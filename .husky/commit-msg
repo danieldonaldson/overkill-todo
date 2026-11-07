@@ -1,0 +1,1 @@
+PNPM_CONFIG_MINIMUM_RELEASE_AGE=1440 pnpm exec commitlint --edit "$1"

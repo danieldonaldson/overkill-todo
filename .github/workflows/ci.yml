@@ -1,0 +1,171 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # Superseded PR pushes are worth cancelling. Main is not: a cancelled main run
+  # publishes no images.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  # Refuse npm releases younger than 24h (also set in pnpm-workspace.yaml).
+  PNPM_CONFIG_MINIMUM_RELEASE_AGE: "1440"
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: app
+          POSTGRES_PASSWORD: app
+          POSTGRES_DB: app
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://app:app@localhost/app
+    steps:
+      - uses: actions/checkout@v7
+
+      # Installs exactly what backend/rust-toolchain.toml pins (with clippy and
+      # rustfmt), so CI and local can't drift onto different lint sets.
+      - name: Toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,sqlx-cli,cargo-audit,cargo-deny
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Audit dependencies
+        run: cargo audit
+
+      - name: Check dependency policy
+        run: cargo deny check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery
+        env:
+          SQLX_OFFLINE: "true"
+
+      - name: Unit tests
+        run: cargo nextest run --locked --lib
+        env:
+          SQLX_OFFLINE: "true"
+
+      - name: Run migrations
+        run: cargo sqlx migrate run
+
+      - name: Integration tests
+        run: cargo nextest run --locked --tests
+
+      # Fails when a query changed without `just db-prepare`.
+      - name: Check SQLx offline cache
+        run: cargo sqlx prepare --check -- --all-targets
+
+  web:
+    name: Web
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @app/web exec playwright install --with-deps chromium
+      - run: pnpm lint
+      - run: pnpm --filter @app/web check
+      - run: pnpm --filter @app/web build
+      - run: pnpm --filter @app/web test:unit
+
+  web-e2e:
+    name: Web E2E
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @app/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @app/web build
+      - run: pnpm --filter @app/web test:e2e
+      - uses: actions/upload-artifact@v5
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          retention-days: 7
+
+  # Images are built only from main, after every check passed, and tagged with the
+  # commit. Deploys reference the tag's digest; CI holds no deploy credentials.
+  # Once builds get slow, scope them to what changed since the last published image
+  # (notes: "Scope image builds to what changed since the last published image").
+  images:
+    name: Build ${{ matrix.component }} image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend, web, web-e2e]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: backend
+            context: backend
+            dockerfile: backend/Dockerfile
+          - component: web
+            context: .
+            dockerfile: apps/web/Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image name
+        id: image
+        # ghcr requires a lowercase repository path.
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/${{ matrix.component }}" >>"$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache
+          cache-to: type=registry,ref=${{ steps.image.outputs.name }}:buildcache,mode=max
+          provenance: mode=max
+          sbom: true

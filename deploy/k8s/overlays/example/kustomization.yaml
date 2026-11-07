@@ -1,0 +1,32 @@
+# Copy per environment (staging, production). A deploy is a commit that changes a digest here.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: app-production
+resources:
+  - ../../base
+  - object-store.yaml
+  # - backend-secrets.sealed.yaml   # SealedSecret or SOPS-encrypted; never a plain Secret
+images:
+  - name: backend
+    newName: ghcr.io/OWNER/REPO/backend
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: web
+    newName: ghcr.io/OWNER/REPO/web
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+configMapGenerator:
+  - name: backend-config
+    literals:
+      - DEV_MODE=false
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=4322
+      - FRONTEND_BASE_URL=https://app.example.com
+      - MX_VALIDATION_ENABLED=true
+  - name: web-config
+    literals:
+      - PUBLIC_TURNSTILE_SITE_KEY=
+patches:
+  - target: { kind: Ingress, name: app }
+    patch: |
+      - op: replace
+        path: /spec/rules/0/host
+        value: app.example.com

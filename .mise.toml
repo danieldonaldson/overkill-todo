@@ -1,0 +1,19 @@
+# `mise install` provisions the dev toolchain. Rust comes from rustup via
+# backend/rust-toolchain.toml; Postgres runs in Docker (compose.yaml).
+[tools]
+node = "24"
+pnpm = "11"
+just = "latest"
+sops = "latest"          # SOPS+age: encrypted secrets committed to git
+age = "latest"
+"cargo:sqlx-cli" = { version = "0.9", features = "rustls,postgres" }
+"cargo:cargo-nextest" = "latest"
+"cargo:cargo-watch" = "latest"   # `just dev` backend auto-reload
+"cargo:cargo-deny" = "latest"
+"cargo:cargo-audit" = "latest"
+
+# Kubernetes path only (deploy/k8s, optional). Uncomment if you use it.
+# kubectl = "latest"
+# helm = "latest"
+# kubeseal = "0.38.4"    # MUST match the in-cluster SealedSecrets controller
+# tilt = "latest"

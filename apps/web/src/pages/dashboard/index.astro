@@ -1,0 +1,8 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro'
+import HomePanel from '../../components/dashboard/HomePanel.svelte'
+---
+
+<DashboardLayout title="Dashboard | App">
+  <HomePanel client:load />
+</DashboardLayout>

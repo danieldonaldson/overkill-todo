@@ -1,0 +1,15 @@
+# Where CNPG archives WAL and base backups. Credentials live in a sealed/encrypted Secret.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: app-db-store
+spec:
+  retentionPolicy: 14d
+  configuration:
+    destinationPath: s3://BUCKET/app-db
+    endpointURL: https://S3_ENDPOINT
+    s3Credentials:
+      accessKeyId: { name: app-db-backup-s3, key: ACCESS_KEY_ID }
+      secretAccessKey: { name: app-db-backup-s3, key: SECRET_ACCESS_KEY }
+    wal:
+      compression: gzip

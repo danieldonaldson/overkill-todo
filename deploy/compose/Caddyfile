@@ -1,0 +1,17 @@
+# Production edge for the single-host deployment. Caddy gets and renews the TLS
+# certificate for $DOMAIN on its own; ports 80 and 443 must reach this host.
+{$DOMAIN} {
+	encode zstd gzip
+
+	handle /api/* {
+		reverse_proxy backend:4322
+	}
+	handle {
+		reverse_proxy web:8080
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

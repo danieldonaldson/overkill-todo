@@ -1,0 +1,180 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@app/design-tokens/tokens.css';
+
+/* Enable class-based dark mode (mode-watcher toggles html.dark) */
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * shadcn-svelte semantic tokens mapped to app's warm brand palette
+ * (feather / cloud / pebble / shade / char / brand) rather than shadcn neutral.
+ */
+:root {
+  /* One radius language: squircle cards/inputs, pill chips/buttons. */
+  --radius: 1rem;
+
+  /* Brand + teal palette live in @app/design-tokens (imported above). */
+
+  /* Surfaces */
+  --background: #f7f3ee; /* feather */
+  --foreground: #1f1b18; /* char */
+  --card: #fffcf8; /* cloud */
+  --card-foreground: #1f1b18;
+  /* Elevated surface tier, one step above --card (nested tiles/rows). */
+  --cloud-2: #ece5db;
+  --popover: #fffcf8;
+  --popover-foreground: #1f1b18;
+
+  /* Primary — app brand. Orange fills carry dark (brand-ink) text: white
+     on #d6583d fails AA (3.9:1), dark-on-orange passes. */
+  --primary: #d6583d;
+  --primary-foreground: #1a120d; /* brand-ink */
+
+  /* Secondary / muted / accent — warm neutrals */
+  --secondary: #ece5db;
+  --secondary-foreground: #1f1b18;
+  --muted: #ece5db;
+  --muted-foreground: #6c6864; /* shade */
+  --accent: #ece5db;
+  --accent-foreground: #1f1b18;
+
+  /* Destructive */
+  --destructive: #d94f3c; /* error */
+
+  /* UI chrome */
+  --border: #e2dcd3; /* pebble */
+  --input: #e2dcd3;
+  --ring: #d6583d;
+}
+
+.dark {
+  /* Surfaces (dark) */
+  --background: #1c1917;
+  --foreground: #f0ebe4;
+  --card: #231f1c;
+  --card-foreground: #f0ebe4;
+  /* Elevated surface tier (nested tiles/rows) — cloud-2. */
+  --cloud-2: #2a231d;
+  --popover: #231f1c;
+  --popover-foreground: #f0ebe4;
+
+  /* Primary — lifted brand for dark; dark brand-ink text on the orange fill
+     keeps AA (white-on-orange fails). */
+  --primary: #e0664a;
+  --primary-foreground: #1a120d; /* brand-ink */
+
+  /* Secondary / muted / accent (dark) */
+  --secondary: #3a3530; /* pebble dark */
+  --secondary-foreground: #f0ebe4;
+  --muted: #2c2723;
+  --muted-foreground: #a09890; /* shade dark */
+  --accent: #3a3530;
+  --accent-foreground: #f0ebe4;
+
+  /* Destructive */
+  --destructive: #e0604f;
+
+  /* UI chrome */
+  --border: #3a3530;
+  --input: #3a3530;
+  --ring: #e0664a;
+}
+
+@theme inline {
+  /* Fonts */
+  --font-display: 'Geist', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
+
+  /* z-index scale */
+  --z-dropdown: 100;
+  --z-modal: 200;
+  --z-toast: 300;
+
+  /* Radius */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* Brand + teal utilities come from @app/design-tokens' @theme block. */
+
+  /* shadcn semantic color mappings */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-cloud-2: var(--cloud-2);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body min-h-screen text-base leading-normal;
+  }
+
+  input,
+  button,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  a {
+    @apply text-primary no-underline;
+  }
+
+  a:hover {
+    @apply underline;
+  }
+
+  :focus-visible {
+    @apply outline-ring outline-2 outline-offset-2;
+  }
+}
+
+@layer utilities {
+  .sr-only {
+    @apply absolute -m-px h-px w-px overflow-hidden border-0 p-0 whitespace-nowrap;
+    clip: rect(0, 0, 0, 0);
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  @apply h-2 w-2;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-muted;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/30 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/50;
+}

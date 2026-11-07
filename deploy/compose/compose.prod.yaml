@@ -1,0 +1,82 @@
+# Single-host production override. Paths resolve from the repo root. Use with the base file:
+#
+#   docker compose -f compose.yaml -f deploy/compose/compose.prod.yaml --profile full up -d
+#
+# Differences from the local `full` profile, and nothing else:
+#   - images are pulled by digest (set in deploy/compose/.env), never built here
+#   - the DB password and backend config come from files decrypted from SOPS
+#   - the edge serves $DOMAIN on 80/443 with automatic TLS
+#   - a nightly pg_dump runs (copy it off the host; see README)
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    # Not published on the host in production.
+    ports: !reset []
+    restart: unless-stopped
+
+  backend:
+    image: ${BACKEND_IMAGE:?set BACKEND_IMAGE to ghcr.io/<owner>/<repo>/backend@sha256:...}
+    build: !reset null
+    env_file: !override
+      - ./deploy/compose/backend.env
+    environment:
+      DATABASE_URL: !reset null
+      FRONTEND_BASE_URL: https://${DOMAIN:?set DOMAIN}
+    restart: unless-stopped
+
+  web:
+    image: ${WEB_IMAGE:?set WEB_IMAGE to ghcr.io/<owner>/<repo>/web@sha256:...}
+    build: !reset null
+    environment:
+      PUBLIC_TURNSTILE_SITE_KEY: ${PUBLIC_TURNSTILE_SITE_KEY:-}
+    restart: unless-stopped
+
+  edge:
+    ports: !override
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes: !override
+      - ./deploy/compose/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    restart: unless-stopped
+
+  backup:
+    profiles: ["full"]
+    image: postgres:18
+    environment:
+      PGHOST: db
+      PGUSER: app
+      PGDATABASE: app
+      PGPASSFILE: /tmp/.pgpass
+    secrets: [db_password]
+    volumes:
+      - ./deploy/compose/backups:/backups
+    entrypoint: ["/bin/sh", "-c"]
+    # Nightly custom-format dump, 14 kept. A dump on the same disk is not a backup:
+    # sync ./backups off the host (restic, rclone) and rehearse a restore.
+    command:
+      - |
+        printf 'db:5432:app:app:%s\n' "$$(cat /run/secrets/db_password)" > /tmp/.pgpass
+        chmod 600 /tmp/.pgpass
+        while true; do
+          f=/backups/app-$$(date -u +%Y%m%dT%H%M%SZ).dump
+          pg_dump -Fc -f "$$f.partial" && mv "$$f.partial" "$$f" && echo "backup ok $$f"
+          ls -1t /backups/*.dump | tail -n +15 | xargs -r rm --
+          sleep 86400
+        done
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+secrets:
+  db_password:
+    file: ./deploy/compose/db_password
+
+volumes:
+  caddy-data:

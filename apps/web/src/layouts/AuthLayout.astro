@@ -1,0 +1,63 @@
+---
+import Base from './Base.astro'
+
+// `heading` is optional: the tabbed sign-in/create-account screen renders its
+// own h1 inside the active panel, since the heading changes with the tab.
+interface Props {
+  title: string
+  heading?: string
+  description?: string
+}
+
+const { title, heading, description } = Astro.props
+---
+
+<Base {title}>
+  <!--
+    Split-screen auth. The form column comes FIRST in the source so keyboard/SR
+    focus order is form-first; the decorative brand panel is ordered visually to
+    the left on desktop (lg:order-first) but is aria-hidden and holds no focusable
+    controls, so it never traps keyboard/SR users. Collapses to form-only on mobile.
+  -->
+  <div class="grid min-h-screen lg:grid-cols-2">
+    <main class="flex items-center justify-center px-4 py-10 sm:px-6">
+      <section class="w-full max-w-md rounded-[var(--radius)] border border-border bg-card p-6 shadow-sm sm:p-8">
+        <div class="mb-6 text-center">
+          <a href="/" class="font-display text-xl font-semibold text-primary">app</a>
+          {heading && <h1 class="mt-6 font-display text-2xl font-semibold tracking-tight">{heading}</h1>}
+          {description && <p class="mt-2 text-sm text-muted-foreground">{description}</p>}
+        </div>
+        <slot />
+      </section>
+    </main>
+
+    <aside
+      aria-hidden="true"
+      class="relative hidden overflow-hidden bg-brand-dark lg:order-first lg:flex lg:flex-col lg:justify-between lg:p-12"
+    >
+      <!-- Wordmark (decorative echo; the real home link lives in the form column). -->
+      <span class="font-display text-2xl font-semibold text-white/95">app</span>
+
+      <div class="max-w-sm">
+        <p class="font-display text-4xl leading-tight font-semibold text-white">
+          Replace this{' '}
+          <span class="text-brand-light">with your pitch.</span>
+        </p>
+        <p class="mt-4 text-base text-white/70">
+          One sentence on what the product does for the person signing in.
+        </p>
+      </div>
+
+      <!-- Organic curved divider bleeding into the form column on the right edge. -->
+      <svg
+        class="pointer-events-none absolute inset-y-0 right-[-1px] h-full w-24 text-background"
+        viewBox="0 0 100 800"
+        preserveAspectRatio="none"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M100 0 H60 C10 220 90 360 40 480 C0 600 60 700 100 800 V0 Z" />
+      </svg>
+    </aside>
+  </div>
+</Base>

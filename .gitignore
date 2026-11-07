@@ -1,0 +1,35 @@
+node_modules
+.pnpm-store
+dist
+.astro
+.env
+.env.*
+!.env.example
+
+# Playwright
+test-results
+playwright-report
+
+# Vitest browser artifacts
+.vitest-attachments
+__screenshots__
+coverage
+
+# backend local env + build
+backend/.env
+backend/.env.secret
+backend/target
+# Decrypted SOPS output must never be committed. Encrypted *.sops.yaml files ARE committed;
+# only decrypted temp forms are ignored.
+*.sops.yaml.dec
+*.dec.yaml
+secrets.plain.yaml
+
+# proptest saves a failing-seed file per crate on failure; not tracked (a
+# committed failing seed makes the test hard-fail for everyone).
+backend/proptest-regressions/
+
+# single-host deploy: decrypted secrets and local dumps
+deploy/compose/backend.env
+deploy/compose/db_password
+deploy/compose/backups/

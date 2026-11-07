@@ -1,0 +1,17 @@
+---
+import Base from './Base.astro'
+import DashboardApp from '../components/dashboard/DashboardApp.svelte'
+
+interface Props {
+  title?: string
+  skipVerificationCheck?: boolean
+}
+
+const { title = 'App Dashboard', skipVerificationCheck = false } = Astro.props
+---
+
+<Base {title}>
+  <DashboardApp client:load {skipVerificationCheck}>
+    <slot />
+  </DashboardApp>
+</Base>

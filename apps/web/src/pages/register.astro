@@ -1,0 +1,8 @@
+---
+import AuthLayout from '../layouts/AuthLayout.astro'
+import AuthScreen from '../components/auth/AuthScreen.svelte'
+---
+
+<AuthLayout title="Create account | App">
+  <AuthScreen initial="register" client:load />
+</AuthLayout>

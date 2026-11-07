@@ -1,0 +1,18 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+allowBuilds:
+  esbuild: true
+  sharp: true
+
+minimumReleaseAge: 1440
+
+overrides:
+  yaml: '>=2.8.3'
+  esbuild: '>=0.28.0'
+  undici@>=7.0.0 <7.28.0: '>=7.28.0 <8'
+  undici@<6.27.0: '>=6.27.0 <7'
+  # esrap 2.2.12 regressed svelte's TS codegen: <script lang="ts"> reaches the
+  # bundler unstripped, breaking `astro build`. Hold at the last good release.
+  esrap: '2.2.11'

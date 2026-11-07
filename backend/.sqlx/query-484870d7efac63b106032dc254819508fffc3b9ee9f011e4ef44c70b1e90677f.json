@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT 1 as ping",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "ping",
+        "type_info": "Int4",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "484870d7efac63b106032dc254819508fffc3b9ee9f011e4ef44c70b1e90677f"
+}

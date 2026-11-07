@@ -1,0 +1,10 @@
+---
+import AuthLayout from '../layouts/AuthLayout.astro'
+import VerifyEmailForm from '../components/auth/VerifyEmailForm.svelte'
+
+const email = Astro.url.searchParams.get('email') ?? ''
+---
+
+<AuthLayout title="Verify email | app" heading="Verify your email">
+  <VerifyEmailForm client:load {email} />
+</AuthLayout>

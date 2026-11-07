@@ -1,0 +1,63 @@
+# Local services, and an optional prod-like stack.
+#
+#   docker compose up -d db                  # just the database (what `just dev` uses)
+#   docker compose --profile full up --build # db + backend + web + Caddy edge on :8080
+#
+# The `full` profile is the same images CI builds, behind the same single-origin
+# routing production uses (/api → backend, everything else → web). It is also a
+# workable single-VPS deployment: see deploy/compose/README.md.
+name: app
+
+services:
+  db:
+    image: postgres:18
+    # pg_stat_statements is created by the initial migration; it must be preloaded.
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: app
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  backend:
+    profiles: ["full"]
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgres://app:app@db:5432/app
+      FRONTEND_BASE_URL: http://localhost:8080
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: "4322"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  web:
+    profiles: ["full"]
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    read_only: true
+    tmpfs: ["/tmp"]
+    environment:
+      PUBLIC_TURNSTILE_SITE_KEY: ""
+
+  edge:
+    profiles: ["full"]
+    image: caddy:2
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./deploy/compose/Caddyfile.local:/etc/caddy/Caddyfile:ro
+    depends_on: [backend, web]
+
+volumes:
+  db-data:

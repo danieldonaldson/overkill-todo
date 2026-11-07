@@ -1,0 +1,38 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO users (id, email, password_hash, first_name, last_name, email_verified, pending_email, pending_email_requested_at, deleted_at, deletion_scheduled_at, role, created_at, updated_at, version)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)\n            ON CONFLICT (id) DO UPDATE SET\n                email = EXCLUDED.email,\n                password_hash = EXCLUDED.password_hash,\n                first_name = EXCLUDED.first_name,\n                last_name = EXCLUDED.last_name,\n                email_verified = EXCLUDED.email_verified,\n                pending_email = EXCLUDED.pending_email,\n                pending_email_requested_at = EXCLUDED.pending_email_requested_at,\n                deleted_at = EXCLUDED.deleted_at,\n                deletion_scheduled_at = EXCLUDED.deletion_scheduled_at,\n                role = EXCLUDED.role,\n                updated_at = EXCLUDED.updated_at,\n                version = users.version + 1\n            WHERE users.version = $14\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Bool",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz",
+        "Timestamptz",
+        {
+          "Custom": {
+            "name": "user_role",
+            "kind": {
+              "Enum": [
+                "user",
+                "admin",
+                "super_admin"
+              ]
+            }
+          }
+        },
+        "Timestamptz",
+        "Timestamptz",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "19d1d8da4c15a161c5c2d8f3b4a9874be959b15199e431b69ac917690052d06f"
+}

@@ -1,0 +1,31 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH bumped AS (\n                UPDATE email_verification_codes\n                SET attempts = attempts + 1\n                WHERE user_id = $1 AND attempts < $2\n                RETURNING attempts\n            )\n            SELECT\n                (SELECT attempts FROM bumped) AS \"bumped_attempts?: i32\",\n                EXISTS (SELECT 1 FROM email_verification_codes WHERE user_id = $1) AS \"row_exists!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "bumped_attempts?: i32",
+        "type_info": "Int4",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "row_exists!",
+        "type_info": "Bool",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": [
+      null,
+      null
+    ]
+  },
+  "hash": "d4afe113619acf692627151db3a2faf93dab708777dd6d566d07f679566bc0f8"
+}

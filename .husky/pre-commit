@@ -1,0 +1,16 @@
+if git diff --cached --name-only | grep -Eq '^(\.husky/pre-commit|justfile|backend/(Cargo\.(toml|lock)|build\.rs|rust-toolchain.*|\.cargo/|\.sqlx/|migrations/|src/|tests/))'; then
+    echo "Running backend fmt check..."
+    just fmt-check || { echo "  rustfmt failed. Run: just fmt"; exit 1; }
+
+    echo "Running backend clippy..."
+    just lint || { echo "  clippy failed. Run: just lint"; exit 1; }
+else
+    echo "Skipping backend checks; no relevant staged backend files changed."
+fi
+
+if git diff --cached --name-only | grep -Eq '^(\.husky/pre-commit|justfile|eslint\.config\.js|.*\.(js|cjs|mjs|ts|cts|mts|svelte))$'; then
+    echo "Running eslint..."
+    just lint-js || { echo "  eslint failed. Run: just lint-js"; exit 1; }
+else
+    echo "Skipping eslint; no relevant staged frontend files changed."
+fi

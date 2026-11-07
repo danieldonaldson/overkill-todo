@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE password_reset_codes\n            SET attempts = GREATEST(attempts - 1, 0)\n            WHERE user_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "48ff1a046d9c6cf7f4c8711e93ea4b5d7170bb3d9eaa6e73af317546ab910949"
+}

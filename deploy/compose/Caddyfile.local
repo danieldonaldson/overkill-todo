@@ -1,0 +1,9 @@
+# Local prod-like edge: one origin, /api → backend, everything else → web.
+:8080 {
+	handle /api/* {
+		reverse_proxy backend:4322
+	}
+	handle {
+		reverse_proxy web:8080
+	}
+}

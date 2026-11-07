@@ -1,0 +1,98 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT id, user_id, provider as \"provider: _\", provider_user_id, provider_email, linked_at\n            FROM user_oauth_accounts\n            WHERE user_id = $1\n            ORDER BY linked_at ASC\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "user_oauth_accounts",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "user_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "user_oauth_accounts",
+            "name": "user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "provider: _",
+        "type_info": {
+          "Custom": {
+            "name": "oauth_provider",
+            "kind": {
+              "Enum": [
+                "google",
+                "apple"
+              ]
+            }
+          }
+        },
+        "origin": {
+          "Table": {
+            "table": "user_oauth_accounts",
+            "name": "provider"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "provider_user_id",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "user_oauth_accounts",
+            "name": "provider_user_id"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "provider_email",
+        "type_info": "Varchar",
+        "origin": {
+          "Table": {
+            "table": "user_oauth_accounts",
+            "name": "provider_email"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "linked_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "user_oauth_accounts",
+            "name": "linked_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "b41adc77f7fbe336a36384aeb979fb23d0615ed9d8698caa2f25218e1d1285f3"
+}

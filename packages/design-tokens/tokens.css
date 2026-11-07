@@ -1,0 +1,60 @@
+/*
+ * @app/design-tokens — single source of truth for shared design tokens.
+ *
+ * Imported by apps/web after `@import "tailwindcss"`.
+ * Tailwind 4 composes `@theme` across imported CSS, so the brand palette + motion
+ * + radius scale below generate utilities (bg-brand, rounded-card, duration-motion,
+ * ease-out, …) with zero build config.
+ *
+ * Neutrals (feather/cloud/pebble/shade/char) live in apps/web/src/styles/global.css,
+ * which maps them onto shadcn semantic tokens and owns light/dark switching.
+ */
+
+@theme {
+  /* Brand — App */
+  --color-brand: #d6583d;
+  --color-brand-dark: #b0442c;
+  --color-brand-light: #f5a182;
+  /* Dark-text-on-orange chip/fill foreground (passes AA on brand). */
+  --color-brand-ink: #1a120d;
+
+  /* Secondary — Teal */
+  --color-teal: #6db5c7;
+  --color-teal-dark: #4a8c9e;
+  --color-teal-light: #c8e3eb;
+
+  /* Motion — durations + easings (opt-in; see prefers-reduced-motion reset below) */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* Shared radius scale (squircles + pills; shadcn owns --radius) */
+  --radius-chip: 9999px;
+  --radius-tile: 1.25rem;
+  --radius-card: 1.5rem;
+}
+
+/*
+ * Plain custom properties (not @theme) so they're usable in var() and by the
+ * reduced-motion reset. Duration tokens double as Tailwind arbitrary values.
+ */
+:root {
+  --motion-fast: 150ms;
+  --motion: 200ms;
+  --motion-slow: 300ms;
+}
+
+/*
+ * Global accessibility guard: users who ask for reduced motion get none.
+ * Lives in the shared package so every component in both apps inherits it and
+ * no per-component motion can escape the setting.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

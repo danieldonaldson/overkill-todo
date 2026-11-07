@@ -1,0 +1,72 @@
+# Backend API. Reads all config from env (contract: backend/.env.example).
+# maxUnavailable 0 + maxSurge 1 means old and new pods overlap during a roll, and
+# sqlx migrations run at startup, so every migration must be backward compatible
+# (expand now, contract in a later deploy). Leader election (src/.../leader.rs)
+# keeps background tasks single-instance when replicas > 1.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: backend
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backend
+    spec:
+      # SIGTERM: ~5s pre-drain sleep in main.rs, drain requests, release the leader lock.
+      terminationGracePeriodSeconds: 45
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: backend
+          image: backend   # pinned by digest in the overlay (images:)
+          ports:
+            - { name: http, containerPort: 4322 }
+          envFrom:
+            - configMapRef: { name: backend-config }
+            # Required on purpose: a missing secret fails the pod instead of booting keyless.
+            - secretRef: { name: backend-secrets }
+          env:
+            # CNPG generates this secret with a ready-made connection URI.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: app-db-app, key: uri }
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 15
+            failureThreshold: 6
+          readinessProbe:
+            httpGet: { path: /health/ready, port: http }
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector:
+    app.kubernetes.io/name: backend
+  ports:
+    - { name: http, port: 4322, targetPort: http }

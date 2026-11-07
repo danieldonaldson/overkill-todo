@@ -1,0 +1,13 @@
+{
+  "name": "@app/design-tokens",
+  "version": "0.1.0",
+  "description": "Shared CSS design tokens (brand palette, motion, radius) for app frontends",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./tokens.css": "./tokens.css"
+  },
+  "files": [
+    "tokens.css"
+  ]
+}

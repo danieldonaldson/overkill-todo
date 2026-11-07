@@ -1,0 +1,43 @@
+# Postgres via CloudNativePG (operator must be installed). CNPG creates the
+# `app-db-app` secret the backend reads DATABASE_URL from.
+#
+# Backups: continuous WAL archiving + base backups to object storage through the
+# barman-cloud plugin. The ObjectStore (bucket, credentials, retention) is
+# environment-specific, so the overlay supplies it. Restore = a new Cluster with
+# `bootstrap.recovery` pointing at that store; rehearse it before relying on it.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: app-db
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18
+  bootstrap:
+    initdb:
+      database: app
+      owner: app
+  postgresql:
+    shared_preload_libraries: [pg_stat_statements]
+  storage:
+    size: 5Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: app-db-store
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: app-db-daily
+spec:
+  schedule: "0 0 3 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: app-db
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

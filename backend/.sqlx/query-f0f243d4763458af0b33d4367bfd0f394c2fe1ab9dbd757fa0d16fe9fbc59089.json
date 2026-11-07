@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO email_verification_codes (id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, magic_token_hash, magic_token_expires_at)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n            ON CONFLICT (user_id) DO UPDATE SET\n                id = EXCLUDED.id,\n                code_hash = EXCLUDED.code_hash,\n                expires_at = EXCLUDED.expires_at,\n                attempts = EXCLUDED.attempts,\n                last_sent_at = EXCLUDED.last_sent_at,\n                -- A routine 6-digit code-send carries magic_token_hash = NULL;\n                -- only overwrite when a new magic token is actually supplied so a\n                -- previously issued magic link stays matchable. The link's expiry\n                -- is preserved alongside it so a code resend never extends it.\n                magic_token_hash = COALESCE(EXCLUDED.magic_token_hash, email_verification_codes.magic_token_hash),\n                magic_token_expires_at = COALESCE(EXCLUDED.magic_token_expires_at, email_verification_codes.magic_token_expires_at)\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Int4",
+        "Timestamptz",
+        "Timestamptz",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f0f243d4763458af0b33d4367bfd0f394c2fe1ab9dbd757fa0d16fe9fbc59089"
+}

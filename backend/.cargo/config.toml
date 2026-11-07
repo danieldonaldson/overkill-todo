@@ -1,0 +1,15 @@
+# Faster dev inner loop: link with lld instead of the default bfd linker.
+#
+# Scoped to the GNU host target only, so it does NOT affect the musl release
+# build (x86_64-unknown-linux-musl) produced by the Dockerfile.
+#
+# Requires `clang` and `lld` on the build host. They are present on the dev
+# image and CI runners; install with your distro's `clang`/`lld` packages.
+#
+# NOTE: deliberately no `target-cpu = native`. It would bake the build host's
+# CPU features into the binary and break portability when the build host CPU
+# differs from the run host (CI builder vs prod node). Pin a baseline target-cpu
+# per deploy arch if you ever want this.
+[target.x86_64-unknown-linux-gnu]
+linker = "clang"
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]
