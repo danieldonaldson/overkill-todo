@@ -1,0 +1,121 @@
+name: Benchmarks
+
+# Report-only regression check: on a PR, benchmark the base commit and the PR on
+# the same runner (scripts/bench-compare.sh) and put the per-bench change in the
+# job summary, with a warning annotation per regression. Never fails the PR:
+# shared-runner timings are fine for "this got 40% slower", not for gating.
+# Pushes to main only build the benches, to keep a warm cache for PRs.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: bench-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Refuse npm releases younger than 24h (also set in pnpm-workspace.yaml).
+  PNPM_CONFIG_MINIMUM_RELEASE_AGE: '1440'
+  # Both sides build with the same settings, so a comparison stays fair; thin
+  # LTO and parallel codegen cut the release build roughly in half versus the
+  # shipped profile (fat LTO, 1 unit).
+  CARGO_PROFILE_BENCH_LTO: thin
+  CARGO_PROFILE_BENCH_CODEGEN_UNITS: '16'
+
+jobs:
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ github.event_name != 'pull_request' || steps.filter.outputs.backend == 'true' }}
+      web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            shared: &shared
+              - .github/workflows/bench.yml
+              - scripts/bench-compare.sh
+              - scripts/bench-report.mjs
+            backend:
+              - *shared
+              - backend/src/**
+              - backend/benches/**
+              - backend/tests/common/**
+              - backend/Cargo.toml
+              - backend/Cargo.lock
+              - backend/rust-toolchain.toml
+            web:
+              - *shared
+              - apps/web/src/**
+              - apps/web/package.json
+              - apps/web/vitest.config.ts
+              - pnpm-lock.yaml
+
+  backend:
+    name: Backend benchmarks
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The compare script checks out the base commit as a worktree.
+          fetch-depth: 0
+
+      - name: Toolchain
+        working-directory: backend
+        run: rustup toolchain install
+
+      # Same policy as CI: only main saves, PRs restore main's cache.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build benches (warm cache)
+        if: github.event_name != 'pull_request'
+        working-directory: backend
+        run: cargo bench --locked --no-run
+        env:
+          SQLX_OFFLINE: 'true'
+
+      - name: Compare against base
+        if: github.event_name == 'pull_request'
+        run: scripts/bench-compare.sh --backend "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+
+  web:
+    name: Web benchmarks
+    needs: changes
+    # Nothing to warm on main: the Vitest run has no build cache worth keeping.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @overkill-todo/web exec playwright install --with-deps chromium
+
+      - name: Compare against base
+        run: scripts/bench-compare.sh --web "$BASE_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}

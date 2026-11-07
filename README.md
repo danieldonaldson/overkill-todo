@@ -57,12 +57,23 @@ In dev, verification codes print in the backend log.
 | `just up`                             | prod-like stack in Docker behind Caddy on :8080 |
 | `just bench` / `just bench-db`        | backend criterion benches / full-router + DB    |
 | `just bench-web`                      | Vitest benches (helpers, client, AdminPanel)    |
+| `just bench-compare [base]`           | base vs working tree, per-bench change report   |
 
 ### Benchmarks
 
 Benchmarks catch performance regressions; they're not part of `just ci` because
-wall-clock numbers on shared runners are too noisy to gate on. Compare against a
-baseline from `main`, on the same machine:
+wall-clock numbers on shared runners are too noisy to gate on.
+
+On every PR, the Benchmarks workflow runs `scripts/bench-compare.sh`: it
+benchmarks the base commit and the PR on the same runner, alternating sides for
+two rounds and keeping each side's fastest run. The table goes in the job summary;
+each bench more than 10% slower, with the two sides' confidence intervals not
+overlapping, gets a warning annotation. It never fails the PR. `bench-db` isn't
+included, because query latency is too noisy for this. Run the same comparison
+locally with `just bench-compare` (default base `main`; `--backend` / `--web` for
+one suite). Tune it with `BENCH_THRESHOLD`, `BENCH_ROUNDS` or `CRITERION_ARGS`.
+
+For quick manual checks, compare against a saved baseline:
 
 ```bash
 git switch main && just bench --save-baseline main          # once per main change

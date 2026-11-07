@@ -57,10 +57,15 @@ fn jwt(c: &mut Criterion) {
     g.bench_function("verify", |b| {
         b.iter(|| verify_jwt(black_box(&token), crypto.decoding_key()));
     });
+    // A well-formed signature from another token, so the full RSA check runs
+    // (a corrupted base64 tail would fail fast and measure the wrong path).
+    let other = create_jwt(Uuid::now_v7(), true, "user", crypto.encoding_key(), 15).unwrap();
+    let forged = format!(
+        "{}.{}",
+        token.rsplit_once('.').unwrap().0,
+        other.rsplit_once('.').unwrap().1
+    );
     g.bench_function("verify_bad_signature", |b| {
-        let mut forged = token.clone();
-        forged.pop();
-        forged.push(if token.ends_with('A') { 'B' } else { 'A' });
         b.iter(|| verify_jwt(black_box(&forged), crypto.decoding_key()));
     });
     g.finish();

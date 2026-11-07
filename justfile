@@ -176,6 +176,11 @@ bench-db *args: db-up
 bench-web *args:
     {{pnpm}} --filter {{web}} exec vitest bench --run {{args}}
 
+# What CI runs on PRs (.github/workflows/bench.yml), here.
+# Benchmark a base ref (default main) vs the working tree. Flags: --backend, --web.
+bench-compare *args:
+    ./scripts/bench-compare.sh {{args}}
+
 # Frontend component-test coverage. HTML report: apps/web/coverage/index.html.
 coverage-web:
     {{pnpm}} --filter {{web}} test:coverage
