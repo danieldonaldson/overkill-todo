@@ -38,7 +38,14 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
 - Component tests: Vitest browser mode. Flows: Playwright with the API mocked
   (`tests/`); real-backend flows go in `tests/integration/`.
 
+## Secrets
+
+- SOPS + age under `deploy/secrets/<env>/`; who reads what is
+  `deploy/secrets/access.yaml`. `.sops.yaml` is generated: change the policy,
+  then `just secrets-sync`. Create secrets with `just secrets-new` (from stdin),
+  never as a plaintext file there.
+
 ## Don't
 
-- Commit `.env`, `backend/.env`, decrypted secrets, or `deploy/compose/backend.env`.
+- Commit `.env`, `backend/.env`, decrypted secrets, or `deploy/compose/.secrets/`.
 - Set `DEV_MODE=true` anywhere but local.

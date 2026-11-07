@@ -76,6 +76,25 @@ wt-list:
       printf '%-50s %s\n' "$p" "$ports"
     done
 
+# ── Secrets ──────────────────────────────────────────────────────────────────────
+# SOPS + age. Policy: deploy/secrets/access.yaml. See deploy/secrets/README.md.
+
+# Policy valid, .sops.yaml generated from it, every secret encrypted to exactly its readers. No keys needed.
+secrets-check:
+    ./scripts/secrets.sh check
+
+# After editing access.yaml: regenerate .sops.yaml and re-key the secrets you can read.
+secrets-sync:
+    ./scripts/secrets.sh sync
+
+# Encrypt stdin into a new secret, e.g. `openssl rand -base64 32 | just secrets-new deploy/secrets/prod/x.sops`.
+secrets-new path:
+    ./scripts/secrets.sh new {{path}}
+
+# On a host: decrypt one environment's secrets into deploy/compose/.secrets/.
+secrets-decrypt env:
+    ./scripts/secrets.sh decrypt {{env}}
+
 # ── Database ─────────────────────────────────────────────────────────────────────
 
 db-up:
@@ -197,7 +216,7 @@ machete:
     cd {{backend}} && cargo machete
 
 # Everything CI gates on. Green here means green CI.
-ci: toolchain-check fmt-check lint machete lint-js test test-integration db-prepare-check test-web e2e
+ci: toolchain-check fmt-check lint machete lint-js secrets-check test test-integration db-prepare-check test-web e2e
 
 # ── Images ───────────────────────────────────────────────────────────────────────
 

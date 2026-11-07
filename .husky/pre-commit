@@ -8,6 +8,11 @@ else
     echo "Skipping backend checks; no relevant staged backend files changed."
 fi
 
+if git diff --cached --name-only | grep -Eq '^(\.husky/pre-commit|\.sops\.yaml|scripts/secrets\.sh|deploy/secrets/)'; then
+    echo "Running secrets check..."
+    just secrets-check || { echo "  secrets check failed. Plaintext under deploy/secrets/? Policy changed? Run: just secrets-sync"; exit 1; }
+fi
+
 if git diff --cached --name-only | grep -Eq '^(\.husky/pre-commit|justfile|eslint\.config\.js|.*\.(js|cjs|mjs|ts|cts|mts|svelte))$'; then
     echo "Running eslint..."
     just lint-js || { echo "  eslint failed. Run: just lint-js"; exit 1; }

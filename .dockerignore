@@ -6,8 +6,10 @@
 **/.env
 **/.env.*
 !**/.env.example
-deploy/compose/backend.env
+deploy/compose/.secrets
+deploy/secrets
 **/*.age
+**/*.sops
 **/*.sops.*
 
 # Host dependencies/artifacts: the image installs its own (musl) node_modules, and a

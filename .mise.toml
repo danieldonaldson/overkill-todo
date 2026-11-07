@@ -10,6 +10,7 @@ pnpm = "11"
 just = "latest"
 sops = "latest"          # SOPS+age: encrypted secrets committed to git
 age = "latest"
+yq = "4"                # scripts/secrets.sh (mikefarah yq; preinstalled on CI runners)
 sccache = "latest"      # compiler cache shared by every worktree (justfile sets RUSTC_WRAPPER)
 "cargo:sqlx-cli" = { version = "0.9", features = "rustls,postgres" }
 "cargo:cargo-nextest" = "latest"

@@ -10,14 +10,18 @@ Move to Kubernetes only when the workload needs it (see `../k8s/README.md`).
 
 ## Files
 
-| File                         | Committed        | What                                                   |
-| ---------------------------- | ---------------- | ------------------------------------------------------ |
-| `compose.prod.yaml`          | yes              | Override on top of `../../compose.yaml`                |
-| `Caddyfile`                  | yes              | TLS edge for `$DOMAIN` (automatic certificates)        |
-| `backend.sops.env`           | yes, encrypted   | Backend config, the contract is `backend/.env.example` |
-| `db_password.sops`           | yes, encrypted   | Postgres password                                      |
-| `backend.env`, `db_password` | **never**        | Decrypted on the host at deploy time (gitignored)      |
-| `.env`                       | on the host only | `DOMAIN`, `BACKEND_IMAGE`, `WEB_IMAGE` (digests)       |
+| File                               | Committed        | What                                                   |
+| ---------------------------------- | ---------------- | ------------------------------------------------------ |
+| `compose.prod.yaml`                | yes              | Override on top of `../../compose.yaml`                |
+| `Caddyfile`                        | yes              | TLS edge for `$DOMAIN` (automatic certificates)        |
+| `../secrets/prod/backend.sops.env` | yes, encrypted   | Backend config, the contract is `backend/.env.example` |
+| `../secrets/prod/db_password.sops` | yes, encrypted   | Postgres password                                      |
+| `.secrets/`                        | **never**        | The above, decrypted on the host (gitignored)          |
+| `.env`                             | on the host only | `DOMAIN`, `BACKEND_IMAGE`, `WEB_IMAGE` (digests)       |
+
+Who can decrypt what, and how to add people or hosts, is in
+[`../secrets/README.md`](../secrets/README.md). The host needs its own age key
+listed under `machines:` there with `env: prod`.
 
 `backend.env` must set `DATABASE_URL=postgres://overkill_todo:<db_password>@db:5432/overkill_todo`,
 `DEV_MODE=false`, real SMTP and Turnstile settings, and fresh JWT, CSRF and
@@ -32,9 +36,7 @@ login has no brute-force throttle beyond Turnstile.
 
 ```bash
 # on the host, in a checkout of the repo
-sops -d deploy/compose/backend.sops.env > deploy/compose/backend.env
-sops -d deploy/compose/db_password.sops > deploy/compose/db_password
-chmod 600 deploy/compose/backend.env deploy/compose/db_password
+just secrets-decrypt prod        # → deploy/compose/.secrets/ (needs the host's age key)
 
 cat > .env <<'ENV'
 DOMAIN=app.example.com

@@ -1,0 +1,9 @@
+# GENERATED from deploy/secrets/access.yaml by scripts/secrets.sh. Don't edit:
+# change the policy and run `just secrets-sync`.
+creation_rules:
+  - path_regex: '^deploy/secrets/local/'
+    age: age1slszqve3ls2qll0t568kqlrtfw3h2x4gwjxv3h0lz72ejmj6cvus0075ug
+  - path_regex: '^deploy/secrets/staging/'
+    age: age1slszqve3ls2qll0t568kqlrtfw3h2x4gwjxv3h0lz72ejmj6cvus0075ug
+  - path_regex: '^deploy/secrets/prod/'
+    age: age1slszqve3ls2qll0t568kqlrtfw3h2x4gwjxv3h0lz72ejmj6cvus0075ug

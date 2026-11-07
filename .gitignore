@@ -31,9 +31,8 @@ secrets.plain.yaml
 # committed failing seed makes the test hard-fail for everyone).
 backend/proptest-regressions/
 
-# single-host deploy: decrypted secrets and local dumps
-deploy/compose/backend.env
-deploy/compose/db_password
+# single-host deploy: decrypted secrets (`just secrets-decrypt`) and local dumps
+deploy/compose/.secrets/
 deploy/compose/backups/
 
 # Vitest bench baselines (`just bench-web --outputJson .bench/main.json`)

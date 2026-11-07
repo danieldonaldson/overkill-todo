@@ -5,6 +5,7 @@
 # Differences from the local `full` profile, and nothing else:
 #   - images are pulled by digest (set in deploy/compose/.env), never built here
 #   - the DB password and backend config come from files decrypted from SOPS
+#     (`just secrets-decrypt prod` → deploy/compose/.secrets/, see deploy/secrets/)
 #   - the edge serves $DOMAIN on 80/443 with automatic TLS
 #   - a nightly pg_dump runs (copy it off the host; see README)
 services:
@@ -20,7 +21,7 @@ services:
     image: ${BACKEND_IMAGE:?set BACKEND_IMAGE to ghcr.io/<owner>/<repo>/backend@sha256:...}
     build: !reset null
     env_file: !override
-      - ./deploy/compose/backend.env
+      - ./deploy/compose/.secrets/backend.env
     environment:
       DATABASE_URL: !reset null
       FRONTEND_BASE_URL: https://${DOMAIN:?set DOMAIN}
@@ -76,7 +77,7 @@ services:
 
 secrets:
   db_password:
-    file: ./deploy/compose/db_password
+    file: ./deploy/compose/.secrets/db_password
 
 volumes:
   caddy-data:

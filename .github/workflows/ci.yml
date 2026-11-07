@@ -218,6 +218,16 @@ jobs:
           path: apps/web/playwright-report
           retention-days: 7
 
+  # Cheap and always run, needs no keys: deploy/secrets/access.yaml, the generated
+  # .sops.yaml and every secret's recipients agree, and nothing there is plaintext.
+  # yq is preinstalled on the runner image.
+  secrets:
+    name: Secrets policy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./scripts/secrets.sh check
+
   # Images are built only from main, after every check passed, and tagged with the
   # commit. Deploys reference the tag's digest; CI holds no deploy credentials.
   # Once builds get slow, scope them to what changed since the last published image
@@ -225,7 +235,7 @@ jobs:
   images:
     name: Build ${{ matrix.component }} image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [backend, web, web-e2e]
+    needs: [backend, web, web-e2e, secrets]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
