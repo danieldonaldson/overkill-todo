@@ -66,7 +66,8 @@
   })
 
   async function handleRoleChange(user: AdminUserRow, event: Event) {
-    const role = (event.target as HTMLSelectElement).value as UserRole
+    const select = event.target as HTMLSelectElement
+    const role = select.value as UserRole
     if (role === user.role) return
     busyUserId = user.id
     message = null
@@ -77,11 +78,10 @@
       message = `Updated ${updated.email} to ${updated.role}.`
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to change role'
-      // Reset the <select> back to the unchanged role. Replacing the row object
-      // (not just the array) changes its identity so the one-way `value` binding
-      // actually re-applies — spreading the array alone leaves the DOM showing
-      // the failed selection.
-      users = users.map((u) => (u.id === user.id ? { ...u } : u))
+      // Reset the <select> to the unchanged role by hand. Re-rendering can't do
+      // it: Svelte remembers the value it last applied (`user.role`), sees the
+      // same value again, and leaves the DOM showing the failed selection.
+      select.value = user.role
     } finally {
       busyUserId = null
     }
