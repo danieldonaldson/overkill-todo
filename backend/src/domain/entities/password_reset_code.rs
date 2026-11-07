@@ -33,6 +33,9 @@ pub struct PasswordResetCode {
     attempts: i32,
     last_sent_at: DateTime<Utc>,
     created_at: DateTime<Utc>,
+    /// Codes for this user replaced while locked at the attempt cap; each
+    /// doubles the next lock window. Persisted, never set by the domain.
+    lockouts: i32,
 }
 
 impl PasswordResetCode {
@@ -53,6 +56,7 @@ impl PasswordResetCode {
             attempts: 0,
             last_sent_at: now,
             created_at: now,
+            lockouts: 0,
         }
     }
 
@@ -75,7 +79,23 @@ impl PasswordResetCode {
             attempts,
             last_sent_at,
             created_at,
+            lockouts: 0,
         }
+    }
+
+    /// Sets the persisted lockout count. Chained onto [`Self::from_persistence`]
+    /// by the repository; kept separate so the many test call sites of
+    /// `from_persistence` don't each have to spell out a zero.
+    #[must_use]
+    pub const fn with_lockouts(mut self, lockouts: i32) -> Self {
+        self.lockouts = lockouts;
+        self
+    }
+
+    /// Returns how many earlier codes were replaced while locked.
+    #[must_use]
+    pub const fn lockouts(&self) -> i32 {
+        self.lockouts
     }
 
     /// Returns the code's unique identifier.
@@ -131,7 +151,7 @@ impl PasswordResetCode {
     /// in sync with the email-verification flow.
     #[must_use]
     const fn lockout(&self) -> AttemptLockout {
-        AttemptLockout::new(self.attempts, self.last_sent_at)
+        AttemptLockout::new(self.attempts, self.last_sent_at, self.lockouts)
     }
 
     /// Checks if this code is locked (too many failed attempts).

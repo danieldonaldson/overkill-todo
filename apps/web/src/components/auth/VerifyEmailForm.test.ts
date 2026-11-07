@@ -97,7 +97,7 @@ describe('VerifyEmailForm', () => {
     })
     await expect
       .element(screen.getByRole('alert'))
-      .toMatchTextContent(/new verification code has been sent/i)
+      .toMatchTextContent(/a new code is on its way/i)
   })
 
   it('shows the remaining-attempts hint on an invalid code', async () => {
@@ -140,28 +140,13 @@ describe('VerifyEmailForm', () => {
     await expect.element(screen.getByRole('alert')).toMatchTextContent(/this code has expired/i)
   })
 
-  it('starts a cooldown when a resend is rate-limited', async () => {
-    vi.mocked(api.auth.resendVerification).mockRejectedValue({
-      error_code: 'COOLDOWN_ACTIVE',
-      cooldown_seconds: 120,
-    })
+  it('starts the cooldown timer from a resend response', async () => {
+    vi.mocked(api.auth.resendVerification).mockResolvedValue({ cooldown_seconds: 300 })
     const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     await screen.getByRole('button', { name: /resend code/i }).click()
 
-    await expect
-      .element(screen.getByRole('alert'))
-      .toMatchTextContent(/please wait before requesting/i)
     // The cooldown swaps the resend button for the countdown timer.
     await expect.element(screen.getByText(/resend in/i)).toBeInTheDocument()
-  })
-
-  it('redirects to the dashboard when resending reports the email is already verified', async () => {
-    vi.mocked(api.auth.resendVerification).mockRejectedValue({ error_code: 'ALREADY_VERIFIED' })
-    const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
-
-    await screen.getByRole('button', { name: /resend code/i }).click()
-
-    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/dashboard'))
   })
 })

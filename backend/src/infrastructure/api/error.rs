@@ -43,8 +43,6 @@ pub enum AppError {
     Database(String),
     #[error("External service error: {0}")]
     ExternalService(String),
-    #[error("Signup incomplete for: {email}")]
-    SignupIncomplete { email: String },
 }
 
 /// Common error codes for 401 Unauthorized responses.
@@ -128,7 +126,6 @@ impl AppError {
             Self::Internal(_) => "internal_error",
             Self::Database(_) => "database_error",
             Self::ExternalService(_) => "external_service_error",
-            Self::SignupIncomplete { .. } => "signup_incomplete",
         }
     }
 
@@ -245,15 +242,6 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let dev_mode = is_dev_mode();
 
-        if let Self::SignupIncomplete { email } = self {
-            let body = serde_json::json!({
-                "error": "Please complete your registration",
-                "error_code": "signup_incomplete",
-                "email": email
-            });
-            return (StatusCode::FORBIDDEN, Json(body)).into_response();
-        }
-
         let code = self.error_code().to_string();
 
         let (status, message) = match &self {
@@ -304,7 +292,6 @@ impl IntoResponse for AppError {
                 };
                 (StatusCode::BAD_GATEWAY, response_msg)
             }
-            Self::SignupIncomplete { .. } => unreachable!("handled above"),
         };
 
         let body = Json(ErrorResponse { code, message });
@@ -419,21 +406,6 @@ mod tests {
         assert_eq!(json["message"], "already exists");
     }
 
-    #[tokio::test]
-    async fn test_into_response_signup_incomplete() {
-        let error = AppError::SignupIncomplete {
-            email: "test@example.com".into(),
-        };
-        let response = error.into_response();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["error"], "Please complete your registration");
-        assert_eq!(json["error_code"], "signup_incomplete");
-        assert_eq!(json["email"], "test@example.com");
-    }
-
     #[test]
     fn test_fingerprint_internal_error() {
         let error = AppError::Internal("something went wrong".into());
@@ -452,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn test_display_forbidden_and_external_and_signup() {
+    fn test_display_forbidden_and_external() {
         assert_eq!(
             format!("{}", AppError::access_denied()),
             "Forbidden: You do not have permission to access this resource"
@@ -460,15 +432,6 @@ mod tests {
         assert_eq!(
             format!("{}", AppError::ExternalService("upstream down".into())),
             "External service error: upstream down"
-        );
-        assert_eq!(
-            format!(
-                "{}",
-                AppError::SignupIncomplete {
-                    email: "a@b.com".into()
-                }
-            ),
-            "Signup incomplete for: a@b.com"
         );
     }
 
@@ -499,10 +462,6 @@ mod tests {
         assert_eq!(
             AppError::ExternalService("x".into()).error_code(),
             "external_service_error"
-        );
-        assert_eq!(
-            AppError::SignupIncomplete { email: "x".into() }.error_code(),
-            "signup_incomplete"
         );
     }
 

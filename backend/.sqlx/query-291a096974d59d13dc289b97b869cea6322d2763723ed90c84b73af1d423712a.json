@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE email_verification_codes\n            SET code_hash = $2, expires_at = $3, attempts = 0, last_sent_at = NOW(),\n                lockouts = lockouts + CASE WHEN attempts >= $4 THEN 1 ELSE 0 END\n            WHERE user_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "291a096974d59d13dc289b97b869cea6322d2763723ed90c84b73af1d423712a"
+}

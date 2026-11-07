@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO password_reset_codes (id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at)\n            VALUES ($1, $2, $3, $4, $5, $6, $7)\n            ON CONFLICT (user_id) DO UPDATE SET\n                id = EXCLUDED.id,\n                code_hash = EXCLUDED.code_hash,\n                expires_at = EXCLUDED.expires_at,\n                attempts = EXCLUDED.attempts,\n                last_sent_at = EXCLUDED.last_sent_at,\n                -- Replacing a code that sat at the attempt cap counts as a\n                -- lockout and doubles the next lock window. Never reset here.\n                lockouts = password_reset_codes.lockouts\n                    + CASE WHEN password_reset_codes.attempts >= $8 THEN 1 ELSE 0 END\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Int4",
+        "Timestamptz",
+        "Timestamptz",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "175c791ede72ca68b520421d17019fa2501692ef428cbd2564e0448eae99a0be"
+}

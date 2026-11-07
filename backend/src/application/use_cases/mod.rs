@@ -11,10 +11,10 @@ pub use admin::{ListUsersUseCase, SetUserRoleUseCase};
 pub use auth::{
     CompleteSignupUseCase, GetCurrentUserUseCase, LoginUserUseCase, OAuthCallbackMode,
     OAuthCallbackResult, OAuthCallbackUseCase, OAuthUnlinkUseCase, RefreshResult,
-    RefreshTokenUseCase, RegisterUserUseCase, RequestPasswordResetUseCase, ResendResult,
-    ResendVerificationError, ResendVerificationUseCase, ResetPasswordUseCase, RevokeTokenUseCase,
-    SendVerificationCodeUseCase, ValidateResetCodeUseCase, VerifyEmailError, VerifyEmailUseCase,
-    VerifyMagicLinkError, VerifyMagicLinkUseCase,
+    RefreshTokenUseCase, RegisterOutcome, RegisterUserUseCase, RequestPasswordResetUseCase,
+    ResendResult, ResendVerificationError, ResendVerificationUseCase, ResetPasswordUseCase,
+    RevokeTokenUseCase, SendVerificationCodeUseCase, ValidateResetCodeUseCase, VerifyEmailError,
+    VerifyEmailUseCase, VerifyMagicLinkError, VerifyMagicLinkUseCase,
 };
 
 pub use user::{

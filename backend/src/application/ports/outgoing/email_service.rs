@@ -40,4 +40,17 @@ pub trait EmailService: Send + Sync {
         code: &str,
         first_name: &str,
     ) -> Result<(), DomainError>;
+
+    /// Tells the owner of an existing account that someone tried to register
+    /// with their email.
+    ///
+    /// Sent instead of a verification code when registration hits a completed
+    /// account, so the API can answer exactly as it does for a new signup
+    /// without revealing that the account exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `to` - The recipient's email address
+    /// * `first_name` - The user's first name for personalization
+    async fn notify_account_exists(&self, to: &str, first_name: &str) -> Result<(), DomainError>;
 }

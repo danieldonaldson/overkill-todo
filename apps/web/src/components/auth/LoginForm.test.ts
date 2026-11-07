@@ -126,27 +126,4 @@ describe('LoginForm', () => {
 
     await expect.element(screen.getByRole('alert')).toHaveTextContent('Service unavailable')
   })
-
-  it('routes incomplete signups back to email verification', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      headers: { get: vi.fn().mockReturnValue(null) },
-      json: () =>
-        Promise.resolve({
-          error_code: 'signup_incomplete',
-          message: 'Please complete your registration',
-          email: 'incomplete@example.com',
-        }),
-    })
-
-    const screen = await render(LoginForm, { turnstileToken: 'dev-mode-skip' })
-
-    await screen.getByLabelText(/email/i).fill('incomplete@example.com')
-    await getPasswordInput(screen).fill('password123')
-    await screen.getByRole('button', { name: /sign in/i }).click()
-
-    await vi.waitFor(() => {
-      expect(navigate).toHaveBeenCalledWith('/verify-email?email=incomplete%40example.com')
-    })
-  })
 })

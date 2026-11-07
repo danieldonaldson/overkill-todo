@@ -17,8 +17,10 @@ use std::sync::Arc;
 /// high-entropy, Argon2id-verified passwords. (The low-entropy 6-digit reset/verify
 /// codes keep their own atomic in-app attempt cap; see `verify_email.rs`.)
 ///
-/// The starter's deploy configs ship no edge rate limit and Turnstile is off until
-/// configured: add both before going live, or add an in-app per-account/IP lockout.
+/// Per-IP rate limiting of `/api/v1/auth/*` is done at the Traefik level, outside
+/// this repo; the Caddy edge in `deploy/compose` and the k8s ingress here don't
+/// throttle. Turnstile is required outside `DEV_MODE` (startup fails without
+/// `TURNSTILE_SECRET_KEY`).
 pub struct LoginUserUseCase {
     user_repository: Arc<dyn UserRepository>,
 }

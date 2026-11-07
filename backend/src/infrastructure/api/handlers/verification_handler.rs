@@ -28,6 +28,7 @@ use crate::{
             VerifyMagicLinkUseCase,
         },
     },
+    domain::entities::attempt_lockout::RESEND_COOLDOWN_MINUTES,
     infrastructure::api::{
         error::AppError,
         extractors::ValidatedJson,
@@ -240,9 +241,7 @@ async fn issue_auth_tokens(
     tag = "Authentication",
     request_body = ResendVerificationRequest,
     responses(
-        (status = 200, description = "Verification code sent", body = ResendVerificationResponse),
-        (status = 400, description = "Rate limited - try again later", body = VerificationErrorResponse),
-        (status = 404, description = "User not found")
+        (status = 200, description = "Same response whether or not a code was sent (unknown email, already verified, cooldown, and lock are not distinguished)", body = ResendVerificationResponse)
     )
 )]
 #[tracing::instrument(name = "handler.resend_verification", skip(deps, request), fields(email = %request.email))]
@@ -260,57 +259,35 @@ pub async fn resend_verification(
         return e.into_response();
     }
 
-    match deps
+    // Every outcome that depends on the account — no such user, already
+    // verified, inside the cooldown, code locked — gets the same 200 and the
+    // full cooldown. Anything else would let this endpoint answer "does this
+    // email have an account?". A caller that hit a cooldown or lock just gets no
+    // new email, and its timer still keeps it from retrying too early.
+    let cooldown_seconds = match deps
         .resend_verification_use_case
         .execute(&request.email)
         .await
     {
-        Ok(result) => {
-            let response = ResendVerificationResponse {
-                success: true,
-                message: "Verification code sent. Check your email.".into(),
-                cooldown_seconds: result.cooldown_seconds,
-            };
-            Json(response).into_response()
-        }
-        Err(ResendVerificationError::AlreadyVerified) => {
-            let response = VerificationErrorResponse::new(
-                "Email is already verified.",
-                VerificationErrorCode::AlreadyVerified,
-            );
-            (StatusCode::BAD_REQUEST, Json(response)).into_response()
-        }
-        Err(ResendVerificationError::CooldownActive { seconds_remaining }) => {
-            let response = VerificationErrorResponse::new(
-                "Please wait before requesting a new code.",
-                VerificationErrorCode::CooldownActive,
-            )
-            .with_cooldown_seconds(seconds_remaining);
-            (StatusCode::BAD_REQUEST, Json(response)).into_response()
-        }
-        Err(ResendVerificationError::Locked {
-            seconds_until_unlock,
-        }) => {
-            // The current code is locked from too many failed attempts;
-            // resending would reset the counter, so it is refused for a short
-            // fixed window (seconds_until_unlock) before a fresh code is allowed.
-            let response = VerificationErrorResponse::new(
-                "Too many incorrect attempts. Please try again later.",
-                VerificationErrorCode::CodeLocked,
-            )
-            .with_attempts_remaining(0)
-            .with_cooldown_seconds(seconds_until_unlock);
-            (StatusCode::BAD_REQUEST, Json(response)).into_response()
-        }
-        Err(ResendVerificationError::NotFound(msg)) => {
-            let app_error: AppError = ResendVerificationError::NotFound(msg).into();
-            app_error.into_response()
-        }
+        Ok(result) => result.cooldown_seconds,
+        Err(
+            ResendVerificationError::NotFound(_)
+            | ResendVerificationError::AlreadyVerified
+            | ResendVerificationError::CooldownActive { .. }
+            | ResendVerificationError::Locked { .. },
+        ) => RESEND_COOLDOWN_MINUTES * 60,
         Err(ResendVerificationError::Internal(msg)) => {
             let app_error: AppError = ResendVerificationError::Internal(msg).into();
-            app_error.into_response()
+            return app_error.into_response();
         }
-    }
+    };
+
+    Json(ResendVerificationResponse {
+        success: true,
+        message: "If this email is awaiting verification, a new code is on its way.".into(),
+        cooldown_seconds,
+    })
+    .into_response()
 }
 
 /// Request password reset (forgot password)
@@ -529,15 +506,7 @@ pub async fn verify_magic(
             // Success - email verified, issue signup token and redirect
             let signup_token = match create_signup_token(&deps.crypto, &user) {
                 Ok(token) => token,
-                Err(e) => {
-                    let error_str = format!("Failed to create signup token: {e}");
-                    let redirect_url = format!(
-                        "{}/login?error={}",
-                        deps.frontend_base_url,
-                        urlencoding::encode(&error_str)
-                    );
-                    return Redirect::to(&redirect_url).into_response();
-                }
+                Err(e) => return signup_token_failure_redirect(&deps.frontend_base_url, &e),
             };
 
             let email_encoded = urlencoding::encode(user.email().as_str());
@@ -560,13 +529,7 @@ pub async fn verify_magic(
                 let signup_token = match create_signup_token(&deps.crypto, &user) {
                     Ok(token) => token,
                     Err(e) => {
-                        let error_str = format!("Failed to create signup token: {e}");
-                        let redirect_url = format!(
-                            "{}/login?error={}",
-                            deps.frontend_base_url,
-                            urlencoding::encode(&error_str)
-                        );
-                        return Redirect::to(&redirect_url).into_response();
+                        return signup_token_failure_redirect(&deps.frontend_base_url, &e);
                     }
                 };
 
@@ -603,6 +566,15 @@ pub async fn verify_magic(
             Redirect::to(&redirect_url).into_response()
         }
     }
+}
+
+/// Redirect to the login page after signup-token creation failed. The cause is
+/// logged, not sent: the redirect URL is client-visible, and internal error text
+/// must not reach clients.
+fn signup_token_failure_redirect(frontend_base_url: &str, error: &str) -> Response {
+    tracing::error!(error = %error, "Failed to create signup token during magic link verification");
+    let error_msg = urlencoding::encode("An error occurred. Please try again.");
+    Redirect::to(&format!("{frontend_base_url}/login?error={error_msg}")).into_response()
 }
 
 /// Create a signup token for a user (used by magic link handler).

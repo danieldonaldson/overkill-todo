@@ -17,8 +17,8 @@ use crate::{
         },
         ports::{MxValidator, OAuthAccountRepository, TurnstileService},
         use_cases::{
-            GetCurrentUserUseCase, LoginUserUseCase, RefreshTokenUseCase, RegisterUserUseCase,
-            RevokeTokenUseCase, SendVerificationCodeUseCase,
+            GetCurrentUserUseCase, LoginUserUseCase, RefreshTokenUseCase, RegisterOutcome,
+            RegisterUserUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
         },
     },
     domain::errors::DomainError,
@@ -96,9 +96,8 @@ pub struct AuthHandlerDeps {
     tag = "Authentication",
     request_body = InitiateRegistrationRequest,
     responses(
-        (status = 200, description = "Verification code sent", body = InitiateRegistrationResponse),
+        (status = 200, description = "Verification code sent; for an email that already has an account, its owner is notified instead (same response, so registration can't be used to check for accounts)", body = InitiateRegistrationResponse),
         (status = 400, description = "Invalid input"),
-        (status = 409, description = "Email already exists (user has completed signup)"),
         (status = 502, description = "The verification email could not be delivered; the code was not sent, and resending is available immediately")
     )
 )]
@@ -131,25 +130,47 @@ pub async fn register(
         }
     }
 
-    // Execute use case (creates user without password, or reuses existing incomplete signup)
-    let user = deps.register_use_case.execute(&request.email).await?;
-
-    // Record successful registration
-
-    // Issue the code and deliver it, both inside the request, bounded by
-    // REGISTRATION_SEND_BUDGET.
-    //
-    // The failure is reported rather than logged and swallowed. The email is the
-    // sole carrier of the code, and the flow has no password or session to fall
-    // back on, so "registered" without it is a dead end: the caller sits on a
-    // "check your email" screen forever. A 502 at least tells them to try again.
-    deps.send_verification_code_use_case
-        .issue_and_deliver(&user, REGISTRATION_SEND_BUDGET)
-        .await
-        .map_err(|e| {
-            tracing::error!(user_id = %user.id(), error = %e, "Registration could not deliver the verification code");
-            DomainError::from(e)
-        })?;
+    // Creates a user without a password, reuses an incomplete signup, or finds
+    // a completed account. All three get the same response below, so the
+    // endpoint can't be used to check whether an email is registered.
+    match deps.register_use_case.execute(&request.email).await? {
+        // Issue the code and deliver it, both inside the request, bounded by
+        // REGISTRATION_SEND_BUDGET.
+        //
+        // The failure is reported rather than logged and swallowed. The email is
+        // the sole carrier of the code, and the flow has no password or session to
+        // fall back on, so "registered" without it is a dead end: the caller sits
+        // on a "check your email" screen forever. A 502 at least tells them to
+        // try again.
+        RegisterOutcome::PendingVerification(user) => {
+            deps.send_verification_code_use_case
+                .issue_and_deliver(&user, REGISTRATION_SEND_BUDGET)
+                .await
+                .map_err(|e| {
+                    tracing::error!(user_id = %user.id(), error = %e, "Registration could not deliver the verification code");
+                    DomainError::from(e)
+                })?;
+        }
+        // Tell the owner instead of sending a code. Sent inline under the same
+        // budget, and a failure maps to the same 502, so neither the timing nor
+        // the status separates this branch from a new signup.
+        RegisterOutcome::AlreadyRegistered(user) => {
+            let sent = tokio::time::timeout(
+                REGISTRATION_SEND_BUDGET,
+                deps.register_use_case.notify_existing(&user),
+            )
+            .await
+            .unwrap_or_else(|_elapsed| {
+                Err(DomainError::ExternalService(format!(
+                    "account-exists notice not sent within {REGISTRATION_SEND_BUDGET:?}"
+                )))
+            });
+            if let Err(e) = sent {
+                tracing::error!(user_id = %user.id(), error = %e, "Registration could not deliver the account-exists notice");
+                return Err(DomainError::ExternalService(e.to_string()).into());
+            }
+        }
+    }
 
     Ok(Json(InitiateRegistrationResponse {
         success: true,
@@ -196,31 +217,18 @@ pub async fn login(
         return Err(AppError::invalid_credentials());
     };
 
-    // A password-less user is one of two things: mid-signup (email registered
-    // but no password set yet) or an OAuth-only account (registered via a
-    // provider, never set a password). These need different answers, so don't
-    // conflate them: an OAuth-only account is *complete* — it just can't log in
-    // by password — whereas an incomplete signup must be finished.
+    // A password-less user is either mid-signup (email registered, no password
+    // set yet) or an OAuth-only account (registered via a provider).
     if !user.has_password() {
         // Equalize timing with the password-verification path so an attacker
         // can't distinguish these states from a wrong password by response time
         // (the unknown-email path does the same dummy verify).
         verify_dummy_password(&deps.crypto, &request.password);
 
-        let has_oauth = !deps
-            .oauth_account_repo
-            .find_by_user_id(user.id())
-            .await?
-            .is_empty();
-        if has_oauth {
-            // OAuth-only account: must authenticate via the provider. Return the
-            // generic invalid-credentials error rather than disclosing that the
-            // account exists and is provider-linked.
-            return Err(AppError::invalid_credentials());
-        }
-        return Err(AppError::SignupIncomplete {
-            email: user.email().as_str().to_string(),
-        });
+        // Both get the generic invalid-credentials error: a distinct answer
+        // would confirm the email has an account. An incomplete signup is
+        // finished by registering again, which reuses the pending user.
+        return Err(AppError::invalid_credentials());
     }
 
     // Verify password with Argon2. `has_password()` guaranteed Some above; the

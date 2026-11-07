@@ -61,6 +61,9 @@ pub enum CryptoInitError {
     /// `CSRF_SECRET` is not valid base64 (url-safe or standard).
     #[error("CSRF_SECRET must be valid base64 (url-safe or standard)")]
     CsrfSecret,
+    /// `CSRF_SECRET` decoded to fewer than [`MIN_CSRF_SECRET_LEN`] bytes.
+    #[error("CSRF_SECRET must decode to at least 32 bytes; got {0} bytes")]
+    CsrfSecretLength(usize),
     /// `SECRETS_ENCRYPTION_KEY` is not valid base64 (url-safe or standard).
     #[error("SECRETS_ENCRYPTION_KEY must be valid base64 (url-safe or standard)")]
     SecretsKeyEncoding,
@@ -74,6 +77,11 @@ pub enum CryptoInitError {
     #[error("JWT_PUBLIC_KEY is not a valid RSA public key (PEM): {0}")]
     JwtPublicKey(jsonwebtoken::errors::Error),
 }
+
+/// Minimum decoded length of `CSRF_SECRET`. It is an HMAC-SHA256 key, so anything
+/// shorter than the 32-byte output is weaker than the MAC itself; this also rejects
+/// placeholder values such as `changeme`.
+pub const MIN_CSRF_SECRET_LEN: usize = 32;
 
 /// Decode a base64 secret, accepting either url-safe (no padding) or standard
 /// (padded) alphabets. Tolerating both avoids the boot-breaking `.env.example`
@@ -117,6 +125,9 @@ impl Crypto {
 
         let csrf_secret = decode_secret_b64(&settings.csrf_secret_b64)
             .map_err(|_| CryptoInitError::CsrfSecret)?;
+        if csrf_secret.len() < MIN_CSRF_SECRET_LEN {
+            return Err(CryptoInitError::CsrfSecretLength(csrf_secret.len()));
+        }
 
         let secret_key_bytes = decode_secret_b64(&settings.secrets_encryption_key_b64)
             .map_err(|_| CryptoInitError::SecretsKeyEncoding)?;
@@ -600,6 +611,17 @@ mod tests {
         assert!(matches!(
             Crypto::from_settings(&s),
             Err(CryptoInitError::Argon2Params(_))
+        ));
+    }
+
+    #[test]
+    fn from_settings_rejects_short_csrf_secret() {
+        let mut s = valid_settings();
+        // Valid base64, but only 8 bytes ("changeme").
+        s.csrf_secret_b64 = "Y2hhbmdlbWU".to_string();
+        assert!(matches!(
+            Crypto::from_settings(&s),
+            Err(CryptoInitError::CsrfSecretLength(8))
         ));
     }
 

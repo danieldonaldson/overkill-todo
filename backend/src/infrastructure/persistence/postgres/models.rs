@@ -44,6 +44,7 @@ pub struct EmailVerificationCodeRow {
     pub created_at: DateTime<Utc>,
     pub magic_token_hash: Option<String>,
     pub magic_token_expires_at: Option<DateTime<Utc>>,
+    pub lockouts: i32,
 }
 
 #[derive(Debug, FromRow)]
@@ -55,6 +56,7 @@ pub struct PasswordResetCodeRow {
     pub attempts: i32,
     pub last_sent_at: DateTime<Utc>,
     pub created_at: DateTime<Utc>,
+    pub lockouts: i32,
 }
 
 #[derive(Debug, FromRow)]

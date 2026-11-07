@@ -104,22 +104,18 @@
         email,
         turnstile_token: turnstileToken || undefined,
       })
-      successMessage = 'A new verification code has been sent. Check your email.'
+      // The API answers the same way whether or not it sent a code (so it can't be
+      // used to check for accounts); an email inside its cooldown or lock gets no
+      // new code, but the returned cooldown still drives the timer.
+      successMessage = 'If this email is awaiting verification, a new code is on its way.'
       cooldownSeconds = response.cooldown_seconds ?? 0
       turnstileRef?.reset()
       turnstileToken = null
       code = ''
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'error_code' in error) {
-        const authError = error as { error?: string; error_code: string; cooldown_seconds?: number }
-        if (authError.error_code === 'COOLDOWN_ACTIVE' && authError.cooldown_seconds) {
-          cooldownSeconds = authError.cooldown_seconds
-          formError = 'Please wait before requesting a new code.'
-        } else if (authError.error_code === 'ALREADY_VERIFIED') {
-          navigate('/dashboard')
-        } else {
-          formError = authError.error || 'An unexpected error occurred'
-        }
+        const authError = error as { error?: string }
+        formError = authError.error || 'An unexpected error occurred'
       } else {
         formError = error instanceof Error ? error.message : 'An unexpected error occurred'
       }

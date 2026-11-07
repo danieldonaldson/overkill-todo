@@ -16,15 +16,28 @@ pub const MAX_ATTEMPTS: i32 = 5;
 pub const RESEND_COOLDOWN_MINUTES: i64 = 5;
 
 /// How long a code stays locked after the attempt cap is hit, measured from
-/// `last_sent_at`.
+/// `last_sent_at`, for a user with no earlier lockouts.
 ///
 /// Bounds the brute-force lockout so a locked code can be replaced via resend
 /// after a short cooldown rather than being clearable immediately (which would
-/// reset the attempt counter and defeat the lockout).
+/// reset the attempt counter and defeat the lockout). Each earlier lockout
+/// doubles it, up to [`MAX_LOCK_DURATION_MINUTES`].
 pub const LOCK_DURATION_MINUTES: i64 = 15;
 
-/// Shared lockout/cooldown arithmetic over an attempt count and the time the
-/// code was last sent.
+/// Upper bound on the escalating lock window (24 hours).
+///
+/// With the cap reached after 7 lockouts, a sustained campaign gets about 35
+/// guesses in its first day and 5 a day after that, against 10^6 possible codes.
+pub const MAX_LOCK_DURATION_MINUTES: i64 = 24 * 60;
+
+/// Days a once-locked code row is kept after its last send.
+///
+/// Lets the `lockouts` count outlive the code's own expiry: an attacker who waits
+/// for expiry cleanup must not get the short first lock window back.
+pub const LOCKOUT_MEMORY_DAYS: i32 = 30;
+
+/// Shared lockout/cooldown arithmetic over an attempt count, the time the code
+/// was last sent, and how many earlier codes were replaced while locked.
 ///
 /// Built on demand from an entity's `attempts` + `last_sent_at`; holds no
 /// identity of its own. [`is_locked`](Self::is_locked) is the single definition
@@ -36,16 +49,30 @@ pub const LOCK_DURATION_MINUTES: i64 = 15;
 pub struct AttemptLockout {
     attempts: i32,
     last_sent_at: DateTime<Utc>,
+    lockouts: i32,
 }
 
 impl AttemptLockout {
-    /// Creates a lockout view over an attempt count and last-sent timestamp.
+    /// Creates a lockout view over an attempt count, last-sent timestamp, and
+    /// the number of earlier lockouts.
     #[must_use]
-    pub const fn new(attempts: i32, last_sent_at: DateTime<Utc>) -> Self {
+    pub const fn new(attempts: i32, last_sent_at: DateTime<Utc>, lockouts: i32) -> Self {
         Self {
             attempts,
             last_sent_at,
+            lockouts,
         }
+    }
+
+    /// The lock window for the current code: [`LOCK_DURATION_MINUTES`] doubled
+    /// once per earlier lockout, capped at [`MAX_LOCK_DURATION_MINUTES`].
+    #[must_use]
+    pub fn lock_duration(&self) -> Duration {
+        // 2^7 * 15 min already exceeds the cap, so clamping the exponent keeps
+        // the shift in range without changing the result.
+        let doublings = self.lockouts.clamp(0, 7).unsigned_abs();
+        let minutes = (LOCK_DURATION_MINUTES << doublings).min(MAX_LOCK_DURATION_MINUTES);
+        Duration::minutes(minutes)
     }
 
     /// Whether the code is at or beyond the failed-attempt cap.
@@ -62,7 +89,7 @@ impl AttemptLockout {
         if !self.is_locked() {
             return 0;
         }
-        let unlock_at = self.last_sent_at + Duration::minutes(LOCK_DURATION_MINUTES);
+        let unlock_at = self.last_sent_at + self.lock_duration();
         (unlock_at - Utc::now()).num_seconds().max(0)
     }
 
@@ -103,7 +130,43 @@ mod tests {
     use super::*;
 
     fn lockout(attempts: i32, sent_minutes_ago: i64) -> AttemptLockout {
-        AttemptLockout::new(attempts, Utc::now() - Duration::minutes(sent_minutes_ago))
+        AttemptLockout::new(
+            attempts,
+            Utc::now() - Duration::minutes(sent_minutes_ago),
+            0,
+        )
+    }
+
+    fn after_lockouts(lockouts: i32) -> AttemptLockout {
+        AttemptLockout::new(MAX_ATTEMPTS, Utc::now(), lockouts)
+    }
+
+    #[test]
+    fn lock_duration_doubles_per_earlier_lockout() {
+        assert_eq!(after_lockouts(0).lock_duration(), Duration::minutes(15));
+        assert_eq!(after_lockouts(1).lock_duration(), Duration::minutes(30));
+        assert_eq!(after_lockouts(2).lock_duration(), Duration::minutes(60));
+        assert_eq!(after_lockouts(6).lock_duration(), Duration::minutes(960));
+    }
+
+    #[test]
+    fn lock_duration_is_capped() {
+        let cap = Duration::minutes(MAX_LOCK_DURATION_MINUTES);
+        assert_eq!(after_lockouts(7).lock_duration(), cap);
+        assert_eq!(after_lockouts(1_000).lock_duration(), cap);
+    }
+
+    #[test]
+    fn escalated_lock_outlasts_base_window() {
+        let l = AttemptLockout::new(
+            MAX_ATTEMPTS,
+            Utc::now() - Duration::minutes(LOCK_DURATION_MINUTES + 1),
+            2,
+        );
+        assert!(
+            l.seconds_until_unlock() > 0,
+            "third lock lasts an hour, not 15 min"
+        );
     }
 
     #[test]

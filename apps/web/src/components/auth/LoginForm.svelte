@@ -56,17 +56,10 @@
       navigate('/dashboard')
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'error_code' in error) {
-        const authError = error as {
-          error?: string
-          message?: string
-          error_code: string
-          email?: string
-        }
-
-        if (authError.error_code === 'signup_incomplete') {
-          navigate(`/verify-email?email=${encodeURIComponent(authError.email || emailValue)}`)
-          return
-        }
+        // An unfinished signup gets the same generic invalid-credentials error as
+        // a wrong password (the API doesn't reveal which emails have accounts);
+        // registering again picks the pending signup back up.
+        const authError = error as { error?: string; message?: string; error_code: string }
 
         formError = authError.error || authError.message || 'An unexpected error occurred'
       } else {

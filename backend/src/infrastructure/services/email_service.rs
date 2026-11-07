@@ -12,7 +12,7 @@ use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use crate::application::ports::EmailService;
 use crate::domain::errors::DomainError;
 use crate::infrastructure::services::email_templates::{
-    RenderedEmail, password_reset_email, verification_email,
+    RenderedEmail, account_exists_email, password_reset_email, verification_email,
 };
 
 /// Number of SMTP send attempts before giving up (1 initial + retries).
@@ -193,6 +193,12 @@ impl EmailService for SmtpEmailService {
         let rendered = password_reset_email(&self.app_name, first_name, code);
         self.send(to, rendered).await
     }
+
+    #[tracing::instrument(name = "service.email.send_account_exists", skip(self), fields(to = %to))]
+    async fn notify_account_exists(&self, to: &str, first_name: &str) -> Result<(), DomainError> {
+        let rendered = account_exists_email(&self.app_name, first_name);
+        self.send(to, rendered).await
+    }
 }
 
 impl SmtpEmailService {
@@ -290,6 +296,17 @@ impl EmailService for ConsoleEmailService {
             first_name = %first_name,
             code = %code,
             "📧 PASSWORD RESET EMAIL (console mode)"
+        );
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "service.email.send_account_exists_console", skip(self), fields(to = %to))]
+    async fn notify_account_exists(&self, to: &str, first_name: &str) -> Result<(), DomainError> {
+        tracing::info!(
+            app = %self.app_name,
+            to = %to,
+            first_name = %first_name,
+            "📧 ACCOUNT EXISTS EMAIL (console mode)"
         );
         Ok(())
     }

@@ -9,6 +9,10 @@
 use sqlx::PgPool;
 use std::time::Duration;
 
+// Expired code rows that were ever locked are kept this long after their last
+// send so the escalating lockout count isn't reset by cleanup.
+use crate::domain::entities::attempt_lockout::LOCKOUT_MEMORY_DAYS;
+
 const BATCH_SIZE: i64 = 1_000;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -54,11 +58,13 @@ pub async fn run_once(pool: &PgPool) -> Result<MaintenanceReport, sqlx::Error> {
         WHERE id IN (
             SELECT id FROM email_verification_codes
             WHERE expires_at < NOW()
+              AND (lockouts = 0 OR last_sent_at < NOW() - make_interval(days => $2))
             ORDER BY expires_at
             LIMIT $1
         )
         ",
-        BATCH_SIZE
+        BATCH_SIZE,
+        LOCKOUT_MEMORY_DAYS
     )
     .execute(pool)
     .await?
@@ -70,11 +76,13 @@ pub async fn run_once(pool: &PgPool) -> Result<MaintenanceReport, sqlx::Error> {
         WHERE id IN (
             SELECT id FROM password_reset_codes
             WHERE expires_at < NOW()
+              AND (lockouts = 0 OR last_sent_at < NOW() - make_interval(days => $2))
             ORDER BY expires_at
             LIMIT $1
         )
         ",
-        BATCH_SIZE
+        BATCH_SIZE,
+        LOCKOUT_MEMORY_DAYS
     )
     .execute(pool)
     .await?

@@ -24,6 +24,10 @@ Move to Kubernetes only when the workload needs it (see `../k8s/README.md`).
 encryption keys. The backend refuses to start in production with a no-op adapter
 or missing config, which is the point: a bad deploy fails at boot, not later.
 
+Rate limiting of the auth endpoints (`/api/v1/auth/*`, per client IP) is done at
+the Traefik level, not by this Caddy edge or the backend. Without it, password
+login has no brute-force throttle beyond Turnstile.
+
 ## First deploy
 
 ```bash

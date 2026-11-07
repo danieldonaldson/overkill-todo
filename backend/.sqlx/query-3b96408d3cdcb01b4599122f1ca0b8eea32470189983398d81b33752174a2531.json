@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, magic_token_hash, magic_token_expires_at\n            FROM email_verification_codes\n            WHERE user_id = $1\n            ",
+  "query": "\n            SELECT id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, magic_token_hash, magic_token_expires_at, lockouts\n            FROM email_verification_codes\n            WHERE user_id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -101,6 +101,17 @@
             "name": "magic_token_expires_at"
           }
         }
+      },
+      {
+        "ordinal": 9,
+        "name": "lockouts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "email_verification_codes",
+            "name": "lockouts"
+          }
+        }
       }
     ],
     "parameters": {
@@ -117,8 +128,9 @@
       false,
       false,
       true,
-      true
+      true,
+      false
     ]
   },
-  "hash": "acbeb45c1003d3c239572a49b3e6b7910b514b381dd5f8d9f4666d7bedd622dc"
+  "hash": "3b96408d3cdcb01b4599122f1ca0b8eea32470189983398d81b33752174a2531"
 }

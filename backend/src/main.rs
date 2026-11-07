@@ -220,7 +220,10 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let password_reset_repo = Arc::new(PostgresPasswordResetRepository::new(db.clone()));
 
     // Use cases
-    let register_uc = Arc::new(RegisterUserUseCase::new(user_repo.clone()));
+    let register_uc = Arc::new(RegisterUserUseCase::new(
+        user_repo.clone(),
+        email_service.clone(),
+    ));
     let login_uc = Arc::new(LoginUserUseCase::new(user_repo.clone()));
     let get_current_user_uc = Arc::new(GetCurrentUserUseCase::new(user_repo.clone()));
     let refresh_token_uc = Arc::new(RefreshTokenUseCase::new(

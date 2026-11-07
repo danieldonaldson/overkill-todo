@@ -141,6 +141,41 @@ pub fn password_reset_email(app_name: &str, first_name: &str, code: &str) -> Ren
     }
 }
 
+/// Sent when someone registers with the email of an existing, complete account.
+/// Carries no code or link: the owner signs in as usual or resets their password.
+#[must_use]
+pub fn account_exists_email(app_name: &str, first_name: &str) -> RenderedEmail {
+    let subject = format!("Someone tried to sign up for {app_name} with your email");
+    let greet = greeting(first_name);
+
+    let html = html_shell(
+        app_name,
+        &format!(
+            "<p style=\"margin:0 0 16px;\">{greet}</p>\
+             <p style=\"margin:0 0 16px;\">Someone just tried to create a {app} account with \
+             this email address, but you already have one. Sign in as usual, or use \
+             <strong>Forgot password</strong> on the sign-in page if you don't remember it.</p>\
+             <p style=\"font-size:14px;color:#52525b;margin:0;\">If this wasn't you, you can \
+             ignore this email. Your account has not been changed.</p>",
+            app = escape_html(app_name),
+        ),
+    );
+
+    let text = format!(
+        "{greet}\n\nSomeone just tried to create a {app_name} account with this email address, \
+         but you already have one. Sign in as usual, or use \"Forgot password\" on the sign-in \
+         page if you don't remember it.\n\nIf this wasn't you, you can ignore this email. \
+         Your account has not been changed.\n",
+        greet = strip_greeting_html(&greet),
+    );
+
+    RenderedEmail {
+        subject,
+        html,
+        text,
+    }
+}
+
 /// The greeting is built once for HTML (escaped); for the plaintext alternative
 /// we want the raw name back. Names only ever contain the entities introduced by
 /// [`escape_html`], so reverse exactly those.
@@ -156,6 +191,18 @@ fn strip_greeting_html(greet: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_exists_email_carries_no_code_or_link() {
+        let e = account_exists_email("Acme <b>", "Ann");
+        assert!(e.subject.contains("Acme <b>"));
+        assert!(e.html.contains("Acme &lt;b&gt;"));
+        assert!(e.text.contains("you already have one"));
+        assert!(
+            !e.text.contains("http"),
+            "no link: the owner signs in as usual"
+        );
+    }
 
     #[test]
     fn escapes_html_special_chars_in_name() {

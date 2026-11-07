@@ -40,6 +40,9 @@ pub struct EmailVerificationCode {
     /// resending the 6-digit code (which refreshes `expires_at`) does not extend
     /// or revive a previously-issued magic link.
     magic_token_expires_at: Option<DateTime<Utc>>,
+    /// Codes for this user replaced while locked at the attempt cap; each
+    /// doubles the next lock window. Persisted, never set by the domain.
+    lockouts: i32,
 }
 
 impl EmailVerificationCode {
@@ -62,6 +65,7 @@ impl EmailVerificationCode {
             created_at: now,
             magic_token_hash: None,
             magic_token_expires_at: None,
+            lockouts: 0,
         }
     }
 
@@ -83,6 +87,7 @@ impl EmailVerificationCode {
             created_at: now,
             magic_token_hash: Some(magic_token_hash),
             magic_token_expires_at: Some(now + Duration::hours(EXPIRY_HOURS)),
+            lockouts: 0,
         }
     }
 
@@ -110,7 +115,23 @@ impl EmailVerificationCode {
             created_at,
             magic_token_hash,
             magic_token_expires_at,
+            lockouts: 0,
         }
+    }
+
+    /// Sets the persisted lockout count. Chained onto [`Self::from_persistence`]
+    /// by the repository; kept separate so the many test call sites of
+    /// `from_persistence` don't each have to spell out a zero.
+    #[must_use]
+    pub const fn with_lockouts(mut self, lockouts: i32) -> Self {
+        self.lockouts = lockouts;
+        self
+    }
+
+    /// Returns how many earlier codes were replaced while locked.
+    #[must_use]
+    pub const fn lockouts(&self) -> i32 {
+        self.lockouts
     }
 
     /// Returns the code's unique identifier.
@@ -189,7 +210,7 @@ impl EmailVerificationCode {
     /// in sync with the password-reset flow.
     #[must_use]
     const fn lockout(&self) -> AttemptLockout {
-        AttemptLockout::new(self.attempts, self.last_sent_at)
+        AttemptLockout::new(self.attempts, self.last_sent_at, self.lockouts)
     }
 
     /// Checks if this code is locked (too many failed attempts).

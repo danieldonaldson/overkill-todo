@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, magic_token_hash, magic_token_expires_at\n            FROM email_verification_codes\n            WHERE magic_token_hash = $1\n            ",
+  "query": "\n            SELECT id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, lockouts\n            FROM password_reset_codes\n            WHERE user_id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -9,7 +9,7 @@
         "type_info": "Uuid",
         "origin": {
           "Table": {
-            "table": "email_verification_codes",
+            "table": "password_reset_codes",
             "name": "id"
           }
         }
@@ -20,7 +20,7 @@
         "type_info": "Uuid",
         "origin": {
           "Table": {
-            "table": "email_verification_codes",
+            "table": "password_reset_codes",
             "name": "user_id"
           }
         }
@@ -31,7 +31,7 @@
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "email_verification_codes",
+            "table": "password_reset_codes",
             "name": "code_hash"
           }
         }
@@ -42,7 +42,7 @@
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
-            "table": "email_verification_codes",
+            "table": "password_reset_codes",
             "name": "expires_at"
           }
         }
@@ -53,7 +53,7 @@
         "type_info": "Int4",
         "origin": {
           "Table": {
-            "table": "email_verification_codes",
+            "table": "password_reset_codes",
             "name": "attempts"
           }
         }
@@ -64,7 +64,7 @@
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
-            "table": "email_verification_codes",
+            "table": "password_reset_codes",
             "name": "last_sent_at"
           }
         }
@@ -75,37 +75,26 @@
         "type_info": "Timestamptz",
         "origin": {
           "Table": {
-            "table": "email_verification_codes",
+            "table": "password_reset_codes",
             "name": "created_at"
           }
         }
       },
       {
         "ordinal": 7,
-        "name": "magic_token_hash",
-        "type_info": "Text",
+        "name": "lockouts",
+        "type_info": "Int4",
         "origin": {
           "Table": {
-            "table": "email_verification_codes",
-            "name": "magic_token_hash"
-          }
-        }
-      },
-      {
-        "ordinal": 8,
-        "name": "magic_token_expires_at",
-        "type_info": "Timestamptz",
-        "origin": {
-          "Table": {
-            "table": "email_verification_codes",
-            "name": "magic_token_expires_at"
+            "table": "password_reset_codes",
+            "name": "lockouts"
           }
         }
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -116,9 +105,8 @@
       false,
       false,
       false,
-      true,
-      true
+      false
     ]
   },
-  "hash": "70df308e0191c945d1996af3e6076f77d80424a021a3f0b3fbbcbb2a38e1ac99"
+  "hash": "f78b890c0a8314e828cc0ef3ef24d19e29500976d9f1e3c8ad89c51e480fc87e"
 }

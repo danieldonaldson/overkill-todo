@@ -235,6 +235,13 @@ impl EmailService for FailFirstEmailService {
             .send_password_reset_email(to, code, first_name)
             .await
     }
+
+    async fn notify_account_exists(&self, to: &str, first_name: &str) -> Result<(), DomainError> {
+        if self.should_fail() {
+            return Err(DomainError::ExternalService("relay unreachable".into()));
+        }
+        self.inner.notify_account_exists(to, first_name).await
+    }
 }
 
 /// Like [`create_test_app`] but with an injectable email service, so tests can
@@ -273,7 +280,10 @@ fn create_test_app_full(
     let password_reset_repo = Arc::new(PostgresPasswordResetRepository::new(db.clone()));
     let db_pool = db.pool().clone();
 
-    let register_uc = Arc::new(RegisterUserUseCase::new(user_repo.clone()));
+    let register_uc = Arc::new(RegisterUserUseCase::new(
+        user_repo.clone(),
+        email_service.clone(),
+    ));
     let login_uc = Arc::new(LoginUserUseCase::new(user_repo.clone()));
     let get_current_user_uc = Arc::new(GetCurrentUserUseCase::new(user_repo.clone()));
     let refresh_token_uc = Arc::new(RefreshTokenUseCase::new(

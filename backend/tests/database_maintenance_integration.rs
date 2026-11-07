@@ -100,3 +100,62 @@ async fn removes_stale_rows_and_preserves_current_rows(pool: PgPool) {
         assert_eq!(count, 1, "unexpected retained row count for {table}");
     }
 }
+
+/// Expired code rows that were ever locked are kept for the lockout memory
+/// window, so waiting for cleanup doesn't reset the escalating lock. Once idle
+/// past that window they go like any other expired row.
+#[sqlx::test(migrations = "./migrations")]
+async fn keeps_expired_code_rows_with_lockouts_until_idle(pool: PgPool) {
+    // (lockouts, last sent) → kept?
+    let cases = [
+        (0, "-1 hour", false),
+        (2, "-1 hour", true),
+        (2, "-31 days", false),
+    ];
+    // sqlx only takes static SQL, so each table spells out its own statements.
+    let tables = [
+        (
+            "email_verification_codes",
+            "INSERT INTO email_verification_codes (id, user_id, code_hash, expires_at, attempts, lockouts, last_sent_at)
+             VALUES ($1, $2, 'h', NOW() - INTERVAL '1 minute', 5, $3, NOW() + $4::interval)",
+            "SELECT user_id FROM email_verification_codes ORDER BY user_id",
+        ),
+        (
+            "password_reset_codes",
+            "INSERT INTO password_reset_codes (id, user_id, code_hash, expires_at, attempts, lockouts, last_sent_at)
+             VALUES ($1, $2, 'h', NOW() - INTERVAL '1 minute', 5, $3, NOW() + $4::interval)",
+            "SELECT user_id FROM password_reset_codes ORDER BY user_id",
+        ),
+    ];
+    for (table, insert_sql, select_sql) in tables {
+        let mut kept = Vec::new();
+        for (i, (lockouts, sent, want_kept)) in cases.into_iter().enumerate() {
+            let user = Uuid::now_v7();
+            sqlx::query("INSERT INTO users (id, email) VALUES ($1, $2)")
+                .bind(user)
+                .bind(format!("lockout-memory-{table}-{i}@example.com"))
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query(insert_sql)
+                .bind(Uuid::now_v7())
+                .bind(user)
+                .bind(lockouts)
+                .bind(sent)
+                .execute(&pool)
+                .await
+                .unwrap();
+            if want_kept {
+                kept.push(user);
+            }
+        }
+
+        database_maintenance::run_once(&pool).await.unwrap();
+
+        let remaining: Vec<Uuid> = sqlx::query_scalar(select_sql)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(remaining, kept, "{table}");
+    }
+}

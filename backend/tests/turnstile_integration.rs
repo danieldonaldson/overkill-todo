@@ -145,11 +145,12 @@ async fn valid_token_lets_each_request_through(pool: PgPool) {
     // later requests see the account `register` creates.
     let expected = [
         ("/api/v1/auth/register", StatusCode::OK),
-        // The account `register` just created has no password yet.
-        ("/api/v1/auth/login", StatusCode::FORBIDDEN),
-        // Inside the resend cooldown `register` just started: a 400 with
-        // `COOLDOWN_ACTIVE`, not the bot check (see the assertion below).
-        ("/api/v1/auth/resend-verification", StatusCode::BAD_REQUEST),
+        // The account `register` just created has no password yet: the same
+        // generic 401 as a wrong password.
+        ("/api/v1/auth/login", StatusCode::UNAUTHORIZED),
+        // Inside the resend cooldown `register` just started, which resend
+        // doesn't disclose: a plain 200.
+        ("/api/v1/auth/resend-verification", StatusCode::OK),
         ("/api/v1/auth/forgot-password", StatusCode::OK),
     ];
     for (uri, want) in expected {

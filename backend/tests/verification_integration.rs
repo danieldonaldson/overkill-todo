@@ -290,26 +290,6 @@ async fn unfinished_signup_recovers_via_password_reset(pool: PgPool) {
 // resend-verification branches
 // ---------------------------------------------------------------------------
 
-/// Resending immediately after registration is inside the 5-minute cooldown.
-#[sqlx::test(migrations = "./migrations")]
-async fn resend_during_cooldown_returns_cooldown_active(pool: PgPool) {
-    let app = common::create_test_app(pool.clone());
-    let email = "e2e-cooldown@example.com";
-    register(&app, email).await;
-
-    let resp = app
-        .oneshot(post_json(
-            "/api/v1/auth/resend-verification",
-            &json!({ "email": email }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body = body_json(resp.into_body()).await;
-    assert_eq!(body["error_code"], "COOLDOWN_ACTIVE");
-    assert!(body["cooldown_seconds"].as_i64().unwrap() > 0);
-}
-
 /// Resend succeeds once the cooldown window has elapsed (simulated by aging
 /// `last_sent_at`), returning a fresh cooldown for the frontend timer.
 #[sqlx::test(migrations = "./migrations")]
@@ -339,77 +319,196 @@ async fn resend_after_cooldown_succeeds(pool: PgPool) {
     assert_eq!(body["cooldown_seconds"], 300);
 }
 
-/// A locked code refuses resend for the lock window, even past the cooldown.
+/// POSTs to resend-verification and returns the status and JSON body.
+async fn resend(app: &axum::Router, email: &str) -> (StatusCode, Value) {
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/resend-verification",
+            &json!({ "email": email }),
+        ))
+        .await
+        .unwrap();
+    let status = resp.status();
+    (status, body_json(resp.into_body()).await)
+}
+
+/// Reads `(attempts, lockouts)` for a user's verification code row.
+async fn code_counters(pool: &PgPool, id: uuid::Uuid) -> (i32, i32) {
+    sqlx::query_as::<_, (i32, i32)>(
+        "SELECT attempts, lockouts FROM email_verification_codes WHERE user_id = $1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Every account-dependent outcome — unknown email, already verified, inside
+/// the cooldown, code locked — answers exactly like a successful resend, so the
+/// endpoint can't be used to check whether an email has an account.
 #[sqlx::test(migrations = "./migrations")]
-async fn resend_while_locked_returns_code_locked(pool: PgPool) {
+async fn resend_answers_identically_whatever_the_account_state(pool: PgPool) {
+    let app = common::create_test_app(pool.clone());
+
+    // Fresh send, past the cooldown: the reference response.
+    let ok_email = "e2e-resend-same-ok@example.com";
+    register(&app, ok_email).await;
+    sqlx::query("UPDATE email_verification_codes SET last_sent_at = NOW() - INTERVAL '10 minutes' WHERE user_id = $1")
+        .bind(user_id(&pool, ok_email).await)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let reference = resend(&app, ok_email).await;
+    assert_eq!(reference.0, StatusCode::OK);
+
+    // Inside the cooldown `register` just started.
+    let cooldown_email = "e2e-resend-same-cooldown@example.com";
+    register(&app, cooldown_email).await;
+
+    // Locked: at the cap, cooldown elapsed, lock window not.
+    let locked_email = "e2e-resend-same-locked@example.com";
+    register(&app, locked_email).await;
+    sqlx::query("UPDATE email_verification_codes SET attempts = 5, last_sent_at = NOW() - INTERVAL '6 minutes' WHERE user_id = $1")
+        .bind(user_id(&pool, locked_email).await)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    // Already verified.
+    let verified_email = "e2e-resend-same-verified@example.com";
+    register(&app, verified_email).await;
+    verify_and_get_signup_token(&app, verified_email).await;
+
+    for email in [
+        cooldown_email,
+        locked_email,
+        verified_email,
+        "e2e-resend-same-ghost@example.com",
+    ] {
+        assert_eq!(
+            resend(&app, email).await,
+            reference,
+            "{email} answered differently"
+        );
+    }
+}
+
+/// A locked code is not replaced by a resend inside its lock window, even
+/// though the response says nothing about it.
+#[sqlx::test(migrations = "./migrations")]
+async fn resend_while_locked_issues_no_new_code(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-resend-locked@example.com";
     register(&app, email).await;
     let id = user_id(&pool, email).await;
 
-    // At the attempt cap, sent 6 minutes ago: cooldown elapsed but the 15-minute
-    // lock window has not — the lockout must win.
     sqlx::query("UPDATE email_verification_codes SET attempts = 5, last_sent_at = NOW() - INTERVAL '6 minutes' WHERE user_id = $1")
         .bind(id)
         .execute(&pool)
         .await
         .unwrap();
 
-    let resp = app
-        .oneshot(post_json(
-            "/api/v1/auth/resend-verification",
-            &json!({ "email": email }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body = body_json(resp.into_body()).await;
-    assert_eq!(body["error_code"], "CODE_LOCKED");
+    assert_eq!(resend(&app, email).await.0, StatusCode::OK);
+    assert_eq!(
+        code_counters(&pool, id).await,
+        (5, 0),
+        "the locked code must survive"
+    );
 }
 
-/// Resending for an already-verified user returns `already_verified`.
+/// Re-registering an unfinished signup must not hand out a fresh code (and five
+/// fresh guesses) while the current one is locked. This used to bypass the
+/// attempt cap entirely.
 #[sqlx::test(migrations = "./migrations")]
-async fn resend_already_verified_returns_400(pool: PgPool) {
+async fn reregistering_does_not_reset_a_locked_code(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
-    let email = "e2e-resend-verified@example.com";
+    let email = "e2e-reregister-locked@example.com";
     register(&app, email).await;
+    let id = user_id(&pool, email).await;
 
-    // Verify first.
+    sqlx::query("UPDATE email_verification_codes SET attempts = 5, last_sent_at = NOW() - INTERVAL '6 minutes' WHERE user_id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    register(&app, email).await; // still a plain 200
+    assert_eq!(
+        code_counters(&pool, id).await,
+        (5, 0),
+        "register must not reissue"
+    );
+}
+
+/// Replacing a locked code counts as a lockout, and the next lock lasts twice
+/// as long: 20 minutes after a second lock is still inside its 30-minute window.
+#[sqlx::test(migrations = "./migrations")]
+async fn lock_window_doubles_after_each_lockout(pool: PgPool) {
+    let app = common::create_test_app(pool.clone());
+    let email = "e2e-lockout-escalation@example.com";
+    register(&app, email).await;
+    let id = user_id(&pool, email).await;
+    let lock_20_minutes_ago = "UPDATE email_verification_codes SET attempts = 5, last_sent_at = NOW() - INTERVAL '20 minutes' WHERE user_id = $1";
+
+    // First lock (15 min) has expired: the resend replaces the code.
+    sqlx::query(lock_20_minutes_ago)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    resend(&app, email).await;
+    assert_eq!(code_counters(&pool, id).await, (0, 1));
+
+    // Second lock is 30 min, so 20 min later the code is still locked.
+    sqlx::query(lock_20_minutes_ago)
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    resend(&app, email).await;
+    assert_eq!(
+        code_counters(&pool, id).await,
+        (5, 1),
+        "second lock must outlast 15 min"
+    );
+}
+
+/// Registering an email that already has a complete account answers exactly
+/// like a new signup (the owner is emailed instead of sent a code).
+#[sqlx::test(migrations = "./migrations")]
+async fn register_existing_account_answers_like_a_new_signup(pool: PgPool) {
+    let app = common::create_test_app(pool.clone());
+    let email = "e2e-register-existing@example.com";
+    register(&app, email).await;
+    let signup_token = verify_and_get_signup_token(&app, email).await;
     let resp = app
         .clone()
         .oneshot(post_json(
-            "/api/v1/auth/verify-email",
-            &json!({ "email": email, "code": "123456" }),
+            "/api/v1/auth/complete-signup",
+            &json!({ "signup_token": signup_token, "email": email, "password": "existing123" }),
         ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let resp = app
-        .oneshot(post_json(
-            "/api/v1/auth/resend-verification",
-            &json!({ "email": email }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body = body_json(resp.into_body()).await;
-    assert_eq!(body["error_code"], "ALREADY_VERIFIED");
-}
-
-/// Resending for an unknown user returns 404.
-#[sqlx::test(migrations = "./migrations")]
-async fn resend_unknown_user_returns_404(pool: PgPool) {
-    let app = common::create_test_app(pool);
-
-    let resp = app
-        .oneshot(post_json(
-            "/api/v1/auth/resend-verification",
-            &json!({ "email": "e2e-ghost@example.com" }),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let register_body = |email: &'static str| {
+        let app = app.clone();
+        async move {
+            let resp = app
+                .oneshot(post_json(
+                    "/api/v1/auth/register",
+                    &json!({ "email": email }),
+                ))
+                .await
+                .unwrap();
+            (resp.status(), body_json(resp.into_body()).await)
+        }
+    };
+    let existing = register_body(email).await;
+    let fresh = register_body("e2e-register-brand-new@example.com").await;
+    assert_eq!(existing.0, StatusCode::OK);
+    assert_eq!(existing, fresh);
 }
 
 // ---------------------------------------------------------------------------

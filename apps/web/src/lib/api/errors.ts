@@ -12,7 +12,7 @@ export interface ApiError {
   code?: string
   /** Canonical human-readable message (`ErrorResponse.message`). */
   message?: string
-  /** Structured auth-flow code (e.g. `CODE_INVALID`, `signup_incomplete`). */
+  /** Structured auth-flow code (e.g. `CODE_INVALID`, `CODE_LOCKED`). */
   error_code?: string
   /** Alternate message field used by some auth handlers. */
   error?: string

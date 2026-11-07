@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use crate::application::ports::PasswordResetRepository;
 use crate::domain::entities::PasswordResetCode;
-use crate::domain::entities::attempt_lockout::AttemptOutcome;
+use crate::domain::entities::attempt_lockout::{AttemptOutcome, LOCKOUT_MEMORY_DAYS, MAX_ATTEMPTS};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{ResetCodeId, UserId};
 use crate::infrastructure::persistence::postgres::connection::Database;
@@ -32,6 +32,7 @@ impl PostgresPasswordResetRepository {
             row.last_sent_at,
             row.created_at,
         )
+        .with_lockouts(row.lockouts)
     }
 }
 
@@ -48,7 +49,11 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
                 code_hash = EXCLUDED.code_hash,
                 expires_at = EXCLUDED.expires_at,
                 attempts = EXCLUDED.attempts,
-                last_sent_at = EXCLUDED.last_sent_at
+                last_sent_at = EXCLUDED.last_sent_at,
+                -- Replacing a code that sat at the attempt cap counts as a
+                -- lockout and doubles the next lock window. Never reset here.
+                lockouts = password_reset_codes.lockouts
+                    + CASE WHEN password_reset_codes.attempts >= $8 THEN 1 ELSE 0 END
             "#,
             code.id().as_uuid(),
             code.user_id().as_uuid(),
@@ -57,6 +62,7 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
             code.attempts(),
             code.last_sent_at(),
             code.created_at(),
+            MAX_ATTEMPTS,
         )
         .execute(self.db.pool())
         .await
@@ -73,7 +79,7 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
         let row = sqlx::query_as!(
             PasswordResetCodeRow,
             r#"
-            SELECT id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at
+            SELECT id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, lockouts
             FROM password_reset_codes
             WHERE user_id = $1
             "#,
@@ -162,7 +168,9 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
             r#"
             DELETE FROM password_reset_codes
             WHERE expires_at < NOW()
+              AND (lockouts = 0 OR last_sent_at < NOW() - make_interval(days => $1))
             "#,
+            LOCKOUT_MEMORY_DAYS,
         )
         .execute(self.db.pool())
         .await

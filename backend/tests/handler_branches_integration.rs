@@ -101,16 +101,11 @@ async fn login_missing_device_fingerprint_returns_400(pool: PgPool) {
 }
 
 /// A user who started signup (registered + verified) but never set a password
-/// AND has no linked OAuth account is mid-signup: the handler returns 403 with
-/// `error_code: "signup_incomplete"`.
-///
-/// The companion case — a password-less user *with* a linked OAuth account — is
-/// an OAuth-only account and gets 401 instead (see
-/// `login_oauth_only_user_returns_401`). `login` distinguishes the two by
-/// checking for linked OAuth accounts, so a provider user is not wrongly told
-/// their signup is "incomplete".
+/// gets the same generic 401 `invalid_credentials` as a wrong password or an
+/// unknown email. A distinct answer would confirm the email has an account; the
+/// user finishes signup by registering again, which reuses the pending user.
 #[sqlx::test(migrations = "./migrations")]
-async fn login_signup_incomplete_returns_403(pool: PgPool) {
+async fn login_signup_incomplete_returns_generic_401(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-login-incomplete@example.com";
 
@@ -137,14 +132,15 @@ async fn login_signup_incomplete_returns_403(pool: PgPool) {
         ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     let body = body_json(resp.into_body()).await;
-    assert_eq!(body["error_code"], "signup_incomplete");
+    assert_eq!(body["code"], "invalid_credentials");
+    assert!(body.get("email").is_none(), "must not echo the email back");
 }
 
 /// A password-less user *with* a linked OAuth account is an OAuth-only account:
-/// password login is refused with a generic 401 (NOT 403 `signup_incomplete`),
-/// and the response must not disclose that the account is provider-linked.
+/// password login is refused with the same generic 401, and the response must
+/// not disclose that the account is provider-linked.
 #[sqlx::test(migrations = "./migrations")]
 async fn login_oauth_only_user_returns_401(pool: PgPool) {
     use overkill_todo::application::ports::{OAuthAccountRepository, UserRepository};

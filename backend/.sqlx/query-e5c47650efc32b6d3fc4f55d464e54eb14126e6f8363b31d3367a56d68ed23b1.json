@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            DELETE FROM password_reset_codes\n            WHERE expires_at < NOW()\n              AND (lockouts = 0 OR last_sent_at < NOW() - make_interval(days => $1))\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e5c47650efc32b6d3fc4f55d464e54eb14126e6f8363b31d3367a56d68ed23b1"
+}

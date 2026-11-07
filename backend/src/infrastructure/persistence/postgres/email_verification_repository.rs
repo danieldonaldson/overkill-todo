@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::application::ports::EmailVerificationRepository;
 use crate::domain::entities::EmailVerificationCode;
-use crate::domain::entities::attempt_lockout::AttemptOutcome;
+use crate::domain::entities::attempt_lockout::{AttemptOutcome, LOCKOUT_MEMORY_DAYS, MAX_ATTEMPTS};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{UserId, VerificationCodeId};
 use crate::infrastructure::persistence::postgres::connection::Database;
@@ -35,6 +35,7 @@ impl PostgresEmailVerificationRepository {
             row.magic_token_hash,
             row.magic_token_expires_at,
         )
+        .with_lockouts(row.lockouts)
     }
 }
 
@@ -52,6 +53,10 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
                 expires_at = EXCLUDED.expires_at,
                 attempts = EXCLUDED.attempts,
                 last_sent_at = EXCLUDED.last_sent_at,
+                -- Replacing a code that sat at the attempt cap counts as a
+                -- lockout and doubles the next lock window. Never reset here.
+                lockouts = email_verification_codes.lockouts
+                    + CASE WHEN email_verification_codes.attempts >= $10 THEN 1 ELSE 0 END,
                 -- A routine 6-digit code-send carries magic_token_hash = NULL;
                 -- only overwrite when a new magic token is actually supplied so a
                 -- previously issued magic link stays matchable. The link's expiry
@@ -68,6 +73,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
             code.created_at(),
             code.magic_token_hash(),
             code.magic_token_expires_at(),
+            MAX_ATTEMPTS,
         )
         .execute(self.db.pool())
         .await
@@ -84,7 +90,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         let row = sqlx::query_as!(
             EmailVerificationCodeRow,
             r#"
-            SELECT id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, magic_token_hash, magic_token_expires_at
+            SELECT id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, magic_token_hash, magic_token_expires_at, lockouts
             FROM email_verification_codes
             WHERE user_id = $1
             "#,
@@ -198,12 +204,14 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         sqlx::query!(
             r#"
             UPDATE email_verification_codes
-            SET code_hash = $2, expires_at = $3, attempts = 0, last_sent_at = NOW()
+            SET code_hash = $2, expires_at = $3, attempts = 0, last_sent_at = NOW(),
+                lockouts = lockouts + CASE WHEN attempts >= $4 THEN 1 ELSE 0 END
             WHERE user_id = $1
             "#,
             user_id.as_uuid(),
             code_hash,
             expires_at,
+            MAX_ATTEMPTS,
         )
         .execute(self.db.pool())
         .await
@@ -218,7 +226,9 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
             r#"
             DELETE FROM email_verification_codes
             WHERE expires_at < NOW()
+              AND (lockouts = 0 OR last_sent_at < NOW() - make_interval(days => $1))
             "#,
+            LOCKOUT_MEMORY_DAYS,
         )
         .execute(self.db.pool())
         .await
@@ -269,7 +279,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         let row = sqlx::query_as!(
             EmailVerificationCodeRow,
             r#"
-            SELECT id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, magic_token_hash, magic_token_expires_at
+            SELECT id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, magic_token_hash, magic_token_expires_at, lockouts
             FROM email_verification_codes
             WHERE magic_token_hash = $1
             "#,
