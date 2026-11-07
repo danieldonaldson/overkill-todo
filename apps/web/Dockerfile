@@ -1,5 +1,5 @@
 # ---- build ----
-FROM node:24-alpine AS build
+FROM node:25-alpine AS build
 RUN corepack enable
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml .npmrc ./
@@ -14,7 +14,7 @@ RUN pnpm --filter @overkill-todo/web build
 # stage below. Runs as the built-in non-root `node` user (uid 1000) to satisfy `restricted`
 # PodSecurity, same posture as the backend `dev` stage. Deps install into the layer; Tilt's
 # live_update syncs src/ into the running pod and Vite HMR patches the browser with no rebuild.
-FROM node:24-alpine AS dev
+FROM node:25-alpine AS dev
 RUN corepack enable
 WORKDIR /repo
 RUN chown node:node /repo
