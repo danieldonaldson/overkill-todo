@@ -8,8 +8,12 @@ describe('DashboardNav', () => {
   it('renders Home and Settings links', async () => {
     const screen = render(DashboardNavWrapper)
 
-    await expect.element(screen.getByRole('link', { name: /home/i })).toHaveAttribute('href', '/dashboard')
-    await expect.element(screen.getByRole('link', { name: /settings/i })).toHaveAttribute('href', '/dashboard/settings')
+    await expect
+      .element(screen.getByRole('link', { name: /home/i }))
+      .toHaveAttribute('href', '/dashboard')
+    await expect
+      .element(screen.getByRole('link', { name: /settings/i }))
+      .toHaveAttribute('href', '/dashboard/settings')
   })
 
   it('renders a theme toggle', async () => {

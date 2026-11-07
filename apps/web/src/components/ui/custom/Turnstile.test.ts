@@ -36,9 +36,7 @@ describe('Turnstile', () => {
     delete (window as unknown as { turnstile?: unknown }).turnstile
     delete (window as unknown as { onTurnstileLoad?: unknown }).onTurnstileLoad
     delete (window as unknown as { __turnstileQueue?: unknown }).__turnstileQueue
-    document
-      .querySelectorAll('script[src*="turnstile"]')
-      .forEach((s) => s.remove())
+    document.querySelectorAll('script[src*="turnstile"]').forEach((s) => s.remove())
     vi.restoreAllMocks()
   })
 

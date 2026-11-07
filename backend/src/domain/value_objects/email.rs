@@ -15,7 +15,7 @@ use crate::domain::errors::DomainError;
 /// # Examples
 ///
 /// ```
-/// use app::domain::value_objects::Email;
+/// use overkill_todo::domain::value_objects::Email;
 ///
 /// // Valid email, normalized to lowercase
 /// let email = Email::new("  User@Example.COM  ").unwrap();
@@ -69,7 +69,7 @@ impl Email {
 /// # Examples
 ///
 /// ```
-/// use app::domain::value_objects::Email;
+/// use overkill_todo::domain::value_objects::Email;
 ///
 /// let email: Email = "user@example.com".to_string().try_into().unwrap();
 /// ```

@@ -11,6 +11,7 @@ age = "latest"
 "cargo:cargo-watch" = "latest"   # `just dev` backend auto-reload
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-audit" = "latest"
+"cargo:cargo-llvm-cov" = "latest"   # `just coverage` (needs llvm-tools-preview, pinned in rust-toolchain.toml)
 
 # Kubernetes path only (deploy/k8s, optional). Uncomment if you use it.
 # kubectl = "latest"

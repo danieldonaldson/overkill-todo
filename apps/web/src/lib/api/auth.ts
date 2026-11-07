@@ -96,7 +96,7 @@ export function createAuthApi(client: HttpClient) {
         {
           method: 'POST',
           body: JSON.stringify(data),
-        },
+        }
       )
       if (response.expires_at !== undefined) {
         setTokenExpiry(response.expires_at)

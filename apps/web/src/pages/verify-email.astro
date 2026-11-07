@@ -5,6 +5,6 @@ import VerifyEmailForm from '../components/auth/VerifyEmailForm.svelte'
 const email = Astro.url.searchParams.get('email') ?? ''
 ---
 
-<AuthLayout title="Verify email | app" heading="Verify your email">
+<AuthLayout title="Verify email | Overkill Todo" heading="Verify your email">
   <VerifyEmailForm client:load {email} />
 </AuthLayout>

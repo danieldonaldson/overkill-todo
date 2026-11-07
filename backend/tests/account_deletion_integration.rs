@@ -13,12 +13,12 @@ use chrono::{Duration, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use app::application::ports::{
+use overkill_todo::application::ports::{
     AccountLifecycleRepository, EmailVerificationRepository, RefreshTokenRepository, UserRepository,
 };
-use app::domain::entities::{EmailVerificationCode, RefreshToken, User};
-use app::domain::value_objects::Email;
-use app::infrastructure::persistence::{
+use overkill_todo::domain::entities::{EmailVerificationCode, RefreshToken, User};
+use overkill_todo::domain::value_objects::Email;
+use overkill_todo::infrastructure::persistence::{
     Database, PostgresEmailVerificationRepository, PostgresRefreshTokenRepository,
     PostgresUserRepository,
 };

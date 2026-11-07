@@ -50,7 +50,10 @@ test('a new user can register, verify, set a password, and land on the dashboard
 
   // 3. Set a password to complete signup.
   await advance(page, /\/set-password/, /\/dashboard/, async () => {
-    await page.getByLabel(/^new password|^password/i).first().fill('e2e-Password123')
+    await page
+      .getByLabel(/^new password|^password/i)
+      .first()
+      .fill('e2e-Password123')
     await page.getByLabel(/confirm/i).fill('e2e-Password123')
     await page.getByRole('button', { name: /create account/i }).click()
   })

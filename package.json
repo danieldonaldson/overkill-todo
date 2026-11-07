@@ -1,5 +1,5 @@
 {
-  "name": "app",
+  "name": "overkill-todo",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.8.0",
@@ -7,10 +7,10 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "pnpm --filter @app/web dev",
-    "build": "pnpm --filter @app/web build",
-    "test": "pnpm lint && pnpm --filter @app/web test",
-    "test:e2e": "pnpm --filter @app/web test:e2e",
+    "dev": "pnpm --filter @overkill-todo/web dev",
+    "build": "pnpm --filter @overkill-todo/web build",
+    "test": "pnpm lint && pnpm --filter @overkill-todo/web test",
+    "test:e2e": "pnpm --filter @overkill-todo/web test:e2e",
     "lint": "eslint .",
     "format": "prettier --write .",
     "prepare": "husky"

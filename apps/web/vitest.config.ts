@@ -20,7 +20,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reportsDirectory: './coverage',
-      reporter: ['text', 'html', 'lcov'],
+      // summary.txt feeds the CI job summary.
+      reporter: ['text', 'html', 'lcov', ['text-summary', { file: 'summary.txt' }]],
       include: ['src/**/*.{js,ts,svelte}'],
       exclude: [
         'src/test-utils/**',
@@ -39,13 +40,19 @@ export default defineConfig({
     testTimeout: 10000,
   },
   optimizeDeps: {
-    exclude: ['@lucide/svelte', '@testing-library/svelte-core', 'bits-ui', 'mode-watcher', 'svelte-sonner'],
+    exclude: [
+      '@lucide/svelte',
+      '@testing-library/svelte-core',
+      'bits-ui',
+      'mode-watcher',
+      'svelte-sonner',
+    ],
   },
   resolve: {
     conditions: ['browser', 'development'],
     alias: {
       '@': new URL('./src', import.meta.url).pathname,
-      '$lib': new URL('./src/lib', import.meta.url).pathname,
+      $lib: new URL('./src/lib', import.meta.url).pathname,
       'astro:transitions/client': new URL(
         './src/test-utils/astro-transitions-mock.ts',
         import.meta.url

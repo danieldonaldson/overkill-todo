@@ -51,7 +51,7 @@ describe('AuthGuard', () => {
   })
 
   it('revalidates cached users before rendering protected content', async () => {
-    sessionStorage.setItem('app-auth-user', JSON.stringify(verifiedUser))
+    sessionStorage.setItem('overkill-todo-auth-user', JSON.stringify(verifiedUser))
     vi.mocked(api.auth.me).mockRejectedValue(new Error('Unauthorized'))
 
     render(AuthGuardWrapper)

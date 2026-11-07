@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import {
-  clearDeviceFingerprint,
-  getDeviceFingerprint,
-  regenerateFingerprint,
-} from './fingerprint'
+import { clearDeviceFingerprint, getDeviceFingerprint, regenerateFingerprint } from './fingerprint'
 
 const STORAGE_KEY = 'device_fingerprint'
 const SHA256_HEX = /^[0-9a-f]{64}$/

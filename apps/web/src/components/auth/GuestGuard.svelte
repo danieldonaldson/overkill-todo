@@ -44,7 +44,7 @@
       // Deliberately no `checking = false` on this path: keep the spinner up
       // through the navigation so the auth form never flashes into view.
       navigateReplace(
-        user.email_verified ? '/dashboard' : `/verify-email?email=${encodeURIComponent(user.email)}`,
+        user.email_verified ? '/dashboard' : `/verify-email?email=${encodeURIComponent(user.email)}`
       )
     } catch {
       // Stale hint — the cookies are gone or rejected. Show the auth form.

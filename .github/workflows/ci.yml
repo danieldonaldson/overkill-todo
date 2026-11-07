@@ -17,7 +17,7 @@ permissions:
 
 env:
   # Refuse npm releases younger than 24h (also set in pnpm-workspace.yaml).
-  PNPM_CONFIG_MINIMUM_RELEASE_AGE: "1440"
+  PNPM_CONFIG_MINIMUM_RELEASE_AGE: '1440'
 
 jobs:
   backend:
@@ -30,9 +30,9 @@ jobs:
       postgres:
         image: postgres:18
         env:
-          POSTGRES_USER: app
-          POSTGRES_PASSWORD: app
-          POSTGRES_DB: app
+          POSTGRES_USER: overkill_todo
+          POSTGRES_PASSWORD: overkill_todo
+          POSTGRES_DB: overkill_todo
         ports:
           - 5432:5432
         options: >-
@@ -41,7 +41,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgres://app:app@localhost/app
+      DATABASE_URL: postgres://overkill_todo:overkill_todo@localhost/overkill_todo
     steps:
       - uses: actions/checkout@v7
 
@@ -56,7 +56,7 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest,sqlx-cli,cargo-audit,cargo-deny
+          tool: nextest,sqlx-cli,cargo-audit,cargo-deny,cargo-llvm-cov
 
       - name: Format
         run: cargo fmt --check
@@ -70,18 +70,34 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery
         env:
-          SQLX_OFFLINE: "true"
+          SQLX_OFFLINE: 'true'
 
       - name: Unit tests
         run: cargo nextest run --locked --lib
         env:
-          SQLX_OFFLINE: "true"
+          SQLX_OFFLINE: 'true'
 
       - name: Run migrations
         run: cargo sqlx migrate run
 
-      - name: Integration tests
-        run: cargo nextest run --locked --tests
+      # Runs lib + integration tests instrumented, so coverage reflects both.
+      - name: Integration tests (with coverage)
+        run: cargo llvm-cov nextest --locked --tests --lcov --output-path target/lcov.info
+
+      - name: Coverage summary
+        if: always()
+        run: |
+          if [ -f target/lcov.info ]; then
+            { echo '### Backend coverage'; echo '```'; cargo llvm-cov report --summary-only; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: backend-coverage
+          path: backend/target/lcov.info
+          if-no-files-found: ignore
+          retention-days: 14
 
       # Fails when a query changed without `just db-prepare`.
       - name: Check SQLx offline cache
@@ -98,11 +114,25 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @app/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @overkill-todo/web exec playwright install --with-deps chromium
       - run: pnpm lint
-      - run: pnpm --filter @app/web check
-      - run: pnpm --filter @app/web build
-      - run: pnpm --filter @app/web test:unit
+      - run: pnpm --filter @overkill-todo/web check
+      - run: pnpm --filter @overkill-todo/web build
+      - run: pnpm --filter @overkill-todo/web test:coverage
+      - name: Coverage summary
+        if: always()
+        run: |
+          f=apps/web/coverage/summary.txt
+          if [ -f "$f" ]; then
+            { echo '### Web coverage'; echo '```'; cat "$f"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: web-coverage
+          path: apps/web/coverage
+          if-no-files-found: ignore
+          retention-days: 14
 
   web-e2e:
     name: Web E2E
@@ -115,9 +145,9 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @app/web exec playwright install --with-deps chromium
-      - run: pnpm --filter @app/web build
-      - run: pnpm --filter @app/web test:e2e
+      - run: pnpm --filter @overkill-todo/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @overkill-todo/web build
+      - run: pnpm --filter @overkill-todo/web test:e2e
       - uses: actions/upload-artifact@v5
         if: failure()
         with:

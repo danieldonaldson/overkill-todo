@@ -62,7 +62,11 @@
       step = 'password'
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'error_code' in error) {
-        const authError = error as { error?: string; error_code: string; attempts_remaining?: number }
+        const authError = error as {
+          error?: string
+          error_code: string
+          attempts_remaining?: number
+        }
         if (authError.error_code === 'CODE_INVALID') {
           codeError =
             authError.attempts_remaining !== undefined
@@ -140,11 +144,17 @@
       Enter the 6-digit code sent to <strong class="text-foreground">{email}</strong>
     </p>
 
-    <CodeInput bind:value={code} disabled={loading} error={codeError} oncomplete={handleCodeComplete} />
+    <CodeInput
+      bind:value={code}
+      disabled={loading}
+      error={codeError}
+      oncomplete={handleCodeComplete}
+    />
 
     <Button type="submit" disabled={loading || code.length !== 6} class="w-full">
       {#if loading}
-        <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"></span>
+        <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+        ></span>
       {/if}
       {loading ? 'Verifying...' : 'Verify code'}
     </Button>
@@ -203,7 +213,8 @@
 
     <Button type="submit" disabled={loading} class="w-full">
       {#if loading}
-        <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"></span>
+        <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+        ></span>
       {/if}
       {loading ? 'Resetting...' : 'Reset password'}
     </Button>

@@ -165,9 +165,7 @@ describe('SettingsPanel', () => {
     expect(clickSpy).toHaveBeenCalled()
     expect(createUrl).toHaveBeenCalled()
     expect(revokeUrl).toHaveBeenCalledWith('blob:fake')
-    await expect
-      .element(screen.getByText(/data export has been downloaded/i))
-      .toBeInTheDocument()
+    await expect.element(screen.getByText(/data export has been downloaded/i)).toBeInTheDocument()
 
     clickSpy.mockRestore()
     createUrl.mockRestore()

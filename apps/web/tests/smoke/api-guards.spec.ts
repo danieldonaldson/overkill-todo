@@ -7,11 +7,7 @@ import { APP_BASE_URL } from './targets'
 // session, so it would then be rejected by auth. Neither path can change data.
 
 test.describe('unauthenticated access is refused uniformly', () => {
-  const PROTECTED = [
-    '/api/v1/auth/me',
-    '/api/v1/users/me/export',
-    '/api/v1/admin/users',
-  ]
+  const PROTECTED = ['/api/v1/auth/me', '/api/v1/users/me/export', '/api/v1/admin/users']
 
   for (const path of PROTECTED) {
     test(`GET ${path} without a session is 401 token_missing`, async ({ request }) => {

@@ -10,16 +10,16 @@ Move to Kubernetes only when the workload needs it (see `../k8s/README.md`).
 
 ## Files
 
-| File | Committed | What |
-| --- | --- | --- |
-| `compose.prod.yaml` | yes | Override on top of `../../compose.yaml` |
-| `Caddyfile` | yes | TLS edge for `$DOMAIN` (automatic certificates) |
-| `backend.sops.env` | yes, encrypted | Backend config, the contract is `backend/.env.example` |
-| `db_password.sops` | yes, encrypted | Postgres password |
-| `backend.env`, `db_password` | **never** | Decrypted on the host at deploy time (gitignored) |
-| `.env` | on the host only | `DOMAIN`, `BACKEND_IMAGE`, `WEB_IMAGE` (digests) |
+| File                         | Committed        | What                                                   |
+| ---------------------------- | ---------------- | ------------------------------------------------------ |
+| `compose.prod.yaml`          | yes              | Override on top of `../../compose.yaml`                |
+| `Caddyfile`                  | yes              | TLS edge for `$DOMAIN` (automatic certificates)        |
+| `backend.sops.env`           | yes, encrypted   | Backend config, the contract is `backend/.env.example` |
+| `db_password.sops`           | yes, encrypted   | Postgres password                                      |
+| `backend.env`, `db_password` | **never**        | Decrypted on the host at deploy time (gitignored)      |
+| `.env`                       | on the host only | `DOMAIN`, `BACKEND_IMAGE`, `WEB_IMAGE` (digests)       |
 
-`backend.env` must set `DATABASE_URL=postgres://app:<db_password>@db:5432/app`,
+`backend.env` must set `DATABASE_URL=postgres://overkill_todo:<db_password>@db:5432/overkill_todo`,
 `DEV_MODE=false`, real SMTP and Turnstile settings, and fresh JWT, CSRF and
 encryption keys. The backend refuses to start in production with a no-op adapter
 or missing config, which is the point: a bad deploy fails at boot, not later.
@@ -72,8 +72,8 @@ Restore rehearsal, before the first real user and then quarterly:
 
 ```bash
 dc stop backend
-dc exec -T db dropdb -U app app && dc exec -T db createdb -U app app
-dc exec -T db pg_restore -U app -d app --no-owner < deploy/compose/backups/<file>.dump
+dc exec -T db dropdb -U overkill_todo overkill_todo && dc exec -T db createdb -U overkill_todo overkill_todo
+dc exec -T db pg_restore -U overkill_todo -d overkill_todo --no-owner < deploy/compose/backups/<file>.dump
 dc start backend
 ```
 

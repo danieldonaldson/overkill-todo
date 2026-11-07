@@ -53,15 +53,13 @@ test('no location block declares add_header (it would shadow the server-level on
   const blocks = locationBodies(conf)
   expect(blocks.length, 'nginx.conf defines location blocks').toBeGreaterThan(0)
 
-  const offenders = blocks
-    .filter((b) => /\badd_header\b/.test(b.body))
-    .map((b) => b.header)
+  const offenders = blocks.filter((b) => /\badd_header\b/.test(b.body)).map((b) => b.header)
 
   expect(
     offenders,
     'these location blocks declare add_header, which silently drops every ' +
       'server-level security header for the paths they match; express caching ' +
-      'through the $app_cache_control map instead',
+      'through the $app_cache_control map instead'
   ).toEqual([])
 })
 

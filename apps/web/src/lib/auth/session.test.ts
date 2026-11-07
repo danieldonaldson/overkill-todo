@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { clearSessionUser, getSessionUser, setSessionUser } from './session'
 import type { User } from '../types'
 
-const STORAGE_KEY = 'app-auth-user'
+const STORAGE_KEY = 'overkill-todo-auth-user'
 
 const user: User = {
   id: 'user-1',

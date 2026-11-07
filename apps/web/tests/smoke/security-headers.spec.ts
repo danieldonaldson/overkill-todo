@@ -50,10 +50,9 @@ test.describe('security headers on live responses', () => {
 
     expect(
       missing,
-      'a location block is shadowing the server-level add_headers — see nginx-headers.spec.ts',
+      'a location block is shadowing the server-level add_headers — see nginx-headers.spec.ts'
     ).toEqual([])
   })
-
 })
 
 test.describe('CSP content, as actually served', () => {
@@ -70,7 +69,7 @@ test.describe('CSP content, as actually served', () => {
     // means the build changed and nobody re-pinned.
     expect(
       scriptSrc!.filter((s) => s.startsWith("'sha256-")).length,
-      'inline scripts are pinned by hash',
+      'inline scripts are pinned by hash'
     ).toBeGreaterThan(0)
   })
 

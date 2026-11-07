@@ -46,12 +46,12 @@ Every external dependency sits behind an outgoing port with a real adapter and a
 no-op or console adapter. `main.rs` is the only place that chooses, and outside
 `DEV_MODE` it **refuses to start** if a no-op would be used:
 
-| Port | Real | Dev fallback |
-| --- | --- | --- |
-| Email | `SmtpEmailService` | `ConsoleEmailService` (prints to stdout) |
-| Bot protection | `CloudflareTurnstileService` | `NoOpTurnstileService` |
-| MX validation | `HickoryMxValidator` | `NoOpMxValidator` (only when disabled) |
-| Google OAuth | `GoogleOAuthClient` | disabled unless `GOOGLE_OAUTH_ENABLED` |
+| Port           | Real                         | Dev fallback                             |
+| -------------- | ---------------------------- | ---------------------------------------- |
+| Email          | `SmtpEmailService`           | `ConsoleEmailService` (prints to stdout) |
+| Bot protection | `CloudflareTurnstileService` | `NoOpTurnstileService`                   |
+| MX validation  | `HickoryMxValidator`         | `NoOpMxValidator` (only when disabled)   |
+| Google OAuth   | `GoogleOAuthClient`          | disabled unless `GOOGLE_OAUTH_ENABLED`   |
 
 Adding a provider (payments, storage, LLMs) means a new port in
 `application/ports/outgoing/`, an adapter in `infrastructure/`, and a no-op for dev.

@@ -16,7 +16,7 @@ use crate::infrastructure::api::handlers::{
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "App API",
+        title = "Overkill Todo API",
         version = "1.0.0",
         description = "Backend API"
     ),

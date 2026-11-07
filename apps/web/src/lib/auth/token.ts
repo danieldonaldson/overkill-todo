@@ -14,7 +14,7 @@ const REFRESH_GENERATION_KEY = 'jwt_refresh_generation'
 const REFRESH_THRESHOLD_SECONDS = 60 // Refresh when less than 60 seconds remaining
 
 // Web Lock name used to serialize refreshes across all same-origin tabs.
-const REFRESH_LOCK_NAME = 'app-token-refresh'
+const REFRESH_LOCK_NAME = 'overkill-todo-token-refresh'
 
 // In-tab single-flight: collapse concurrent refresh callers in this tab onto
 // one promise. Cross-tab coordination is handled separately via the Web Lock.
@@ -183,14 +183,14 @@ function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
       (error) => {
         signal.removeEventListener('abort', onAbort)
         reject(error)
-      },
+      }
     )
   })
 }
 
 async function withRefreshLock(
   refreshFn: () => Promise<boolean>,
-  signal: AbortSignal,
+  signal: AbortSignal
 ): Promise<boolean> {
   const generationBeforeLock = getRefreshGeneration()
 

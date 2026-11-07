@@ -13,6 +13,14 @@ export default tseslint.config(
     },
   },
   {
-    ignores: ['**/dist/**', '**/.astro/**', '**/node_modules/**', '**/target/**', '**/coverage/**', '**/.claude/**', '**/.agents/**'],
+    ignores: [
+      '**/dist/**',
+      '**/.astro/**',
+      '**/node_modules/**',
+      '**/target/**',
+      '**/coverage/**',
+      '**/.claude/**',
+      '**/.agents/**',
+    ],
   }
 )

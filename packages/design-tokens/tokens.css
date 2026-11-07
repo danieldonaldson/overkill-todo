@@ -1,5 +1,5 @@
 /*
- * @app/design-tokens — single source of truth for shared design tokens.
+ * @overkill-todo/design-tokens — single source of truth for shared design tokens.
  *
  * Imported by apps/web after `@import "tailwindcss"`.
  * Tailwind 4 composes `@theme` across imported CSS, so the brand palette + motion
@@ -11,7 +11,7 @@
  */
 
 @theme {
-  /* Brand — App */
+  /* Brand — Overkill Todo */
   --color-brand: #d6583d;
   --color-brand-dark: #b0442c;
   --color-brand-light: #f5a182;

@@ -28,7 +28,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: web
-          image: web   # pinned by digest in the overlay (images:)
+          image: web # pinned by digest in the overlay (images:)
           ports:
             - { name: http, containerPort: 8080 }
           envFrom:
@@ -42,7 +42,7 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
-            capabilities: { drop: ["ALL"] }
+            capabilities: { drop: ['ALL'] }
           volumeMounts:
             - { name: tmp, mountPath: /tmp }
       volumes:

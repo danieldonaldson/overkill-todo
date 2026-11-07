@@ -18,11 +18,13 @@ use std::sync::Arc;
 use chrono::{Duration, Utc};
 use sqlx::PgPool;
 
-use app::application::ports::{OAuthAccountRepository, RefreshTokenRepository, UserRepository};
-use app::domain::entities::{OAuthAccount, OAuthProvider, RefreshToken, User};
-use app::domain::errors::DomainError;
-use app::domain::value_objects::{Email, UserId};
-use app::infrastructure::persistence::{
+use overkill_todo::application::ports::{
+    OAuthAccountRepository, RefreshTokenRepository, UserRepository,
+};
+use overkill_todo::domain::entities::{OAuthAccount, OAuthProvider, RefreshToken, User};
+use overkill_todo::domain::errors::DomainError;
+use overkill_todo::domain::value_objects::{Email, UserId};
+use overkill_todo::infrastructure::persistence::{
     Database, PostgresOAuthAccountRepository, PostgresRefreshTokenRepository,
     PostgresUserRepository,
 };

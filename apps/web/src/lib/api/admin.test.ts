@@ -10,7 +10,6 @@ function fakeClient() {
 }
 
 describe('admin api', () => {
-
   it('lists users with pagination query', async () => {
     const { client, request } = fakeClient()
     await createAdminApi(client).listUsers({ limit: 10, offset: 20 })

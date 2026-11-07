@@ -20,13 +20,13 @@ async function collectViolations(page: Page): Promise<Violation[]> {
   await page.addInitScript(() => {
     document.addEventListener('securitypolicyviolation', (e) => {
       const evt = e as SecurityPolicyViolationEvent
-      ;(
-        window as unknown as { __reportCspViolation: (v: Violation) => void }
-      ).__reportCspViolation({
-        directive: evt.effectiveDirective || evt.violatedDirective,
-        blockedURI: evt.blockedURI,
-        sample: evt.sample ?? '',
-      })
+      ;(window as unknown as { __reportCspViolation: (v: Violation) => void }).__reportCspViolation(
+        {
+          directive: evt.effectiveDirective || evt.violatedDirective,
+          blockedURI: evt.blockedURI,
+          sample: evt.sample ?? '',
+        }
+      )
     })
   })
   return violations
@@ -77,7 +77,7 @@ test.describe('the production dashboard runs under its own CSP', () => {
     const unexpected = violations.filter((v) => !isAccepted(v))
     expect(
       unexpected,
-      'the CSP is blocking an external resource the app needs — check the third-party origins in script-src/connect-src/frame-src',
+      'the CSP is blocking an external resource the app needs — check the third-party origins in script-src/connect-src/frame-src'
     ).toEqual([])
   })
 

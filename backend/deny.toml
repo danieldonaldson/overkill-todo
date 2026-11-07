@@ -42,7 +42,7 @@ allow = [
 # Apache-2.0-with-LLVM-exception crates (e.g. wasi/rustix) also offer plain
 # Apache-2.0 OR MIT, so no separate exception is required.
 
-# The workspace crate itself (`app`, `publish = false`) carries no license
+# The workspace crate itself (`overkill-todo`, `publish = false`) carries no license
 # field; skip license checks for first-party private crates rather than inventing one.
 private = { ignore = true }
 

@@ -24,7 +24,9 @@ describe('VerifyEmailForm', () => {
   })
 
   const setCode = (screen: ReturnType<typeof render>, value: string) => {
-    const input = screen.container.querySelector('input[aria-label="Verification code"]') as HTMLInputElement
+    const input = screen.container.querySelector(
+      'input[aria-label="Verification code"]'
+    ) as HTMLInputElement
     input.value = value
     input.dispatchEvent(new Event('input', { bubbles: true }))
   }
@@ -32,7 +34,9 @@ describe('VerifyEmailForm', () => {
   it('renders code entry and resend controls', async () => {
     const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
-    expect(screen.container.querySelector('input[aria-label="Verification code"]')).toBeInTheDocument()
+    expect(
+      screen.container.querySelector('input[aria-label="Verification code"]')
+    ).toBeInTheDocument()
     await expect.element(screen.getByRole('button', { name: /verify email/i })).toBeDisabled()
     await expect.element(screen.getByRole('button', { name: /resend code/i })).toBeInTheDocument()
     await expect.element(screen.getByText(/test@example.com/)).toBeInTheDocument()
@@ -55,7 +59,10 @@ describe('VerifyEmailForm', () => {
     setCode(screen, '123456')
 
     await vi.waitFor(() => {
-      expect(api.auth.verifyEmail).toHaveBeenCalledWith({ email: 'test@example.com', code: '123456' })
+      expect(api.auth.verifyEmail).toHaveBeenCalledWith({
+        email: 'test@example.com',
+        code: '123456',
+      })
       expect(navigate).toHaveBeenCalledWith('/dashboard')
     })
   })
@@ -67,7 +74,9 @@ describe('VerifyEmailForm', () => {
     setCode(screen, '123456')
 
     await vi.waitFor(() => {
-      expect(navigate).toHaveBeenCalledWith('/set-password?token=signup-token&email=new%40example.com')
+      expect(navigate).toHaveBeenCalledWith(
+        '/set-password?token=signup-token&email=new%40example.com'
+      )
     })
   })
 
@@ -86,7 +95,9 @@ describe('VerifyEmailForm', () => {
     await vi.waitFor(() => {
       expect(api.auth.resendVerification).toHaveBeenCalled()
     })
-    await expect.element(screen.getByRole('alert')).toHaveTextContent(/new verification code has been sent/i)
+    await expect
+      .element(screen.getByRole('alert'))
+      .toHaveTextContent(/new verification code has been sent/i)
   })
 
   it('shows the remaining-attempts hint on an invalid code', async () => {
@@ -98,7 +109,9 @@ describe('VerifyEmailForm', () => {
 
     setCode(screen, '123456')
 
-    await expect.element(screen.getByText(/incorrect code\. 2 attempts remaining/i)).toBeInTheDocument()
+    await expect
+      .element(screen.getByText(/incorrect code\. 2 attempts remaining/i))
+      .toBeInTheDocument()
   })
 
   it('prompts a fresh code when the entered code has expired', async () => {
@@ -107,9 +120,7 @@ describe('VerifyEmailForm', () => {
 
     setCode(screen, '123456')
 
-    await expect
-      .element(screen.getByRole('alert'))
-      .toHaveTextContent(/this code has expired/i)
+    await expect.element(screen.getByRole('alert')).toHaveTextContent(/this code has expired/i)
   })
 
   it('starts a cooldown when a resend is rate-limited', async () => {
@@ -121,7 +132,9 @@ describe('VerifyEmailForm', () => {
 
     await screen.getByRole('button', { name: /resend code/i }).click()
 
-    await expect.element(screen.getByRole('alert')).toHaveTextContent(/please wait before requesting/i)
+    await expect
+      .element(screen.getByRole('alert'))
+      .toHaveTextContent(/please wait before requesting/i)
     // The cooldown swaps the resend button for the countdown timer.
     await expect.element(screen.getByText(/resend in/i)).toBeInTheDocument()
   })

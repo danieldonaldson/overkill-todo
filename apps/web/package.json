@@ -1,5 +1,5 @@
 {
-  "name": "@app/web",
+  "name": "@overkill-todo/web",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -9,13 +9,14 @@
     "check": "astro check",
     "test": "astro check && astro build && vitest run",
     "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:integration": "playwright test --config playwright.integration.config.ts",
     "test:e2e:smoke": "playwright test --config playwright.smoke.config.ts",
     "coverage": "astro check && astro build && vitest run --coverage"
   },
   "dependencies": {
-    "@app/design-tokens": "workspace:*",
+    "@overkill-todo/design-tokens": "workspace:*",
     "@astrojs/svelte": "^9.0.0",
     "@fontsource/geist": "^5.1.0",
     "@fontsource/inter": "^5.1.0",

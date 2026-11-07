@@ -35,9 +35,9 @@ services:
 
   edge:
     ports: !override
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
     environment:
       DOMAIN: ${DOMAIN}
     volumes: !override
@@ -46,25 +46,25 @@ services:
     restart: unless-stopped
 
   backup:
-    profiles: ["full"]
+    profiles: ['full']
     image: postgres:18
     environment:
       PGHOST: db
-      PGUSER: app
-      PGDATABASE: app
+      PGUSER: overkill_todo
+      PGDATABASE: overkill_todo
       PGPASSFILE: /tmp/.pgpass
     secrets: [db_password]
     volumes:
       - ./deploy/compose/backups:/backups
-    entrypoint: ["/bin/sh", "-c"]
+    entrypoint: ['/bin/sh', '-c']
     # Nightly custom-format dump, 14 kept. A dump on the same disk is not a backup:
     # sync ./backups off the host (restic, rclone) and rehearse a restore.
     command:
       - |
-        printf 'db:5432:app:app:%s\n' "$$(cat /run/secrets/db_password)" > /tmp/.pgpass
+        printf 'db:5432:overkill_todo:overkill_todo:%s\n' "$$(cat /run/secrets/db_password)" > /tmp/.pgpass
         chmod 600 /tmp/.pgpass
         while true; do
-          f=/backups/app-$$(date -u +%Y%m%dT%H%M%SZ).dump
+          f=/backups/overkill-todo-$$(date -u +%Y%m%dT%H%M%SZ).dump
           pg_dump -Fc -f "$$f.partial" && mv "$$f.partial" "$$f" && echo "backup ok $$f"
           ls -1t /backups/*.dump | tail -n +15 | xargs -r rm --
           sleep 86400

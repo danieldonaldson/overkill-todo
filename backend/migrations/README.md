@@ -7,7 +7,7 @@ reversal scripts. Each migration is applied once, in order, and recorded in the
 `_sqlx_migrations` table by `sqlx migrate run`.
 
 Rationale: down-migrations are rarely exercised, drift from the real schema, and
-give false confidence in production. We prefer roll-*forward* fixes (a new
+give false confidence in production. We prefer roll-_forward_ fixes (a new
 migration that corrects the previous one) over automated rollbacks.
 
 ## Policy: backward-compatible (expand/contract) — mandatory
@@ -21,8 +21,8 @@ The backend Deployment uses a surge rolling update (`maxSurge=1`,
 never drops the sole replica. During every roll the **new pod and the old pod
 run against the same database at the same time** for a few seconds. The new pod
 runs `sqlx migrate run` at boot (serialized safely by the default Postgres
-advisory lock), so the schema can change *while the old pod is still serving
-requests against it*. If a migration removes or narrows something the old code
+advisory lock), so the schema can change _while the old pod is still serving
+requests against it_. If a migration removes or narrows something the old code
 still uses, the old pod starts erroring mid-roll — a self-inflicted outage
 during what is supposed to be a zero-downtime deploy.
 
@@ -115,7 +115,7 @@ Caveats for `CONCURRENTLY`:
 ## Adding a value to an enum: two migrations, not one
 
 `user_role`, `oauth_provider`, and friends are Postgres `ENUM` types.
-Adding a value and *using* it in the same migration fails:
+Adding a value and _using_ it in the same migration fails:
 
 ```
 ERROR:  unsafe use of new value "moderator" of enum type user_role
@@ -140,7 +140,7 @@ Split it:
 every statement in that file — prefer the split.)
 
 This composes with the expand/contract policy above: adding a label is an
-*expand* step and is safe for the old pod, which simply never emits the new
+_expand_ step and is safe for the old pod, which simply never emits the new
 value. Postgres cannot remove an enum label at all short of rebuilding the type.
 
 ## Rolling back manually

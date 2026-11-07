@@ -8,7 +8,7 @@ test.describe('reachability', () => {
   test('the API reports healthy', async ({ request }) => {
     const res = await request.get(`${APP_BASE_URL}/api/v1/health`)
     expect(res.status()).toBe(200)
-    expect(await res.json()).toEqual({ service: 'app', status: 'ok' })
+    expect(await res.json()).toEqual({ service: 'overkill-todo', status: 'ok' })
   })
 
   test('the API reports ready, with the database reachable', async ({ request }) => {
@@ -32,5 +32,4 @@ test.describe('reachability', () => {
     expect([301, 302, 307, 308]).toContain(res.status())
     expect(res.headers()['location']).toMatch(/^https:/)
   })
-
 })

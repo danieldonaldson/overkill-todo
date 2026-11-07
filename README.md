@@ -22,12 +22,12 @@ cp -r ~/Work/dev-workflows/starters/rust-svelte ~/Work/myproject
 cd ~/Work/myproject && rm -rf node_modules backend/target && git init
 ```
 
-Then rename: `app` / `@app/*` / `App` are placeholders (package names, Compose
+Then rename: `app` / `@overkill-todo/*` / `App` are placeholders (package names, Compose
 project, DB name, JWT issuer and audience in `backend/src/infrastructure/api/jwt.rs`,
 `APP_NAME`, page titles, the leader-lock key in `main.rs`).
 
 ```bash
-grep -rIl --exclude-dir={node_modules,target,.sqlx,dist} -e '\bapp\b' -e '@app/' -e 'App\b' .
+grep -rIl --exclude-dir={node_modules,target,.sqlx,dist} -e '\bapp\b' -e '@overkill-todo/' -e 'App\b' .
 ```
 
 ## Daily use
@@ -42,14 +42,14 @@ just ci      # everything CI checks, locally
 Make yourself an admin after signing up: `just grant-admin you@example.com`.
 In dev, verification codes print in the backend log.
 
-| Recipe | What it runs |
-| --- | --- |
-| `just test` / `just test-integration` | backend unit / DB-backed tests |
-| `just test-web` | `astro check` + Vitest (real Chromium) |
-| `just e2e` | Playwright against the built site, API mocked |
-| `just e2e-integration` | Playwright signup against `just dev` |
-| `just smoke <url>` | read-only checks against a deployed site |
-| `just up` | prod-like stack in Docker behind Caddy on :8080 |
+| Recipe                                | What it runs                                    |
+| ------------------------------------- | ----------------------------------------------- |
+| `just test` / `just test-integration` | backend unit / DB-backed tests                  |
+| `just test-web`                       | `astro check` + Vitest (real Chromium)          |
+| `just e2e`                            | Playwright against the built site, API mocked   |
+| `just e2e-integration`                | Playwright signup against `just dev`            |
+| `just smoke <url>`                    | read-only checks against a deployed site        |
+| `just up`                             | prod-like stack in Docker behind Caddy on :8080 |
 
 ## Layout
 
@@ -78,4 +78,4 @@ scripts/            dev env generation
 ## Where this came from
 
 Extracted from a production project and trimmed to the auth core. The reasoning
-behind most choices lives in the notes vault: start at *Starting a new project*.
+behind most choices lives in the notes vault: start at _Starting a new project_.

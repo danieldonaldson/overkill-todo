@@ -10,7 +10,8 @@
   import { navigate } from '../../lib/navigation'
   import { minLength, required, validate } from '../../lib/utils/validation'
 
-  let { token: propToken = '', email: propEmail = '' }: { token?: string; email?: string } = $props()
+  let { token: propToken = '', email: propEmail = '' }: { token?: string; email?: string } =
+    $props()
 
   const token = $derived(propToken || getUrlParam('token'))
   const email = $derived(propEmail || getUrlParam('email'))
@@ -143,7 +144,8 @@
 
   <Button type="submit" disabled={loading} class="w-full">
     {#if loading}
-      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"></span>
+      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+      ></span>
     {/if}
     {loading ? 'Creating account...' : 'Create account'}
   </Button>

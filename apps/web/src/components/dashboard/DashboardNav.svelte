@@ -39,7 +39,7 @@
   const links = $derived(
     isAdmin
       ? [...baseLinks, { href: '/dashboard/admin', label: 'Admin', icon: ShieldIcon }]
-      : baseLinks,
+      : baseLinks
   )
 
   // Home is an exact match (every route starts with /dashboard); the others own

@@ -1,13 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  email,
-  maxLength,
-  minLength,
-  pattern,
-  required,
-  validate,
-  validateAll,
-} from './validation'
+import { email, maxLength, minLength, pattern, required, validate, validateAll } from './validation'
 
 describe('required', () => {
   it('returns null for non-empty values', () => {
@@ -97,9 +89,7 @@ describe('validate', () => {
   })
 
   it('runs later rules when earlier ones pass', () => {
-    expect(validate('notanemail', [required(), email()])).toBe(
-      'Please enter a valid email address'
-    )
+    expect(validate('notanemail', [required(), email()])).toBe('Please enter a valid email address')
   })
 })
 
@@ -124,10 +114,7 @@ describe('validateAll', () => {
   })
 
   it('skips fields with no rules', () => {
-    const errors = validateAll(
-      { email: 'bad', name: 'whatever' },
-      { email: [email()] }
-    )
+    const errors = validateAll({ email: 'bad', name: 'whatever' }, { email: [email()] })
     expect(errors).toEqual({ email: 'Please enter a valid email address' })
   })
 })

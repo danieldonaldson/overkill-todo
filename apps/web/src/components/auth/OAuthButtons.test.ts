@@ -22,7 +22,9 @@ describe('OAuthButtons', () => {
     const screen = render(OAuthButtons)
 
     await expect.element(screen.getByText('Or continue with')).toBeInTheDocument()
-    await expect.element(screen.getByRole('button', { name: /google/i })).toHaveAttribute('type', 'button')
+    await expect
+      .element(screen.getByRole('button', { name: /google/i }))
+      .toHaveAttribute('type', 'button')
   })
 
   it('starts Google login by default', async () => {

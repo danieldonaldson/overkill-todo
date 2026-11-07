@@ -20,7 +20,7 @@ pub async fn health_check() -> Json<Value> {
     // for CVE matching. The container self-healthcheck only asserts the 200.
     Json(json!({
         "status": "ok",
-        "service": "app"
+        "service": "overkill-todo"
     }))
 }
 

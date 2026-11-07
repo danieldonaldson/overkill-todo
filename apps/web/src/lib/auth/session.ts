@@ -8,7 +8,7 @@
 
 import type { User } from '../types'
 
-const AUTH_SESSION_KEY = 'app-auth-user'
+const AUTH_SESSION_KEY = 'overkill-todo-auth-user'
 
 /**
  * Get the cached user from session storage.

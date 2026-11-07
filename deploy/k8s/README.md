@@ -28,6 +28,6 @@ credentials.
 
 - Cluster bring-up, Cilium, policies, sealing: `~/Work/dev-workflows/k8s/` and
   `runbooks/talos-cluster-bringup.md`
-- Why and when: notes hub *Kubernetes platform patterns*
+- Why and when: notes hub _Kubernetes platform patterns_
 - Restore drill: `runbooks/dr-rehearsal.md` (a CNPG restore is a new `Cluster`
   with `bootstrap.recovery`)

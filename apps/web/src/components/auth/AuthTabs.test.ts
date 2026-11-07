@@ -32,7 +32,9 @@ describe('AuthTabs', () => {
     const screen = render(AuthTabs, { initial: 'login' })
 
     await expect.element(screen.getByRole('heading', { name: 'Welcome back' })).toBeInTheDocument()
-    await expect.element(screen.getByRole('tab', { name: /sign in/i })).toHaveAttribute('data-state', 'active')
+    await expect
+      .element(screen.getByRole('tab', { name: /sign in/i }))
+      .toHaveAttribute('data-state', 'active')
     expect(screen.container.querySelector('input[name="password"]')).not.toBeNull()
     expect(replaceState).not.toHaveBeenCalled()
   })
@@ -40,7 +42,9 @@ describe('AuthTabs', () => {
   it('opens on the create-account panel when mounted from /register', async () => {
     const screen = render(AuthTabs, { initial: 'register' })
 
-    await expect.element(screen.getByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
+    await expect
+      .element(screen.getByRole('heading', { name: 'Create your account' }))
+      .toBeInTheDocument()
     await expect
       .element(screen.getByRole('tab', { name: /create account/i }))
       .toHaveAttribute('data-state', 'active')
@@ -53,7 +57,9 @@ describe('AuthTabs', () => {
 
     await screen.getByRole('tab', { name: /create account/i }).click()
 
-    await expect.element(screen.getByRole('heading', { name: 'Create your account' })).toBeInTheDocument()
+    await expect
+      .element(screen.getByRole('heading', { name: 'Create your account' }))
+      .toBeInTheDocument()
     expect(screen.container.querySelector('input[name="password"]')).toBeNull()
     await vi.waitFor(() => {
       expect(replaceState).toHaveBeenCalledWith(history.state, '', '/register')
@@ -66,7 +72,9 @@ describe('AuthTabs', () => {
     await screen.getByRole('button', { name: /^sign in$/i }).click()
 
     await expect.element(screen.getByRole('heading', { name: 'Welcome back' })).toBeInTheDocument()
-    await expect.element(screen.getByRole('tab', { name: /sign in/i })).toHaveAttribute('data-state', 'active')
+    await expect
+      .element(screen.getByRole('tab', { name: /sign in/i }))
+      .toHaveAttribute('data-state', 'active')
   })
 
   it('carries the typed email across a tab switch', async () => {

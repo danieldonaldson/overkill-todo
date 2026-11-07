@@ -12,9 +12,7 @@ const apiTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:4322'
 
 // Behind a TLS proxy (e.g. the optional k8s dev loop), the HMR websocket must dial
 // back on the proxy port (HMR_CLIENT_PORT=443), not Vite's own port.
-const hmrClientPort = process.env.HMR_CLIENT_PORT
-  ? Number(process.env.HMR_CLIENT_PORT)
-  : undefined
+const hmrClientPort = process.env.HMR_CLIENT_PORT ? Number(process.env.HMR_CLIENT_PORT) : undefined
 
 // Vite rejects requests whose Host header isn't localhost unless allow-listed. Behind a
 // proxy with its own hostname the dev server 403s ("Blocked request") without this.

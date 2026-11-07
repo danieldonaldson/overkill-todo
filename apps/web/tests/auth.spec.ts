@@ -45,6 +45,9 @@ test.describe('auth pages', () => {
     await page.goto('/forgot-password')
 
     await expect(page.getByRole('button', { name: /send reset code/i })).toBeVisible()
-    await expect(page.getByRole('link', { name: /back to sign in/i })).toHaveAttribute('href', '/login')
+    await expect(page.getByRole('link', { name: /back to sign in/i })).toHaveAttribute(
+      'href',
+      '/login'
+    )
   })
 })

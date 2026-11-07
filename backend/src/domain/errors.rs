@@ -23,7 +23,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```
-/// use app::domain::errors::DomainError;
+/// use overkill_todo::domain::errors::DomainError;
 ///
 /// fn validate_age(age: i32) -> Result<(), DomainError> {
 ///     if age < 0 {

@@ -147,10 +147,10 @@ async fn login_signup_incomplete_returns_403(pool: PgPool) {
 /// and the response must not disclose that the account is provider-linked.
 #[sqlx::test(migrations = "./migrations")]
 async fn login_oauth_only_user_returns_401(pool: PgPool) {
-    use app::application::ports::{OAuthAccountRepository, UserRepository};
-    use app::domain::entities::{OAuthAccount, OAuthProvider, User};
-    use app::domain::value_objects::Email;
-    use app::infrastructure::persistence::{
+    use overkill_todo::application::ports::{OAuthAccountRepository, UserRepository};
+    use overkill_todo::domain::entities::{OAuthAccount, OAuthProvider, User};
+    use overkill_todo::domain::value_objects::Email;
+    use overkill_todo::infrastructure::persistence::{
         Database, PostgresOAuthAccountRepository, PostgresUserRepository,
     };
     use std::sync::Arc;

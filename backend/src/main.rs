@@ -5,7 +5,7 @@ use tokio::signal;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
-use app::{
+use overkill_todo::{
     application::{
         ports::{
             AccountLifecycleRepository, EmailService, MxValidator, OAuthAccountRepository,
@@ -113,9 +113,9 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     // Default verbosity follows the environment: debug in dev, info in prod.
     // Always overridable via RUST_LOG.
     let default_filter = if settings.server.dev_mode {
-        "app=debug,tower_http=debug"
+        "overkill_todo=debug,tower_http=debug"
     } else {
-        "app=info,tower_http=info"
+        "overkill_todo=info,tower_http=info"
     };
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| default_filter.parse().unwrap());
@@ -387,12 +387,12 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     let leader_handle = {
-        use app::infrastructure::tasks;
+        use overkill_todo::infrastructure::tasks;
         use std::time::Duration;
 
         // Stable per-deployment key for the background-workers advisory lock.
         // Pick a different value per app if several share one database.
-        const BACKGROUND_WORKERS_LOCK: i64 = 0x6170_705f_776f_726b; // "app_work"
+        const BACKGROUND_WORKERS_LOCK: i64 = 0x746f_646f_5f77_726b; // "todo_wrk"
 
         let leader_db = db.clone();
         let purge = purge_accounts_uc;

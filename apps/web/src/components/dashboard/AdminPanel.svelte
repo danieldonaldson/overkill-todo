@@ -63,7 +63,6 @@
     } finally {
       loading = false
     }
-
   })
 
   async function handleRoleChange(user: AdminUserRow, event: Event) {

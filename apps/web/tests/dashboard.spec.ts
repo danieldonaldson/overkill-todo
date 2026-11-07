@@ -53,5 +53,4 @@ test.describe('dashboard static shells', () => {
     await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
     await expect(page.getByText('Manage your dashboard account.')).toBeVisible()
   })
-
 })

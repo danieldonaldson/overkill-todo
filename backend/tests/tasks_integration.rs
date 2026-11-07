@@ -18,9 +18,9 @@ use std::time::Duration;
 use sqlx::PgPool;
 use tokio::sync::{Notify, watch};
 
-use app::application::use_cases::PurgeScheduledAccountsUseCase;
-use app::infrastructure::persistence::{Database, PostgresUserRepository};
-use app::infrastructure::tasks::leader::run_as_leader;
+use overkill_todo::application::use_cases::PurgeScheduledAccountsUseCase;
+use overkill_todo::infrastructure::persistence::{Database, PostgresUserRepository};
+use overkill_todo::infrastructure::tasks::leader::run_as_leader;
 
 async fn try_lock(pool: &PgPool, key: i64) -> bool {
     let mut conn = pool.acquire().await.unwrap();

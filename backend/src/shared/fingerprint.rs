@@ -8,7 +8,7 @@
 //! # Usage
 //!
 //! ```
-//! use app::shared::fingerprint::generate_error_fingerprint;
+//! use overkill_todo::shared::fingerprint::generate_error_fingerprint;
 //!
 //! let fingerprint = generate_error_fingerprint(
 //!     "Database",

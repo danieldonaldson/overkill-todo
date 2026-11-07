@@ -3,7 +3,7 @@
 # ── Build stage: static musl binary ─────────────────────────────────────────────
 # Alpine's rust image targets x86_64-unknown-linux-musl natively, so a plain
 # `cargo build --release` produces a fully static binary (no libc to copy).
-FROM rust:1.96.0-alpine AS builder
+FROM rust:1.99.1-alpine AS builder
 
 # Build deps for the C-backed crates:
 #   - aws-lc-rs (via rustls/jsonwebtoken): cmake + a C compiler + perl
@@ -17,7 +17,7 @@ RUN apk add --no-cache musl-dev build-base cmake make perl bash pkgconfig ca-cer
 # rust-toolchain.toml, so rustup skips syncing that file's dev-only components
 # (rustfmt/clippy) on first invocation — the image build needs neither, and the sync
 # was pure latency (visible as "downloading component clippy" mid-build).
-ENV RUSTUP_TOOLCHAIN=1.96.0
+ENV RUSTUP_TOOLCHAIN=1.99.1
 
 WORKDIR /app
 
@@ -55,7 +55,7 @@ RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
 # It still runs non-root (uid 10001) so it passes a `restricted` PodSecurity namespace;
 # a dev overlay only needs to relax readOnlyRootFilesystem (so cargo can write
 # /app/target) and the probes/resources.
-FROM rust:1.96.0-bookworm AS dev
+FROM rust:1.99.1-bookworm AS dev
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake perl pkg-config clang lld libssl-dev bash curl \
@@ -63,7 +63,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN cargo install cargo-watch --locked
 
 # Same rationale as the builder stage: skip the dev-only component sync.
-ENV RUSTUP_TOOLCHAIN=1.96.0
+ENV RUSTUP_TOOLCHAIN=1.99.1
 ENV SQLX_OFFLINE=true
 # lld is the single biggest win on debug-rebuild wall-clock.
 ENV RUSTFLAGS="-C link-arg=-fuse-ld=lld"
@@ -102,7 +102,7 @@ ENV CARGO_NET_OFFLINE=true
 COPY . .
 # Two things happen here, and both are load-bearing:
 #
-#   touch — the dummy-src build left a placeholder `app` binary in target/, and COPY
+#   touch — the dummy-src build left a placeholder `overkill-todo` binary in target/, and COPY
 #   stamps the real sources with their (older) build-context mtimes. Cargo compares mtimes,
 #   so it would call the crate FRESH and `cargo watch -x run` would exec the no-op dummy,
 #   which exits 0 immediately. Same trick as the builder stage.
@@ -130,7 +130,7 @@ FROM scratch
 # TLS trust store for outbound HTTPS (OAuth, SMTP, third-party APIs).
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
-COPY --from=builder /app/target/release/app /usr/local/bin/app
+COPY --from=builder /app/target/release/overkill-todo /usr/local/bin/overkill-todo
 
 # Migrations are embedded via the sqlx migrate! macro; no runtime file copy needed.
 
@@ -144,6 +144,6 @@ EXPOSE 4322
 # subcommand (a dependency-free GET /health on the loopback port). /health is the
 # liveness probe; the DB-backed readiness probe is /health/ready.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD ["app", "healthcheck"]
+    CMD ["overkill-todo", "healthcheck"]
 
-ENTRYPOINT ["app"]
+ENTRYPOINT ["overkill-todo"]

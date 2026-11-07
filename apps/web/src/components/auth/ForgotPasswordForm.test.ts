@@ -26,8 +26,12 @@ describe('ForgotPasswordForm', () => {
     const screen = render(ForgotPasswordForm)
 
     await expect.element(screen.getByLabelText(/email/i)).toBeInTheDocument()
-    await expect.element(screen.getByRole('button', { name: /send reset code/i })).toBeInTheDocument()
-    await expect.element(screen.getByRole('link', { name: /back to sign in/i })).toHaveAttribute('href', '/login')
+    await expect
+      .element(screen.getByRole('button', { name: /send reset code/i }))
+      .toBeInTheDocument()
+    await expect
+      .element(screen.getByRole('link', { name: /back to sign in/i }))
+      .toHaveAttribute('href', '/login')
   })
 
   it('validates email before submitting', async () => {

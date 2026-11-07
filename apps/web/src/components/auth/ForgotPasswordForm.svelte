@@ -75,7 +75,8 @@
 
   <Button type="submit" disabled={loading} class="w-full">
     {#if loading}
-      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"></span>
+      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+      ></span>
     {/if}
     Send reset code
   </Button>

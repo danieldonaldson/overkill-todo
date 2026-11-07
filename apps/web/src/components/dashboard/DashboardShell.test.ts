@@ -6,7 +6,9 @@ describe('DashboardShell', () => {
   it('renders brand header and dashboard nav', async () => {
     const screen = render(DashboardShellWrapper)
 
-    await expect.element(screen.getByRole('link', { name: /app/i })).toHaveAttribute('href', '/dashboard')
+    await expect
+      .element(screen.getByRole('link', { name: /overkill todo/i }))
+      .toHaveAttribute('href', '/dashboard')
     await expect.element(screen.getByRole('banner')).toBeInTheDocument()
     await expect.element(screen.getByRole('navigation', { name: /dashboard/i })).toBeInTheDocument()
   })

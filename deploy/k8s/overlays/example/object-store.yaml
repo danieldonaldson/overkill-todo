@@ -2,14 +2,14 @@
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
-  name: app-db-store
+  name: overkill-todo-db-store
 spec:
   retentionPolicy: 14d
   configuration:
-    destinationPath: s3://BUCKET/app-db
+    destinationPath: s3://BUCKET/overkill-todo-db
     endpointURL: https://S3_ENDPOINT
     s3Credentials:
-      accessKeyId: { name: app-db-backup-s3, key: ACCESS_KEY_ID }
-      secretAccessKey: { name: app-db-backup-s3, key: SECRET_ACCESS_KEY }
+      accessKeyId: { name: overkill-todo-db-backup-s3, key: ACCESS_KEY_ID }
+      secretAccessKey: { name: overkill-todo-db-backup-s3, key: SECRET_ACCESS_KEY }
     wal:
       compression: gzip

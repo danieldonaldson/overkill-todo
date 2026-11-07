@@ -15,7 +15,11 @@
     resetTurnstile?: () => void
   }
 
-  let { emailValue = $bindable(''), turnstileToken = null, resetTurnstile = () => {} }: Props = $props()
+  let {
+    emailValue = $bindable(''),
+    turnstileToken = null,
+    resetTurnstile = () => {},
+  }: Props = $props()
 
   let emailError = $state<string | null>(null)
   let formError = $state<string | null>(null)
@@ -71,7 +75,8 @@
 
   <Button type="submit" disabled={loading} class="w-full">
     {#if loading}
-      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"></span>
+      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+      ></span>
     {/if}
     Continue
   </Button>

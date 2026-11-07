@@ -158,11 +158,17 @@
     Enter the 6-digit code sent to <strong class="text-foreground">{email}</strong>
   </p>
 
-  <CodeInput bind:value={code} disabled={loading} error={codeError} oncomplete={handleCodeComplete} />
+  <CodeInput
+    bind:value={code}
+    disabled={loading}
+    error={codeError}
+    oncomplete={handleCodeComplete}
+  />
 
   <Button type="submit" disabled={loading || code.length !== 6} class="w-full">
     {#if loading}
-      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"></span>
+      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+      ></span>
     {/if}
     {loading ? 'Verifying...' : 'Verify email'}
   </Button>
@@ -174,9 +180,17 @@
       <CountdownTimer seconds={cooldownSeconds} oncomplete={handleCooldownComplete} />
     {:else}
       <Turnstile bind:this={turnstileRef} onVerify={handleTurnstileVerify} />
-      <Button type="button" variant="ghost" disabled={resendDisabled} onclick={handleResend} class="w-full">
+      <Button
+        type="button"
+        variant="ghost"
+        disabled={resendDisabled}
+        onclick={handleResend}
+        class="w-full"
+      >
         {#if resending}
-          <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"></span>
+          <span
+            class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+          ></span>
         {/if}
         Resend code
       </Button>

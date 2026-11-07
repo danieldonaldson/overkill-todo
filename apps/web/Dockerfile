@@ -5,9 +5,9 @@ WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml .npmrc ./
 COPY apps/web/package.json apps/web/
 COPY packages/design-tokens/package.json packages/design-tokens/
-RUN pnpm install --filter @app/web... --frozen-lockfile
+RUN pnpm install --filter @overkill-todo/web... --frozen-lockfile
 COPY . .
-RUN pnpm --filter @app/web build
+RUN pnpm --filter @overkill-todo/web build
 
 # ---- dev (local Tilt inner loop: astro dev + Vite HMR, source synced by live_update) ----
 # NOT the final stage — a no-target `docker build` (CI/prod) still lands on the nginx `serve`
@@ -22,7 +22,7 @@ USER node
 COPY --chown=node:node pnpm-workspace.yaml package.json pnpm-lock.yaml .npmrc ./
 COPY --chown=node:node apps/web/package.json apps/web/
 COPY --chown=node:node packages/design-tokens/package.json packages/design-tokens/
-RUN pnpm install --filter @app/web... --frozen-lockfile
+RUN pnpm install --filter @overkill-todo/web... --frozen-lockfile
 COPY --chown=node:node . .
 EXPOSE 8080
 # Invoke astro's binary directly rather than via `pnpm … exec`: pnpm 11's

@@ -9,8 +9,7 @@ export function email(message = 'Please enter a valid email address'): Validatio
 }
 
 export function minLength(min: number, message?: string): ValidationRule<string> {
-  return (value) =>
-    value.length >= min ? null : (message ?? `Must be at least ${min} characters`)
+  return (value) => (value.length >= min ? null : (message ?? `Must be at least ${min} characters`))
 }
 
 export function maxLength(max: number, message?: string): ValidationRule<string> {

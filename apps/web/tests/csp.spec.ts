@@ -66,7 +66,7 @@ test('every inline script in the build is pinned by a CSP hash', () => {
 
   expect(
     [...unpinned],
-    'inline scripts missing from script-src; add these hashes to nginx.conf',
+    'inline scripts missing from script-src; add these hashes to nginx.conf'
   ).toEqual([])
 })
 

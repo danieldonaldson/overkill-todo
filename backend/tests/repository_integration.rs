@@ -12,15 +12,15 @@ use std::sync::Arc;
 use chrono::{Duration, Utc};
 use sqlx::PgPool;
 
-use app::application::ports::{
+use overkill_todo::application::ports::{
     EmailVerificationRepository, OAuthAccountRepository, PasswordResetRepository,
     RefreshTokenRepository, UserRepository,
 };
-use app::domain::entities::{
+use overkill_todo::domain::entities::{
     EmailVerificationCode, OAuthAccount, OAuthProvider, PasswordResetCode, RefreshToken, User,
 };
-use app::domain::value_objects::{Email, RefreshTokenId, ResetCodeId, UserId};
-use app::infrastructure::persistence::{
+use overkill_todo::domain::value_objects::{Email, RefreshTokenId, ResetCodeId, UserId};
+use overkill_todo::infrastructure::persistence::{
     Database, PostgresEmailVerificationRepository, PostgresOAuthAccountRepository,
     PostgresPasswordResetRepository, PostgresRefreshTokenRepository, PostgresUserRepository,
 };
@@ -250,13 +250,19 @@ async fn user_targeted_writes_report_not_found_for_missing_row(pool: PgPool) {
 
     let verify = repo.mark_email_verified(&ghost).await;
     assert!(
-        matches!(verify, Err(app::domain::errors::DomainError::NotFound(_))),
+        matches!(
+            verify,
+            Err(overkill_todo::domain::errors::DomainError::NotFound(_))
+        ),
         "verifying a missing user must be NotFound, got {verify:?}"
     );
 
     let update = repo.update_password(&ghost, "irrelevant-hash").await;
     assert!(
-        matches!(update, Err(app::domain::errors::DomainError::NotFound(_))),
+        matches!(
+            update,
+            Err(overkill_todo::domain::errors::DomainError::NotFound(_))
+        ),
         "updating a missing user's password must be NotFound, got {update:?}"
     );
 }
@@ -303,7 +309,10 @@ async fn refresh_token_rotate_missing_token_conflicts(pool: PgPool) {
     );
     let result = repo.rotate(&RefreshTokenId::new(), &successor).await;
     assert!(
-        matches!(result, Err(app::domain::errors::DomainError::Conflict(_))),
+        matches!(
+            result,
+            Err(overkill_todo::domain::errors::DomainError::Conflict(_))
+        ),
         "rotating a missing token must Conflict: {result:?}"
     );
 }
@@ -499,7 +508,7 @@ async fn email_verification_delete_expired(pool: PgPool) {
 
     // Persist an already-expired code.
     let expired = EmailVerificationCode::from_persistence(
-        app::domain::value_objects::VerificationCodeId::new(),
+        overkill_todo::domain::value_objects::VerificationCodeId::new(),
         user_id,
         "hash".to_string(),
         Utc::now() - Duration::hours(1),

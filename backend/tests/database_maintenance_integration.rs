@@ -1,6 +1,6 @@
 //! Integration coverage for bounded expiry and retention maintenance.
 
-use app::infrastructure::tasks::database_maintenance;
+use overkill_todo::infrastructure::tasks::database_maintenance;
 use sqlx::PgPool;
 use uuid::Uuid;
 

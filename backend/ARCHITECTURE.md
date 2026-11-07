@@ -102,7 +102,7 @@ Never read crypto env vars directly in library code — always go through an inj
 - Refresh tokens stored as SHA-256 hashes; raw token never persisted.
 - Refresh rotation is atomic (single DB transaction).
 - Revoked refresh-token reuse triggers full-family revocation. The reuse/revoked
-  check runs *before (regardless of) the expiry check*, so a stolen token replayed
+  check runs _before (regardless of) the expiry check_, so a stolen token replayed
   after its natural expiry still trips session-wide invalidation
   (`refresh_token.rs`).
 - Google OAuth ID tokens are JWKS-verified (signature + issuer + audience) before

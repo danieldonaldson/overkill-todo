@@ -66,7 +66,7 @@ for (const path of PAGES) {
 
     expect(
       unpinned,
-      `inline scripts on ${path} are blocked in production; add these hashes to nginx.conf and promote`,
+      `inline scripts on ${path} are blocked in production; add these hashes to nginx.conf and promote`
     ).toEqual([])
   })
 }

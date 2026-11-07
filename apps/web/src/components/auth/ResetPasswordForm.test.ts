@@ -24,12 +24,18 @@ describe('ResetPasswordForm', () => {
   })
 
   const setCode = (screen: ReturnType<typeof render>, value: string) => {
-    const input = screen.container.querySelector('input[aria-label="Verification code"]') as HTMLInputElement
+    const input = screen.container.querySelector(
+      'input[aria-label="Verification code"]'
+    ) as HTMLInputElement
     input.value = value
     input.dispatchEvent(new Event('input', { bubbles: true }))
   }
 
-  const fillPassword = async (screen: ReturnType<typeof render>, password: string, confirm = password) => {
+  const fillPassword = async (
+    screen: ReturnType<typeof render>,
+    password: string,
+    confirm = password
+  ) => {
     await screen.getByRole('textbox', { name: /^new password/i }).fill(password)
     await screen.getByRole('textbox', { name: /^confirm new password/i }).fill(confirm)
   }
@@ -37,7 +43,9 @@ describe('ResetPasswordForm', () => {
   it('starts with reset code verification', async () => {
     const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
 
-    expect(screen.container.querySelector('input[aria-label="Verification code"]')).toBeInTheDocument()
+    expect(
+      screen.container.querySelector('input[aria-label="Verification code"]')
+    ).toBeInTheDocument()
     await expect.element(screen.getByRole('button', { name: /verify code/i })).toBeDisabled()
     await expect.element(screen.getByText(/test@example.com/)).toBeInTheDocument()
   })
@@ -49,7 +57,10 @@ describe('ResetPasswordForm', () => {
     setCode(screen, '123456')
 
     await vi.waitFor(() => {
-      expect(api.auth.verifyResetCode).toHaveBeenCalledWith({ email: 'test@example.com', code: '123456' })
+      expect(api.auth.verifyResetCode).toHaveBeenCalledWith({
+        email: 'test@example.com',
+        code: '123456',
+      })
     })
     await expect.element(screen.getByText(/code verified/i)).toBeInTheDocument()
   })
@@ -93,7 +104,9 @@ describe('ResetPasswordForm', () => {
 
     setCode(screen, '000000')
 
-    await expect.element(screen.getByText(/incorrect code\. 1 attempts remaining/i)).toBeInTheDocument()
+    await expect
+      .element(screen.getByText(/incorrect code\. 1 attempts remaining/i))
+      .toBeInTheDocument()
     // Still on the code step — password fields not shown.
     await expect.element(screen.getByRole('button', { name: /verify code/i })).toBeInTheDocument()
   })

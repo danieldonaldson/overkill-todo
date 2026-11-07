@@ -1,11 +1,11 @@
 set dotenv-load := false
 
 backend := "backend"
-web := "@app/web"
+web := "@overkill-todo/web"
 # Refuse npm releases younger than 24h, even if someone bypasses pnpm-workspace.yaml.
 pnpm := "env PNPM_CONFIG_MINIMUM_RELEASE_AGE=1440 pnpm"
 # Host-side DB access for sqlx / tests / psql. Matches compose.yaml.
-db_url := "postgres://app:app@localhost:" + env_var_or_default("DB_PORT", "5432") + "/app"
+db_url := "postgres://overkill_todo:overkill_todo@localhost:" + env_var_or_default("DB_PORT", "5432") + "/overkill_todo"
 
 default:
     @just --list --unsorted
@@ -56,11 +56,11 @@ db-prepare-check:
 # Drop the local database volume and recreate it. Local only.
 db-reset:
     docker compose rm -sfv db
-    docker volume rm -f app_db-data
+    docker volume rm -f overkill-todo_db-data
     just db-up db-migrate
 
 db-psql:
-    docker compose exec db psql -U app -d app
+    docker compose exec db psql -U overkill_todo -d overkill_todo
 
 # Promote a local user to super_admin (bootstrap the first admin).
 grant-admin email:
@@ -68,7 +68,7 @@ grant-admin email:
     set -euo pipefail
     # Bound as a psql variable and quoted by psql (:'em'), never interpolated into SQL.
     out=$(printf '%s\n' "UPDATE users SET role = 'super_admin' WHERE email = :'em' RETURNING email, role;" \
-      | docker compose exec -T db psql -U app -d app -v ON_ERROR_STOP=1 -v em={{ quote(email) }})
+      | docker compose exec -T db psql -U overkill_todo -d overkill_todo -v ON_ERROR_STOP=1 -v em={{ quote(email) }})
     echo "$out"
     if grep -q '^UPDATE 0$' <<<"$out"; then echo "no user matched" >&2; exit 1; fi
 
@@ -112,6 +112,15 @@ e2e-integration:
 smoke url:
     SMOKE_BASE_URL={{url}} {{pnpm}} --filter {{web}} test:e2e:smoke
 
+# Backend coverage over unit + integration tests. HTML report: backend/target/llvm-cov/html.
+coverage: db-up db-migrate
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo llvm-cov nextest --tests --html
+    cd {{backend}} && cargo llvm-cov report --summary-only
+
+# Frontend component-test coverage. HTML report: apps/web/coverage/index.html.
+coverage-web:
+    {{pnpm}} --filter {{web}} test:coverage
+
 audit:
     cd {{backend}} && cargo audit
 
@@ -124,5 +133,5 @@ ci: fmt-check lint lint-js test test-integration db-prepare-check test-web e2e
 # ── Images ───────────────────────────────────────────────────────────────────────
 
 docker-build:
-    docker build -t app-backend {{backend}}
-    docker build -t app-web -f apps/web/Dockerfile .
+    docker build -t overkill-todo-backend {{backend}}
+    docker build -t overkill-todo-web -f apps/web/Dockerfile .

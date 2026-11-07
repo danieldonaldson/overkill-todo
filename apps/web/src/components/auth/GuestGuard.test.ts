@@ -65,7 +65,7 @@ describe('GuestGuard', () => {
   })
 
   it('redirects when only the cached session user is present', async () => {
-    sessionStorage.setItem('app-auth-user', JSON.stringify(verifiedUser))
+    sessionStorage.setItem('overkill-todo-auth-user', JSON.stringify(verifiedUser))
     vi.mocked(api.auth.me).mockResolvedValue(verifiedUser)
 
     render(GuestGuardWrapper)
@@ -108,7 +108,7 @@ describe('GuestGuard', () => {
 
     await expect.element(screen.getByTestId('guest-content')).toBeInTheDocument()
     expect(navigateReplace).not.toHaveBeenCalled()
-    expect(sessionStorage.getItem('app-auth-user')).toBeNull()
+    expect(sessionStorage.getItem('overkill-todo-auth-user')).toBeNull()
   })
 
   it('keeps the auth form hidden while the session check is in flight', async () => {
@@ -117,7 +117,7 @@ describe('GuestGuard', () => {
     vi.mocked(api.auth.me).mockReturnValue(
       new Promise<User>((resolve) => {
         resolveMe = resolve
-      }),
+      })
     )
 
     const screen = render(GuestGuardWrapper)

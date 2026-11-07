@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 @import 'tw-animate-css';
-@import '@app/design-tokens/tokens.css';
+@import '@overkill-todo/design-tokens/tokens.css';
 
 /* Enable class-based dark mode (mode-watcher toggles html.dark) */
 @custom-variant dark (&:is(.dark *));
@@ -13,7 +13,7 @@
   /* One radius language: squircle cards/inputs, pill chips/buttons. */
   --radius: 1rem;
 
-  /* Brand + teal palette live in @app/design-tokens (imported above). */
+  /* Brand + teal palette live in @overkill-todo/design-tokens (imported above). */
 
   /* Surfaces */
   --background: #f7f3ee; /* feather */
@@ -98,7 +98,7 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
-  /* Brand + teal utilities come from @app/design-tokens' @theme block. */
+  /* Brand + teal utilities come from @overkill-todo/design-tokens' @theme block. */
 
   /* shadcn semantic color mappings */
   --color-background: var(--background);

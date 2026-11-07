@@ -16,7 +16,11 @@
     resetTurnstile?: () => void
   }
 
-  let { emailValue = $bindable(''), turnstileToken = null, resetTurnstile = () => {} }: Props = $props()
+  let {
+    emailValue = $bindable(''),
+    turnstileToken = null,
+    resetTurnstile = () => {},
+  }: Props = $props()
 
   let password = $state('')
   let emailError = $state<string | null>(null)
@@ -52,7 +56,12 @@
       navigate('/dashboard')
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'error_code' in error) {
-        const authError = error as { error?: string; message?: string; error_code: string; email?: string }
+        const authError = error as {
+          error?: string
+          message?: string
+          error_code: string
+          email?: string
+        }
 
         if (authError.error_code === 'signup_incomplete') {
           navigate(`/verify-email?email=${encodeURIComponent(authError.email || emailValue)}`)
@@ -106,7 +115,8 @@
 
   <Button type="submit" disabled={loading} class="w-full">
     {#if loading}
-      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"></span>
+      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+      ></span>
     {/if}
     Sign in
   </Button>
@@ -114,6 +124,8 @@
   <OAuthButtons mode="login" />
 
   <p class="text-center text-sm text-muted-foreground">
-    <a href="/forgot-password" class="font-medium text-primary hover:underline">Forgot your password?</a>
+    <a href="/forgot-password" class="font-medium text-primary hover:underline"
+      >Forgot your password?</a
+    >
   </p>
 </form>

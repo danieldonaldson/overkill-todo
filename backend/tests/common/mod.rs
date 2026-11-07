@@ -1,8 +1,11 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use app::domain::errors::DomainError;
-use app::{
+use axum::Router;
+use axum::body::Body;
+use axum::http::header;
+use overkill_todo::domain::errors::DomainError;
+use overkill_todo::{
     application::{
         ports::{EmailService, MxValidator, OAuthAccountRepository, TurnstileService},
         use_cases::{
@@ -35,12 +38,9 @@ use app::{
         },
     },
 };
-use axum::Router;
-use axum::body::Body;
-use axum::http::header;
 use sqlx::PgPool;
 
-use app::shared::crypto::Crypto;
+use overkill_todo::shared::crypto::Crypto;
 
 static TEST_CRYPTO: OnceLock<Arc<Crypto>> = OnceLock::new();
 
@@ -54,7 +54,7 @@ fn test_crypto() -> Arc<Crypto> {
             // Only the crypto slice is needed to build a `Crypto` handle;
             // `Crypto::for_testing()` is library-test-only (`cfg(test)`) and not
             // reachable from this integration-test crate, so build the slice here.
-            let crypto = app::infrastructure::config::CryptoSettings {
+            let crypto = overkill_todo::infrastructure::config::CryptoSettings {
                 argon2_memory_cost: 4096,
                 argon2_time_cost: 1,
                 argon2_parallelism: 1,
@@ -112,7 +112,7 @@ pub fn mint_session_jwt(
     expiration_minutes: i64,
 ) -> String {
     let crypto = test_crypto();
-    app::infrastructure::api::create_jwt(
+    overkill_todo::infrastructure::api::create_jwt(
         user_id,
         email_verified,
         role,
@@ -129,7 +129,7 @@ pub fn mint_session_jwt(
 #[allow(dead_code)]
 pub fn mint_csrf_token(user_id: &str) -> String {
     let crypto = test_crypto();
-    app::infrastructure::api::generate_csrf_token(crypto.csrf_secret(), user_id)
+    overkill_todo::infrastructure::api::generate_csrf_token(crypto.csrf_secret(), user_id)
 }
 
 /// Build a fully wired test application from a sqlx-provided pool.

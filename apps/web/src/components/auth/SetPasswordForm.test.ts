@@ -27,10 +27,16 @@ describe('SetPasswordForm', () => {
       props: { token: 'signup-token', email: 'test@example.com' },
     })
 
-    await expect.element(screen.getByRole('textbox', { name: /email/i })).toHaveValue('test@example.com')
+    await expect
+      .element(screen.getByRole('textbox', { name: /email/i }))
+      .toHaveValue('test@example.com')
     await expect.element(screen.getByRole('textbox', { name: /^password/i })).toBeInTheDocument()
-    await expect.element(screen.getByRole('textbox', { name: /^confirm password/i })).toBeInTheDocument()
-    await expect.element(screen.getByRole('button', { name: /create account/i })).toBeInTheDocument()
+    await expect
+      .element(screen.getByRole('textbox', { name: /^confirm password/i }))
+      .toBeInTheDocument()
+    await expect
+      .element(screen.getByRole('button', { name: /create account/i }))
+      .toBeInTheDocument()
   })
 
   it('validates matching passwords before submitting', async () => {
@@ -42,7 +48,9 @@ describe('SetPasswordForm', () => {
     await screen.getByRole('textbox', { name: /^confirm password/i }).fill('different')
     await screen.getByRole('button', { name: /create account/i }).click()
 
-    await expect.element(screen.getByText(/password must be at least 8 characters/i)).toBeInTheDocument()
+    await expect
+      .element(screen.getByText(/password must be at least 8 characters/i))
+      .toBeInTheDocument()
     expect(api.auth.completeSignup).not.toHaveBeenCalled()
   })
 
@@ -87,9 +95,7 @@ describe('SetPasswordForm', () => {
     await screen.getByRole('textbox', { name: /^confirm password/i }).fill('password123')
     await screen.getByRole('button', { name: /create account/i }).click()
 
-    await expect
-      .element(screen.getByText(/your signup session has expired/i))
-      .toBeInTheDocument()
+    await expect.element(screen.getByText(/your signup session has expired/i)).toBeInTheDocument()
     expect(navigate).not.toHaveBeenCalled()
   })
 

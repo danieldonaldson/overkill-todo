@@ -20,11 +20,11 @@ pub const SESSION_TOKEN_TYPE: &str = "session";
 /// service. A token minted by (or for) another service — even one signed with a
 /// shared key — carries a different `iss`/`aud` and is rejected, closing the
 /// cross-service token-reuse gap.
-pub const TOKEN_ISSUER: &str = "app";
+pub const TOKEN_ISSUER: &str = "overkill-todo";
 
 /// Audience (`aud`) asserted on every session JWT and required by [`verify_jwt`].
 /// See [`TOKEN_ISSUER`].
-pub const TOKEN_AUDIENCE: &str = "app-api";
+pub const TOKEN_AUDIENCE: &str = "overkill-todo-api";
 
 /// JWT claims payload.
 ///

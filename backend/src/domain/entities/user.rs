@@ -29,7 +29,7 @@ use chrono::{DateTime, Utc};
 /// # Examples
 ///
 /// ```
-/// use app::domain::{entities::User, value_objects::Email};
+/// use overkill_todo::domain::{entities::User, value_objects::Email};
 ///
 /// let email = Email::new("user@example.com").unwrap();
 /// let user = User::new(
@@ -105,7 +105,7 @@ impl User {
     /// # Examples
     ///
     /// ```
-    /// use app::domain::{entities::User, value_objects::Email};
+    /// use overkill_todo::domain::{entities::User, value_objects::Email};
     ///
     /// // User with password
     /// let email = Email::new("jane@example.com").unwrap();
@@ -448,7 +448,7 @@ impl User {
     /// # Examples
     ///
     /// ```
-    /// use app::domain::{entities::User, value_objects::Email};
+    /// use overkill_todo::domain::{entities::User, value_objects::Email};
     ///
     /// let email = Email::new("user@example.com").unwrap();
     /// let mut user = User::new(email, Some("hash".to_string()), "John".into(), "Doe".into());

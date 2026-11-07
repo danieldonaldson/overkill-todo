@@ -1,5 +1,5 @@
 {
-  "name": "@app/design-tokens",
+  "name": "@overkill-todo/design-tokens",
   "version": "0.1.0",
   "description": "Shared CSS design tokens (brand palette, motion, radius) for app frontends",
   "private": true,

@@ -16,7 +16,7 @@
           >
             t
           </span>
-          <span>app</span>
+          <span>Overkill Todo</span>
         </a>
 
         <DashboardNav />

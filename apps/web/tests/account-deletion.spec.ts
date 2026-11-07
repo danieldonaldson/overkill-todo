@@ -16,6 +16,12 @@ const TEST_USER = {
 // danger-zone flow in the browser.
 test.describe('account data export & deletion', () => {
   test.beforeEach(async ({ page }) => {
+    // The /users/me/* calls are non-auth endpoints, so the client silently
+    // refreshes first (no token expiry stored yet). Mock it so the request
+    // doesn't fall through the dev proxy to an absent backend.
+    await page.route('**/api/v1/auth/refresh', async (route) => {
+      await route.fulfill({ json: { expires_at: Math.floor(Date.now() / 1000) + 3600 } })
+    })
     await page.route('**/api/v1/auth/me', async (route) => {
       await route.fulfill({ json: TEST_USER })
     })
@@ -50,7 +56,7 @@ test.describe('account data export & deletion', () => {
     await page.getByRole('button', { name: 'Export my data' }).click()
     const download = await downloadPromise
 
-    expect(download.suggestedFilename()).toBe(`app-data-export-${TEST_USER.id}.json`)
+    expect(download.suggestedFilename()).toBe(`overkill-todo-data-export-${TEST_USER.id}.json`)
     expect(exportCount).toBe(1)
     await expect(page.getByText('Your data export has been downloaded.')).toBeVisible()
   })
@@ -91,8 +97,9 @@ test.describe('account data export & deletion', () => {
 
     // The form flips to the scheduled state with a cancel affordance, and the
     // request carried both the password and the confirmation literal.
-    await expect(page.getByText('Account deletion scheduled. You can cancel during the grace period.'))
-      .toBeVisible()
+    await expect(
+      page.getByText('Account deletion scheduled. You can cancel during the grace period.')
+    ).toBeVisible()
     await expect(page.getByText(/scheduled for deletion on/)).toBeVisible()
     expect(deleteBody).toEqual({ confirmation: 'DELETE', password: 'hunter2' })
 

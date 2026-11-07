@@ -37,7 +37,6 @@
   const googleLinked = $derived(user?.oauth_providers?.includes('google') ?? false)
   const deletionScheduledAt = $derived(user?.deletion_scheduled_at ?? null)
 
-
   onMount(async () => {
     // Paint instantly from cache, but always revalidate: this page renders
     // has_password / oauth_providers, which the cache can have stale.
@@ -140,7 +139,7 @@
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `app-data-export-${data.id}.json`
+      anchor.download = `overkill-todo-data-export-${data.id}.json`
       document.body.appendChild(anchor)
       anchor.click()
       anchor.remove()
@@ -265,7 +264,10 @@
         Account
       </h2>
       <div class="flex items-center gap-3 px-5 py-4">
-        <span class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground" aria-hidden="true">
+        <span
+          class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
+          aria-hidden="true"
+        >
           <MailIcon class="size-4" />
         </span>
         <div class="min-w-0">
@@ -289,10 +291,15 @@
 
       <div class="flex flex-col gap-4 border-b border-border px-5 py-4">
         <div class="flex items-center gap-3">
-          <span class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground" aria-hidden="true">
+          <span
+            class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
+            aria-hidden="true"
+          >
             <KeyRoundIcon class="size-4" />
           </span>
-          <p class="text-sm font-medium">{user.has_password ? 'Change password' : 'Set a password'}</p>
+          <p class="text-sm font-medium">
+            {user.has_password ? 'Change password' : 'Set a password'}
+          </p>
         </div>
         <form class="flex max-w-md flex-col gap-4" onsubmit={handlePasswordSubmit}>
           {#if user.has_password}
@@ -327,7 +334,10 @@
 
       <div class="flex items-center justify-between gap-4 px-5 py-4">
         <div class="flex items-center gap-3">
-          <span class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground" aria-hidden="true">
+          <span
+            class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
+            aria-hidden="true"
+          >
             <LinkIcon class="size-4" />
           </span>
           <div>
@@ -336,7 +346,13 @@
           </div>
         </div>
         {#if googleLinked}
-          <Button type="button" variant="outline" size="sm" loading={unlinkingGoogle} onclick={handleUnlinkGoogle}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            loading={unlinkingGoogle}
+            onclick={handleUnlinkGoogle}
+          >
             Unlink Google
           </Button>
         {:else}
@@ -360,22 +376,36 @@
       </h2>
       <div class="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
         <div class="flex items-center gap-3">
-          <span class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground" aria-hidden="true">
+          <span
+            class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
+            aria-hidden="true"
+          >
             <DownloadIcon class="size-4" />
           </span>
           <div>
             <p class="text-sm font-medium">Export my data</p>
-            <p class="text-sm text-muted-foreground">A machine-readable copy of your account data.</p>
+            <p class="text-sm text-muted-foreground">
+              A machine-readable copy of your account data.
+            </p>
           </div>
         </div>
-        <Button type="button" variant="outline" size="sm" loading={exporting} onclick={handleExportData}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          loading={exporting}
+          onclick={handleExportData}
+        >
           {exporting ? 'Preparing export…' : 'Export my data'}
         </Button>
       </div>
 
       <div class="flex flex-col gap-4 px-5 py-4">
         <div class="flex items-center gap-3">
-          <span class="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive" aria-hidden="true">
+          <span
+            class="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
+            aria-hidden="true"
+          >
             <Trash2Icon class="size-4" />
           </span>
           <p class="text-sm font-semibold text-destructive">Delete account</p>
@@ -383,8 +413,8 @@
         {#if deletionScheduledAt}
           <p class="text-sm text-muted-foreground">
             Your account is scheduled for deletion on
-            <span class="font-medium">{formatDateTime(deletionScheduledAt)}</span>. You can cancel any
-            time before then.
+            <span class="font-medium">{formatDateTime(deletionScheduledAt)}</span>. You can cancel
+            any time before then.
           </p>
           <Button
             type="button"
@@ -398,8 +428,8 @@
           </Button>
         {:else}
           <p class="text-sm text-muted-foreground">
-            This schedules permanent deletion of your account and all associated data after a
-            14-day grace period.
+            This schedules permanent deletion of your account and all associated data after a 14-day
+            grace period.
           </p>
           <div class="flex max-w-md flex-col gap-4">
             {#if user.has_password}
@@ -446,7 +476,10 @@
       </h2>
       <div class="flex items-center justify-between gap-4 px-5 py-4">
         <div class="flex items-center gap-3">
-          <span class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground" aria-hidden="true">
+          <span
+            class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
+            aria-hidden="true"
+          >
             <LogOutIcon class="size-4" />
           </span>
           <p class="text-sm font-medium">Sign out of this device</p>

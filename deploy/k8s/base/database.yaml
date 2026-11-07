@@ -1,5 +1,5 @@
 # Postgres via CloudNativePG (operator must be installed). CNPG creates the
-# `app-db-app` secret the backend reads DATABASE_URL from.
+# `overkill-todo-db-app` secret the backend reads DATABASE_URL from.
 #
 # Backups: continuous WAL archiving + base backups to object storage through the
 # barman-cloud plugin. The ObjectStore (bucket, credentials, retention) is
@@ -8,14 +8,14 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: app-db
+  name: overkill-todo-db
 spec:
   instances: 1
   imageName: ghcr.io/cloudnative-pg/postgresql:18
   bootstrap:
     initdb:
-      database: app
-      owner: app
+      database: overkill_todo
+      owner: overkill_todo
   postgresql:
     shared_preload_libraries: [pg_stat_statements]
   storage:
@@ -27,17 +27,17 @@ spec:
     - name: barman-cloud.cloudnative-pg.io
       isWALArchiver: true
       parameters:
-        barmanObjectName: app-db-store
+        barmanObjectName: overkill-todo-db-store
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup
 metadata:
-  name: app-db-daily
+  name: overkill-todo-db-daily
 spec:
-  schedule: "0 0 3 * * *"
+  schedule: '0 0 3 * * *'
   backupOwnerReference: self
   cluster:
-    name: app-db
+    name: overkill-todo-db
   method: plugin
   pluginConfiguration:
     name: barman-cloud.cloudnative-pg.io

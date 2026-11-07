@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui/card'
+  import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+  } from '$lib/components/ui/card'
   import { api } from '../../lib/api'
   import { getSessionUser, setSessionUser } from '../../lib/auth/session'
   import type { User } from '../../lib/types'
@@ -34,8 +40,8 @@
     <CardHeader>
       <CardTitle>Start building</CardTitle>
       <CardDescription>
-        This panel is a placeholder. Add an API group in <code>src/lib/api</code>, a use case
-        behind a port in the backend, and render it here.
+        This panel is a placeholder. Add an API group in <code>src/lib/api</code>, a use case behind
+        a port in the backend, and render it here.
       </CardDescription>
     </CardHeader>
     <CardContent>

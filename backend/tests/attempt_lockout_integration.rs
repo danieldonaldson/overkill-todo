@@ -9,11 +9,11 @@
 
 use std::sync::Arc;
 
-use app::application::ports::{PasswordResetRepository, UserRepository};
-use app::domain::entities::attempt_lockout::{AttemptOutcome, MAX_ATTEMPTS};
-use app::domain::entities::{PasswordResetCode, User};
-use app::domain::value_objects::{Email, UserId};
-use app::infrastructure::persistence::{
+use overkill_todo::application::ports::{PasswordResetRepository, UserRepository};
+use overkill_todo::domain::entities::attempt_lockout::{AttemptOutcome, MAX_ATTEMPTS};
+use overkill_todo::domain::entities::{PasswordResetCode, User};
+use overkill_todo::domain::value_objects::{Email, UserId};
+use overkill_todo::infrastructure::persistence::{
     Database, PostgresPasswordResetRepository, PostgresUserRepository,
 };
 use sqlx::PgPool;

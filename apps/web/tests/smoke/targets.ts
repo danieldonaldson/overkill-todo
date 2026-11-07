@@ -2,9 +2,8 @@
 // origin (the app and /api/v1 share it); the default is a placeholder.
 export const APP_BASE_URL = (process.env.SMOKE_BASE_URL ?? 'https://app.example.com').replace(
   /\/$/,
-  '',
+  ''
 )
-
 
 // Header names are case-insensitive on the wire and HTTP/2 lowercases them;
 // Playwright's headers() already returns them lowercased, but read through this
