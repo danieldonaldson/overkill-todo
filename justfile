@@ -172,7 +172,7 @@ bench *args:
 bench-db *args: db-up
     cd {{backend}} && DATABASE_URL={{db_url}} cargo bench --bench http -- {{args}}
 
-# Frontend benches (Vitest bench in Chromium). Compare: --outputJson .bench/main.json, then --compare .bench/main.json.
+# Frontend benches (Vitest bench in Chromium). Compare against a base ref: `just bench-compare --web`.
 bench-web *args:
     {{pnpm}} --filter {{web}} exec vitest bench --run {{args}}
 
