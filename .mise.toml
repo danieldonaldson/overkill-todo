@@ -1,6 +1,10 @@
-# `mise install` provisions the dev toolchain. Rust comes from rustup via
-# backend/rust-toolchain.toml; Postgres runs in Docker (compose.yaml).
+# `mise install` provisions the whole dev toolchain, Rust included (mise
+# installs rustup itself if missing). Postgres runs in Docker (compose.yaml).
 [tools]
+# MUST match `channel` in backend/rust-toolchain.toml (CI and the Docker build
+# read that file); `just toolchain-check` fails if they drift. Listed first so
+# the cargo: tools below build with it.
+rust = { version = "1.99.1", components = "rustfmt,clippy,llvm-tools" }
 node = "24"
 pnpm = "11"
 just = "latest"
@@ -11,7 +15,7 @@ age = "latest"
 "cargo:cargo-watch" = "latest"   # `just dev` backend auto-reload
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-audit" = "latest"
-"cargo:cargo-llvm-cov" = "latest"   # `just coverage` (needs llvm-tools-preview, pinned in rust-toolchain.toml)
+"cargo:cargo-llvm-cov" = "latest"   # `just coverage` (needs the llvm-tools component above)
 
 # Kubernetes path only (deploy/k8s, optional). Uncomment if you use it.
 # kubectl = "latest"

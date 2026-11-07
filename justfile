@@ -1,5 +1,11 @@
 set dotenv-load := false
 
+# Run every recipe (shebang ones too) with mise's tools first on PATH, so the
+# pinned Rust, node, pnpm, ... win over system installs (e.g. Arch's `rust`)
+# even in shells without `mise activate`. Fails fast if mise is missing.
+export PATH := `mise exec -- printenv PATH || { echo 'mise is required: https://mise.jdx.dev, then "mise trust && mise install"' >&2; exit 1; }`
+export RUSTUP_TOOLCHAIN := `mise exec -- printenv RUSTUP_TOOLCHAIN`
+
 backend := "backend"
 web := "@overkill-todo/web"
 # Refuse npm releases younger than 24h, even if someone bypasses pnpm-workspace.yaml.
@@ -14,7 +20,7 @@ default:
 
 # One-time: tools, deps, browsers, backend/.env, database.
 setup:
-    command -v mise >/dev/null && mise install || echo "mise not found; install node/pnpm/just/sqlx-cli yourself"
+    mise install
     {{pnpm}} install
     {{pnpm}} --filter {{web}} exec playwright install chromium
     ./scripts/gen-dev-env.sh
@@ -78,6 +84,10 @@ fmt:
     cd {{backend}} && cargo fmt
     {{pnpm}} format
 
+# .mise.toml and backend/rust-toolchain.toml must pin the same Rust.
+toolchain-check:
+    ./scripts/check-rust-pin.sh
+
 fmt-check:
     cd {{backend}} && cargo fmt --check
 
@@ -128,7 +138,7 @@ deny:
     cd {{backend}} && cargo deny check
 
 # Everything CI gates on. Green here means green CI.
-ci: fmt-check lint lint-js test test-integration db-prepare-check test-web e2e
+ci: toolchain-check fmt-check lint lint-js test test-integration db-prepare-check test-web e2e
 
 # ── Images ───────────────────────────────────────────────────────────────────────
 

@@ -50,6 +50,10 @@ jobs:
       - name: Toolchain
         run: rustup toolchain install
 
+      # Local dev gets Rust from .mise.toml; it must pin the same version.
+      - name: Rust pins agree
+        run: ../scripts/check-rust-pin.sh
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: backend

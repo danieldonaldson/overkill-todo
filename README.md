@@ -32,8 +32,13 @@ grep -rIl --exclude-dir={node_modules,target,.sqlx,dist} -e '\bapp\b' -e '@overk
 
 ## Daily use
 
+Prerequisites: [mise](https://mise.jdx.dev) and Docker. mise installs everything
+else, Rust included (it installs rustup if needed), and `just` recipes always use
+mise's tools, so a system Rust or Node on `PATH` doesn't matter.
+
 ```bash
-just setup   # once: tools (mise), deps, browsers, backend/.env, database
+mise trust && mise install   # once: just, node, pnpm, Rust, cargo tools
+just setup   # once: deps, browsers, backend/.env, database
 just dev     # backend :4322 + web :4321 (open this one; it proxies /api)
 just         # list every recipe
 just ci      # everything CI checks, locally
