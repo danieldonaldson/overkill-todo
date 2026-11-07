@@ -5,7 +5,7 @@
 # read that file); `just toolchain-check` fails if they drift. Listed first so
 # the cargo: tools below build with it.
 rust = { version = "1.99.1", components = "rustfmt,clippy,llvm-tools" }
-node = "24"
+node = "26"
 pnpm = "11"
 just = "latest"
 sops = "latest"          # SOPS+age: encrypted secrets committed to git

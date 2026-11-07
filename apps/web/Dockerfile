@@ -1,6 +1,7 @@
 # ---- build ----
-FROM node:24-alpine AS build
-RUN corepack enable
+FROM node:26-alpine AS build
+# Node 25+ no longer bundles corepack; install it so pnpm still comes from `packageManager`.
+RUN npm install -g corepack@0.36.0 && corepack enable
 WORKDIR /repo
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml .npmrc ./
 COPY apps/web/package.json apps/web/
@@ -14,8 +15,8 @@ RUN pnpm --filter @overkill-todo/web build
 # stage below. Runs as the built-in non-root `node` user (uid 1000) to satisfy `restricted`
 # PodSecurity, same posture as the backend `dev` stage. Deps install into the layer; Tilt's
 # live_update syncs src/ into the running pod and Vite HMR patches the browser with no rebuild.
-FROM node:24-alpine AS dev
-RUN corepack enable
+FROM node:26-alpine AS dev
+RUN npm install -g corepack@0.36.0 && corepack enable
 WORKDIR /repo
 RUN chown node:node /repo
 USER node
