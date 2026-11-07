@@ -1,0 +1,13 @@
+# Accepted Trivy findings. Every entry needs a reason and an expiry: when it lapses the
+# gate fails again, so an ignore can't silently outlive the reason for it.
+# Used by the image scans in ci.yml and advisories.yml (TRIVY_IGNOREFILE).
+vulnerabilities:
+  - id: CVE-2026-78661
+    purls:
+      - pkg:golang/golang.org/x/net
+    statement: >-
+      golang.org/x/net/html DoS, in the Caddy binary of the web image (caddy 2.11.9 ships
+      x/net v0.60.0). Fixed upstream in caddyserver/caddy#8368 (x/net v0.62.0, merged
+      2026-11-06) but not yet released. Drop this once Dependabot bumps the image to the
+      Caddy release that includes it.
+    expired_at: 2026-11-21

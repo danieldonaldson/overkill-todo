@@ -50,7 +50,9 @@ rustls = { version = "0.23", features = ["aws_lc_rs"] }
 hickory-resolver = { version = "0.26", features = ["tokio"] }
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "hostname", "builder"] }
 utoipa = { version = "6", features = ["axum_extras", "chrono", "uuid"] }
-utoipa-swagger-ui = { version = "10", features = ["axum"] }
+# Optional: its build script downloads the Swagger UI bundle (via curl) and embeds it in
+# the binary, but it's only ever served in DEV_MODE. Release images build without it.
+utoipa-swagger-ui = { version = "10", features = ["axum"], optional = true }
 # Global allocator: secure mode hardens metadata (guard pages, encrypted free
 # lists) at ~10% cost, and reduces fragmentation under our long-lived async load.
 mimalloc = { version = "0.1", default-features = false, features = ["secure"] }
@@ -83,6 +85,9 @@ name = "http"
 harness = false
 
 [features]
+default = ["swagger-ui"]
+# Serves /docs in DEV_MODE. Off in the release image (backend/Dockerfile).
+swagger-ui = ["dep:utoipa-swagger-ui"]
 mocks = []
 
 [lints.rust]

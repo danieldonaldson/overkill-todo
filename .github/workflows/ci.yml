@@ -128,6 +128,13 @@ jobs:
         env:
           SQLX_OFFLINE: 'true'
 
+      # The release image builds with --no-default-features (no Swagger UI). Check that
+      # combination here too, or a break would first surface in the image job on main.
+      - name: Clippy (release features)
+        run: cargo clippy --lib --bins --no-default-features -- -D warnings -W clippy::pedantic -W clippy::nursery
+        env:
+          SQLX_OFFLINE: 'true'
+
       - name: Run migrations
         run: cargo sqlx migrate run
 
@@ -223,6 +230,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      security-events: write # Trivy SARIF -> code scanning
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +254,7 @@ jobs:
         # ghcr requires a lowercase repository path.
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/${{ matrix.component }}" >>"$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v7
+        id: build
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
@@ -255,3 +264,38 @@ jobs:
           cache-to: type=registry,ref=${{ steps.image.outputs.name }}:buildcache,mode=max
           provenance: mode=max
           sbom: true
+
+      # Scan what was just pushed: OS packages (the web image's Alpine base), Go modules
+      # in the Caddy binary, and the crates cargo-auditable embeds in the backend binary.
+      # None of those are covered by cargo-deny or the lockfiles. The image is already
+      # pushed when this runs, but nothing deploys from CI: a red job here means "don't
+      # promote this digest". Pinned by commit: a scanner runs with registry credentials.
+      - name: Scan image (SARIF for code scanning)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_IGNOREFILE: .trivyignore.yaml # time-boxed accepted findings
+        with:
+          image-ref: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+          version: v0.76.2
+          format: sarif
+          output: trivy.sarif
+          limit-severities-for-sarif: true
+          severity: MEDIUM,HIGH,CRITICAL
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-${{ matrix.component }}
+      # Gate on HIGH/CRITICAL with a released fix: those are actionable (bump the base
+      # image or the dependency). Unfixed CVEs show in code scanning without blocking.
+      - name: Scan image (gate)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_IGNOREFILE: .trivyignore.yaml # time-boxed accepted findings
+        with:
+          image-ref: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+          version: v0.76.2
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          # Reuse the trivy binary the first scan installed; its DB is already cached.
+          skip-setup-trivy: true

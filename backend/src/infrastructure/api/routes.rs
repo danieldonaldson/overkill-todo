@@ -11,9 +11,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
+#[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
+#[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
+#[cfg(feature = "swagger-ui")]
+use super::openapi::ApiDoc;
+#[cfg(feature = "swagger-ui")]
 use crate::infrastructure::config::is_dev_mode;
 use crate::shared::crypto::Crypto;
 
@@ -30,7 +35,6 @@ use super::{
         auth_middleware, csrf_middleware, require_fresh_session, require_verified_email,
         security_headers_middleware, trace_id_middleware,
     },
-    openapi::ApiDoc,
 };
 use crate::application::ports::outgoing::UserRepository;
 
@@ -264,13 +268,16 @@ pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
             DEFAULT_REQUEST_TIMEOUT,
         ));
 
-    let mut router = Router::new().merge(health).nest("/api/v1", api);
+    let router = Router::new().merge(health).nest("/api/v1", api);
 
-    // Swagger UI exposes the full API surface; only mount it in dev mode.
-    if is_dev_mode() {
-        router =
-            router.merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", ApiDoc::openapi()));
-    }
+    // Swagger UI exposes the full API surface; only mount it in dev mode. Release images
+    // build without the `swagger-ui` feature, so the bundle isn't even in the binary.
+    #[cfg(feature = "swagger-ui")]
+    let router = if is_dev_mode() {
+        router.merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", ApiDoc::openapi()))
+    } else {
+        router
+    };
 
     router
         .layer(middleware::from_fn(security_headers_middleware))

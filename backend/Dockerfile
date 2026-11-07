@@ -3,15 +3,21 @@
 # ── Build stage: static musl binary ─────────────────────────────────────────────
 # Alpine's rust image targets x86_64-unknown-linux-musl natively, so a plain
 # `cargo build --release` produces a fully static binary (no libc to copy).
-FROM rust:1.99.1-alpine AS builder
+FROM rust:1.99.1-alpine@sha256:44819b27be4c97b0e4d7203bd2e02c4820f97700211b6a37fb4c246a2de59383 AS builder
 
 # Build deps for the C-backed crates:
 #   - aws-lc-rs (via rustls/jsonwebtoken): cmake + a C compiler + perl
 #   - musl-dev / build-base: the musl C toolchain
 #   - bash: some build scripts assume a non-busybox shell
-#   - curl: utoipa-swagger-ui's build script downloads the Swagger UI bundle
-#     at build time via the curl binary (build-stage only; not in the runtime image)
-RUN apk add --no-cache musl-dev build-base cmake make perl bash pkgconfig ca-certificates curl
+# No curl: the only build script that wanted it (utoipa-swagger-ui downloading its
+# bundle) is behind the `swagger-ui` feature, which this image builds without.
+RUN apk add --no-cache musl-dev build-base cmake make perl bash pkgconfig ca-certificates
+
+# cargo-auditable embeds the resolved dependency list in the binary (a small
+# .dep-v0 section). A scratch image has no package database, so without it Trivy,
+# Grype and GitHub's SBOM see an empty image and report it clean no matter which
+# crates are inside. Installed into its own layer, so it's cached across builds.
+RUN cargo install cargo-auditable@0.7.7 --locked
 
 # Build against the pinned channel directly. RUSTUP_TOOLCHAIN takes precedence over
 # rust-toolchain.toml, so rustup skips syncing that file's dev-only components
@@ -35,7 +41,7 @@ RUN mkdir -p src benches && echo "fn main() {}" > src/main.rs && echo "" > src/l
          echo "fn main() {}" > "benches/$b.rs"; done
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
-    cargo build --release --locked
+    cargo auditable build --release --locked --no-default-features
 RUN rm -rf src benches
 
 # Build the real binary. Force sqlx offline mode so the `query!` macros resolve
@@ -46,7 +52,7 @@ COPY . .
 RUN touch src/main.rs src/lib.rs
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
-    cargo build --release --locked
+    cargo auditable build --release --locked --no-default-features
 
 # ── Dev stage: fast incremental inner loop for Tilt (NOT built by CI) ────────────
 # CI/`just build-backend` build the default (last) stage, so this one only runs when a
@@ -59,7 +65,7 @@ RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
 # It still runs non-root (uid 10001) so it passes a `restricted` PodSecurity namespace;
 # a dev overlay only needs to relax readOnlyRootFilesystem (so cargo can write
 # /app/target) and the probes/resources.
-FROM rust:1.99.1-bookworm AS dev
+FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS dev
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake perl pkg-config clang lld libssl-dev bash curl \

@@ -1,7 +1,9 @@
 name: Advisories
 
-# New RustSec advisories land without any code change, and CI only runs the
-# advisory check on backend PRs and pushes to main. This catches the rest.
+# New advisories land without any code change: RustSec ones for our crates, and CVEs
+# against images that were clean when CI built them (nothing rebuilds an image just
+# because a CVE was published). CI only checks on PRs and pushes to main; this catches
+# the rest.
 on:
   schedule:
     - cron: '0 6 * * 1' # Mondays 06:00 UTC, alongside Dependabot's weekly run
@@ -31,3 +33,54 @@ jobs:
 
       - name: Check advisories
         run: cargo deny check advisories
+
+  images:
+    name: Scan ${{ matrix.component }} image
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, web]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 50
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # CI tags every image sha-<commit>; the newest main commit with a published
+      # image is what would be promoted next. (Commits whose image job failed or
+      # was cancelled have no tag, so walk back until one resolves.)
+      - name: Find latest published image
+        id: image
+        run: |
+          name="ghcr.io/${GITHUB_REPOSITORY,,}/${{ matrix.component }}"
+          for sha in $(git log --format=%H -n 50 origin/main); do
+            if docker buildx imagetools inspect "$name:sha-$sha" >/dev/null 2>&1; then
+              echo "ref=$name:sha-$sha" >>"$GITHUB_OUTPUT"
+              echo "Scanning $name:sha-$sha"
+              exit 0
+            fi
+          done
+          echo "::error::no published ${{ matrix.component }} image for the last 50 main commits"
+          exit 1
+
+      # Same gate as CI: fail on HIGH/CRITICAL with a released fix. A red run here
+      # means a rebuild (or base-image / dependency bump) is due.
+      - name: Scan image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_IGNOREFILE: .trivyignore.yaml # time-boxed accepted findings
+        with:
+          image-ref: ${{ steps.image.outputs.ref }}
+          version: v0.76.2
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
