@@ -14,7 +14,6 @@ pub mod jwt;
 pub mod middleware;
 pub mod oauth_state;
 pub mod openapi;
-pub mod responses;
 pub mod routes;
 
 pub use csrf::{generate_csrf_token, verify_csrf_token};

@@ -95,6 +95,36 @@ describe('ResetPasswordForm', () => {
     expect(navigate).toHaveBeenCalledWith('/dashboard')
   })
 
+  it('refuses to reset when the confirmation does not match', async () => {
+    vi.mocked(api.auth.verifyResetCode).mockResolvedValue({ reset_token: 'reset-token' })
+    const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
+
+    setCode(screen, '123456')
+    await vi.waitFor(() => expect(api.auth.verifyResetCode).toHaveBeenCalled())
+    await fillPassword(screen, 'newpassword123', 'newpassword124')
+    await screen.getByRole('button', { name: /reset password/i }).click()
+
+    await expect.element(screen.getByText('Passwords do not match')).toBeInTheDocument()
+    expect(api.auth.resetPassword).not.toHaveBeenCalled()
+  })
+
+  it('asks for the confirmation when the field is left empty', async () => {
+    vi.mocked(api.auth.verifyResetCode).mockResolvedValue({ reset_token: 'reset-token' })
+    const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
+
+    setCode(screen, '123456')
+    await vi.waitFor(() => expect(api.auth.verifyResetCode).toHaveBeenCalled())
+    const newPassword = screen.getByRole('textbox', { name: /^new password/i })
+    await newPassword.fill('newpassword123')
+    // Visit the confirmation field and leave it empty. (Submitting instead is
+    // stopped by the browser's own `required` check before the form's JS runs.)
+    await screen.getByRole('textbox', { name: /^confirm new password/i }).click()
+    await newPassword.click()
+
+    await expect.element(screen.getByText('Please confirm your password')).toBeInTheDocument()
+    expect(api.auth.resetPassword).not.toHaveBeenCalled()
+  })
+
   it('shows the remaining-attempts hint on an invalid reset code', async () => {
     vi.mocked(api.auth.verifyResetCode).mockRejectedValue({
       error_code: 'CODE_INVALID',

@@ -114,6 +114,23 @@ describe('VerifyEmailForm', () => {
       .toBeInTheDocument()
   })
 
+  it('tells already-verified users to log in instead of signing them in', async () => {
+    // The backend answers an already-verified email with an error and no
+    // credentials; it no longer checks the code (or hands out a session) here.
+    vi.mocked(api.auth.verifyEmail).mockRejectedValue({
+      error: 'This email is already verified. Please log in.',
+      error_code: 'ALREADY_VERIFIED',
+    })
+    const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })
+
+    setCode(screen, '123456')
+
+    await expect
+      .element(screen.getByRole('alert'))
+      .toHaveTextContent('This email is already verified. Please log in.')
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
   it('prompts a fresh code when the entered code has expired', async () => {
     vi.mocked(api.auth.verifyEmail).mockRejectedValue({ error_code: 'CODE_EXPIRED' })
     const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })

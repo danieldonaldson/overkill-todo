@@ -665,4 +665,95 @@ mod tests {
         assert!(msg.contains("Configuration errors"));
         assert!(msg.contains("SERVER_PORT must be a valid number"));
     }
+
+    #[test]
+    fn from_env_maps_every_var_to_its_field() {
+        // Every var gets a distinct value, so a swapped mapping (say
+        // SMTP_USERNAME landing in `password`) fails an assertion. Optional vars
+        // are set explicitly too, so a local `.env` (loaded by `from_env` via
+        // dotenvy, which never overrides set vars) can't leak into the result.
+        // DEV_MODE=false leaves the process-wide dev-mode flag at its default.
+        let vars = [
+            ("DATABASE_URL", "postgres://u:p@db.test/app"),
+            ("DATABASE_MAX_CONNECTIONS", "17"),
+            ("SERVER_HOST", "127.0.0.9"),
+            ("SERVER_PORT", "4999"),
+            ("DEV_MODE", "false"),
+            ("APP_NAME", "Mapping Test"),
+            (
+                "FRONTEND_BASE_URL",
+                "https://App.Example.com:8443/some/path/",
+            ),
+            ("ARGON2_MEMORY_COST", "19456"),
+            ("ARGON2_TIME_COST", "3"),
+            ("ARGON2_PARALLELISM", "2"),
+            ("JWT_EXPIRATION_MINUTES", "14"),
+            ("REFRESH_TOKEN_EXPIRATION_DAYS", "29"),
+            ("JWT_PRIVATE_KEY", "private-key"),
+            ("JWT_PUBLIC_KEY", "public-key"),
+            ("CSRF_SECRET", "csrf-secret"),
+            ("SECRETS_ENCRYPTION_KEY", "enc-key"),
+            ("GOOGLE_OAUTH_ENABLED", "TRUE"),
+            ("GOOGLE_CLIENT_ID", "g-id"),
+            ("GOOGLE_CLIENT_SECRET", "g-secret"),
+            ("GOOGLE_REDIRECT_URI", "https://app.example.com/cb"),
+            ("SMTP_HOST", "smtp.test"),
+            ("SMTP_PORT", "2525"),
+            ("SMTP_USERNAME", "smtp-user"),
+            ("SMTP_PASSWORD", "smtp-pass"),
+            ("SMTP_FROM_ADDRESS", "from@example.com"),
+            // Empty counts as unset, like `SMTP_HOST=` placeholders in `.env`.
+            ("SMTP_FROM_NAME", ""),
+            ("TURNSTILE_SECRET_KEY", "turnstile"),
+            ("MX_VALIDATION_ENABLED", "no"),
+        ];
+
+        with_env_vars(&vars, || {
+            let s = Settings::from_env().expect("all vars valid");
+
+            assert_eq!(s.server.host, "127.0.0.9");
+            assert_eq!(s.server.port, 4999);
+            assert!(!s.server.dev_mode);
+            assert_eq!(s.server.app_name, "Mapping Test");
+            assert_eq!(
+                s.server.frontend_base_url,
+                "https://App.Example.com:8443/some/path/"
+            );
+            assert_eq!(s.server.frontend_origin, "https://App.Example.com:8443");
+
+            assert_eq!(s.database.url, "postgres://u:p@db.test/app");
+            assert_eq!(s.database.max_connections, 17);
+
+            assert_eq!(s.crypto.argon2_memory_cost, 19456);
+            assert_eq!(s.crypto.argon2_time_cost, 3);
+            assert_eq!(s.crypto.argon2_parallelism, 2);
+            assert_eq!(s.crypto.jwt_private_key, "private-key");
+            assert_eq!(s.crypto.jwt_public_key, "public-key");
+            assert_eq!(s.crypto.jwt_expiration_minutes, 14);
+            assert_eq!(s.crypto.refresh_token_expiration_days, 29);
+            assert_eq!(s.crypto.csrf_secret_b64, "csrf-secret");
+            assert_eq!(s.crypto.secrets_encryption_key_b64, "enc-key");
+
+            assert!(s.google_oauth.enabled);
+            assert_eq!(s.google_oauth.client_id.as_deref(), Some("g-id"));
+            assert_eq!(s.google_oauth.client_secret.as_deref(), Some("g-secret"));
+            assert_eq!(
+                s.google_oauth.redirect_uri.as_deref(),
+                Some("https://app.example.com/cb")
+            );
+
+            assert_eq!(s.smtp.host.as_deref(), Some("smtp.test"));
+            assert_eq!(s.smtp.port, 2525);
+            assert_eq!(s.smtp.username.as_deref(), Some("smtp-user"));
+            assert_eq!(s.smtp.password.as_deref(), Some("smtp-pass"));
+            assert_eq!(s.smtp.from_address.as_deref(), Some("from@example.com"));
+            assert_eq!(s.smtp.from_name, None);
+
+            assert_eq!(
+                s.bot_protection.turnstile_secret_key.as_deref(),
+                Some("turnstile")
+            );
+            assert!(!s.bot_protection.mx_validation_enabled);
+        });
+    }
 }
