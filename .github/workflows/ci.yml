@@ -91,7 +91,7 @@ jobs:
             { echo '### Backend coverage'; echo '```'; cargo llvm-cov report --summary-only; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: backend-coverage
@@ -126,7 +126,7 @@ jobs:
           if [ -f "$f" ]; then
             { echo '### Web coverage'; echo '```'; cat "$f"; echo '```'; } >>"$GITHUB_STEP_SUMMARY"
           fi
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: web-coverage
@@ -148,7 +148,7 @@ jobs:
       - run: pnpm --filter @overkill-todo/web exec playwright install --with-deps chromium
       - run: pnpm --filter @overkill-todo/web build
       - run: pnpm --filter @overkill-todo/web test:e2e
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
