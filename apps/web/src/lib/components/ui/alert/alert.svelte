@@ -8,6 +8,8 @@
         default: 'bg-card text-card-foreground',
         destructive:
           'text-destructive bg-card *:data-[slot=alert-description]:text-destructive/90 [&>svg]:text-current',
+        success:
+          'border-success/40 bg-success/10 text-success *:data-[slot=alert-description]:text-success/90 [&>svg]:text-current',
       },
     },
     defaultVariants: {
@@ -37,8 +39,8 @@
   bind:this={ref}
   data-slot="alert"
   class={cn(alertVariants({ variant }), className)}
-  {...restProps}
   role="alert"
+  {...restProps}
 >
   {@render children?.()}
 </div>

@@ -226,8 +226,8 @@
   {/if}
 
   {#if message}
-    <Alert role="status" aria-live="polite">
-      <CircleCheckIcon class="size-4 text-primary" />
+    <Alert variant="success" role="status" aria-live="polite">
+      <CircleCheckIcon class="size-4" />
       <AlertDescription>{message}</AlertDescription>
     </Alert>
   {/if}

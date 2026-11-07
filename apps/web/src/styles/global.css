@@ -41,6 +41,9 @@
   /* Destructive */
   --destructive: #d94f3c; /* error */
 
+  /* Success */
+  --success: #2f7d4a;
+
   /* UI chrome */
   --border: #e2dcd3; /* pebble */
   --input: #e2dcd3;
@@ -73,6 +76,9 @@
 
   /* Destructive */
   --destructive: #e0604f;
+
+  /* Success */
+  --success: #5cbf7a;
 
   /* UI chrome */
   --border: #3a3530;
@@ -117,6 +123,7 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-destructive: var(--destructive);
+  --color-success: var(--success);
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
