@@ -28,11 +28,15 @@ COPY Cargo.toml Cargo.lock ./
 # (ci.yml cache-from/to) can restore them between runs. The cache mounts below
 # only persist crate DOWNLOADS across local rebuilds — they sit outside /app, so they
 # don't shadow that layer and can't regress the CI cache path.
-RUN mkdir -p src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs
+# Stub every [[bench]] in Cargo.toml too: cargo validates all declared targets while
+# parsing the manifest, so a missing benches/<name>.rs fails the whole build.
+RUN mkdir -p src benches && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs \
+    && for b in $(sed -n '/^\[\[bench\]\]/,/^name/s/^name *= *"\(.*\)"/\1/p' Cargo.toml); do \
+         echo "fn main() {}" > "benches/$b.rs"; done
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
     cargo build --release --locked
-RUN rm -rf src
+RUN rm -rf src benches
 
 # Build the real binary. Force sqlx offline mode so the `query!` macros resolve
 # against the committed `.sqlx/` cache instead of needing a live DATABASE_URL.
@@ -84,7 +88,11 @@ COPY Cargo.toml Cargo.lock ./
 # the whole graph on EVERY fresh pod (the baked target/ is warm for the wrong linker).
 # (RUSTFLAGS below is not the issue: the env var overrides the config's identical rustflags.)
 COPY .cargo ./.cargo
-RUN mkdir -p src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs
+# Stub every [[bench]] in Cargo.toml too: cargo validates all declared targets while
+# parsing the manifest, so a missing benches/<name>.rs fails the whole build.
+RUN mkdir -p src benches && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs \
+    && for b in $(sed -n '/^\[\[bench\]\]/,/^name/s/^name *= *"\(.*\)"/\1/p' Cargo.toml); do \
+         echo "fn main() {}" > "benches/$b.rs"; done
 # Grant the runtime user (uid 10001) read access to the baked registry: cargo extracts
 # crate sources here as ROOT, and some crates ship their files 0640 in the .crate tarball
 # (fnv is one), which cargo preserves — so the 10001 in-pod `cargo watch` recompile would
@@ -93,7 +101,7 @@ RUN mkdir -p src && echo "fn main() {}" > src/main.rs && echo "" > src/lib.rs
 # just-created files in place (no extra layer / copy-up bloat).
 RUN cargo build --locked \
     && chmod -R a+rX "$CARGO_HOME/registry"
-RUN rm -rf src
+RUN rm -rf src benches
 
 # From here cargo must never hit the network: deps + index are baked above, and the egress
 # policy would otherwise hang the resolve. This is what keeps the dev pod coming up reliably.
