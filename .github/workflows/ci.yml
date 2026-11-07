@@ -20,8 +20,49 @@ env:
   PNPM_CONFIG_MINIMUM_RELEASE_AGE: '1440'
 
 jobs:
+  # On PRs, run only the suites whose inputs changed (a dependabot npm bump doesn't
+  # need the 5+ minute Rust job). Pushes to main and manual runs always run
+  # everything, so images are only ever built from a fully checked commit.
+  # Skipped jobs report success, so required checks still resolve.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      backend: ${{ github.event_name != 'pull_request' || steps.filter.outputs.backend == 'true' }}
+      web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
+    steps:
+      - uses: dorny/paths-filter@v4
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          filters: |
+            shared: &shared
+              - .github/workflows/ci.yml
+              - .mise.toml
+            backend:
+              - *shared
+              - backend/**
+              - scripts/check-rust-pin.sh
+            web:
+              - *shared
+              - apps/**
+              - packages/**
+              - package.json
+              - pnpm-lock.yaml
+              - pnpm-workspace.yaml
+              - .npmrc
+              - .nvmrc
+              - eslint.config.js
+              - .prettierrc
+              - tsconfig.base.json
+
   backend:
     name: Backend
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -42,6 +83,10 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgres://overkill_todo:overkill_todo@localhost/overkill_todo
+      # No debuginfo in CI: nothing reads it (coverage uses its own instrumentation),
+      # and it slows compiling/linking and bloats the rust-cache.
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
     steps:
       - uses: actions/checkout@v7
 
@@ -109,6 +154,8 @@ jobs:
 
   web:
     name: Web
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -140,6 +187,8 @@ jobs:
 
   web-e2e:
     name: Web E2E
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
