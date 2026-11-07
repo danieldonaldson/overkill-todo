@@ -50,7 +50,7 @@ vi.mocked(api.admin.listUsers).mockResolvedValue({ users, limit: PAGE, offset: 0
 async function renderTable(role: UserRole) {
   sessionStorage.clear()
   vi.mocked(api.auth.me).mockResolvedValue(viewer(role))
-  const screen = render(AdminPanel)
+  const screen = await render(AdminPanel)
   const lastEmail = users[PAGE - 1].email
   await vi.waitFor(
     () => {
@@ -58,7 +58,7 @@ async function renderTable(role: UserRole) {
     },
     { interval: 1, timeout: 2000 }
   )
-  screen.unmount()
+  await screen.unmount()
 }
 
 describe('AdminPanel render (50 rows)', () => {

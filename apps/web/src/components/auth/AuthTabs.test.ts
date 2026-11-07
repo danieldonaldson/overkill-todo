@@ -29,7 +29,7 @@ describe('AuthTabs', () => {
 
   it('opens on the sign-in panel and keeps the URL untouched', async () => {
     const replaceState = vi.spyOn(history, 'replaceState').mockImplementation(() => {})
-    const screen = render(AuthTabs, { initial: 'login' })
+    const screen = await render(AuthTabs, { initial: 'login' })
 
     await expect.element(screen.getByRole('heading', { name: 'Welcome back' })).toBeInTheDocument()
     await expect
@@ -40,7 +40,7 @@ describe('AuthTabs', () => {
   })
 
   it('opens on the create-account panel when mounted from /register', async () => {
-    const screen = render(AuthTabs, { initial: 'register' })
+    const screen = await render(AuthTabs, { initial: 'register' })
 
     await expect
       .element(screen.getByRole('heading', { name: 'Create your account' }))
@@ -53,7 +53,7 @@ describe('AuthTabs', () => {
 
   it('swaps panels and rewrites the URL when a tab is selected', async () => {
     const replaceState = vi.spyOn(history, 'replaceState').mockImplementation(() => {})
-    const screen = render(AuthTabs, { initial: 'login' })
+    const screen = await render(AuthTabs, { initial: 'login' })
 
     await screen.getByRole('tab', { name: /create account/i }).click()
 
@@ -67,7 +67,7 @@ describe('AuthTabs', () => {
   })
 
   it('switches to the other panel from the footer prompt', async () => {
-    const screen = render(AuthTabs, { initial: 'register' })
+    const screen = await render(AuthTabs, { initial: 'register' })
 
     await screen.getByRole('button', { name: /^sign in$/i }).click()
 
@@ -78,7 +78,7 @@ describe('AuthTabs', () => {
   })
 
   it('carries the typed email across a tab switch', async () => {
-    const screen = render(AuthTabs, { initial: 'login' })
+    const screen = await render(AuthTabs, { initial: 'login' })
 
     await screen.getByLabelText(/email/i).fill('someone@example.com')
     await screen.getByRole('tab', { name: /create account/i }).click()
@@ -87,7 +87,7 @@ describe('AuthTabs', () => {
   })
 
   it('keeps the shared Turnstile token alive across a tab switch', async () => {
-    const screen = render(AuthTabs, { initial: 'login' })
+    const screen = await render(AuthTabs, { initial: 'login' })
 
     await screen.getByRole('tab', { name: /create account/i }).click()
     await screen.getByLabelText(/email/i).fill('someone@example.com')
@@ -103,7 +103,7 @@ describe('AuthTabs', () => {
 
   it('restores the original URL when the user tabs back', async () => {
     const replaceState = vi.spyOn(history, 'replaceState').mockImplementation(() => {})
-    const screen = render(AuthTabs, { initial: 'login' })
+    const screen = await render(AuthTabs, { initial: 'login' })
 
     await screen.getByRole('tab', { name: /create account/i }).click()
     await screen.getByRole('tab', { name: /sign in/i }).click()

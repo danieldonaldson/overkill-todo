@@ -23,7 +23,7 @@ describe('ResetPasswordForm', () => {
     vi.clearAllMocks()
   })
 
-  const setCode = (screen: ReturnType<typeof render>, value: string) => {
+  const setCode = (screen: Awaited<ReturnType<typeof render>>, value: string) => {
     const input = screen.container.querySelector(
       'input[aria-label="Verification code"]'
     ) as HTMLInputElement
@@ -32,7 +32,7 @@ describe('ResetPasswordForm', () => {
   }
 
   const fillPassword = async (
-    screen: ReturnType<typeof render>,
+    screen: Awaited<ReturnType<typeof render>>,
     password: string,
     confirm = password
   ) => {
@@ -41,7 +41,7 @@ describe('ResetPasswordForm', () => {
   }
 
   it('starts with reset code verification', async () => {
-    const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
+    const screen = await render(ResetPasswordForm, { props: { email: 'test@example.com' } })
 
     expect(
       screen.container.querySelector('input[aria-label="Verification code"]')
@@ -52,7 +52,7 @@ describe('ResetPasswordForm', () => {
 
   it('verifies the reset code before showing password fields', async () => {
     vi.mocked(api.auth.verifyResetCode).mockResolvedValue({ reset_token: 'reset-token' })
-    const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
+    const screen = await render(ResetPasswordForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '123456')
 
@@ -79,7 +79,7 @@ describe('ResetPasswordForm', () => {
         oauth_providers: [],
       },
     })
-    const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
+    const screen = await render(ResetPasswordForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '123456')
     await vi.waitFor(() => expect(api.auth.verifyResetCode).toHaveBeenCalled())
@@ -97,7 +97,7 @@ describe('ResetPasswordForm', () => {
 
   it('refuses to reset when the confirmation does not match', async () => {
     vi.mocked(api.auth.verifyResetCode).mockResolvedValue({ reset_token: 'reset-token' })
-    const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
+    const screen = await render(ResetPasswordForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '123456')
     await vi.waitFor(() => expect(api.auth.verifyResetCode).toHaveBeenCalled())
@@ -110,7 +110,7 @@ describe('ResetPasswordForm', () => {
 
   it('asks for the confirmation when the field is left empty', async () => {
     vi.mocked(api.auth.verifyResetCode).mockResolvedValue({ reset_token: 'reset-token' })
-    const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
+    const screen = await render(ResetPasswordForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '123456')
     await vi.waitFor(() => expect(api.auth.verifyResetCode).toHaveBeenCalled())
@@ -130,7 +130,7 @@ describe('ResetPasswordForm', () => {
       error_code: 'CODE_INVALID',
       attempts_remaining: 1,
     })
-    const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
+    const screen = await render(ResetPasswordForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '000000')
 
@@ -143,7 +143,7 @@ describe('ResetPasswordForm', () => {
 
   it('prompts for a new code when the reset code has expired', async () => {
     vi.mocked(api.auth.verifyResetCode).mockRejectedValue({ error_code: 'CODE_EXPIRED' })
-    const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
+    const screen = await render(ResetPasswordForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '000000')
 
@@ -153,7 +153,7 @@ describe('ResetPasswordForm', () => {
   it('returns to the code step when the reset token expires mid-flow', async () => {
     vi.mocked(api.auth.verifyResetCode).mockResolvedValue({ reset_token: 'reset-token' })
     vi.mocked(api.auth.resetPassword).mockRejectedValue({ error_code: 'TOKEN_EXPIRED' })
-    const screen = render(ResetPasswordForm, { props: { email: 'test@example.com' } })
+    const screen = await render(ResetPasswordForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '123456')
     await vi.waitFor(() => expect(api.auth.verifyResetCode).toHaveBeenCalled())

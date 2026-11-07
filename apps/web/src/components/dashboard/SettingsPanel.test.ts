@@ -50,7 +50,7 @@ describe('SettingsPanel', () => {
   it('loads and displays account details', async () => {
     vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
 
-    const screen = render(SettingsPanel)
+    const screen = await render(SettingsPanel)
 
     await expect.element(screen.getByText('test@example.com')).toBeInTheDocument()
     await expect.element(screen.getByRole('button', { name: /unlink google/i })).toBeInTheDocument()
@@ -59,7 +59,7 @@ describe('SettingsPanel', () => {
   it('changes password for users with an existing password', async () => {
     vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
     vi.mocked(api.users.changePassword).mockResolvedValue(undefined)
-    const screen = render(SettingsPanel)
+    const screen = await render(SettingsPanel)
 
     await screen.getByLabelText(/current password/i).fill('oldpassword123')
     await screen.getByLabelText(/^new password/i).fill('newpassword123')
@@ -75,7 +75,7 @@ describe('SettingsPanel', () => {
 
   it('links Google when not already linked', async () => {
     vi.mocked(api.auth.me).mockResolvedValue({ ...passwordUser, oauth_providers: [] })
-    const screen = render(SettingsPanel)
+    const screen = await render(SettingsPanel)
 
     await screen.getByRole('button', { name: /link google/i }).click()
 
@@ -87,7 +87,7 @@ describe('SettingsPanel', () => {
     vi.mocked(api.users.requestDeletion).mockResolvedValue({
       deletion_scheduled_at: '2026-07-04T00:00:00Z',
     })
-    const screen = render(SettingsPanel)
+    const screen = await render(SettingsPanel)
 
     await screen.getByLabelText(/confirm your password/i).fill('mypassword123')
     await screen.getByLabelText(/type delete to confirm/i).fill('DELETE')
@@ -104,7 +104,7 @@ describe('SettingsPanel', () => {
 
   it('blocks deletion until the password is provided', async () => {
     vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
-    const screen = render(SettingsPanel)
+    const screen = await render(SettingsPanel)
 
     await screen.getByLabelText(/type delete to confirm/i).fill('DELETE')
     await screen.getByRole('button', { name: /delete my account/i }).click()
@@ -118,7 +118,7 @@ describe('SettingsPanel', () => {
   it('surfaces an error when scheduling deletion fails', async () => {
     vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
     vi.mocked(api.users.requestDeletion).mockRejectedValue(new Error('Deletion service down'))
-    const screen = render(SettingsPanel)
+    const screen = await render(SettingsPanel)
 
     await screen.getByLabelText(/confirm your password/i).fill('mypassword123')
     await screen.getByLabelText(/type delete to confirm/i).fill('DELETE')
@@ -130,7 +130,7 @@ describe('SettingsPanel', () => {
   it('surfaces an error when unlinking Google fails', async () => {
     vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
     vi.mocked(api.oauth.unlink).mockRejectedValue(new Error('Unlink failed'))
-    const screen = render(SettingsPanel)
+    const screen = await render(SettingsPanel)
 
     await screen.getByRole('button', { name: /unlink google/i }).click()
 
@@ -157,7 +157,7 @@ describe('SettingsPanel', () => {
     const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fake')
     const revokeUrl = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
 
-    const screen = render(SettingsPanel)
+    const screen = await render(SettingsPanel)
 
     await screen.getByRole('button', { name: /export my data/i }).click()
 
@@ -178,7 +178,7 @@ describe('SettingsPanel', () => {
       deletion_scheduled_at: '2026-07-04T00:00:00Z',
     })
     vi.mocked(api.users.cancelDeletion).mockResolvedValue({})
-    const screen = render(SettingsPanel)
+    const screen = await render(SettingsPanel)
 
     await screen.getByRole('button', { name: /cancel deletion/i }).click()
 
@@ -190,7 +190,7 @@ describe('SettingsPanel', () => {
   it('logs out and navigates to login', async () => {
     vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
     vi.mocked(api.auth.logout).mockResolvedValue(undefined)
-    const screen = render(SettingsPanel)
+    const screen = await render(SettingsPanel)
 
     await screen.getByRole('button', { name: /log out/i }).click()
 

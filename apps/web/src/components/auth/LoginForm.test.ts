@@ -11,7 +11,7 @@ import { navigate } from '../../lib/navigation'
 
 describe('LoginForm', () => {
   const mockFetch = vi.fn()
-  const getPasswordInput = (screen: ReturnType<typeof render>) =>
+  const getPasswordInput = (screen: Awaited<ReturnType<typeof render>>) =>
     screen.getByRole('textbox', { name: /password/i })
 
   beforeEach(() => {
@@ -24,7 +24,7 @@ describe('LoginForm', () => {
   })
 
   it('renders email, password, OAuth, and password-recovery affordances', async () => {
-    const screen = render(LoginForm, { turnstileToken: 'dev-mode-skip' })
+    const screen = await render(LoginForm, { turnstileToken: 'dev-mode-skip' })
 
     await expect.element(screen.getByLabelText(/email/i)).toBeInTheDocument()
     await expect.element(getPasswordInput(screen)).toBeInTheDocument()
@@ -36,7 +36,7 @@ describe('LoginForm', () => {
   })
 
   it('validates fields before submitting', async () => {
-    const screen = render(LoginForm, { turnstileToken: 'dev-mode-skip' })
+    const screen = await render(LoginForm, { turnstileToken: 'dev-mode-skip' })
 
     await screen.getByLabelText(/email/i).fill('notanemail')
     await getPasswordInput(screen).fill('short')
@@ -67,7 +67,7 @@ describe('LoginForm', () => {
         }),
     })
 
-    const screen = render(LoginForm, { turnstileToken: 'dev-mode-skip' })
+    const screen = await render(LoginForm, { turnstileToken: 'dev-mode-skip' })
 
     await screen.getByLabelText(/email/i).fill('test@example.com')
     await getPasswordInput(screen).fill('password123')
@@ -101,7 +101,7 @@ describe('LoginForm', () => {
         }),
     })
 
-    const screen = render(LoginForm, { turnstileToken: 'dev-mode-skip' })
+    const screen = await render(LoginForm, { turnstileToken: 'dev-mode-skip' })
 
     await screen.getByLabelText(/email/i).fill('test@example.com')
     await getPasswordInput(screen).fill('password123')
@@ -118,7 +118,7 @@ describe('LoginForm', () => {
       json: () => Promise.resolve({ message: 'Service unavailable' }),
     })
 
-    const screen = render(LoginForm, { turnstileToken: 'dev-mode-skip' })
+    const screen = await render(LoginForm, { turnstileToken: 'dev-mode-skip' })
 
     await screen.getByLabelText(/email/i).fill('test@example.com')
     await getPasswordInput(screen).fill('password123')
@@ -139,7 +139,7 @@ describe('LoginForm', () => {
         }),
     })
 
-    const screen = render(LoginForm, { turnstileToken: 'dev-mode-skip' })
+    const screen = await render(LoginForm, { turnstileToken: 'dev-mode-skip' })
 
     await screen.getByLabelText(/email/i).fill('incomplete@example.com')
     await getPasswordInput(screen).fill('password123')

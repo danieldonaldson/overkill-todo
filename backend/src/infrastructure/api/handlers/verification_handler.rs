@@ -1,6 +1,6 @@
 //! Email verification and password reset handlers.
 
-use argon2::password_hash::{PasswordHasher, SaltString};
+use argon2::password_hash::PasswordHasher;
 use axum::{
     Json,
     extract::{Query, State},
@@ -9,7 +9,6 @@ use axum::{
 };
 use chrono::{Duration, Utc};
 use jsonwebtoken::{Header, encode};
-use rand_core::OsRng;
 use std::sync::Arc;
 
 use crate::{
@@ -406,11 +405,10 @@ pub async fn reset_password(
     ValidatedJson(request): ValidatedJson<ResetPasswordRequest>,
 ) -> Result<(HeaderMap, Json<AuthResponse>), AppError> {
     // Hash the new password with Argon2id
-    let salt = SaltString::generate(&mut OsRng);
     let password_hash = deps
         .crypto
         .argon2()
-        .hash_password(request.new_password.as_bytes(), &salt)?
+        .hash_password(request.new_password.as_bytes())?
         .to_string();
 
     // Reset password and get the user
@@ -471,11 +469,10 @@ pub async fn complete_signup(
     ValidatedJson(request): ValidatedJson<CompleteRegistrationRequest>,
 ) -> Result<(HeaderMap, Json<AuthResponse>), AppError> {
     // Hash the password with Argon2id
-    let salt = SaltString::generate(&mut OsRng);
     let password_hash = deps
         .crypto
         .argon2()
-        .hash_password(request.password.as_bytes(), &salt)?
+        .hash_password(request.password.as_bytes())?
         .to_string();
 
     // Complete signup and get the user

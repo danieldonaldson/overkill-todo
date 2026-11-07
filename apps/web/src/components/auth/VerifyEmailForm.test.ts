@@ -23,7 +23,7 @@ describe('VerifyEmailForm', () => {
     vi.clearAllMocks()
   })
 
-  const setCode = (screen: ReturnType<typeof render>, value: string) => {
+  const setCode = (screen: Awaited<ReturnType<typeof render>>, value: string) => {
     const input = screen.container.querySelector(
       'input[aria-label="Verification code"]'
     ) as HTMLInputElement
@@ -32,7 +32,7 @@ describe('VerifyEmailForm', () => {
   }
 
   it('renders code entry and resend controls', async () => {
-    const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })
+    const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     expect(
       screen.container.querySelector('input[aria-label="Verification code"]')
@@ -54,7 +54,7 @@ describe('VerifyEmailForm', () => {
         oauth_providers: [],
       },
     })
-    const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })
+    const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '123456')
 
@@ -69,7 +69,7 @@ describe('VerifyEmailForm', () => {
 
   it('navigates new users with signup token to set-password', async () => {
     vi.mocked(api.auth.verifyEmail).mockResolvedValue({ signup_token: 'signup-token' })
-    const screen = render(VerifyEmailForm, { props: { email: 'new@example.com' } })
+    const screen = await render(VerifyEmailForm, { props: { email: 'new@example.com' } })
 
     setCode(screen, '123456')
 
@@ -82,7 +82,7 @@ describe('VerifyEmailForm', () => {
 
   it('resends verification with Turnstile token', async () => {
     vi.mocked(api.auth.resendVerification).mockResolvedValue({ cooldown_seconds: 300 })
-    const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })
+    const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     await screen.getByRole('button', { name: /resend code/i }).click()
 
@@ -105,7 +105,7 @@ describe('VerifyEmailForm', () => {
       error_code: 'CODE_INVALID',
       attempts_remaining: 2,
     })
-    const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })
+    const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '123456')
 
@@ -121,7 +121,7 @@ describe('VerifyEmailForm', () => {
       error: 'This email is already verified. Please log in.',
       error_code: 'ALREADY_VERIFIED',
     })
-    const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })
+    const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '123456')
 
@@ -133,7 +133,7 @@ describe('VerifyEmailForm', () => {
 
   it('prompts a fresh code when the entered code has expired', async () => {
     vi.mocked(api.auth.verifyEmail).mockRejectedValue({ error_code: 'CODE_EXPIRED' })
-    const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })
+    const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     setCode(screen, '123456')
 
@@ -145,7 +145,7 @@ describe('VerifyEmailForm', () => {
       error_code: 'COOLDOWN_ACTIVE',
       cooldown_seconds: 120,
     })
-    const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })
+    const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     await screen.getByRole('button', { name: /resend code/i }).click()
 
@@ -158,7 +158,7 @@ describe('VerifyEmailForm', () => {
 
   it('redirects to the dashboard when resending reports the email is already verified', async () => {
     vi.mocked(api.auth.resendVerification).mockRejectedValue({ error_code: 'ALREADY_VERIFIED' })
-    const screen = render(VerifyEmailForm, { props: { email: 'test@example.com' } })
+    const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     await screen.getByRole('button', { name: /resend code/i }).click()
 

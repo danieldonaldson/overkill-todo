@@ -23,7 +23,7 @@ describe('ForgotPasswordForm', () => {
   })
 
   it('renders the reset request form', async () => {
-    const screen = render(ForgotPasswordForm)
+    const screen = await render(ForgotPasswordForm)
 
     await expect.element(screen.getByLabelText(/email/i)).toBeInTheDocument()
     await expect
@@ -35,7 +35,7 @@ describe('ForgotPasswordForm', () => {
   })
 
   it('validates email before submitting', async () => {
-    const screen = render(ForgotPasswordForm)
+    const screen = await render(ForgotPasswordForm)
 
     await screen.getByLabelText(/email/i).fill('invalid')
     await screen.getByRole('button', { name: /send reset code/i }).click()
@@ -46,7 +46,7 @@ describe('ForgotPasswordForm', () => {
 
   it('requests a reset code with Turnstile token and navigates to reset-password', async () => {
     vi.mocked(api.auth.forgotPassword).mockResolvedValue(undefined)
-    const screen = render(ForgotPasswordForm)
+    const screen = await render(ForgotPasswordForm)
 
     await screen.getByLabelText(/email/i).fill('test@example.com')
     await screen.getByRole('button', { name: /send reset code/i }).click()
@@ -62,7 +62,7 @@ describe('ForgotPasswordForm', () => {
 
   it('surfaces an error and stays put when the request fails', async () => {
     vi.mocked(api.auth.forgotPassword).mockRejectedValue(new Error('Email service down'))
-    const screen = render(ForgotPasswordForm)
+    const screen = await render(ForgotPasswordForm)
 
     await screen.getByLabelText(/email/i).fill('test@example.com')
     await screen.getByRole('button', { name: /send reset code/i }).click()

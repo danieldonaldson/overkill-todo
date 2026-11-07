@@ -11,7 +11,7 @@ import ThemeToggle from './ThemeToggle.svelte'
 
 describe('ThemeToggle', () => {
   it('renders a labelled toggle button reflecting the current (light) mode', async () => {
-    const screen = render(ThemeToggle)
+    const screen = await render(ThemeToggle)
 
     const button = screen.getByRole('button', { name: /toggle theme/i })
     await expect.element(button).toBeInTheDocument()
@@ -19,7 +19,7 @@ describe('ThemeToggle', () => {
   })
 
   it('calls toggleMode when clicked', async () => {
-    const screen = render(ThemeToggle)
+    const screen = await render(ThemeToggle)
 
     await screen.getByRole('button', { name: /toggle theme/i }).click()
 

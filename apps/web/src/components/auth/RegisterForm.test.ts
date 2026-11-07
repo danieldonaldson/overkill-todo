@@ -24,7 +24,7 @@ describe('RegisterForm', () => {
   })
 
   it('renders email-first signup without password fields', async () => {
-    const screen = render(RegisterForm, { turnstileToken: 'dev-mode-skip' })
+    const screen = await render(RegisterForm, { turnstileToken: 'dev-mode-skip' })
 
     await expect.element(screen.getByLabelText(/email/i)).toBeInTheDocument()
     await expect.element(screen.getByRole('button', { name: /continue/i })).toBeInTheDocument()
@@ -32,7 +32,7 @@ describe('RegisterForm', () => {
   })
 
   it('validates email before submitting', async () => {
-    const screen = render(RegisterForm, { turnstileToken: 'dev-mode-skip' })
+    const screen = await render(RegisterForm, { turnstileToken: 'dev-mode-skip' })
 
     await screen.getByLabelText(/email/i).fill('notanemail')
     await screen.getByRole('button', { name: /continue/i }).click()
@@ -47,7 +47,7 @@ describe('RegisterForm', () => {
       message: 'Verification code sent',
     })
 
-    const screen = render(RegisterForm, { turnstileToken: 'dev-mode-skip' })
+    const screen = await render(RegisterForm, { turnstileToken: 'dev-mode-skip' })
 
     await screen.getByLabelText(/email/i).fill('john@example.com')
     await screen.getByRole('button', { name: /continue/i }).click()
@@ -63,7 +63,7 @@ describe('RegisterForm', () => {
 
   it('surfaces an error and stays put when registration fails', async () => {
     vi.mocked(api.auth.register).mockRejectedValue(new Error('Email already registered'))
-    const screen = render(RegisterForm, { turnstileToken: 'dev-mode-skip' })
+    const screen = await render(RegisterForm, { turnstileToken: 'dev-mode-skip' })
 
     await screen.getByLabelText(/email/i).fill('john@example.com')
     await screen.getByRole('button', { name: /continue/i }).click()

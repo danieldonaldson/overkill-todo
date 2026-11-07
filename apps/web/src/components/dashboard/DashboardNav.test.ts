@@ -6,7 +6,7 @@ import DashboardNavAdminWrapper from './DashboardNavAdminWrapper.test.svelte'
 
 describe('DashboardNav', () => {
   it('renders Home and Settings links', async () => {
-    const screen = render(DashboardNavWrapper)
+    const screen = await render(DashboardNavWrapper)
 
     await expect
       .element(screen.getByRole('link', { name: /home/i }))
@@ -17,20 +17,20 @@ describe('DashboardNav', () => {
   })
 
   it('renders a theme toggle', async () => {
-    const screen = render(DashboardNavWrapper)
+    const screen = await render(DashboardNavWrapper)
 
     await expect.element(screen.getByRole('button', { name: /toggle theme/i })).toBeInTheDocument()
   })
 
   it('hides the Admin link for non-admin users', async () => {
-    const screen = render(DashboardNavWrapper)
+    const screen = await render(DashboardNavWrapper)
 
     await expect.element(screen.getByRole('link', { name: /home/i })).toBeInTheDocument()
     expect(screen.container.querySelector('a[href="/dashboard/admin"]')).toBeNull()
   })
 
   it('shows the Admin link for admin users', async () => {
-    const screen = render(DashboardNavAdminWrapper)
+    const screen = await render(DashboardNavAdminWrapper)
 
     await expect
       .element(screen.getByRole('link', { name: /admin/i }))
@@ -38,7 +38,7 @@ describe('DashboardNav', () => {
   })
 
   it('marks the active route with aria-current="page"', async () => {
-    const screen = render(DashboardNav, { props: { pathname: '/dashboard/settings' } })
+    const screen = await render(DashboardNav, { props: { pathname: '/dashboard/settings' } })
 
     await expect
       .element(screen.getByRole('link', { name: /settings/i }))

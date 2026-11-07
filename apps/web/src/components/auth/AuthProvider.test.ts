@@ -39,7 +39,7 @@ describe('AuthProvider', () => {
   })
 
   it('provides unauthenticated context without a user', async () => {
-    const screen = render(AuthProviderWrapper)
+    const screen = await render(AuthProviderWrapper)
 
     await expect.element(screen.getByTestId('context-consumer')).toBeInTheDocument()
     await expect.element(screen.getByTestId('is-authenticated')).toHaveTextContent('false')
@@ -48,7 +48,7 @@ describe('AuthProvider', () => {
   })
 
   it('provides authenticated context from initial user', async () => {
-    const screen = render(AuthProviderWrapper, { props: { initialUser: mockUser } })
+    const screen = await render(AuthProviderWrapper, { props: { initialUser: mockUser } })
 
     await expect.element(screen.getByTestId('is-authenticated')).toHaveTextContent('true')
     await expect.element(screen.getByTestId('user-email')).toHaveTextContent('test@example.com')
@@ -56,7 +56,7 @@ describe('AuthProvider', () => {
 
   it('logs out and replaces navigation with login', async () => {
     vi.mocked(api.auth.logout).mockResolvedValue(undefined)
-    const screen = render(AuthProviderWrapper, { props: { initialUser: mockUser } })
+    const screen = await render(AuthProviderWrapper, { props: { initialUser: mockUser } })
 
     await screen.getByTestId('logout-btn').click()
 

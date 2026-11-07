@@ -43,7 +43,7 @@ describe('Turnstile', () => {
   it('auto-verifies with the dev token and renders no widget in dev mode', async () => {
     // The browser test harness serves from localhost, so isDev is true here.
     const onVerify = vi.fn()
-    render(Turnstile, { props: { onVerify } })
+    await render(Turnstile, { props: { onVerify } })
 
     await vi.waitFor(() => expect(onVerify).toHaveBeenCalledWith('dev-mode-skip'))
     expect(document.querySelector('.turnstile-container')).toBeNull()
@@ -52,7 +52,7 @@ describe('Turnstile', () => {
   it('renders the widget in production mode when the script is already loaded', async () => {
     const { api } = stubTurnstile()
     const onVerify = vi.fn()
-    render(Turnstile, { props: { onVerify, forceProduction: true } })
+    await render(Turnstile, { props: { onVerify, forceProduction: true } })
 
     await vi.waitFor(() => expect(api.render).toHaveBeenCalledTimes(1))
     expect(document.querySelector('.turnstile-container')).not.toBeNull()
@@ -61,7 +61,7 @@ describe('Turnstile', () => {
   it('stays invisible unless Cloudflare wants to challenge the visitor', async () => {
     const { api, lastOpts } = stubTurnstile()
     const onVerify = vi.fn()
-    render(Turnstile, { props: { onVerify, forceProduction: true } })
+    await render(Turnstile, { props: { onVerify, forceProduction: true } })
 
     await vi.waitFor(() => expect(api.render).toHaveBeenCalled())
     expect(lastOpts().appearance).toBe('interaction-only')
@@ -70,7 +70,7 @@ describe('Turnstile', () => {
   it('forwards the success token and clears it on error/expiry', async () => {
     const { api, lastOpts } = stubTurnstile()
     const onVerify = vi.fn()
-    render(Turnstile, { props: { onVerify, forceProduction: true } })
+    await render(Turnstile, { props: { onVerify, forceProduction: true } })
 
     await vi.waitFor(() => expect(api.render).toHaveBeenCalled())
     const opts = lastOpts()
@@ -86,7 +86,7 @@ describe('Turnstile', () => {
 
   it('injects the Cloudflare script and drains the render queue on load', async () => {
     const onVerify = vi.fn()
-    render(Turnstile, { props: { onVerify, forceProduction: true } })
+    await render(Turnstile, { props: { onVerify, forceProduction: true } })
 
     await vi.waitFor(() =>
       expect(document.querySelector('script[src*="turnstile"]')).not.toBeNull()

@@ -23,7 +23,7 @@ describe('SetPasswordForm', () => {
   })
 
   it('renders account completion fields', async () => {
-    const screen = render(SetPasswordForm, {
+    const screen = await render(SetPasswordForm, {
       props: { token: 'signup-token', email: 'test@example.com' },
     })
 
@@ -40,7 +40,7 @@ describe('SetPasswordForm', () => {
   })
 
   it('validates matching passwords before submitting', async () => {
-    const screen = render(SetPasswordForm, {
+    const screen = await render(SetPasswordForm, {
       props: { token: 'signup-token', email: 'test@example.com' },
     })
 
@@ -67,7 +67,7 @@ describe('SetPasswordForm', () => {
         oauth_providers: [],
       },
     })
-    const screen = render(SetPasswordForm, {
+    const screen = await render(SetPasswordForm, {
       props: { token: 'signup-token', email: 'test@example.com' },
     })
 
@@ -87,7 +87,7 @@ describe('SetPasswordForm', () => {
 
   it('explains an expired signup token and does not navigate', async () => {
     vi.mocked(api.auth.completeSignup).mockRejectedValue({ error_code: 'TOKEN_EXPIRED' })
-    const screen = render(SetPasswordForm, {
+    const screen = await render(SetPasswordForm, {
       props: { token: 'signup-token', email: 'test@example.com' },
     })
 
@@ -100,7 +100,7 @@ describe('SetPasswordForm', () => {
   })
 
   it('blocks submission when the signup token is missing', async () => {
-    const screen = render(SetPasswordForm, { props: { token: '', email: 'test@example.com' } })
+    const screen = await render(SetPasswordForm, { props: { token: '', email: 'test@example.com' } })
 
     await screen.getByRole('textbox', { name: /^password/i }).fill('password123')
     await screen.getByRole('textbox', { name: /^confirm password/i }).fill('password123')

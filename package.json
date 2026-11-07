@@ -16,15 +16,15 @@
     "prepare": "husky"
   },
   "devDependencies": {
-    "@commitlint/cli": "^21.0.2",
-    "@commitlint/config-conventional": "^21.0.2",
-    "eslint": "^10.5.0",
-    "eslint-plugin-svelte": "^3.14.0",
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
+    "eslint": "^10.14.0",
+    "eslint-plugin-svelte": "^3.24.0",
     "husky": "^9.1.7",
-    "prettier": "^3.8.4",
+    "prettier": "^3.9.10",
     "prettier-plugin-svelte": "^4.1.1",
-    "svelte-eslint-parser": "^1.4.0",
+    "svelte-eslint-parser": "^1.10.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.61.1"
+    "typescript-eslint": "^8.72.1"
   }
 }

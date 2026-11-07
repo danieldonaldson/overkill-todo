@@ -627,7 +627,7 @@ mod tests {
         let err: AppError = argon2::Error::AlgorithmInvalid.into();
         assert!(matches!(err, AppError::Internal(msg) if msg.contains("Password hashing")));
 
-        let ph_err: AppError = argon2::password_hash::Error::Password.into();
+        let ph_err: AppError = argon2::password_hash::Error::PasswordInvalid.into();
         assert!(matches!(ph_err, AppError::Internal(msg) if msg.contains("Password hashing")));
     }
 }

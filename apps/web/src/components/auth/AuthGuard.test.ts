@@ -42,7 +42,7 @@ describe('AuthGuard', () => {
     vi.mocked(api.auth.me).mockResolvedValue(verifiedUser)
     const onAuthenticated = vi.fn()
 
-    const screen = render(AuthGuardWrapper, {
+    const screen = await render(AuthGuardWrapper, {
       props: { childText: 'Secret content', onAuthenticated },
     })
 
@@ -54,7 +54,7 @@ describe('AuthGuard', () => {
     sessionStorage.setItem('overkill-todo-auth-user', JSON.stringify(verifiedUser))
     vi.mocked(api.auth.me).mockRejectedValue(new Error('Unauthorized'))
 
-    render(AuthGuardWrapper)
+    await render(AuthGuardWrapper)
 
     await vi.waitFor(() => {
       expect(api.auth.me).toHaveBeenCalled()
@@ -65,7 +65,7 @@ describe('AuthGuard', () => {
   it('redirects unauthenticated users to login', async () => {
     vi.mocked(api.auth.me).mockRejectedValue(new Error('Unauthorized'))
 
-    render(AuthGuardWrapper)
+    await render(AuthGuardWrapper)
 
     await vi.waitFor(() => {
       expect(navigateReplace).toHaveBeenCalledWith('/login')
@@ -78,7 +78,7 @@ describe('AuthGuard', () => {
       email_verified: false,
     })
 
-    render(AuthGuardWrapper)
+    await render(AuthGuardWrapper)
 
     await vi.waitFor(() => {
       expect(navigateReplace).toHaveBeenCalledWith('/verify-email?email=test%40example.com')
@@ -91,7 +91,7 @@ describe('AuthGuard', () => {
       email_verified: false,
     })
 
-    const screen = render(AuthGuardWrapper, { props: { skipVerificationCheck: true } })
+    const screen = await render(AuthGuardWrapper, { props: { skipVerificationCheck: true } })
 
     await expect.element(screen.getByTestId('protected-content')).toBeInTheDocument()
     expect(navigateReplace).not.toHaveBeenCalled()

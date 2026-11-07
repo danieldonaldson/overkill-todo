@@ -1,11 +1,11 @@
 use argon2::PasswordHasher as Argon2PasswordHasher;
-use argon2::password_hash::{PasswordHash, PasswordVerifier, SaltString};
+use argon2::password_hash::PasswordVerifier;
+use argon2::password_hash::phc::PasswordHash;
 use axum::{
     Json,
     extract::State,
     http::header::{self, HeaderMap},
 };
-use rand_core::OsRng;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -51,10 +51,9 @@ const REGISTRATION_SEND_BUDGET: Duration = Duration::from_secs(10);
 fn dummy_password_hash(crypto: &Crypto) -> &'static str {
     static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     DUMMY.get_or_init(|| {
-        let salt = SaltString::generate(&mut OsRng);
         crypto
             .argon2()
-            .hash_password(b"timing-equalization-dummy", &salt)
+            .hash_password(b"timing-equalization-dummy")
             .expect("dummy password hash should always compute")
             .to_string()
     })

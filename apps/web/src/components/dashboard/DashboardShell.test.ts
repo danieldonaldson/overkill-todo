@@ -4,7 +4,7 @@ import DashboardShellWrapper from './DashboardShellWrapper.test.svelte'
 
 describe('DashboardShell', () => {
   it('renders brand header and dashboard nav', async () => {
-    const screen = render(DashboardShellWrapper)
+    const screen = await render(DashboardShellWrapper)
 
     await expect
       .element(screen.getByRole('link', { name: /overkill todo/i }))
@@ -14,7 +14,7 @@ describe('DashboardShell', () => {
   })
 
   it('renders children inside the main region', async () => {
-    const screen = render(DashboardShellWrapper, { props: { childText: 'Secret dashboard' } })
+    const screen = await render(DashboardShellWrapper, { props: { childText: 'Secret dashboard' } })
 
     await expect.element(screen.getByRole('main')).toBeInTheDocument()
     await expect.element(screen.getByTestId('shell-content')).toHaveTextContent('Secret dashboard')

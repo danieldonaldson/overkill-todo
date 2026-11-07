@@ -19,7 +19,7 @@ describe('OAuthButtons', () => {
   })
 
   it('renders a Google login button with divider copy', async () => {
-    const screen = render(OAuthButtons)
+    const screen = await render(OAuthButtons)
 
     await expect.element(screen.getByText('Or continue with')).toBeInTheDocument()
     await expect
@@ -28,7 +28,7 @@ describe('OAuthButtons', () => {
   })
 
   it('starts Google login by default', async () => {
-    const screen = render(OAuthButtons)
+    const screen = await render(OAuthButtons)
 
     await screen.getByRole('button', { name: /google/i }).click()
 
@@ -37,7 +37,7 @@ describe('OAuthButtons', () => {
   })
 
   it('starts Google linking in link mode', async () => {
-    const screen = render(OAuthButtons, { props: { mode: 'link' } })
+    const screen = await render(OAuthButtons, { props: { mode: 'link' } })
 
     await screen.getByRole('button', { name: /google/i }).click()
 

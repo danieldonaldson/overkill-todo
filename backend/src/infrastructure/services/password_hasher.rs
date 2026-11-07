@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use argon2::PasswordHasher as Argon2PasswordHasher;
-use argon2::password_hash::{PasswordHash, PasswordVerifier, SaltString};
+use argon2::password_hash::PasswordVerifier;
+use argon2::password_hash::phc::PasswordHash;
 use async_trait::async_trait;
-use rand_core::OsRng;
 
 use crate::application::ports::PasswordHasher;
 use crate::domain::errors::DomainError;
@@ -29,10 +29,9 @@ impl Argon2Hasher {
 impl Argon2Hasher {
     /// Synchronous Argon2 hash — CPU-bound; run on a blocking thread.
     fn hash_blocking(crypto: &Crypto, password: &str) -> Result<String, DomainError> {
-        let salt = SaltString::generate(&mut OsRng);
         let hash = crypto
             .argon2()
-            .hash_password(password.as_bytes(), &salt)
+            .hash_password(password.as_bytes())
             .map_err(|e| DomainError::Persistence(format!("Failed to hash password: {e}")))?;
         Ok(hash.to_string())
     }

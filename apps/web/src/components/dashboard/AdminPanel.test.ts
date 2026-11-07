@@ -47,7 +47,7 @@ const bob: AdminUserRow = {
   created_at: 'not-a-date',
 }
 
-function aliceRoleSelect(screen: ReturnType<typeof render>) {
+function aliceRoleSelect(screen: Awaited<ReturnType<typeof render>>) {
   return screen.getByRole('row').filter({ hasText: 'alice@example.com' }).getByRole('combobox')
 }
 
@@ -61,7 +61,7 @@ describe('AdminPanel', () => {
   it('redirects non-admins to the dashboard without rendering users', async () => {
     vi.mocked(api.auth.me).mockResolvedValue(viewer('user'))
 
-    const screen = render(AdminPanel)
+    const screen = await render(AdminPanel)
 
     await vi.waitFor(() => expect(navigateReplace).toHaveBeenCalledWith('/dashboard'))
     expect(screen.container.textContent).not.toContain('alice@example.com')
@@ -70,7 +70,7 @@ describe('AdminPanel', () => {
   it('redirects when the identity check fails and nothing is cached', async () => {
     vi.mocked(api.auth.me).mockRejectedValue(new Error('network down'))
 
-    render(AdminPanel)
+    await render(AdminPanel)
 
     await vi.waitFor(() => expect(navigateReplace).toHaveBeenCalledWith('/dashboard'))
   })
@@ -78,7 +78,7 @@ describe('AdminPanel', () => {
   it('shows a read-only user list to admins', async () => {
     vi.mocked(api.auth.me).mockResolvedValue(viewer('admin'))
 
-    const screen = render(AdminPanel)
+    const screen = await render(AdminPanel)
 
     await expect.element(screen.getByText('alice@example.com')).toBeInTheDocument()
     await expect.element(screen.getByText('All registered users.')).toBeInTheDocument()
@@ -92,7 +92,7 @@ describe('AdminPanel', () => {
     vi.mocked(api.auth.me).mockResolvedValue(viewer('admin'))
     vi.mocked(api.admin.listUsers).mockRejectedValue(new Error('Forbidden'))
 
-    const screen = render(AdminPanel)
+    const screen = await render(AdminPanel)
 
     await expect.element(screen.getByText('Forbidden')).toBeInTheDocument()
   })
@@ -101,7 +101,7 @@ describe('AdminPanel', () => {
     vi.mocked(api.auth.me).mockResolvedValue(viewer('admin'))
     vi.mocked(api.admin.listUsers).mockResolvedValue({ users: [], limit: 50, offset: 0 })
 
-    const screen = render(AdminPanel)
+    const screen = await render(AdminPanel)
 
     await expect.element(screen.getByText('No users.')).toBeInTheDocument()
   })
@@ -110,7 +110,7 @@ describe('AdminPanel', () => {
     vi.mocked(api.auth.me).mockResolvedValue(viewer('super_admin'))
     vi.mocked(api.admin.setRole).mockResolvedValue({ ...alice, role: 'admin' })
 
-    const screen = render(AdminPanel)
+    const screen = await render(AdminPanel)
     await expect.element(screen.getByText('Manage user roles.')).toBeInTheDocument()
 
     await aliceRoleSelect(screen).selectOptions('admin')
@@ -126,7 +126,7 @@ describe('AdminPanel', () => {
     vi.mocked(api.auth.me).mockResolvedValue(viewer('super_admin'))
     vi.mocked(api.admin.setRole).mockRejectedValue(new Error('Cannot demote the last super admin'))
 
-    const screen = render(AdminPanel)
+    const screen = await render(AdminPanel)
     await expect.element(aliceRoleSelect(screen)).toHaveValue('user')
 
     await aliceRoleSelect(screen).selectOptions('super_admin')

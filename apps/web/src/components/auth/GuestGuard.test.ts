@@ -46,7 +46,7 @@ describe('GuestGuard', () => {
   })
 
   it('renders the auth form without calling /auth/me when there is no session hint', async () => {
-    const screen = render(GuestGuardWrapper)
+    const screen = await render(GuestGuardWrapper)
 
     await expect.element(screen.getByTestId('guest-content')).toBeInTheDocument()
     expect(api.auth.me).not.toHaveBeenCalled()
@@ -57,7 +57,7 @@ describe('GuestGuard', () => {
     seedTokenExpiry(600)
     vi.mocked(api.auth.me).mockResolvedValue(verifiedUser)
 
-    render(GuestGuardWrapper)
+    await render(GuestGuardWrapper)
 
     await vi.waitFor(() => {
       expect(navigateReplace).toHaveBeenCalledWith('/dashboard')
@@ -68,7 +68,7 @@ describe('GuestGuard', () => {
     sessionStorage.setItem('overkill-todo-auth-user', JSON.stringify(verifiedUser))
     vi.mocked(api.auth.me).mockResolvedValue(verifiedUser)
 
-    render(GuestGuardWrapper)
+    await render(GuestGuardWrapper)
 
     await vi.waitFor(() => {
       expect(navigateReplace).toHaveBeenCalledWith('/dashboard')
@@ -81,7 +81,7 @@ describe('GuestGuard', () => {
     seedTokenExpiry(-3600)
     vi.mocked(api.auth.me).mockResolvedValue(verifiedUser)
 
-    render(GuestGuardWrapper)
+    await render(GuestGuardWrapper)
 
     await vi.waitFor(() => {
       expect(api.auth.me).toHaveBeenCalled()
@@ -93,7 +93,7 @@ describe('GuestGuard', () => {
     seedTokenExpiry(600)
     vi.mocked(api.auth.me).mockResolvedValue({ ...verifiedUser, email_verified: false })
 
-    render(GuestGuardWrapper)
+    await render(GuestGuardWrapper)
 
     await vi.waitFor(() => {
       expect(navigateReplace).toHaveBeenCalledWith('/verify-email?email=test%40example.com')
@@ -104,7 +104,7 @@ describe('GuestGuard', () => {
     seedTokenExpiry(600)
     vi.mocked(api.auth.me).mockRejectedValue(new Error('Unauthorized'))
 
-    const screen = render(GuestGuardWrapper)
+    const screen = await render(GuestGuardWrapper)
 
     await expect.element(screen.getByTestId('guest-content')).toBeInTheDocument()
     expect(navigateReplace).not.toHaveBeenCalled()
@@ -120,7 +120,7 @@ describe('GuestGuard', () => {
       })
     )
 
-    const screen = render(GuestGuardWrapper)
+    const screen = await render(GuestGuardWrapper)
 
     await expect.element(screen.getByText('Loading...')).toBeInTheDocument()
     expect(screen.getByTestId('guest-content').elements()).toHaveLength(0)

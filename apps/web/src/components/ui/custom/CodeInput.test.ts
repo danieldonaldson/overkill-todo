@@ -3,7 +3,7 @@ import { render } from 'vitest-browser-svelte'
 import CodeInput from './CodeInput.svelte'
 import CodeInputHarness from './CodeInputHarness.test.svelte'
 
-const getInput = (screen: ReturnType<typeof render>) =>
+const getInput = (screen: Awaited<ReturnType<typeof render>>) =>
   screen.getByRole('textbox', { name: /verification code/i })
 
 const pressKey = (input: HTMLInputElement, init: KeyboardEventInit) => {
@@ -16,7 +16,7 @@ describe('CodeInput', () => {
   it('formats a full 6-digit code with a space and reports completion', async () => {
     const oncomplete = vi.fn()
     const oninput = vi.fn()
-    const screen = render(CodeInput, { props: { oncomplete, oninput } })
+    const screen = await render(CodeInput, { props: { oncomplete, oninput } })
 
     await getInput(screen).fill('123456')
 
@@ -28,7 +28,7 @@ describe('CodeInput', () => {
   it('strips non-digit characters from input', async () => {
     const oncomplete = vi.fn()
     const oninput = vi.fn()
-    const screen = render(CodeInput, { props: { oncomplete, oninput } })
+    const screen = await render(CodeInput, { props: { oncomplete, oninput } })
 
     await getInput(screen).fill('a1b2c3')
 
@@ -39,7 +39,7 @@ describe('CodeInput', () => {
 
   it('respects a custom length for completion', async () => {
     const oncomplete = vi.fn()
-    const screen = render(CodeInput, { props: { length: 4, oncomplete } })
+    const screen = await render(CodeInput, { props: { length: 4, oncomplete } })
 
     await getInput(screen).fill('1234')
 
@@ -49,7 +49,7 @@ describe('CodeInput', () => {
   it('handles a pasted code, sanitizing and completing', async () => {
     const oncomplete = vi.fn()
     const oninput = vi.fn()
-    const screen = render(CodeInput, { props: { oncomplete, oninput } })
+    const screen = await render(CodeInput, { props: { oncomplete, oninput } })
 
     const input = getInput(screen).element() as HTMLInputElement
     const data = new DataTransfer()
@@ -64,14 +64,14 @@ describe('CodeInput', () => {
   })
 
   it('renders an error message and marks the field invalid', async () => {
-    const screen = render(CodeInput, { props: { error: 'Invalid code' } })
+    const screen = await render(CodeInput, { props: { error: 'Invalid code' } })
 
     await expect.element(screen.getByText('Invalid code')).toBeInTheDocument()
     await expect.element(getInput(screen)).toHaveAttribute('aria-invalid', 'true')
   })
 
   it('blocks non-digit key presses', async () => {
-    const screen = render(CodeInput)
+    const screen = await render(CodeInput)
     const input = getInput(screen).element() as HTMLInputElement
 
     expect(pressKey(input, { key: 'a' }).defaultPrevented).toBe(true)
@@ -79,14 +79,14 @@ describe('CodeInput', () => {
   })
 
   it('allows digit key presses', async () => {
-    const screen = render(CodeInput)
+    const screen = await render(CodeInput)
     const input = getInput(screen).element() as HTMLInputElement
 
     expect(pressKey(input, { key: '5' }).defaultPrevented).toBe(false)
   })
 
   it('allows navigation/editing keys', async () => {
-    const screen = render(CodeInput)
+    const screen = await render(CodeInput)
     const input = getInput(screen).element() as HTMLInputElement
 
     for (const key of ['Backspace', 'Delete', 'Tab', 'ArrowLeft', 'ArrowRight', 'Home', 'End']) {
@@ -95,7 +95,7 @@ describe('CodeInput', () => {
   })
 
   it('allows paste and select-all shortcuts', async () => {
-    const screen = render(CodeInput)
+    const screen = await render(CodeInput)
     const input = getInput(screen).element() as HTMLInputElement
 
     expect(pressKey(input, { key: 'v', ctrlKey: true }).defaultPrevented).toBe(false)
@@ -104,7 +104,7 @@ describe('CodeInput', () => {
   })
 
   it('focuses and clears via the exported imperative handle', async () => {
-    const screen = render(CodeInputHarness)
+    const screen = await render(CodeInputHarness)
     const input = getInput(screen)
 
     await input.fill('123456')

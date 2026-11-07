@@ -12,19 +12,19 @@ describe('CountdownTimer', () => {
   })
 
   it('formats the remaining time as M:SS', async () => {
-    const screen = render(CountdownTimer, { props: { seconds: 90, autoStart: false } })
+    const screen = await render(CountdownTimer, { props: { seconds: 90, autoStart: false } })
 
     await expect.element(screen.getByText('1:30')).toBeInTheDocument()
   })
 
   it('zero-pads the seconds component', async () => {
-    const screen = render(CountdownTimer, { props: { seconds: 65, autoStart: false } })
+    const screen = await render(CountdownTimer, { props: { seconds: 65, autoStart: false } })
 
     await expect.element(screen.getByText('1:05')).toBeInTheDocument()
   })
 
   it('renders a custom label before the time', async () => {
-    const screen = render(CountdownTimer, {
+    const screen = await render(CountdownTimer, {
       props: { seconds: 30, autoStart: false, label: 'Try again in' },
     })
 
@@ -33,13 +33,13 @@ describe('CountdownTimer', () => {
   })
 
   it('renders nothing once the countdown is complete', async () => {
-    const screen = render(CountdownTimer, { props: { seconds: 0, autoStart: false } })
+    const screen = await render(CountdownTimer, { props: { seconds: 0, autoStart: false } })
 
     await expect.element(screen.getByText('0:00')).not.toBeInTheDocument()
   })
 
   it('ticks down once per second while auto-started', async () => {
-    const screen = render(CountdownTimer, { props: { seconds: 5, autoStart: true } })
+    const screen = await render(CountdownTimer, { props: { seconds: 5, autoStart: true } })
 
     await expect.element(screen.getByText('0:05')).toBeInTheDocument()
 
@@ -50,7 +50,7 @@ describe('CountdownTimer', () => {
 
   it('calls oncomplete and hides itself when it reaches zero', async () => {
     const oncomplete = vi.fn()
-    const screen = render(CountdownTimer, { props: { seconds: 2, autoStart: true, oncomplete } })
+    const screen = await render(CountdownTimer, { props: { seconds: 2, autoStart: true, oncomplete } })
 
     await vi.advanceTimersByTimeAsync(2000)
 
@@ -60,7 +60,7 @@ describe('CountdownTimer', () => {
 
   it('does not auto-start when autoStart is false', async () => {
     const oncomplete = vi.fn()
-    const screen = render(CountdownTimer, { props: { seconds: 3, autoStart: false, oncomplete } })
+    const screen = await render(CountdownTimer, { props: { seconds: 3, autoStart: false, oncomplete } })
 
     await vi.advanceTimersByTimeAsync(5000)
 
