@@ -155,15 +155,8 @@ async fn verify_email_locked_code_returns_code_locked(pool: PgPool) {
     assert_eq!(body["attempts_remaining"], 0);
 }
 
-/// Verifying twice: the second call hits the already-verified path and still
-/// returns a usable response (a fresh signup token, since no password is set).
-#[sqlx::test(migrations = "./migrations")]
-async fn verify_email_already_verified_reissues_signup_token(pool: PgPool) {
-    let app = common::create_test_app(pool.clone());
-    let email = "e2e-already@example.com";
-    register(&app, email).await;
-
-    // First verification succeeds.
+/// Verify an address with the dev code; returns the signup token.
+async fn verify_and_get_signup_token(app: &axum::Router, email: &str) -> String {
     let resp = app
         .clone()
         .oneshot(post_json(
@@ -173,22 +166,124 @@ async fn verify_email_already_verified_reissues_signup_token(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = body_json(resp.into_body()).await;
-    assert!(body["signup_token"].is_string());
+    body_json(resp.into_body()).await["signup_token"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
 
-    // Mark verified is already done; a second verify hits AlreadyVerified.
+/// Assert a verify-email response is the `ALREADY_VERIFIED` error and carries
+/// no credential of any kind.
+async fn assert_already_verified_without_credentials(resp: axum::http::Response<Body>) {
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert!(common::cookie_value(&resp, "auth_token").is_none());
+    assert!(common::cookie_value(&resp, "refresh_token").is_none());
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["error_code"], "ALREADY_VERIFIED");
+    assert!(body.get("signup_token").is_none());
+}
+
+/// SECURITY regression: an already-verified account is reported as such but
+/// never handed a session. The already-verified branch runs before any code is
+/// checked, so issuing credentials there let anyone who knew the email log in.
+#[sqlx::test(migrations = "./migrations")]
+async fn verify_email_on_verified_account_does_not_log_in(pool: PgPool) {
+    let app = common::create_test_app(pool.clone());
+    let email = "e2e-victim@example.com";
+    register(&app, email).await;
+    let signup_token = verify_and_get_signup_token(&app, email).await;
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/complete-signup",
+            &json!({ "signup_token": signup_token, "email": email, "password": "ownerpass123" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Attacker knows only the email and guesses a code.
     let resp = app
         .oneshot(post_json(
             "/api/v1/auth/verify-email",
+            &json!({ "email": email, "code": "000000" }),
+        ))
+        .await
+        .unwrap();
+
+    assert_already_verified_without_credentials(resp).await;
+}
+
+/// SECURITY regression: a verified account without a password (signup left
+/// unfinished, or OAuth-only) must not get a signup token from a guessed code;
+/// that token would let the attacker set the account's password.
+#[sqlx::test(migrations = "./migrations")]
+async fn verify_email_on_verified_passwordless_account_issues_no_signup_token(pool: PgPool) {
+    let app = common::create_test_app(pool.clone());
+    let email = "e2e-unfinished@example.com";
+    register(&app, email).await;
+    verify_and_get_signup_token(&app, email).await;
+
+    let resp = app
+        .oneshot(post_json(
+            "/api/v1/auth/verify-email",
+            &json!({ "email": email, "code": "000000" }),
+        ))
+        .await
+        .unwrap();
+
+    assert_already_verified_without_credentials(resp).await;
+}
+
+/// A user who verified but never set a password (and lost the signup token)
+/// recovers through forgot-password, which proves email ownership afresh.
+#[sqlx::test(migrations = "./migrations")]
+async fn unfinished_signup_recovers_via_password_reset(pool: PgPool) {
+    let app = common::create_test_app(pool.clone());
+    let email = "e2e-unfinished@example.com";
+    register(&app, email).await;
+    verify_and_get_signup_token(&app, email).await; // token "lost"
+
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/forgot-password",
+            &json!({ "email": email }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/verify-reset-code",
             &json!({ "email": email, "code": "123456" }),
         ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = body_json(resp.into_body()).await;
-    // Still no password set, so a signup token is returned again.
-    assert!(body["signup_token"].is_string());
-    assert_eq!(body["user"]["email_verified"], true);
+    let reset_token = body_json(resp.into_body()).await["reset_token"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/reset-password",
+            &json!({ "reset_token": reset_token, "new_password": "recovered123" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let resp = app
+        .oneshot(post_json(
+            "/api/v1/auth/login",
+            &json!({ "email": email, "password": "recovered123" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 // ---------------------------------------------------------------------------

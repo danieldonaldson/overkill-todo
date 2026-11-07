@@ -77,7 +77,7 @@ pub struct VerificationHandlerDeps {
     request_body = VerifyEmailRequest,
     responses(
         (status = 200, description = "Email verified successfully", body = VerifyEmailResponse),
-        (status = 400, description = "Invalid or expired code", body = VerificationErrorResponse),
+        (status = 400, description = "Invalid or expired code, or email already verified", body = VerificationErrorResponse),
         (status = 404, description = "User not found")
     )
 )]
@@ -99,9 +99,16 @@ pub async fn verify_email(
             // Success - email verified
             issue_tokens_or_signup_token(&deps, &headers, user).await
         }
-        Err(VerifyEmailError::AlreadyVerified(user)) => {
-            // Already verified - still handle appropriately
-            issue_tokens_or_signup_token(&deps, &headers, *user).await
+        Err(VerifyEmailError::AlreadyVerified(_)) => {
+            // SECURITY: never issue credentials here. The use case returns this
+            // *before* checking the code (a verified account has no code left to
+            // check), so issuing a session or signup token would let anyone who
+            // knows the email log in, or set a password on an OAuth-only account.
+            let response = VerificationErrorResponse::new(
+                "This email is already verified. Please log in.",
+                VerificationErrorCode::AlreadyVerified,
+            );
+            (StatusCode::BAD_REQUEST, Json(response)).into_response()
         }
         Err(VerifyEmailError::NotFound(msg)) => {
             let app_error: AppError = VerifyEmailError::NotFound(msg).into();
