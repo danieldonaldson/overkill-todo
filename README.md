@@ -125,7 +125,8 @@ scripts/            dev env generation, worktree create/remove
   `chore:` …). Pre-commit hooks are path-scoped and fast, so don't skip them.
 - **Branches:** short-lived branches into `main`; `main` is always deployable.
 - **Dependencies:** pnpm refuses releases younger than 24h; Dependabot waits 3
-  days; `cargo deny` and `cargo audit` run in CI.
+  days; `cargo deny` (advisories, licenses, sources;
+  also weekly) and `cargo machete` (unused deps) run in CI.
 - **Database:** forward-only migrations, expand then contract; let Postgres
   enforce invariants (constraints, partial unique indexes).
 - **Deploys:** an image digest change committed to the deploy config. CI builds

@@ -180,14 +180,19 @@ bench-web *args:
 coverage-web:
     {{pnpm}} --filter {{web}} test:coverage
 
+# RustSec advisory scan (the advisory part of `just deny`).
 audit:
-    cd {{backend}} && cargo audit
+    cd {{backend}} && cargo deny check advisories
 
 deny:
     cd {{backend}} && cargo deny check
 
+# Unused dependencies. False positives go in [package.metadata.cargo-machete].
+machete:
+    cd {{backend}} && cargo machete
+
 # Everything CI gates on. Green here means green CI.
-ci: toolchain-check fmt-check lint lint-js test test-integration db-prepare-check test-web e2e
+ci: toolchain-check fmt-check lint machete lint-js test test-integration db-prepare-check test-web e2e
 
 # ── Images ───────────────────────────────────────────────────────────────────────
 

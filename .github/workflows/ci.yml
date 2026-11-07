@@ -109,16 +109,19 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: nextest,sqlx-cli,cargo-audit,cargo-deny,cargo-llvm-cov
+          tool: nextest,sqlx-cli,cargo-deny,cargo-machete,cargo-llvm-cov
 
       - name: Format
         run: cargo fmt --check
 
-      - name: Audit dependencies
-        run: cargo audit
-
+      # Advisories (RustSec), licenses, bans, sources. advisories.yml also runs the
+      # advisory part weekly, since new advisories land without any code change.
       - name: Check dependency policy
         run: cargo deny check
+
+      # Every unused dependency is compile time paid on every build.
+      - name: Unused dependencies
+        run: cargo machete
 
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery

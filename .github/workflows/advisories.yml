@@ -1,0 +1,33 @@
+name: Advisories
+
+# New RustSec advisories land without any code change, and CI only runs the
+# advisory check on backend PRs and pushes to main. This catches the rest.
+on:
+  schedule:
+    - cron: '0 6 * * 1' # Mondays 06:00 UTC, alongside Dependabot's weekly run
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: RustSec advisories
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      # Same pinned toolchain as CI (backend/rust-toolchain.toml); cargo-deny
+      # needs it for `cargo metadata`.
+      - name: Toolchain
+        run: rustup toolchain install
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: Check advisories
+        run: cargo deny check advisories

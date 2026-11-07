@@ -4,14 +4,15 @@
 # (`PNPM_CONFIG_MINIMUM_RELEASE_AGE=1440`, see the justfile): it gates the dependency
 # graph on license, source, and advisory policy rather than re-resolving freely.
 #
-# `cargo audit` (see .cargo/audit.toml) still owns the RustSec CVE scan; this adds
-# license allow/deny, source bans, and duplicate detection on top of it.
+# It also owns the RustSec advisory scan (`just audit` runs just that part; CI
+# runs it weekly via .github/workflows/advisories.yml), alongside license
+# allow/deny, source bans, and duplicate detection.
 
 [advisories]
 version = 2
 # RustSec advisory handling. Vulnerabilities and yanked crates deny by default.
-# Keep this ignore list in sync with `.cargo/audit.toml` — every entry needs a
-# justification and should be dropped the moment a fix is available.
+# Every ignore entry needs a justification and should be dropped the moment a
+# fix is available.
 ignore = [
     # RUSTSEC-2026-0173 — `proc-macro-error2` unmaintained. Build-time proc-macro
     # dependency of `validator_derive`; not in the runtime binary. Drop once

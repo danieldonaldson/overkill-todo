@@ -15,7 +15,7 @@ sccache = "latest"      # compiler cache shared by every worktree (justfile sets
 "cargo:cargo-nextest" = "latest"
 "cargo:cargo-watch" = "latest"   # `just dev` backend auto-reload
 "cargo:cargo-deny" = "latest"
-"cargo:cargo-audit" = "latest"
+"cargo:cargo-machete" = "latest"   # `just machete`
 "cargo:cargo-llvm-cov" = "latest"   # `just coverage` (needs the llvm-tools component above)
 # OpenSpec CLI for the /opsx:* commands (openspec/README.md). Matches the
 # `generatedBy` version of .claude/skills; re-run `openspec update` when bumping.
