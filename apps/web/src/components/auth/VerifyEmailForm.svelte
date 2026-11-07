@@ -144,8 +144,8 @@
   {/if}
 
   {#if successMessage}
-    <Alert>
-      <CircleCheckIcon class="size-4 text-primary" />
+    <Alert variant="success">
+      <CircleCheckIcon class="size-4" />
       <AlertDescription>{successMessage}</AlertDescription>
     </Alert>
   {/if}
