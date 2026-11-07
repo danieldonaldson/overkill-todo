@@ -11,6 +11,8 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
 - After editing any SQL query: `just db-prepare` and commit `backend/.sqlx/`.
 - Clippy runs with pedantic + nursery and `-D warnings`. Fix lints; don't add
   `allow`s without a comment saying why.
+- Parallel checkouts: `just wt-new <branch>` (own DB/ports), never bare
+  `git worktree add`. `just wt-list` / `just wt-rm <branch>`.
 
 ## Backend rules
 
