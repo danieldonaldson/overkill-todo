@@ -46,6 +46,10 @@ API_PORT=$((4322 + 10 * slot))
 PREVIEW_PORT=$((4323 + 10 * slot))
 EDGE_PORT=$((8080 + slot))
 ENV
+# Compose reads .env (not .worktree.env) from the project dir, so without this a
+# bare `docker compose ...` here would act on the main checkout's database.
+# Gitignored; just still loads only .worktree.env.
+ln -s .worktree.env "$dir/.env"
 
 cd "$dir"
 mise trust --quiet 2>/dev/null || true

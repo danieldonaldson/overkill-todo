@@ -97,8 +97,10 @@ Each worktree gets its own Postgres (Compose project `overkill-todo-<branch>`),
 its own ports (slot N: web `4321+10N`, API `4322+10N`, e2e preview `4323+10N`,
 DB `5432+N`, edge `8080+N`) and its own `backend/.env`. All of that lives in its
 gitignored `.worktree.env`, which `just` loads, so `just dev`, `just e2e` and
-`just db-migrate` there never touch another checkout's server or schema. The main
-checkout has no `.worktree.env` and keeps the default ports.
+`just db-migrate` there never touch another checkout's server or schema. A `.env`
+symlink to it makes plain `docker compose` there use the worktree's project too
+(worktrees made before that was added: `ln -s .worktree.env .env`). The main
+checkout has neither file and keeps the default ports.
 
 Each worktree has its own `backend/target`, so its first build starts cold.
 `sccache` (installed by mise, wired in by the justfile) shares compiled
