@@ -17,6 +17,9 @@ sccache = "latest"      # compiler cache shared by every worktree (justfile sets
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-audit" = "latest"
 "cargo:cargo-llvm-cov" = "latest"   # `just coverage` (needs the llvm-tools component above)
+# OpenSpec CLI for the /opsx:* commands (openspec/README.md). Matches the
+# `generatedBy` version of .claude/skills; re-run `openspec update` when bumping.
+"npm:@fission-ai/openspec" = "1.13.1"
 
 # Kubernetes path only (deploy/k8s, optional). Uncomment if you use it.
 # kubectl = "latest"

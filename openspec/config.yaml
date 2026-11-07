@@ -1,0 +1,71 @@
+schema: spec-driven
+
+# Shown to AI when creating artifacts. See openspec/README.md for the workflow
+# these rules support. Adapted from Siyavula's deploy-repo workflow, minus the
+# team process (sprints, tickets, PM/dev-manager ownership).
+context: |
+  overkill-todo is a solo full-stack project: a Rust 2024 / Axum 0.8 / sqlx +
+  Postgres backend in backend/ (hexagonal: infrastructure → application →
+  domain) and an Astro 7 static site with Svelte 5 islands in apps/web/.
+  Auth (email + password, Google OAuth, Turnstile, JWT + refresh tokens, CSRF,
+  roles, account export and deletion) is already built.
+
+  Project rules that shape designs and tasks are in CLAUDE.md,
+  backend/ARCHITECTURE.md and README.md. In particular:
+  - Migrations are forward-only and compatible with the previous release
+    (expand, deploy, then contract).
+  - A new external service is an outgoing port + real adapter + no-op adapter.
+  - `just ci` is the full gate; `main` is always deployable.
+  - Deploying is committing a new image digest to the deploy config
+    (deploy/compose, optionally deploy/k8s). CI builds images and never holds
+    production credentials.
+
+  User types (be specific; never just "user"):
+  - Visitor: not signed in, on a public page
+  - Member: signed-in account holder using the app
+  - Admin: account with the admin role, using the admin pages
+  - Super Admin: account with the super_admin role (can manage admins)
+
+  Features and slices:
+  - One OpenSpec change is one feature: one outcome, one appetite.
+  - A slice is one numbered task group in tasks.md. Each slice delivers some
+    of the spec's scenarios end to end, can be deployed on its own, and takes
+    no more than about 5 working days.
+  - A slice is done when it is merged with `just ci` green and deployed. A
+    feature is done when it is switched on and the change is archived.
+
+rules:
+  proposal:
+    - 'Every change has an ID OT-<nnn> (three digits, zero-padded): the next number after the highest one used under openspec/changes/, including openspec/changes/archive/. Name the change ot-<nnn>-<kebab-name> (e.g. ot-004-shared-lists) and start the proposal with the heading "# OT-<nnn>: <short feature name>". Never reuse or renumber an ID.'
+    - 'Open "Why" with a one-line user story where there is a clear user: "As a <user type>, I want <goal> so that <value>." Then the context: why now and what problem it solves.'
+    - Include an "Appetite" section stating how much time this is worth, not an estimate. If unknown, write "TBD".
+    - 'Keep everything that serves one outcome in one change; split a large feature into slices, not into separate changes. Only separate outcomes get separate changes.'
+    - 'If the appetite is more than about 6 weeks, add a "Shape of the work" section: a suggested order of parts, each releasable on its own and likely several slices.'
+    - Include an "Out of Scope" section and a "Dependencies" section (external services, data migrations, blocking work, or "None").
+    - For user-facing changes, link a mockup or describe the user-facing change clearly.
+    - Do not prescribe implementation (crates, modules, tables, endpoints) in the proposal. Reusing an existing user-facing behaviour for consistency is fine; how to reuse it is not.
+    - 'End with a "Ready" section with two lines: "Riskiest unknown" (what is most likely to make this harder than expected) and "First slice" (the thin path that retires it). Write "TBD" for either if it is not clear yet. If neither can be named, the feature is not understood well enough to start.'
+    - Keep it under about one page.
+  specs:
+    - 'Name each capability after a lasting product area (for example auth, accounts, lists), not after the feature. Prefer adding to an existing capability over creating a new one. Never put a change ID in a capability name.'
+    - Write behaviour as observed by users or API clients, as scenarios that can be tested.
+    - "Cover the unhappy path: validation failures, the database or an external service being unavailable, empty states, permissions (Visitor vs. Member vs. Admin, and one Member touching another's data), limits (one item vs. thousands), concurrent edits, leaving part-way through, and mobile. Omit one only if it genuinely cannot happen."
+    - Keep scenarios small and independent, because slices are planned as groups of scenarios.
+    - Do not name internal code, libraries or infrastructure components.
+  design:
+    - 'Sections: Context (point to the proposal rather than restating it), Goals / Non-Goals (design-level only), Hypothesis (what we believe about the riskiest unknown, how and where the first slice tests it, and how we will know; production behind a flag is often the right place, test earlier when being wrong would be costly or hard to undo), Decisions (each choice, why, and the alternatives considered; this matters most), Risks / Trade-offs as "[Risk] → Mitigation", Migration Plan if the schema changes, Open Questions (only ones that can safely wait; if the answer would change the specs, approach or slices, settle it now). Omit empty sections; keep it proportional.'
+    - Record decisions so the work can be picked up again months later without re-deriving them. When an unclear detail of the spec gets decided during a slice, add it to Decisions.
+    - 'Respect the layering: domain types and errors in domain, use cases and ports in application, Axum/sqlx/adapters in infrastructure. Say which layer each new piece lives in.'
+    - 'For schema changes, spell out the expand/contract steps so each deploy stays compatible with the previous release.'
+    - Once the first slice has shipped, record what it showed in Hypothesis and revise any decisions it changed.
+  tasks:
+    - Before the first slice has shipped, tasks.md holds only the first slice (plus the final feature-done group). Add the remaining slices once it has shipped and design.md has been revised with what it showed.
+    - 'Group tasks into numbered slices with headings like "## 1. Slice 1 (first slice): <what it delivers>". Under each heading, list the spec scenarios the slice delivers.'
+    - The first slice is a thin end-to-end path through the main success scenario that also retires the riskiest unknown named in the proposal's Ready section.
+    - Each slice must be deployable on its own (behind a flag if needed) and take no more than about 5 working days. It need not be visible to users (a live migration, an endpoint not yet linked from the UI) but must be checkable in production. Put tech-debt cleanup in the slice that touches that code.
+    - 'To split a slice further, group scenarios by: workflow step (create, view, edit, delete), user type (Member vs. Admin), happy path before unhappy path, data scope (single item before bulk), or platform (desktop before mobile).'
+    - 'Prefer a first slice to a spike. Use a pure spike (time-boxed, at most 2 days, answering named questions, producing findings rather than code) only when nothing deployable can come out of it.'
+    - For a slice with a migration, include a task for its rollback plan. If the slice adds something that can fail in production, include a task for logging or alerting on it.
+    - "Use the project's real commands: `just test`, `just test-integration`, `just test-web`, `just e2e`, `just lint`, and `just db-prepare` (committing backend/.sqlx/) after any SQL change. Don't invent deploy commands; deploying is a digest change in the deploy config."
+    - 'End each slice with: tests for its scenarios (unit, `#[sqlx::test]` integration, Vitest component, Playwright flow as appropriate), `just ci` green, deployed, and checked with `just smoke <url>` where it applies.'
+    - 'End the list with a final group: switch the feature on and remove the flag (or schedule its removal), update README/docs if behaviour, env vars or setup changed, and archive the change.'
