@@ -54,9 +54,13 @@ jobs:
       - name: Rust pins agree
         run: ../scripts/check-rust-pin.sh
 
+      # Only main saves. A PR can restore caches from its own ref or from main, never
+      # from another PR, so per-PR saves (~1.1 GiB each) were just filling the 10 GiB
+      # repo quota and evicting main's cache — leaving every PR to build cold.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: backend
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - uses: taiki-e/install-action@v2
         with:
@@ -76,15 +80,11 @@ jobs:
         env:
           SQLX_OFFLINE: 'true'
 
-      - name: Unit tests
-        run: cargo nextest run --locked --lib
-        env:
-          SQLX_OFFLINE: 'true'
-
       - name: Run migrations
         run: cargo sqlx migrate run
 
-      # Runs lib + integration tests instrumented, so coverage reflects both.
+      # Runs lib (unit) + integration tests instrumented, so coverage reflects both.
+      # No separate unit-test step: it would only add another full, uninstrumented build.
       - name: Integration tests (with coverage)
         run: cargo llvm-cov nextest --locked --tests --lcov --output-path target/lcov.info
 
