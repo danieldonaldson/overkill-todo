@@ -1,13 +1,18 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use axum::Router;
 use axum::body::Body;
 use axum::http::header;
+use overkill_todo::domain::entities::OAuthProvider;
 use overkill_todo::domain::errors::DomainError;
 use overkill_todo::{
     application::{
-        ports::{EmailService, MxValidator, OAuthAccountRepository, TurnstileService},
+        ports::{
+            EmailService, MxValidator, OAuthAccountRepository, OAuthProviderClient,
+            TurnstileService,
+        },
         use_cases::{
             CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
             ExportUserDataUseCase, GetCurrentUserUseCase, ListUsersUseCase, LoginUserUseCase,
@@ -136,10 +141,36 @@ pub fn mint_csrf_token(user_id: &str) -> String {
 // Not every test binary uses this; `common` is compiled per binary.
 #[allow(dead_code)]
 pub fn create_test_app(pool: PgPool) -> Router {
-    create_test_app_full(pool, console_email())
+    create_test_app_full(pool, console_email(), HashMap::new(), no_op_turnstile())
+}
+
+/// Build the test app with the given OAuth provider clients registered, so the
+/// real (non-bypass) start → callback flow can run against a fake provider.
+// Only the OAuth integration binary uses this; `common` is compiled per binary.
+#[allow(dead_code)]
+pub fn create_test_app_with_oauth(
+    pool: PgPool,
+    oauth_clients: HashMap<OAuthProvider, Arc<dyn OAuthProviderClient>>,
+) -> Router {
+    create_test_app_full(pool, console_email(), oauth_clients, no_op_turnstile())
 }
 
 /// The email service every builder uses unless a test wants delivery to fail.
+fn no_op_turnstile() -> Arc<dyn TurnstileService> {
+    Arc::new(NoOpTurnstileService)
+}
+
+/// Build the test app with bot protection switched on, using the given
+/// Turnstile service in place of the default no-op (which reports disabled).
+// Only the Turnstile integration binary uses this; `common` is compiled per binary.
+#[allow(dead_code)]
+pub fn create_test_app_with_turnstile(
+    pool: PgPool,
+    turnstile_service: Arc<dyn TurnstileService>,
+) -> Router {
+    create_test_app_full(pool, console_email(), HashMap::new(), turnstile_service)
+}
+
 fn console_email() -> Arc<dyn EmailService> {
     Arc::new(ConsoleEmailService::new("Test".to_string()))
 }
@@ -214,11 +245,16 @@ pub fn create_test_app_with_email_service(
     pool: PgPool,
     email_service: Arc<dyn EmailService>,
 ) -> Router {
-    create_test_app_full(pool, email_service)
+    create_test_app_full(pool, email_service, HashMap::new(), no_op_turnstile())
 }
 
 #[allow(clippy::too_many_lines)]
-fn create_test_app_full(pool: PgPool, email_service: Arc<dyn EmailService>) -> Router {
+fn create_test_app_full(
+    pool: PgPool,
+    email_service: Arc<dyn EmailService>,
+    oauth_clients: HashMap<OAuthProvider, Arc<dyn OAuthProviderClient>>,
+    turnstile_service: Arc<dyn TurnstileService>,
+) -> Router {
     let crypto = test_crypto();
 
     let db = Arc::new(Database::from_pool(pool));
@@ -227,7 +263,6 @@ fn create_test_app_full(pool: PgPool, email_service: Arc<dyn EmailService>) -> R
     let jwt_service = Arc::new(CryptoJwtService::new(crypto.clone()));
     let password_hasher = Arc::new(Argon2Hasher::new(crypto.clone()));
     let token_service = Arc::new(CryptoTokenService::new(crypto.clone()));
-    let turnstile_service: Arc<dyn TurnstileService> = Arc::new(NoOpTurnstileService);
     let mx_validator: Arc<dyn MxValidator> = Arc::new(NoOpMxValidator);
 
     let user_repo = Arc::new(PostgresUserRepository::new(db.clone()));
@@ -352,7 +387,7 @@ fn create_test_app_full(pool: PgPool, email_service: Arc<dyn EmailService>) -> R
         callback_use_case: oauth_callback_uc,
         unlink_use_case: oauth_unlink_uc,
         refresh_token_use_case: refresh_token_uc,
-        oauth_clients: std::collections::HashMap::new(),
+        oauth_clients,
         crypto: crypto.clone(),
     });
 
