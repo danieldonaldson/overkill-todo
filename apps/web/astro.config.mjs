@@ -7,8 +7,12 @@ import tailwindcss from '@tailwindcss/vite'
 // that call the Rust API at the same origin (/api/v1). In `just dev` Vite proxies
 // /api to the backend; deployed, the edge (Caddy or an Ingress) routes it.
 
-// Where the dev/preview server forwards /api. The backend's default port.
-const apiTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:4322'
+// Ports default to the main checkout's; `just wt-new` gives each worktree its own
+// (WEB_PORT / API_PORT in .worktree.env, which just loads).
+const webPort = Number(process.env.WEB_PORT ?? 4321)
+
+// Where the dev/preview server forwards /api. The backend's port.
+const apiTarget = process.env.API_PROXY_TARGET ?? `http://localhost:${process.env.API_PORT ?? 4322}`
 
 // Behind a TLS proxy (e.g. the optional k8s dev loop), the HMR websocket must dial
 // back on the proxy port (HMR_CLIENT_PORT=443), not Vite's own port.
@@ -27,7 +31,7 @@ export default defineConfig({
   // design tokens only). Under `output: 'static'` this emits a meta-refresh index.html.
   redirects: { '/': '/login' },
   integrations: [svelte()],
-  server: { port: 4321 },
+  server: { port: webPort },
   // The Astro dev toolbar wedges behind single-origin proxies (its entrypoint.js
   // request 504s). It's a dev-only overlay we don't use, so disable it.
   devToolbar: { enabled: false },
@@ -50,12 +54,17 @@ export default defineConfig({
       exclude: ['mode-watcher'],
     },
     server: {
+      // A taken port is an error, not a silent hop to the next one: the hopped
+      // server would still proxy /api to the backend that owns the taken port
+      // (another worktree's), so you'd be testing the wrong code.
+      strictPort: true,
       proxy: { '/api': { target: apiTarget, changeOrigin: false } },
       // Vite 8 moved the HMR client-connection options from `server.hmr.*` to `server.ws.*`.
       ...(hmrClientPort ? { ws: { clientPort: hmrClientPort } } : {}),
       ...(devAllowedHosts ? { allowedHosts: devAllowedHosts } : {}),
     },
     preview: {
+      strictPort: true,
       proxy: { '/api': { target: apiTarget, changeOrigin: false } },
     },
   },

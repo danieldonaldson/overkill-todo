@@ -6,6 +6,9 @@
 # The `full` profile is the same images CI builds, behind the same single-origin
 # routing production uses (/api → backend, everything else → web). It is also a
 # workable single-VPS deployment: see deploy/compose/README.md.
+#
+# COMPOSE_PROJECT_NAME overrides `name:` below; `just wt-new` sets it per worktree
+# so each checkout gets its own database container and volume.
 name: overkill-todo
 
 services:
@@ -33,7 +36,7 @@ services:
     env_file: ./backend/.env
     environment:
       DATABASE_URL: postgres://overkill_todo:overkill_todo@db:5432/overkill_todo
-      FRONTEND_BASE_URL: http://localhost:8080
+      FRONTEND_BASE_URL: http://localhost:${EDGE_PORT:-8080}
       SERVER_HOST: 0.0.0.0
       SERVER_PORT: '4322'
     depends_on:
@@ -54,7 +57,7 @@ services:
     profiles: ['full']
     image: caddy:2
     ports:
-      - '8080:8080'
+      - '${EDGE_PORT:-8080}:8080'
     volumes:
       - ./deploy/compose/Caddyfile.local:/etc/caddy/Caddyfile:ro
     depends_on: [backend, web]

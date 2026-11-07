@@ -1,17 +1,26 @@
-set dotenv-load := false
+# Only .worktree.env (per-worktree ports + Compose project, from `just wt-new`),
+# never a stray .env. Absent in the main checkout, which keeps the defaults.
+set dotenv-load := true
+set dotenv-path := ".worktree.env"
 
 # Run every recipe (shebang ones too) with mise's tools first on PATH, so the
 # pinned Rust, node, pnpm, ... win over system installs (e.g. Arch's `rust`)
 # even in shells without `mise activate`. Fails fast if mise is missing.
 export PATH := `mise exec -- printenv PATH || { echo 'mise is required: https://mise.jdx.dev, then "mise trust && mise install"' >&2; exit 1; }`
 export RUSTUP_TOOLCHAIN := `mise exec -- printenv RUSTUP_TOOLCHAIN`
+# sccache shares compiled dependencies between worktrees (each still has its own
+# target/). Empty means no wrapper: when sccache isn't installed yet, in CI, or
+# when you've set RUSTC_WRAPPER yourself.
+export RUSTC_WRAPPER := env("RUSTC_WRAPPER", if env("CI", "") != "" { "" } else { `mise exec -- sh -c 'command -v sccache || true'` })
 
 backend := "backend"
 web := "@overkill-todo/web"
 # Refuse npm releases younger than 24h, even if someone bypasses pnpm-workspace.yaml.
 pnpm := "env PNPM_CONFIG_MINIMUM_RELEASE_AGE=1440 pnpm"
 # Host-side DB access for sqlx / tests / psql. Matches compose.yaml.
-db_url := "postgres://overkill_todo:overkill_todo@localhost:" + env_var_or_default("DB_PORT", "5432") + "/overkill_todo"
+db_url := "postgres://overkill_todo:overkill_todo@localhost:" + env("DB_PORT", "5432") + "/overkill_todo"
+# Compose project: "overkill-todo" in the main checkout, per-worktree otherwise.
+project := env("COMPOSE_PROJECT_NAME", "overkill-todo")
 
 default:
     @just --list --unsorted
@@ -28,7 +37,7 @@ setup:
 
 # ── Local dev ────────────────────────────────────────────────────────────────────
 
-# Run backend (auto-reload) + web dev server. Web on :4321 proxies /api to :4322.
+# Backend (auto-reload) + web dev server. Web :4321 proxies /api to :4322 (WEB_PORT/API_PORT in a worktree).
 dev: db-up
     #!/usr/bin/env bash
     set -euo pipefail
@@ -37,12 +46,35 @@ dev: db-up
     {{pnpm}} --filter {{web}} dev &
     wait
 
-# Prod-like stack in Docker: real images behind a Caddy edge on :8080.
+# Prod-like stack in Docker: real images behind a Caddy edge on :8080 (EDGE_PORT).
 up:
     docker compose --profile full up --build
 
 down:
     docker compose --profile full down
+
+# ── Worktrees ────────────────────────────────────────────────────────────────────
+
+# Parallel checkout at ../overkill-todo-<branch>: own database, ports, backend/.env.
+wt-new branch base="HEAD":
+    ./scripts/worktree-new.sh {{ quote(branch) }} {{ quote(base) }}
+
+# Remove a wt-new checkout and its database (keeps the branch; FORCE=1 if dirty).
+wt-rm branch:
+    ./scripts/worktree-rm.sh {{ quote(branch) }}
+
+# Every checkout with its ports.
+wt-list:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git worktree list --porcelain | sed -n 's/^worktree //p' | while IFS= read -r p; do
+      if [[ -f $p/.worktree.env ]]; then
+        ports=$(sed -n 's/^\(WEB\|API\|DB\)_PORT=/\1 /p' "$p/.worktree.env" | paste -sd ' ')
+      else
+        ports="WEB 4321 API 4322 DB 5432"
+      fi
+      printf '%-50s %s\n' "$p" "$ports"
+    done
 
 # ── Database ─────────────────────────────────────────────────────────────────────
 
@@ -62,7 +94,7 @@ db-prepare-check:
 # Drop the local database volume and recreate it. Local only.
 db-reset:
     docker compose rm -sfv db
-    docker volume rm -f overkill-todo_db-data
+    docker volume rm -f {{project}}_db-data
     just db-up db-migrate
 
 db-psql:

@@ -5,6 +5,8 @@ dist
 .env
 .env.*
 !.env.example
+# per-worktree ports + Compose project (scripts/worktree-new.sh)
+.worktree.env
 
 # Playwright
 test-results

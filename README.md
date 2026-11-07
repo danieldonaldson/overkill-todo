@@ -56,6 +56,29 @@ In dev, verification codes print in the backend log.
 | `just smoke <url>`                    | read-only checks against a deployed site        |
 | `just up`                             | prod-like stack in Docker behind Caddy on :8080 |
 
+## Parallel work (worktrees)
+
+```bash
+just wt-new feat/thing        # ../overkill-todo-feat-thing on a new branch off HEAD
+just wt-new fix/x origin/main # or off another base; reuses the branch if it exists
+just wt-list                  # every checkout and its ports
+just wt-rm feat/thing         # drop the checkout + its database (keeps the branch)
+```
+
+Each worktree gets its own Postgres (Compose project `overkill-todo-<branch>`),
+its own ports (slot N: web `4321+10N`, API `4322+10N`, e2e preview `4323+10N`,
+DB `5432+N`, edge `8080+N`) and its own `backend/.env`. All of that lives in its
+gitignored `.worktree.env`, which `just` loads, so `just dev`, `just e2e` and
+`just db-migrate` there never touch another checkout's server or schema. The main
+checkout has no `.worktree.env` and keeps the default ports.
+
+Each worktree has its own `backend/target`, so its first build starts cold.
+`sccache` (installed by mise, wired in by the justfile) shares compiled
+dependencies between them; `sccache --show-stats` shows the hit rate. Its cache
+sits in `~/.cache/sccache`, capped at 10 GiB by default (`SCCACHE_CACHE_SIZE`).
+Google OAuth only accepts redirect URIs you've registered, so real Google sign-in
+works only on the main checkout's `:4321` (the dev-mode bypass works everywhere).
+
 ## Layout
 
 ```
@@ -64,7 +87,7 @@ apps/web/           Astro + Svelte site, nginx image
 packages/           shared design tokens
 deploy/compose/     single-host production (Caddy TLS, digests, nightly dumps)
 deploy/k8s/         optional kustomize base (CNPG Postgres, Ingress)
-scripts/            dev env generation
+scripts/            dev env generation, worktree create/remove
 .github/            CI and Dependabot
 ```
 
