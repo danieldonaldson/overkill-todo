@@ -97,7 +97,7 @@ describe('VerifyEmailForm', () => {
     })
     await expect
       .element(screen.getByRole('alert'))
-      .toHaveTextContent(/new verification code has been sent/i)
+      .toMatchTextContent(/new verification code has been sent/i)
   })
 
   it('shows the remaining-attempts hint on an invalid code', async () => {
@@ -137,7 +137,7 @@ describe('VerifyEmailForm', () => {
 
     setCode(screen, '123456')
 
-    await expect.element(screen.getByRole('alert')).toHaveTextContent(/this code has expired/i)
+    await expect.element(screen.getByRole('alert')).toMatchTextContent(/this code has expired/i)
   })
 
   it('starts a cooldown when a resend is rate-limited', async () => {
@@ -151,7 +151,7 @@ describe('VerifyEmailForm', () => {
 
     await expect
       .element(screen.getByRole('alert'))
-      .toHaveTextContent(/please wait before requesting/i)
+      .toMatchTextContent(/please wait before requesting/i)
     // The cooldown swaps the resend button for the countdown timer.
     await expect.element(screen.getByText(/resend in/i)).toBeInTheDocument()
   })

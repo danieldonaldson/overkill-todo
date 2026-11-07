@@ -48,25 +48,39 @@ function readCriterion(home, prefix) {
   return results
 }
 
-/** Vitest `--outputJson` files <out>/<prefix><round>.json: mean (ms) ± rme (%). */
+/**
+ * Vitest bench results <out>/<prefix><round>.json: mean (ms) ± rme (%), keyed
+ * `web: <group> > <bench>`. Reads both formats, since the base side may predate
+ * the Vitest 5 move: v5 JSON reporter (`testResults[].assertionResults[]
+ * .benchmarks[].tasks[]`, group = test title) and v4 `--outputJson` (`files[]
+ * .groups[].benchmarks[]`, group = describe name).
+ */
 function readVitest(dir, prefix) {
   /** @type {Map<string, Estimate>} */
   const results = new Map()
+  /** @param {string} group @param {string} name @param {number} meanMs @param {number} rme */
+  const add = (group, name, meanMs, rme) => {
+    // Mean, not median: the browser timer's 0.1 ms resolution zeroes the
+    // median of anything faster than that.
+    const point = meanMs * 1e6
+    const moe = (point * rme) / 100
+    keepFastest(results, `web: ${group} > ${name}`, { point, lo: point - moe, hi: point + moe })
+  }
   const files = readdirSync(dir).filter((n) => n.startsWith(prefix) && n.endsWith('.json'))
-  for (const f of files.flatMap((n) => JSON.parse(readFileSync(join(dir, n), 'utf8')).files)) {
-    for (const group of f.groups) {
-      // fullName is "src/path.bench.ts > describe"; drop the file part.
-      const groupName = group.fullName.split(' > ').slice(1).join(' > ')
-      for (const b of group.benchmarks) {
-        // Mean, not median: the browser timer's 0.1 ms resolution zeroes the
-        // median of anything faster than that.
-        const point = b.mean * 1e6
-        const moe = (point * b.rme) / 100
-        keepFastest(results, `web: ${groupName} > ${b.name}`, {
-          point,
-          lo: point - moe,
-          hi: point + moe,
-        })
+  for (const report of files.map((n) => JSON.parse(readFileSync(join(dir, n), 'utf8')))) {
+    for (const file of report.testResults ?? []) {
+      for (const test of file.assertionResults) {
+        const group = [...test.ancestorTitles, test.title].join(' > ')
+        for (const b of test.benchmarks ?? []) {
+          for (const t of b.tasks) add(group, t.name, t.latency.mean, t.latency.rme)
+        }
+      }
+    }
+    for (const f of report.files ?? []) {
+      for (const group of f.groups) {
+        // fullName is "src/path.bench.ts > describe"; drop the file part.
+        const groupName = group.fullName.split(' > ').slice(1).join(' > ')
+        for (const b of group.benchmarks) add(groupName, b.name, b.mean, b.rme)
       }
     }
   }

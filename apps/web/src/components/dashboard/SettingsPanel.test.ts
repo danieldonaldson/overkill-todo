@@ -111,7 +111,7 @@ describe('SettingsPanel', () => {
 
     await expect
       .element(screen.getByRole('alert'))
-      .toHaveTextContent(/enter your password to confirm/i)
+      .toMatchTextContent(/enter your password to confirm/i)
     expect(api.users.requestDeletion).not.toHaveBeenCalled()
   })
 

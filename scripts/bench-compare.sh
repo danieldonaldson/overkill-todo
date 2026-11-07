@@ -69,7 +69,12 @@ if [ $web = 1 ]; then
       echo "no web benches for $(basename "$2" .json); skipping"; return
     fi
     echo "── web benches: $(basename "$2" .json)"
-    (cd "$1" && pnpm --filter @overkill-todo/web exec vitest bench --run --outputJson "$2")
+    # Vitest 5 dropped --outputJson for the JSON reporter; the base side may
+    # still be on 4, so pick the flags per checkout.
+    local major out_flags
+    major=$(cd "$1/apps/web" && node -p "require('vitest/package.json').version.split('.')[0]")
+    if [ "$major" -ge 5 ]; then out_flags=(--reporter=json --outputFile="$2"); else out_flags=(--outputJson "$2"); fi
+    (cd "$1" && pnpm --filter @overkill-todo/web exec vitest bench --run "${out_flags[@]}")
   }
   (cd "$worktree" && pnpm install --frozen-lockfile --silent \
     && pnpm --filter @overkill-todo/web exec playwright install chromium >/dev/null)

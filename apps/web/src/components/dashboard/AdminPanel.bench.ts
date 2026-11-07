@@ -1,7 +1,7 @@
 // Render cost of the admin user table at a full page (50 rows), read-only and
 // with the per-row role selects super-admins get. API mocked; each iteration
 // mounts, waits for the last row, and unmounts. Run with `just bench-web`.
-import { bench, describe, vi } from 'vitest'
+import { test, vi } from 'vitest'
 import { render } from 'vitest-browser-svelte'
 import AdminPanel from './AdminPanel.svelte'
 
@@ -61,7 +61,10 @@ async function renderTable(role: UserRole) {
   await screen.unmount()
 }
 
-describe('AdminPanel render (50 rows)', () => {
-  bench('admin (read-only)', () => renderTable('admin'), { throws: true })
-  bench('super_admin (role selects)', () => renderTable('super_admin'), { throws: true })
+test('AdminPanel render (50 rows)', async ({ bench }) => {
+  await bench.compare(
+    bench('admin (read-only)', () => renderTable('admin')),
+    bench('super_admin (role selects)', () => renderTable('super_admin')),
+    { throws: true }
+  )
 })

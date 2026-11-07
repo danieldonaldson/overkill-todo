@@ -147,7 +147,7 @@ describe('ResetPasswordForm', () => {
 
     setCode(screen, '000000')
 
-    await expect.element(screen.getByRole('alert')).toHaveTextContent(/this code has expired/i)
+    await expect.element(screen.getByRole('alert')).toMatchTextContent(/this code has expired/i)
   })
 
   it('returns to the code step when the reset token expires mid-flow', async () => {
@@ -160,7 +160,7 @@ describe('ResetPasswordForm', () => {
     await fillPassword(screen, 'newpassword123')
     await screen.getByRole('button', { name: /reset password/i }).click()
 
-    await expect.element(screen.getByRole('alert')).toHaveTextContent(/your session expired/i)
+    await expect.element(screen.getByRole('alert')).toMatchTextContent(/your session expired/i)
     // Bounced back to the code-entry step.
     await expect.element(screen.getByRole('button', { name: /verify code/i })).toBeInTheDocument()
   })

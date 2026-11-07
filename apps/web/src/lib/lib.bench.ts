@@ -1,7 +1,7 @@
 // Hot client-side helpers: form validation, error narrowing, date formatting,
 // class merging, and the HTTP client's per-request path (fetch stubbed, so this
 // measures our code, not the network). Run with `just bench-web`.
-import { bench, describe } from 'vitest'
+import { test } from 'vitest'
 import { HttpClient } from './api/client'
 import { getErrorCode, getErrorMessage, isApiError } from './api/errors'
 import { setTokenExpiry } from './auth/token'
@@ -9,7 +9,9 @@ import { formatDate, formatDateTime } from './format'
 import { cn } from './utils'
 import { email, maxLength, minLength, required, validateAll } from './utils/validation'
 
-describe('validation', () => {
+// One test per group: the test name and each bench name form the report key
+// (`web: <test> > <bench>`), which scripts/bench-report.mjs matches across runs.
+test('validation', async ({ bench }) => {
   const schema = {
     email: [required(), email(), maxLength(254)],
     password: [required(), minLength(8), maxLength(256)],
@@ -18,56 +20,59 @@ describe('validation', () => {
   const valid = { email: 'alice@example.com', password: 'correct horse battery', first_name: 'A' }
   const invalid = { email: 'alice@', password: 'short', first_name: '' }
 
-  bench('validateAll signup (valid)', () => {
-    validateAll(valid, schema)
-  })
-  bench('validateAll signup (invalid)', () => {
-    validateAll(invalid, schema)
-  })
+  await bench.compare(
+    bench('validateAll signup (valid)', () => {
+      validateAll(valid, schema)
+    }),
+    bench('validateAll signup (invalid)', () => {
+      validateAll(invalid, schema)
+    })
+  )
 })
 
-describe('api errors', () => {
+test('api errors', async ({ bench }) => {
   const structured = { error_code: 'invalid_code', error: 'Wrong code', attempts_remaining: 2 }
   const plain = { code: 'csrf_invalid', message: 'Invalid CSRF token' }
 
-  bench('isApiError + code + message', () => {
+  await bench('isApiError + code + message', () => {
     for (const body of [structured, plain, null, 'nope']) {
       if (isApiError(body)) {
         getErrorCode(body)
         getErrorMessage(body)
       }
     }
-  })
+  }).run()
 })
 
-describe('format', () => {
+test('format', async ({ bench }) => {
   // One admin page of timestamps.
   const dates = Array.from({ length: 50 }, (_, i) =>
     new Date(Date.UTC(2026, 0, 1 + i, 12)).toISOString()
   )
 
-  bench('formatDate x50', () => {
-    for (const d of dates) formatDate(d)
-  })
-  bench('formatDateTime x50', () => {
-    for (const d of dates) formatDateTime(d)
-  })
+  await bench.compare(
+    bench('formatDate x50', () => {
+      for (const d of dates) formatDate(d)
+    }),
+    bench('formatDateTime x50', () => {
+      for (const d of dates) formatDateTime(d)
+    })
+  )
 })
 
-describe('cn', () => {
-  bench('button variant merge', () => {
+test('cn', async ({ bench }) => {
+  await bench('button variant merge', () => {
     cn(
       'inline-flex items-center justify-center rounded-md text-sm font-medium px-4 py-2',
       'bg-primary text-primary-foreground hover:bg-primary/90',
       false && 'opacity-50',
       'px-6 rounded-lg'
     )
-  })
+  }).run()
 })
 
-describe('HttpClient.request', () => {
-  // Set up in the describe body: Vitest bench mode does not run beforeAll/
-  // afterAll hooks. Bench files run isolated, so the stubs don't leak.
+test('HttpClient.request', async ({ bench }) => {
+  // Bench files run isolated, so these stubs don't leak into other files.
   const body = JSON.stringify({ users: [], limit: 50, offset: 0 })
   const client = new HttpClient()
   // A live session, so the client goes straight to fetch without refreshing.
@@ -79,22 +84,17 @@ describe('HttpClient.request', () => {
       headers: { 'content-type': 'application/json', 'x-trace-id': 'bench' },
     })
 
-  // `throws`: a failing request must fail the run, not report NaN.
-  bench(
-    'GET (authenticated)',
-    async () => {
+  await bench.compare(
+    bench('GET (authenticated)', async () => {
       await client.request('/admin/users?limit=50', { method: 'GET' })
-    },
-    { throws: true }
-  )
-  bench(
-    'PUT (CSRF header)',
-    async () => {
+    }),
+    bench('PUT (CSRF header)', async () => {
       await client.request('/admin/users/u1/role', {
         method: 'PUT',
         body: JSON.stringify({ role: 'admin' }),
       })
-    },
+    }),
+    // A failing request must fail the run, not report NaN.
     { throws: true }
   )
 })
