@@ -5,7 +5,7 @@ import { APP_BASE_URL, parseCsp } from './targets'
 // The live counterpart to csp.spec.ts.
 //
 // csp.spec.ts hashes the inline scripts in the LOCAL build and checks them
-// against the LOCAL nginx.conf. Both halves can be right while production
+// against the LOCAL Caddyfile. Both halves can be right while production
 // serves something else entirely — a stale image, an un-promoted digest, or an
 // edge that rewrites the HTML. This hashes the inline scripts in the response
 // production actually returns, against the CSP header returned with that same
@@ -66,7 +66,7 @@ for (const path of PAGES) {
 
     expect(
       unpinned,
-      `inline scripts on ${path} are blocked in production; add these hashes to nginx.conf and promote`
+      `inline scripts on ${path} are blocked in production; add these hashes to apps/web/Caddyfile and promote`
     ).toEqual([])
   })
 }

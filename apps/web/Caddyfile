@@ -1,0 +1,97 @@
+# Static file server for the built Astro site (the web image's runtime stage).
+# TLS terminates at the edge (Caddy in compose, an Ingress in k8s); this only speaks
+# plain HTTP on :8080 as uid 101 with a read-only root filesystem.
+{
+	# No admin API on :2019: nothing reconfigures this server at runtime, and an open
+	# admin endpoint inside the pod would let anything that reaches it load a new config.
+	admin off
+	# Internal hop only: no certificates, no HTTP->HTTPS redirect, no ACME storage.
+	auto_https off
+	# Don't try to write autosave.json (the root filesystem is read-only).
+	persist_config off
+}
+
+:8080 {
+	root * /srv
+
+	encode zstd gzip
+
+	log {
+		output stdout
+		format json
+	}
+	log_skip /healthz
+
+	# Security headers — set ONCE, here, unmatched. Unlike nginx's add_header, Caddy's
+	# header directives don't shadow one another per block, but a second directive naming
+	# one of these fields WOULD overwrite it; tests/caddy-headers.spec.ts guards both.
+	header {
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		# HSTS — only honoured by browsers over HTTPS, harmless on the internal hop to
+		# the TLS-terminating edge.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# script-src drops 'unsafe-inline'. Our own inline scripts are externalised
+		# to /scripts/*; the remaining inline scripts are Astro's island-hydration
+		# bootstrap and props deserializer, pinned by SHA-256 hash below. If an Astro
+		# upgrade changes either snippet, hydration breaks until the hashes are
+		# regenerated from the built HTML (guarded by tests/csp.spec.ts).
+		# static.cloudflareinsights.com serves the Web Analytics beacon that Cloudflare injects
+		# into every HTML response at the edge.
+		#
+		# Allowed as a HOST, deliberately NOT as Cloudflare's documented
+		# `https://static.cloudflareinsights.com/beacon.min.js` — that form does not work. The
+		# URL actually served is `/beacon.min.js/v4513226c…`, i.e. the version is a further path
+		# SEGMENT, and a CSP source expression whose path does not end in `/` must match the
+		# path exactly. Verified in Chromium against all three candidates: the documented form
+		# is BLOCKED; `…/beacon.min.js/` (prefix) and the bare host both work. Host-only is used
+		# here because that host is single-purpose; tighten to the trailing-slash prefix if
+		# ever wanted.
+		#
+		# connect-src stays 'self': for edge-injected (rather than hand-embedded) beacons the
+		# RUM payload POSTs to /cdn-cgi/rum on our own origin. If a connect-src violation ever
+		# appears for this, the fix is to add https://cloudflareinsights.com — not to loosen
+		# anything else.
+		# Any third-party embed (payment checkout, captcha, analytics) needs its own
+		# script-src/connect-src/frame-src entries, and a CSP that's too tight fails
+		# silently in production. Add an embed only together with a browser test that
+		# drives it under this exact policy (see tests/csp.spec.ts).
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'sha256-QzWFZi+FLIx23tnm9SBU4aEgx4x8DsuASP07mfqol/c=' 'sha256-SaCkFfPruIdTXT8/97JArQmGxiJAL2o4bBDvSgJ5y3Q=' https://challenges.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self'; frame-src https://challenges.cloudflare.com; frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
+	}
+
+	# Don't advertise the server software. Deletions must be deferred: Caddy sets Server
+	# when it starts writing the response.
+	header -Server {
+		defer
+	}
+
+	# `route` runs its directives in the order written (outside it Caddy sorts them), which
+	# is what lets the Cache-Control matchers below see the path AFTER try_files rewrote it.
+	route {
+		# Probe target for the kubelet readiness/liveness probes. `/` is only a meta-refresh
+		# stub to /login (astro.config.mjs `redirects`), so probing it says nothing about the
+		# app being served. Answered directly — no filesystem hit, no redirect.
+		respond /healthz "ok" 200
+
+		# Runtime public config, rendered from env into /tmp at startup (the root filesystem
+		# is read-only, so it can't live under /srv). Regenerated per pod: never cache.
+		handle /config.js {
+			header Cache-Control "no-store"
+			root * /tmp
+			file_server
+		}
+
+		# Static dashboard routes, with an SPA fallback.
+		try_files {path} {path}/index.html /index.html
+
+		@immutable path /_astro/* *.woff *.woff2 *.eot *.ttf *.otf
+		header @immutable Cache-Control "public, immutable, max-age=31536000"
+		@html path *.html */
+		header @html Cache-Control "no-cache, no-store, must-revalidate"
+
+		file_server
+	}
+}

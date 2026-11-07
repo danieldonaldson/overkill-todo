@@ -1,0 +1,33 @@
+# Build context for apps/web/Dockerfile (context: repo root). The backend image builds
+# from backend/ with its own backend/.dockerignore.
+#
+# Keep secrets out of the context: the web build stage does `COPY . .`, so anything not
+# excluded here lands in a build-stage layer (and in a mode=max registry buildcache).
+**/.env
+**/.env.*
+!**/.env.example
+deploy/compose/backend.env
+**/*.age
+**/*.sops.*
+
+# Host dependencies/artifacts: the image installs its own (musl) node_modules, and a
+# host copy would overwrite it with glibc-built native binaries.
+**/node_modules
+**/dist
+**/.astro
+**/coverage
+**/test-results
+**/.vitest-attachments
+**/.bench
+**/.turbo
+
+# Not needed to build the frontend.
+.git
+backend
+deploy
+openspec
+scripts
+.claude
+.github
+.husky
+**/*.md

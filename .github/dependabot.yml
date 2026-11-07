@@ -30,3 +30,15 @@ updates:
     schedule:
       interval: weekly
       day: monday
+
+  # Base images (tags are pinned by digest in the web Dockerfile; Dependabot bumps both).
+  - package-ecosystem: docker
+    directories: [/backend, /apps/web]
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 3
+    groups:
+      docker:
+        update-types: [minor, patch]

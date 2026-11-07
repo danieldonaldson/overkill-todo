@@ -113,7 +113,7 @@ works only on the main checkout's `:4321` (the dev-mode bypass works everywhere)
 
 ```
 backend/            Rust API (see backend/README.md, backend/ARCHITECTURE.md)
-apps/web/           Astro + Svelte site, nginx image
+apps/web/           Astro + Svelte site, Caddy image
 packages/           shared design tokens
 deploy/compose/     single-host production (Caddy TLS, digests, nightly dumps)
 deploy/k8s/         optional kustomize base (CNPG Postgres, Ingress)

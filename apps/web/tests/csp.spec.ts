@@ -7,17 +7,17 @@ import { expect, test } from '@playwright/test'
 // Guards the CSP hardening: script-src must not fall back to
 // 'unsafe-inline', and every inline <script> the build still emits — chiefly
 // Astro's island-hydration bootstrap — must be pinned by a SHA-256 hash in
-// nginx.conf. An Astro upgrade that changes that snippet fails this test with
+// the Caddyfile. An Astro upgrade that changes that snippet fails this test with
 // the new hash to paste in, instead of silently breaking hydration in prod.
 
 const here = dirname(fileURLToPath(import.meta.url))
 const distDir = join(here, '..', 'dist')
-const nginxConf = join(here, '..', 'nginx.conf')
+const caddyfile = join(here, '..', 'Caddyfile')
 
 function readScriptSrc(): string {
-  const conf = readFileSync(nginxConf, 'utf8')
+  const conf = readFileSync(caddyfile, 'utf8')
   const csp = conf.match(/Content-Security-Policy\s+"([^"]*)"/)?.[1]
-  expect(csp, 'nginx.conf has a Content-Security-Policy header').toBeTruthy()
+  expect(csp, 'Caddyfile sets a Content-Security-Policy header').toBeTruthy()
   const scriptSrc = csp!.split(';').find((d) => d.trim().startsWith('script-src'))
   expect(scriptSrc, 'CSP has a script-src directive').toBeTruthy()
   return scriptSrc!.trim()
@@ -66,7 +66,7 @@ test('every inline script in the build is pinned by a CSP hash', () => {
 
   expect(
     [...unpinned],
-    'inline scripts missing from script-src; add these hashes to nginx.conf'
+    'inline scripts missing from script-src; add these hashes to the Caddyfile'
   ).toEqual([])
 })
 
@@ -94,9 +94,9 @@ function directive(csp: string, name: string): string {
 }
 
 test('every third-party origin the app depends on is allowed by the CSP', () => {
-  const conf = readFileSync(nginxConf, 'utf8')
+  const conf = readFileSync(caddyfile, 'utf8')
   const csp = conf.match(/Content-Security-Policy\s+"([^"]*)"/)?.[1]
-  expect(csp, 'nginx.conf has a Content-Security-Policy header').toBeTruthy()
+  expect(csp, 'Caddyfile sets a Content-Security-Policy header').toBeTruthy()
 
   const missing: string[] = []
   for (const { origin, directives, why } of REQUIRED_ORIGINS) {

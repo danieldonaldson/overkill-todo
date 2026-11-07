@@ -1,6 +1,6 @@
 // Public runtime config for the app. Shipped with ${VAR} placeholders; the container
 // entrypoint (docker-entrypoint.d/40-render-public-config.sh) renders these
-// from the pod's PUBLIC_* env into /tmp/config.js at startup, which nginx serves as /config.js
+// from the pod's PUBLIC_* env into /tmp/config.js at startup, which Caddy serves as /config.js
 // (the root filesystem is read-only, so it can't be rewritten in place). The local dev server
 // serves this file verbatim — the placeholders survive (they start with "${" so config.ts's
 // runtimeValue() rejects them) and config.ts falls back to import.meta.env. Loaded

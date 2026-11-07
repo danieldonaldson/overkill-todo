@@ -3,8 +3,8 @@
 # at container startup, so one promoted image serves every environment.
 #
 # Writes to /tmp because the container runs with readOnlyRootFilesystem (only the /tmp emptyDir
-# is writable); nginx serves /config.js from /tmp (see nginx.conf). Runs via the nginx image's
-# /docker-entrypoint.d hook (as uid 101, before nginx starts).
+# is writable); Caddy serves /config.js from /tmp (see Caddyfile). Runs via the image's
+# /docker-entrypoint.sh hook (as uid 101, before Caddy starts).
 #
 # Encoding approach (why not envsubst): `envsubst` would drop operator-set
 # PUBLIC_* values straight into single-quoted JS string literals, with zero escaping. A value
@@ -28,7 +28,7 @@ set -eu
 # Default so an unset env renders empty rather than an empty JSON error downstream.
 : "${PUBLIC_TURNSTILE_SITE_KEY:=}"
 
-src=/usr/share/nginx/html/config.js
+src=/srv/config.js
 dst=/tmp/config.js
 
 # JSON-encode $1 (including the surrounding quotes) so arbitrary operator-set values are safe.

@@ -31,7 +31,7 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
 - Pages are static Astro; interactivity is Svelte 5 islands (runes).
 - Runtime config comes from `window.__PUBLIC_CONFIG` via `public/config.js`,
   rendered from `PUBLIC_*` env at container start. No secrets in the frontend.
-- Inline scripts are CSP-pinned by sha256 in `nginx.conf`; changing one means
+- Inline scripts are CSP-pinned by sha256 in `apps/web/Caddyfile`; changing one means
   updating the hash (the CSP spec fails otherwise).
 - Component tests: Vitest browser mode. Flows: Playwright with the API mocked
   (`tests/`); real-backend flows go in `tests/integration/`.

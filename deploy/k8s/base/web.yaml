@@ -1,4 +1,4 @@
-# Static Astro site on nginx-unprivileged (uid 101, :8080). PUBLIC_* env is rendered
+# Static Astro site on Caddy (uid 101, :8080, admin API off). PUBLIC_* env is rendered
 # into /config.js at container start, so one image serves every environment.
 apiVersion: apps/v1
 kind: Deployment

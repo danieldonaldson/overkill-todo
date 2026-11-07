@@ -7,9 +7,9 @@ import { APP_BASE_URL, REQUIRED_SECURITY_HEADERS, parseCsp } from './targets'
 // declares an add_header of its own drops every server-level one. A block that
 // set only Cache-Control therefore stripped CSP, Permissions-Policy and COOP
 // from every HTML response in production, while nginx.conf still read as though
-// CSP were enforced. The repo's csp.spec.ts and nginx-headers.spec.ts guard the
+// CSP were enforced. The repo's csp.spec.ts and caddy-headers.spec.ts guard the
 // *file*; this guards the *bytes a live edge returns*, for every distinct class
-// of response nginx routes differently. That is the only place the bug is
+// of response the server routes differently. That is the only place the bug is
 // visible.
 
 // Hashed asset filenames change every build, so discover them from the live
@@ -24,8 +24,8 @@ async function discoverAssets(request: APIRequestContext): Promise<{ js: string;
 }
 
 test.describe('security headers on live responses', () => {
-  // Each entry is a response class nginx can route through a different location
-  // block — i.e. a separate opportunity to shadow the headers.
+  // Each entry is a response class the server routes through a different handler
+  // — i.e. a separate opportunity to shadow the headers.
   test('every class of dashboard response carries the full header set', async ({ request }) => {
     const { js, css } = await discoverAssets(request)
     const paths = [
@@ -50,7 +50,7 @@ test.describe('security headers on live responses', () => {
 
     expect(
       missing,
-      'a location block is shadowing the server-level add_headers — see nginx-headers.spec.ts'
+      'a handler is skipping or overriding the site-level security headers — see caddy-headers.spec.ts'
     ).toEqual([])
   })
 })
