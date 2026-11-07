@@ -58,6 +58,26 @@ mockall = "0.15"
 once_cell = "1.19"
 proptest = "1.6"
 wiremock = "0.6"
+criterion = { version = "0.8", features = ["async_tokio", "html_reports"] }
+
+# Criterion benches (`just bench`). `harness = false` hands `main` to criterion.
+# They share `tests/common` with the integration tests for app wiring and keys.
+[[bench]]
+name = "crypto"
+harness = false
+
+[[bench]]
+name = "domain"
+harness = false
+
+[[bench]]
+name = "middleware"
+harness = false
+
+# Full router against Postgres; skips itself when DATABASE_URL is unset.
+[[bench]]
+name = "http"
+harness = false
 
 [features]
 mocks = []

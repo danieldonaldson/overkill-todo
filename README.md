@@ -55,6 +55,34 @@ In dev, verification codes print in the backend log.
 | `just e2e-integration`                | Playwright signup against `just dev`            |
 | `just smoke <url>`                    | read-only checks against a deployed site        |
 | `just up`                             | prod-like stack in Docker behind Caddy on :8080 |
+| `just bench` / `just bench-db`        | backend criterion benches / full-router + DB    |
+| `just bench-web`                      | Vitest benches (helpers, client, AdminPanel)    |
+
+### Benchmarks
+
+Benchmarks catch performance regressions; they're not part of `just ci` because
+wall-clock numbers on shared runners are too noisy to gate on. Compare against a
+baseline from `main`, on the same machine:
+
+```bash
+git switch main && just bench --save-baseline main          # once per main change
+git switch my-branch && just bench --baseline main          # prints % change per bench
+just bench-web --outputJson .bench/main.json                # frontend, on main
+just bench-web --compare .bench/main.json                   # frontend, on your branch
+```
+
+- `backend/benches/crypto.rs`: JWT, CSRF, OAuth state, secret cipher, tokens,
+  and Argon2 at production cost.
+- `backend/benches/domain.rs`: value objects, request DTOs, error fingerprints
+  and responses, email templates.
+- `backend/benches/middleware.rs`: the real router's middleware stack, no DB.
+- `backend/benches/http.rs` (`just bench-db`): `/me`, export, admin list,
+  login, and refresh rotation against a throwaway `overkill_todo_bench` database.
+- `apps/web/**/*.bench.ts`: Vitest benches in Chromium. Bench mode skips
+  `beforeAll`, so set up in the `describe` body; pass `{ throws: true }` to async
+  benches so a failure fails the run instead of reporting NaN.
+
+Criterion HTML reports land in `backend/target/criterion/report/index.html`.
 
 ## Parallel work (worktrees)
 

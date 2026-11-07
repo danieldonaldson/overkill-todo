@@ -35,3 +35,6 @@ backend/proptest-regressions/
 deploy/compose/backend.env
 deploy/compose/db_password
 deploy/compose/backups/
+
+# Vitest bench baselines (`just bench-web --outputJson .bench/main.json`)
+.bench/

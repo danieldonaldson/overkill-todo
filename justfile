@@ -159,6 +159,23 @@ coverage: db-up db-migrate
     cd {{backend}} && DATABASE_URL={{db_url}} cargo llvm-cov nextest --tests --html
     cd {{backend}} && cargo llvm-cov report --summary-only
 
+# ── Benchmarks ───────────────────────────────────────────────────────────────────
+# Regression workflow: `just bench --save-baseline main` on main, then on your
+# branch `just bench --baseline main` (criterion prints the change per bench).
+# Same machine, same power state; HTML reports land in backend/target/criterion.
+
+# Backend benches that need no DB (crypto, domain, middleware). Args go to criterion.
+bench *args:
+    cd {{backend}} && SQLX_OFFLINE=true cargo bench --bench crypto --bench domain --bench middleware -- {{args}}
+
+# Full-router benches against Postgres. Recreates an `overkill_todo_bench` database each run.
+bench-db *args: db-up
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo bench --bench http -- {{args}}
+
+# Frontend benches (Vitest bench in Chromium). Compare: --outputJson .bench/main.json, then --compare .bench/main.json.
+bench-web *args:
+    {{pnpm}} --filter {{web}} exec vitest bench --run {{args}}
+
 # Frontend component-test coverage. HTML report: apps/web/coverage/index.html.
 coverage-web:
     {{pnpm}} --filter {{web}} test:coverage
