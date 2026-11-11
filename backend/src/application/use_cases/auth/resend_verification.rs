@@ -4,8 +4,8 @@ use crate::application::ports::UserRepository;
 use crate::application::ports::{
     CodeGenerator, EmailService, EmailVerificationRepository, PasswordHasher,
 };
-use crate::domain::entities::EmailVerificationCode;
 use crate::domain::entities::email_verification_code::RESEND_COOLDOWN_MINUTES;
+use crate::domain::entities::{EmailVerificationCode, Reissue};
 use std::sync::Arc;
 
 /// Result of a resend operation, including metadata for the frontend.
@@ -98,16 +98,16 @@ impl ResendVerificationUseCase {
             // lockout. Refuse for a short fixed window (LOCK_DURATION_MINUTES)
             // after the lock, then allow a fresh code — rather than blocking for
             // the full 24h code lifetime.
-            let seconds_until_unlock = existing_code.seconds_until_unlock();
-            if seconds_until_unlock > 0 {
-                return Err(ResendVerificationError::Locked {
-                    seconds_until_unlock,
-                });
-            }
-            if !existing_code.can_resend() {
-                return Err(ResendVerificationError::CooldownActive {
-                    seconds_remaining: existing_code.seconds_until_resend(),
-                });
+            match existing_code.reissue() {
+                Reissue::Allowed => {}
+                Reissue::Locked { seconds_remaining } => {
+                    return Err(ResendVerificationError::Locked {
+                        seconds_until_unlock: seconds_remaining,
+                    });
+                }
+                Reissue::Cooldown { seconds_remaining } => {
+                    return Err(ResendVerificationError::CooldownActive { seconds_remaining });
+                }
             }
         }
 

@@ -1,6 +1,6 @@
 //! Email verification code entity.
 
-use crate::domain::entities::attempt_lockout::AttemptLockout;
+use crate::domain::entities::attempt_lockout::{AttemptLockout, Reissue};
 use crate::domain::value_objects::{UserId, VerificationCodeId};
 use chrono::{DateTime, Duration, Utc};
 
@@ -13,6 +13,38 @@ pub use crate::domain::entities::attempt_lockout::{
 
 /// Duration in hours before the verification code expires.
 pub const EXPIRY_HOURS: i64 = 24;
+
+/// A one-click magic-link token: the SHA-256 hash of the emailed token and its
+/// own expiry.
+///
+/// The expiry is independent of the 6-digit code's `expires_at`, so resending
+/// the code (which refreshes `expires_at`) never extends or revives a link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MagicToken {
+    hash: String,
+    expires_at: DateTime<Utc>,
+}
+
+impl MagicToken {
+    /// SHA-256 hash of the token (the token is a random UUID, so a fast hash
+    /// is enough).
+    #[must_use]
+    pub fn hash(&self) -> &str {
+        &self.hash
+    }
+
+    /// When the link stops working.
+    #[must_use]
+    pub const fn expires_at(&self) -> DateTime<Utc> {
+        self.expires_at
+    }
+
+    /// Whether the link has expired.
+    #[must_use]
+    pub fn is_expired(&self) -> bool {
+        self.expires_at <= Utc::now()
+    }
+}
 
 /// An email verification code for user email verification.
 ///
@@ -34,12 +66,8 @@ pub struct EmailVerificationCode {
     attempts: i32,
     last_sent_at: DateTime<Utc>,
     created_at: DateTime<Utc>,
-    /// Optional magic link token hash (SHA-256, since token is random UUID)
-    magic_token_hash: Option<String>,
-    /// Expiry of the magic link token, tracked independently of `expires_at` so
-    /// resending the 6-digit code (which refreshes `expires_at`) does not extend
-    /// or revive a previously-issued magic link.
-    magic_token_expires_at: Option<DateTime<Utc>>,
+    /// The one-click magic link issued alongside the code, if any.
+    magic_token: Option<MagicToken>,
     /// Codes for this user replaced while locked at the attempt cap; each
     /// doubles the next lock window. Persisted, never set by the domain.
     lockouts: i32,
@@ -63,8 +91,7 @@ impl EmailVerificationCode {
             attempts: 0,
             last_sent_at: now,
             created_at: now,
-            magic_token_hash: None,
-            magic_token_expires_at: None,
+            magic_token: None,
             lockouts: 0,
         }
     }
@@ -85,16 +112,23 @@ impl EmailVerificationCode {
             attempts: 0,
             last_sent_at: now,
             created_at: now,
-            magic_token_hash: Some(magic_token_hash),
-            magic_token_expires_at: Some(now + Duration::hours(EXPIRY_HOURS)),
+            magic_token: Some(MagicToken {
+                hash: magic_token_hash,
+                expires_at: now + Duration::hours(EXPIRY_HOURS),
+            }),
             lockouts: 0,
         }
     }
 
     /// Reconstructs a verification code from persistence layer data.
+    ///
+    /// The magic token's two columns become one [`MagicToken`] only when both
+    /// are set. A hash with no recorded expiry can never be redeemed (it counts
+    /// as expired), so it is dropped; saving such a code leaves the stored
+    /// columns untouched, as the upsert keeps existing magic-token values.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub const fn from_persistence(
+    pub fn from_persistence(
         id: VerificationCodeId,
         user_id: UserId,
         code_hash: String,
@@ -113,8 +147,9 @@ impl EmailVerificationCode {
             attempts,
             last_sent_at,
             created_at,
-            magic_token_hash,
-            magic_token_expires_at,
+            magic_token: magic_token_hash
+                .zip(magic_token_expires_at)
+                .map(|(hash, expires_at)| MagicToken { hash, expires_at }),
             lockouts: 0,
         }
     }
@@ -176,27 +211,29 @@ impl EmailVerificationCode {
         self.created_at
     }
 
+    /// Returns the magic link token, if one was issued.
+    #[must_use]
+    pub const fn magic_token(&self) -> Option<&MagicToken> {
+        self.magic_token.as_ref()
+    }
+
     /// Returns the magic link token hash, if set.
     #[must_use]
     pub fn magic_token_hash(&self) -> Option<&str> {
-        self.magic_token_hash.as_deref()
+        self.magic_token.as_ref().map(MagicToken::hash)
     }
 
     /// Returns when the magic link token expires, if set.
     #[must_use]
-    pub const fn magic_token_expires_at(&self) -> Option<DateTime<Utc>> {
-        self.magic_token_expires_at
+    pub fn magic_token_expires_at(&self) -> Option<DateTime<Utc>> {
+        self.magic_token.as_ref().map(MagicToken::expires_at)
     }
 
-    /// Checks whether the magic link token is expired.
-    ///
-    /// Uses the token's own expiry (independent of the 6-digit code's
-    /// `expires_at`) so a code resend never extends the link. A token with no
-    /// recorded expiry is treated as expired/invalid.
+    /// Checks whether the magic link can no longer be redeemed: it has expired,
+    /// or there is none.
     #[must_use]
     pub fn is_magic_token_expired(&self) -> bool {
-        self.magic_token_expires_at
-            .is_none_or(|expires_at| expires_at <= Utc::now())
+        self.magic_token.as_ref().is_none_or(MagicToken::is_expired)
     }
 
     /// Checks if this code has expired.
@@ -219,25 +256,12 @@ impl EmailVerificationCode {
         self.lockout().is_locked()
     }
 
-    /// Seconds until a locked code may be replaced via resend, measured from
-    /// `last_sent_at`. Returns 0 once the lock window has elapsed (or if the
-    /// code is not locked), at which point a resend issues a fresh code.
+    /// Whether a replacement code may be issued now (see
+    /// [`AttemptLockout::reissue`]). Every path that issues a code for this
+    /// user must check it first, or it would clear an active lockout.
     #[must_use]
-    pub fn seconds_until_unlock(&self) -> i64 {
-        self.lockout().seconds_until_unlock()
-    }
-
-    /// Checks if a new code can be sent (cooldown expired).
-    #[must_use]
-    pub fn can_resend(&self) -> bool {
-        self.lockout().can_resend()
-    }
-
-    /// Returns how many seconds until resend is allowed.
-    /// Returns 0 if resend is already allowed.
-    #[must_use]
-    pub fn seconds_until_resend(&self) -> i64 {
-        self.lockout().seconds_until_resend()
+    pub fn reissue(&self) -> Reissue {
+        self.lockout().reissue()
     }
 
     /// Increments the attempt counter after a failed verification.
@@ -300,8 +324,10 @@ mod tests {
     #[test]
     fn test_cannot_resend_immediately() {
         let code = create_valid_code();
-        assert!(!code.can_resend());
-        assert!(code.seconds_until_resend() > 0);
+        assert!(matches!(
+            code.reissue(),
+            Reissue::Cooldown { seconds_remaining } if seconds_remaining > 0
+        ));
     }
 
     #[test]
@@ -378,21 +404,7 @@ mod tests {
     }
 
     #[test]
-    fn test_seconds_until_unlock() {
-        // Not locked → 0 regardless of last_sent_at.
-        let unlocked = EmailVerificationCode::from_persistence(
-            VerificationCodeId::new(),
-            UserId::new(),
-            "hash".to_string(),
-            Utc::now() + Duration::hours(24),
-            0,
-            Utc::now(),
-            Utc::now(),
-            None,
-            None,
-        );
-        assert_eq!(unlocked.seconds_until_unlock(), 0);
-
+    fn test_reissue_while_locked() {
         // Locked, sent just now → within the lock window.
         let just_locked = EmailVerificationCode::from_persistence(
             VerificationCodeId::new(),
@@ -405,10 +417,13 @@ mod tests {
             None,
             None,
         );
-        let secs = just_locked.seconds_until_unlock();
-        assert!(secs > 0 && secs <= LOCK_DURATION_MINUTES * 60);
+        assert!(matches!(
+            just_locked.reissue(),
+            Reissue::Locked { seconds_remaining }
+                if seconds_remaining > 0 && seconds_remaining <= LOCK_DURATION_MINUTES * 60
+        ));
 
-        // Locked, but the lock window has elapsed → 0 (resend allowed).
+        // Locked, but the lock window has elapsed → resend allowed.
         let lock_elapsed = EmailVerificationCode::from_persistence(
             VerificationCodeId::new(),
             UserId::new(),
@@ -420,7 +435,7 @@ mod tests {
             None,
             None,
         );
-        assert_eq!(lock_elapsed.seconds_until_unlock(), 0);
+        assert_eq!(lock_elapsed.reissue(), Reissue::Allowed);
     }
 
     #[test]
@@ -443,7 +458,9 @@ mod tests {
         assert!(!make(Some(Utc::now() + Duration::hours(1))).is_magic_token_expired());
         // Past expiry → expired.
         assert!(make(Some(Utc::now() - Duration::hours(1))).is_magic_token_expired());
-        // No recorded expiry → treated as expired/invalid.
-        assert!(make(None).is_magic_token_expired());
+        // No recorded expiry → no usable token, so treated as expired.
+        let no_expiry = make(None);
+        assert!(no_expiry.magic_token().is_none());
+        assert!(no_expiry.is_magic_token_expired());
     }
 }

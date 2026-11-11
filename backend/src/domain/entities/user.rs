@@ -1,5 +1,5 @@
 use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{AccountStatus, Email, UserId, UserRole};
+use crate::domain::value_objects::{AccountStatus, Email, PendingEmailChange, UserId, UserRole};
 use chrono::{DateTime, Utc};
 
 /// How long a user can cancel a deletion request before the account is purged.
@@ -19,7 +19,7 @@ pub const DELETION_GRACE_PERIOD_DAYS: i64 = 14;
 /// # Email Change
 ///
 /// Users can request to change their email. The flow is:
-/// 1. User requests email change, `pending_email` is set
+/// 1. User requests email change, a [`PendingEmailChange`] is recorded
 /// 2. Verification code is sent to the new email
 /// 3. User confirms with the code, email is swapped
 ///
@@ -58,8 +58,7 @@ pub struct User {
     first_name: String,
     last_name: String,
     email_verified: bool,
-    pending_email: Option<Email>,
-    pending_email_requested_at: Option<DateTime<Utc>>,
+    pending_email_change: Option<PendingEmailChange>,
     status: AccountStatus,
     // Authorization
     role: UserRole,
@@ -84,8 +83,7 @@ pub struct UserParts {
     pub first_name: String,
     pub last_name: String,
     pub email_verified: bool,
-    pub pending_email: Option<Email>,
-    pub pending_email_requested_at: Option<DateTime<Utc>>,
+    pub pending_email_change: Option<PendingEmailChange>,
     pub status: AccountStatus,
     pub role: UserRole,
     pub created_at: DateTime<Utc>,
@@ -137,8 +135,7 @@ impl User {
             first_name,
             last_name,
             email_verified: false,
-            pending_email: None,
-            pending_email_requested_at: None,
+            pending_email_change: None,
             status: AccountStatus::Active,
             role: UserRole::User,
             created_at: now,
@@ -160,8 +157,7 @@ impl User {
             first_name,
             last_name,
             email_verified,
-            pending_email,
-            pending_email_requested_at,
+            pending_email_change,
             status,
             role,
             created_at,
@@ -175,8 +171,7 @@ impl User {
             first_name,
             last_name,
             email_verified,
-            pending_email,
-            pending_email_requested_at,
+            pending_email_change,
             status,
             role,
             created_at,
@@ -251,22 +246,32 @@ impl User {
         self.email_verified
     }
 
+    /// Returns the pending email change, if any.
+    #[must_use]
+    pub const fn pending_email_change(&self) -> Option<&PendingEmailChange> {
+        self.pending_email_change.as_ref()
+    }
+
     /// Returns the pending email address, if any.
     #[must_use]
-    pub const fn pending_email(&self) -> Option<&Email> {
-        self.pending_email.as_ref()
+    pub fn pending_email(&self) -> Option<&Email> {
+        self.pending_email_change
+            .as_ref()
+            .map(PendingEmailChange::new_email)
     }
 
     /// Returns when the pending email was requested, if any.
     #[must_use]
-    pub const fn pending_email_requested_at(&self) -> Option<DateTime<Utc>> {
-        self.pending_email_requested_at
+    pub fn pending_email_requested_at(&self) -> Option<DateTime<Utc>> {
+        self.pending_email_change
+            .as_ref()
+            .map(PendingEmailChange::requested_at)
     }
 
     /// Returns true if there is a pending email change request.
     #[must_use]
     pub const fn has_pending_email(&self) -> bool {
-        self.pending_email.is_some()
+        self.pending_email_change.is_some()
     }
 
     /// Returns the user's role.
@@ -314,23 +319,22 @@ impl User {
 
     /// Requests an email change to a new address.
     ///
-    /// This sets the `pending_email` and `pending_email_requested_at` fields.
-    /// The email change must be confirmed by verifying the new email address.
+    /// Replaces any earlier pending change. The change must be confirmed by
+    /// verifying the new email address.
     pub fn request_email_change(&mut self, new_email: Email) {
         let now = Utc::now();
-        self.pending_email = Some(new_email);
-        self.pending_email_requested_at = Some(now);
+        self.pending_email_change = Some(PendingEmailChange::new(new_email, now));
         self.updated_at = now;
     }
 
     /// Confirms the pending email change.
     ///
-    /// This swaps the current email with the pending email and clears the pending fields.
-    /// The `email_verified` flag is set to true since the new email was verified.
+    /// This swaps the current email for the pending one and clears the pending
+    /// change. The `email_verified` flag is set to true since the new email was
+    /// verified. A no-op when nothing is pending.
     pub fn confirm_email_change(&mut self) {
-        if let Some(new_email) = self.pending_email.take() {
-            self.email = new_email;
-            self.pending_email_requested_at = None;
+        if let Some(change) = self.pending_email_change.take() {
+            self.email = change.into_new_email();
             self.email_verified = true;
             self.updated_at = Utc::now();
         }
@@ -338,9 +342,7 @@ impl User {
 
     /// Cancels any pending email change request.
     pub fn cancel_email_change(&mut self) {
-        if self.pending_email.is_some() {
-            self.pending_email = None;
-            self.pending_email_requested_at = None;
+        if self.pending_email_change.take().is_some() {
             self.updated_at = Utc::now();
         }
     }
@@ -432,8 +434,7 @@ impl User {
         self.password_hash = None;
         self.first_name = "Deleted".to_string();
         self.last_name = "User".to_string();
-        self.pending_email = None;
-        self.pending_email_requested_at = None;
+        self.pending_email_change = None;
         self.status = AccountStatus::Deleted { deleted_at: now };
         self.updated_at = now;
         Ok(())
@@ -461,8 +462,7 @@ impl User {
             first_name: self.first_name,
             last_name: self.last_name,
             email_verified: self.email_verified,
-            pending_email: self.pending_email,
-            pending_email_requested_at: self.pending_email_requested_at,
+            pending_email_change: self.pending_email_change,
             status: self.status,
             role: self.role,
             created_at: self.created_at,
@@ -530,8 +530,7 @@ impl UserBuilder {
                 first_name: "Test".to_string(),
                 last_name: "User".to_string(),
                 email_verified: true,
-                pending_email: None,
-                pending_email_requested_at: None,
+                pending_email_change: None,
                 status: AccountStatus::Active,
                 role: UserRole::User,
                 created_at: now,

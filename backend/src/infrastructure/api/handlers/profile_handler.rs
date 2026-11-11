@@ -127,8 +127,8 @@ fn build_export(
         email_verified: parts.email_verified,
         has_password,
         pending_email: parts
-            .pending_email
-            .map(crate::domain::value_objects::Email::into_string),
+            .pending_email_change
+            .map(|change| change.into_new_email().into_string()),
         deletion_scheduled_at: parts.status.deletion_scheduled_at(),
         role: parts.role.to_db_str().to_string(),
         created_at: parts.created_at,

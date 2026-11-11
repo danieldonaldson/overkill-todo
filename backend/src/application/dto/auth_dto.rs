@@ -2,7 +2,7 @@
 
 use super::validation::validate_verification_code;
 use crate::domain::entities::User;
-use crate::domain::value_objects::Email;
+use crate::domain::value_objects::PendingEmailChange;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -249,8 +249,13 @@ impl UserResponse {
             email_verified: parts.email_verified,
             has_password,
             oauth_providers,
-            pending_email: parts.pending_email.map(Email::into_string),
-            pending_email_requested_at: parts.pending_email_requested_at,
+            pending_email_requested_at: parts
+                .pending_email_change
+                .as_ref()
+                .map(PendingEmailChange::requested_at),
+            pending_email: parts
+                .pending_email_change
+                .map(|change| change.into_new_email().into_string()),
             deletion_scheduled_at: parts.status.deletion_scheduled_at(),
             role: parts.role.to_db_str().to_string(),
             created_at: parts.created_at,
