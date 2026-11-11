@@ -561,71 +561,104 @@ fn location(resp: &axum::http::Response<Body>) -> String {
         .to_string()
 }
 
-/// A valid magic link verifies the email and redirects to /set-password.
+fn confirm_magic(token: &str) -> Request<Body> {
+    post_json("/api/v1/auth/verify-magic", &json!({ "token": token }))
+}
+
+async fn email_verified(pool: &PgPool, id: uuid::Uuid) -> bool {
+    sqlx::query_scalar::<_, bool>("SELECT email_verified FROM users WHERE id = $1")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The legacy GET link only forwards the token to the frontend confirmation
+/// page (in the fragment). It must not verify anything: mail scanners fetch it.
 #[sqlx::test(migrations = "./migrations")]
-async fn magic_link_valid_redirects_to_set_password(pool: PgPool) {
+async fn magic_link_get_redirects_without_side_effects(pool: PgPool) {
+    let app = common::create_test_app(pool.clone());
+    let email = "e2e-magic-get@example.com";
+    register(&app, email).await;
+    let id = user_id(&pool, email).await;
+    let token = plant_magic_token(&pool, id, false).await;
+
+    let resp = app
+        .clone()
+        .oneshot(get(&format!("/api/v1/auth/verify-magic?token={token}")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let loc = location(&resp);
+    assert!(
+        loc.ends_with(&format!("/verify-magic#token={token}")),
+        "unexpected redirect: {loc}"
+    );
+    assert!(!email_verified(&pool, id).await);
+
+    // The token is still usable after the prefetch.
+    let resp = app.oneshot(confirm_magic(&token)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// Confirming a valid link verifies the email and returns a signup token in the
+/// body (never in a URL).
+#[sqlx::test(migrations = "./migrations")]
+async fn magic_link_confirm_returns_signup_token(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-magic@example.com";
     register(&app, email).await;
     let id = user_id(&pool, email).await;
     let token = plant_magic_token(&pool, id, false).await;
 
-    let resp = app
-        .oneshot(get(&format!("/api/v1/auth/verify-magic?token={token}")))
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    let loc = location(&resp);
-    assert!(loc.contains("/set-password"), "unexpected redirect: {loc}");
-    assert!(loc.contains("token="));
+    let resp = app.clone().oneshot(confirm_magic(&token)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    assert!(body["signup_token"].as_str().is_some_and(|t| !t.is_empty()));
+    assert_eq!(body["user"]["email"], email);
+    assert!(email_verified(&pool, id).await);
 
-    // Email is now verified in the DB.
-    let verified = sqlx::query_scalar::<_, bool>("SELECT email_verified FROM users WHERE id = $1")
-        .bind(id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert!(verified);
+    // Single use.
+    let resp = app.oneshot(confirm_magic(&token)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(resp.into_body()).await["error_code"],
+        "CODE_INVALID"
+    );
 }
 
-/// An invalid (unknown) magic token redirects to /verify-email with an error.
+/// An unknown token is rejected with a structured error.
 #[sqlx::test(migrations = "./migrations")]
-async fn magic_link_invalid_token_redirects_to_error(pool: PgPool) {
+async fn magic_link_invalid_token_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
 
     let resp = app
-        .oneshot(get("/api/v1/auth/verify-magic?token=not-a-real-token"))
+        .oneshot(confirm_magic("not-a-real-token"))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    let loc = location(&resp);
-    assert!(loc.contains("/verify-email?error="), "got: {loc}");
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(resp.into_body()).await["error_code"],
+        "CODE_INVALID"
+    );
 }
 
-/// An expired magic token redirects to /verify-email with an error.
+/// An expired token is rejected and verifies nothing.
 #[sqlx::test(migrations = "./migrations")]
-async fn magic_link_expired_token_redirects_to_error(pool: PgPool) {
+async fn magic_link_expired_token_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-magic-expired@example.com";
     register(&app, email).await;
     let id = user_id(&pool, email).await;
     let token = plant_magic_token(&pool, id, true).await;
 
-    let resp = app
-        .oneshot(get(&format!("/api/v1/auth/verify-magic?token={token}")))
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    let loc = location(&resp);
-    assert!(loc.contains("/verify-email?error="), "got: {loc}");
-
-    // Email must NOT have been verified.
-    let verified = sqlx::query_scalar::<_, bool>("SELECT email_verified FROM users WHERE id = $1")
-        .bind(id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert!(!verified);
+    let resp = app.oneshot(confirm_magic(&token)).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        body_json(resp.into_body()).await["error_code"],
+        "CODE_EXPIRED"
+    );
+    assert!(!email_verified(&pool, id).await);
 }
 
 // ---------------------------------------------------------------------------

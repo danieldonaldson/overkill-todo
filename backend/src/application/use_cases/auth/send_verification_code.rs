@@ -15,10 +15,12 @@ use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
-/// Backend path that consumes a magic-link token (`GET ...?token=`). The link is
-/// rooted at the frontend base URL because the API is served same-origin behind
-/// the same proxy (see the dashboard's `API_BASE = '/api/v1'`).
-const VERIFY_MAGIC_PATH: &str = "/api/v1/auth/verify-magic";
+/// Frontend page that confirms a magic-link token. The token travels in the URL
+/// fragment (`#token=`), which browsers never send to a server, so it stays out
+/// of access logs. Opening the page does nothing by itself: the user presses a
+/// button that POSTs the token to `/api/v1/auth/verify-magic`, so mail scanners
+/// that prefetch links can't use the token up before the user clicks.
+const VERIFY_MAGIC_PATH: &str = "/verify-magic";
 
 /// Why a registration-time verification code never reached the user.
 ///
@@ -106,7 +108,7 @@ impl SendVerificationCodeUseCase {
     /// Builds the absolute magic-link URL for a raw token.
     fn magic_link(&self, token: &str) -> String {
         format!(
-            "{base}{path}?token={token}",
+            "{base}{path}#token={token}",
             base = self.frontend_base_url.trim_end_matches('/'),
             path = VERIFY_MAGIC_PATH,
         )

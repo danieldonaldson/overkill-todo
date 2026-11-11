@@ -105,6 +105,9 @@ async fn run_real_oauth_flow(
     if state.is_empty() {
         return Err(AppError::Validation("Missing state parameter".into()));
     }
+    if code.is_empty() {
+        return Err(AppError::Validation("Missing code parameter".into()));
+    }
     let state_claims = verify_oauth_state(deps.crypto.decoding_key(), state)?;
 
     if state_claims.provider != provider {
@@ -225,31 +228,68 @@ pub async fn oauth_start(
 
 /// OAuth callback from provider.
 ///
-/// Handles both real OAuth flow and test bypass mode.
+/// Handles both real OAuth flow and test bypass mode. Always answers with a
+/// redirect: the browser arrives here by top-level navigation from the
+/// provider, so a JSON error body would strand the user on a raw error page.
+/// Provider-reported errors (e.g. a cancelled consent) and every internal
+/// failure go back to `/login` with a fixed error code; the cause is logged,
+/// never put in the URL.
 #[utoipa::path(
     get,
     path = "/api/v1/auth/oauth/{provider}/callback",
     tag = "OAuth",
     params(
         ("provider" = String, Path, description = "OAuth provider"),
-        ("code" = String, Query, description = "Authorization code"),
-        ("state" = String, Query, description = "State parameter")
+        ("code" = Option<String>, Query, description = "Authorization code"),
+        ("state" = Option<String>, Query, description = "State parameter"),
+        ("error" = Option<String>, Query, description = "Error reported by the provider, e.g. access_denied")
     ),
     responses(
-        (status = 302, description = "Redirect to app with result"),
-        (status = 400, description = "OAuth error")
+        (status = 307, description = "Redirect to the app with the result, or to /login?error=oauth_cancelled|oauth_failed")
     )
 )]
-/// # Errors
-///
-/// Returns an error if OAuth flow fails, provider is invalid, or service errors occur.
-#[allow(clippy::too_many_lines)]
 pub async fn oauth_callback(
     State(deps): State<Arc<OAuthHandlerDeps>>,
     headers: HeaderMap,
     Path(provider): Path<String>,
     Query(query): Query<CallbackQuery>,
+) -> (HeaderMap, Redirect) {
+    if let Some(error) = query.error.as_deref() {
+        tracing::info!(provider = %provider, error, "OAuth provider reported an error");
+        let code = if error == "access_denied" {
+            "oauth_cancelled"
+        } else {
+            "oauth_failed"
+        };
+        return login_error_redirect(code);
+    }
+
+    match oauth_callback_inner(&deps, &headers, &provider, query).await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::warn!(provider = %provider, error = %e, "OAuth callback failed");
+            login_error_redirect("oauth_failed")
+        }
+    }
+}
+
+/// Redirect to the login page with a fixed error code, clearing the OAuth
+/// handoff cookies so a retry starts clean.
+fn login_error_redirect(code: &'static str) -> (HeaderMap, Redirect) {
+    (
+        cleared_oauth_handoff_headers(),
+        Redirect::temporary(&format!("/login?error={code}")),
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+async fn oauth_callback_inner(
+    deps: &OAuthHandlerDeps,
+    headers: &HeaderMap,
+    provider: &str,
+    query: CallbackQuery,
 ) -> Result<(HeaderMap, Redirect), AppError> {
+    let provider = provider.to_owned();
     let provider_enum = parse_provider(&provider)?;
 
     // Handle test bypass mode for E2E tests (debug builds only)
@@ -283,16 +323,19 @@ pub async fn oauth_callback(
         } else {
             // Real OAuth flow (debug build, bypass not active).
             let state = query.state.as_deref().unwrap_or("");
+            let code = query.code.as_deref().unwrap_or("");
             let (user_info, state_claims) =
-                run_real_oauth_flow(&deps, &provider, provider_enum, state, &query.code).await?;
+                run_real_oauth_flow(deps, &provider, provider_enum, state, code).await?;
             (user_info, state_claims, true)
         };
 
-    // Real OAuth flow (release build — CallbackQuery is OAuthCallbackQuery with required state)
+    // Real OAuth flow (release build — CallbackQuery is OAuthCallbackQuery)
     #[cfg(not(debug_assertions))]
     let (user_info, state_claims, enforce_binding) = {
+        let state = query.state.as_deref().unwrap_or("");
+        let code = query.code.as_deref().unwrap_or("");
         let (user_info, state_claims) =
-            run_real_oauth_flow(&deps, &provider, provider_enum, &query.state, &query.code).await?;
+            run_real_oauth_flow(deps, &provider, provider_enum, state, code).await?;
         (user_info, state_claims, true)
     };
 
@@ -300,7 +343,7 @@ pub async fn oauth_callback(
     // attacker replaying a valid code+state from their own flow has no matching
     // `oauth_state` cookie in the victim's browser, so this fails closed.
     if enforce_binding {
-        let provided_nonce = extract_oauth_state_cookie(&headers);
+        let provided_nonce = extract_oauth_state_cookie(headers);
         if provided_nonce.as_deref() != Some(state_claims.nonce.as_str()) {
             tracing::warn!(provider = %provider, "OAuth state binding mismatch — rejecting callback");
             return Err(AppError::Validation("OAuth state binding mismatch".into()));
@@ -326,7 +369,7 @@ pub async fn oauth_callback(
         .callback_use_case
         .execute(provider_enum, user_info, mode, linking_user_id.as_ref())
         .await?;
-    let device_fingerprint = extract_oauth_device_fingerprint_cookie(&headers);
+    let device_fingerprint = extract_oauth_device_fingerprint_cookie(headers);
 
     match result {
         OAuthCallbackResult::LoggedIn(user) => {

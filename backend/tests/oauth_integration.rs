@@ -183,6 +183,14 @@ async fn callback(
         .unwrap()
 }
 
+/// The callback always answers with a redirect: failures land on the login
+/// page with a fixed error code and the handoff cookies cleared.
+fn assert_login_error(resp: &Response<Body>, code: &str) {
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(location(resp), format!("/login?error={code}"));
+    assert_handoff_cookies_cleared(resp);
+}
+
 /// Run start → callback as one browser and return the callback response.
 async fn login_flow(app: &Router, code: &str, device_fingerprint: Option<&str>) -> Response<Body> {
     let s = start(app, "google", "login", None).await;
@@ -353,7 +361,7 @@ async fn login_without_provider_email_is_rejected(pool: PgPool) {
 
     let resp = login_flow(&app, "no-email", None).await;
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_login_error(&resp, "oauth_failed");
     assert!(common::cookie_value(&resp, "auth_token").is_none());
 }
 
@@ -363,11 +371,8 @@ async fn failed_code_exchange_does_not_log_in(pool: PgPool) {
 
     let resp = login_flow(&app, "rejected-by-provider", None).await;
 
-    assert!(
-        resp.status().is_server_error(),
-        "provider failure surfaces as an upstream error, got {}",
-        resp.status()
-    );
+    // An upstream failure still lands the browser back on the login page.
+    assert_login_error(&resp, "oauth_failed");
     assert!(common::cookie_value(&resp, "auth_token").is_none());
 }
 
@@ -390,7 +395,7 @@ async fn callback_without_state_cookie_is_rejected(pool: PgPool) {
     )
     .await;
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_login_error(&resp, "oauth_failed");
     assert!(common::cookie_value(&resp, "auth_token").is_none());
 }
 
@@ -408,8 +413,70 @@ async fn callback_with_another_flows_nonce_is_rejected(pool: PgPool) {
     )
     .await;
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_login_error(&resp, "oauth_failed");
     assert!(common::cookie_value(&resp, "auth_token").is_none());
+}
+
+/// A cancelled consent arrives as `?error=access_denied&state=…` with no code.
+#[sqlx::test]
+async fn provider_cancellation_redirects_to_login(pool: PgPool) {
+    let app = app(pool);
+    let s = start(&app, "google", "login", None).await;
+
+    let resp = callback(
+        &app,
+        "google",
+        &format!("error=access_denied&state={}", s.state),
+        Some(&format!("oauth_state={}", s.nonce)),
+    )
+    .await;
+
+    assert_login_error(&resp, "oauth_cancelled");
+    assert!(common::cookie_value(&resp, "auth_token").is_none());
+}
+
+#[sqlx::test]
+async fn other_provider_error_redirects_to_login(pool: PgPool) {
+    let app = app(pool);
+
+    let resp = callback(&app, "google", "error=server_error", None).await;
+
+    assert_login_error(&resp, "oauth_failed");
+}
+
+#[sqlx::test]
+async fn callback_without_code_redirects_to_login(pool: PgPool) {
+    let app = app(pool);
+    let s = start(&app, "google", "login", None).await;
+
+    let resp = callback(
+        &app,
+        "google",
+        &format!("state={}", s.state),
+        Some(&format!("oauth_state={}", s.nonce)),
+    )
+    .await;
+
+    assert_login_error(&resp, "oauth_failed");
+}
+
+/// SECURITY: an identity whose provider hasn't verified the email must not
+/// create an account. Such a row would be reused by the real owner's email
+/// signup, and the provider identity's link would then log into it.
+#[sqlx::test]
+async fn login_with_unverified_provider_email_creates_no_account(pool: PgPool) {
+    let app = app(pool.clone());
+
+    let resp = login_flow(&app, "unverified", Some("browser-fp")).await;
+
+    assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
+    assert_eq!(location(&resp), "/login?error=oauth_email_conflict");
+    assert!(common::cookie_value(&resp, "auth_token").is_none());
+    let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(users, 0);
 }
 
 #[sqlx::test]
@@ -418,7 +485,7 @@ async fn callback_without_state_param_is_rejected(pool: PgPool) {
 
     let resp = callback(&app, "google", "code=new-user", None).await;
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_login_error(&resp, "oauth_failed");
 }
 
 #[sqlx::test]
@@ -433,7 +500,7 @@ async fn callback_with_forged_state_is_rejected(pool: PgPool) {
     )
     .await;
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_login_error(&resp, "oauth_failed");
 }
 
 #[sqlx::test]
@@ -449,7 +516,7 @@ async fn callback_for_different_provider_than_state_is_rejected(pool: PgPool) {
     )
     .await;
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_login_error(&resp, "oauth_failed");
 }
 
 #[sqlx::test]
@@ -473,7 +540,7 @@ async fn callback_with_malformed_user_id_in_state_is_rejected(pool: PgPool) {
     )
     .await;
 
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    assert_login_error(&resp, "oauth_failed");
 }
 
 // ---------------------------------------------------------------------------

@@ -7,14 +7,18 @@
   import { FormInput } from '$lib/components/ui/form-input'
   import PasswordStrength from '../ui/custom/PasswordStrength.svelte'
   import { api } from '../../lib/api'
+  import { clearSignupHandoff, readSignupHandoff } from '../../lib/auth/signup-handoff'
   import { navigate } from '../../lib/navigation'
   import { minLength, required, validate } from '../../lib/utils/validation'
 
   let { token: propToken = '', email: propEmail = '' }: { token?: string; email?: string } =
     $props()
 
-  const token = $derived(propToken || getUrlParam('token'))
-  const email = $derived(propEmail || getUrlParam('email'))
+  // The signup token arrives via sessionStorage, never the URL (see
+  // signup-handoff.ts). Read after mount: the page is prerendered without it.
+  let handoff = $state<{ token: string; email: string } | null>(null)
+  const token = $derived(propToken || handoff?.token || '')
+  const email = $derived(propEmail || handoff?.email || '')
   const passwordsMatch = $derived(confirmPassword.length > 0 && confirmPassword === password)
 
   let password = $state('')
@@ -25,15 +29,11 @@
   let loading = $state(false)
 
   onMount(() => {
-    if (!propToken && !new URLSearchParams(window.location.search).get('token')) {
+    handoff = readSignupHandoff()
+    if (!propToken && !handoff) {
       navigate('/register')
     }
   })
-
-  function getUrlParam(name: string): string {
-    if (typeof window === 'undefined') return ''
-    return new URLSearchParams(window.location.search).get(name) || ''
-  }
 
   function validatePassword() {
     passwordError = validate(password, [
@@ -73,6 +73,7 @@
         email,
         password,
       })
+      clearSignupHandoff()
       navigate('/dashboard')
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'error_code' in error) {

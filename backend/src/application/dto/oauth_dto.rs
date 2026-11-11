@@ -26,10 +26,16 @@ pub struct OAuthDeviceFingerprintRequest {
 }
 
 /// Query params for OAuth callback (from provider).
+///
+/// Every field is optional: a provider reports a failed or cancelled consent
+/// as `?error=access_denied&state=…` with no `code` (RFC 6749 §4.1.2.1). The
+/// handler turns any missing piece into a redirect back to the login page
+/// rather than letting the extractor answer with a bare 400.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct OAuthCallbackQuery {
-    pub code: String,
-    pub state: String,
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
 }
 
 /// Claims stored in the OAuth state JWT (CSRF/session binding for the redirect
@@ -48,7 +54,8 @@ pub struct OAuthStateClaims {
 #[cfg(debug_assertions)]
 #[derive(Debug, Deserialize)]
 pub struct OAuthTestBypassQuery {
-    pub code: String,
+    pub code: Option<String>,
+    pub error: Option<String>,
     pub sub: Option<String>,
     pub email: Option<String>,
     pub email_verified: Option<bool>,
@@ -59,7 +66,7 @@ pub struct OAuthTestBypassQuery {
 impl OAuthTestBypassQuery {
     #[must_use]
     pub fn is_test_bypass(&self) -> bool {
-        self.code == "test"
+        self.code.as_deref() == Some("test")
     }
 }
 

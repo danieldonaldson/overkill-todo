@@ -8,6 +8,7 @@ use crate::application::dto::{
     InitiateRegistrationResponse, LinkedOAuthAccountExport, LoginRequest,
     OAuthDeviceFingerprintRequest, OAuthMode, OAuthStartQuery, RequestDeletionRequest,
     SetUserRoleRequest, UserResponse, VerifyEmailResponse, VerifyMagicLinkQuery,
+    VerifyMagicLinkRequest,
 };
 use crate::infrastructure::api::handlers::{
     admin_handler, auth_handler, oauth_handler, profile_handler, verification_handler,
@@ -27,6 +28,8 @@ use crate::infrastructure::api::handlers::{
         auth_handler::refresh,
         auth_handler::me,
         verification_handler::verify_email,
+        verification_handler::verify_magic,
+        verification_handler::verify_magic_redirect,
         verification_handler::complete_signup,
         verification_handler::resend_verification,
         oauth_handler::oauth_store_device_fingerprint,
@@ -49,6 +52,7 @@ use crate::infrastructure::api::handlers::{
         CompleteRegistrationRequest,
         VerifyEmailResponse,
         VerifyMagicLinkQuery,
+        VerifyMagicLinkRequest,
         OAuthDeviceFingerprintRequest,
         OAuthStartQuery,
         OAuthMode,

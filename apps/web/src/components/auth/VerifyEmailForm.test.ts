@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
 import { render } from 'vitest-browser-svelte'
+import { readSignupHandoff } from '../../lib/auth/signup-handoff'
 import VerifyEmailForm from './VerifyEmailForm.svelte'
 
 vi.mock('../../lib/api', () => ({
@@ -93,10 +95,11 @@ describe('VerifyEmailForm', () => {
     setCode(screen, '123456')
 
     await vi.waitFor(() => {
-      expect(navigate).toHaveBeenCalledWith(
-        '/set-password?token=signup-token&email=new%40example.com'
-      )
+      expect(navigate).toHaveBeenCalledWith('/set-password')
     })
+    // The token travels via sessionStorage, never the URL.
+    expect(readSignupHandoff()).toEqual({ token: 'signup-token', email: 'new@example.com' })
+    sessionStorage.clear()
   })
 
   it('resends verification with Turnstile token', async () => {

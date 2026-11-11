@@ -7,6 +7,7 @@
   import CountdownTimer from '../ui/custom/CountdownTimer.svelte'
   import Turnstile, { type TurnstileRef } from '../ui/custom/Turnstile.svelte'
   import { api } from '../../lib/api'
+  import { saveSignupHandoff } from '../../lib/auth/signup-handoff'
   import { navigate } from '../../lib/navigation'
 
   let { email: propEmail = '' }: { email?: string } = $props()
@@ -42,8 +43,8 @@
       const response = await api.auth.verifyEmail({ email, code: verifyCode })
 
       if (response.signup_token) {
-        const params = new URLSearchParams({ token: response.signup_token, email })
-        navigate(`/set-password?${params.toString()}`)
+        saveSignupHandoff({ token: response.signup_token, email })
+        navigate('/set-password')
       } else if (response.user) {
         // Existing user with a password: auto-logged-in via HttpOnly cookies.
         navigate('/dashboard')

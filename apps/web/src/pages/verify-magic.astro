@@ -1,0 +1,8 @@
+---
+import AuthLayout from '../layouts/AuthLayout.astro'
+import VerifyMagicForm from '../components/auth/VerifyMagicForm.svelte'
+---
+
+<AuthLayout title="Confirm email | Overkill Todo" heading="Confirm your email">
+  <VerifyMagicForm client:load />
+</AuthLayout>

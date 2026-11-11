@@ -115,8 +115,13 @@ impl VerifyMagicLinkUseCase {
             .map_err(|e| VerifyMagicLinkError::Internal(e.to_string()))?
             .ok_or_else(|| VerifyMagicLinkError::Internal("User not found".into()))?;
 
-        // Check if already verified
+        // Check if already verified. Use the link up either way, so one link
+        // can't keep minting signup tokens until it expires.
         if user.email_verified() {
+            self.email_verification_repo
+                .delete_for_user(user.id())
+                .await
+                .map_err(|e| VerifyMagicLinkError::Internal(e.to_string()))?;
             return Err(VerifyMagicLinkError::AlreadyVerified(Box::new(user)));
         }
 
@@ -334,6 +339,13 @@ mod tests {
         mock_verification_repo
             .expect_find_by_magic_token_hash()
             .returning(move |_| Ok(Some(verification_code.clone())));
+        // The link is used up even though nothing was verified, so it can't
+        // keep minting signup tokens until it expires.
+        mock_verification_repo
+            .expect_delete_for_user()
+            .withf(move |id| *id == user_id)
+            .times(1)
+            .returning(|_| Ok(()));
 
         let use_case =
             VerifyMagicLinkUseCase::new(Arc::new(mock_user_repo), Arc::new(mock_verification_repo));

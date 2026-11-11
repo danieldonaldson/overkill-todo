@@ -361,9 +361,17 @@ mod tests {
     }
 }
 
-/// Query parameters for magic link verification.
+/// Query parameters for the legacy magic-link GET, which now only redirects.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct VerifyMagicLinkQuery {
     /// The magic link token from the email.
+    pub token: String,
+}
+
+/// Request body for confirming a magic link.
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct VerifyMagicLinkRequest {
+    /// The magic link token from the email.
+    #[validate(length(min = 1, max = 256, message = "Invalid magic link token"))]
     pub token: String,
 }

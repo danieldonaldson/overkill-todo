@@ -487,12 +487,25 @@ async fn auth_flows_leave_no_secrets_in_telemetry(pool: PgPool) {
         .expect("a magic link was sent");
     let magic_token = link.split("token=").nth(1).unwrap().to_string();
     secrets.push(magic_token.clone());
+    // Legacy GET link (token in the query string), then the POST confirmation.
     let req = Request::builder()
         .uri(format!("/api/v1/auth/verify-magic?token={magic_token}"))
         .body(Body::empty())
         .unwrap();
     let (resp, _) = send(&app, req).await;
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let (resp, body) = send(
+        &app,
+        post_json(
+            "/api/v1/auth/verify-magic",
+            &json!({ "token": magic_token }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    if let Some(signup_token) = body.get("signup_token").and_then(|t| t.as_str()) {
+        secrets.push(signup_token.to_string());
+    }
 
     // The code is too short to search for safely on its own (it could appear in
     // a timestamp), so look for it only as a field value.

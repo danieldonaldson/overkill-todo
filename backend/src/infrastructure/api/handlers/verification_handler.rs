@@ -16,8 +16,9 @@ use crate::{
             AuthResponse, CompleteRegistrationRequest, ForgotPasswordRequest,
             ResendVerificationRequest, ResendVerificationResponse, ResetPasswordRequest,
             UserResponse, VerificationErrorCode, VerificationErrorResponse, VerifyEmailRequest,
-            VerifyEmailResponse, VerifyMagicLinkQuery, VerifyResetCodeRequest,
-            VerifyResetCodeResponse, validation::sanitize_verification_code,
+            VerifyEmailResponse, VerifyMagicLinkQuery, VerifyMagicLinkRequest,
+            VerifyResetCodeRequest, VerifyResetCodeResponse,
+            validation::sanitize_verification_code,
         },
         ports::{PasswordHasher, TurnstileService},
         use_cases::auth::{
@@ -473,10 +474,14 @@ pub async fn complete_signup(
     ))
 }
 
-/// Verify email via magic link (backup to 6-digit code)
+/// Legacy magic-link entry point: redirect to the frontend confirmation page.
 ///
-/// GET endpoint that verifies the email, issues a signup token, and redirects to /set-password.
-/// This is a one-click verification for web users.
+/// Emails used to link here directly, and this GET verified the email on the
+/// spot. Mail scanners that prefetch links used the token up before the user
+/// clicked, so it no longer has side effects: it only forwards the token, in the
+/// URL fragment, to `/verify-magic`, where the user confirms with a button
+/// (`POST /api/v1/auth/verify-magic`). Kept so links in emails sent before the
+/// change still work; new emails link to the frontend page directly.
 #[utoipa::path(
     get,
     path = "/api/v1/auth/verify-magic",
@@ -485,92 +490,85 @@ pub async fn complete_signup(
         ("token" = String, Query, description = "The magic link token from the email")
     ),
     responses(
-        (status = 302, description = "Redirects to /set-password with signup_token and email"),
-        (status = 302, description = "Redirects to /login?error=... on error")
+        (status = 303, description = "Redirects to the /verify-magic confirmation page with the token in the fragment")
+    )
+)]
+#[tracing::instrument(name = "handler.verify_magic_redirect", skip_all)]
+pub async fn verify_magic_redirect(
+    State(deps): State<Arc<VerificationHandlerDeps>>,
+    Query(query): Query<VerifyMagicLinkQuery>,
+) -> Redirect {
+    Redirect::to(&format!(
+        "{}/verify-magic#token={}",
+        deps.frontend_base_url.trim_end_matches('/'),
+        urlencoding::encode(&query.token)
+    ))
+}
+
+/// Confirm a magic link (backup to the 6-digit code).
+///
+/// Answers exactly like `verify-email`: a `signup_token` in the body when the
+/// account has no password yet, otherwise a session (cookies) for auto-login.
+/// Nothing here goes into a URL, so the signup token never reaches browser
+/// history or access logs.
+#[utoipa::path(
+    post,
+    path = "/api/v1/auth/verify-magic",
+    tag = "Authentication",
+    request_body = VerifyMagicLinkRequest,
+    responses(
+        (status = 200, description = "Email verified", body = VerifyEmailResponse),
+        (status = 400, description = "Invalid, expired or locked link, or the account is already verified and has a password", body = VerificationErrorResponse)
     )
 )]
 #[tracing::instrument(name = "handler.verify_magic", skip_all)]
 pub async fn verify_magic(
     State(deps): State<Arc<VerificationHandlerDeps>>,
-    Query(query): Query<VerifyMagicLinkQuery>,
+    headers: HeaderMap,
+    ValidatedJson(request): ValidatedJson<VerifyMagicLinkRequest>,
 ) -> Response {
-    match deps.verify_magic_link_use_case.execute(&query.token).await {
-        Ok(user) => {
-            // Success - email verified, issue signup token and redirect
-            let signup_token = match create_signup_token(&deps.crypto, &user) {
-                Ok(token) => token,
-                Err(e) => return signup_token_failure_redirect(&deps.frontend_base_url, &e),
-            };
-
-            let email_encoded = urlencoding::encode(user.email().as_str());
-            let redirect_url = format!(
-                "{}/set-password?token={}&email={}",
-                deps.frontend_base_url, signup_token, email_encoded
-            );
-
-            tracing::info!(user_id = %user.id(), "Email verified via magic link, redirecting to set-password");
-            Redirect::to(&redirect_url).into_response()
+    match deps
+        .verify_magic_link_use_case
+        .execute(&request.token)
+        .await
+    {
+        Ok(user) => issue_tokens_or_signup_token(&deps, &headers, user).await,
+        // Holding the link proves ownership of the address, so an account that
+        // is verified but still has no password (OAuth-only, or a signup that
+        // stopped after verifying) may set one. With a password there is
+        // nothing to do: tell them to log in, and never issue a session here.
+        Err(VerifyMagicLinkError::AlreadyVerified(user)) if !user.has_password() => {
+            issue_signup_token(&deps.crypto, *user)
         }
-        Err(VerifyMagicLinkError::AlreadyVerified(user)) => {
-            // Already verified - if user has password, redirect to login; otherwise to set-password
-            if (*user).has_password() {
-                let redirect_url =
-                    format!("{}/login?message=email_verified", deps.frontend_base_url);
-                Redirect::to(&redirect_url).into_response()
-            } else {
-                // No password - issue signup token
-                let signup_token = match create_signup_token(&deps.crypto, &user) {
-                    Ok(token) => token,
-                    Err(e) => {
-                        return signup_token_failure_redirect(&deps.frontend_base_url, &e);
-                    }
-                };
-
-                let email_encoded = urlencoding::encode(user.email().as_str());
-                let redirect_url = format!(
-                    "{}/set-password?token={}&email={}",
-                    deps.frontend_base_url, signup_token, email_encoded
-                );
-                Redirect::to(&redirect_url).into_response()
-            }
-        }
-        Err(VerifyMagicLinkError::InvalidToken) => {
-            let error_msg =
-                urlencoding::encode("Invalid or expired magic link. Please request a new code.");
-            let redirect_url = format!("{}/verify-email?error={error_msg}", deps.frontend_base_url);
-            Redirect::to(&redirect_url).into_response()
-        }
-        Err(VerifyMagicLinkError::TokenExpired) => {
-            let error_msg =
-                urlencoding::encode("This magic link has expired. Please request a new code.");
-            let redirect_url = format!("{}/verify-email?error={error_msg}", deps.frontend_base_url);
-            Redirect::to(&redirect_url).into_response()
-        }
-        Err(VerifyMagicLinkError::TokenLocked) => {
-            let error_msg =
-                urlencoding::encode("Too many failed attempts. Please request a new code.");
-            let redirect_url = format!("{}/verify-email?error={error_msg}", deps.frontend_base_url);
-            Redirect::to(&redirect_url).into_response()
-        }
-        Err(VerifyMagicLinkError::Internal(msg)) => {
-            tracing::error!(error = %msg, "Internal error during magic link verification");
-            let error_msg = urlencoding::encode("An error occurred. Please try again.");
-            let redirect_url = format!("{}/verify-email?error={error_msg}", deps.frontend_base_url);
-            Redirect::to(&redirect_url).into_response()
-        }
+        Err(VerifyMagicLinkError::AlreadyVerified(_)) => verification_error(
+            "This email is already verified. Please log in.",
+            VerificationErrorCode::AlreadyVerified,
+        ),
+        Err(VerifyMagicLinkError::InvalidToken) => verification_error(
+            "This link is invalid or has already been used. Request a new code.",
+            VerificationErrorCode::CodeInvalid,
+        ),
+        Err(VerifyMagicLinkError::TokenExpired) => verification_error(
+            "This link has expired. Request a new code.",
+            VerificationErrorCode::CodeExpired,
+        ),
+        Err(VerifyMagicLinkError::TokenLocked) => verification_error(
+            "Too many failed attempts. Request a new code.",
+            VerificationErrorCode::CodeLocked,
+        ),
+        Err(VerifyMagicLinkError::Internal(msg)) => AppError::Internal(msg).into_response(),
     }
 }
 
-/// Redirect to the login page after signup-token creation failed. The cause is
-/// logged, not sent: the redirect URL is client-visible, and internal error text
-/// must not reach clients.
-fn signup_token_failure_redirect(frontend_base_url: &str, error: &str) -> Response {
-    tracing::error!(error = %error, "Failed to create signup token during magic link verification");
-    let error_msg = urlencoding::encode("An error occurred. Please try again.");
-    Redirect::to(&format!("{frontend_base_url}/login?error={error_msg}")).into_response()
+fn verification_error(message: &str, code: VerificationErrorCode) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(VerificationErrorResponse::new(message, code)),
+    )
+        .into_response()
 }
 
-/// Create a signup token for a user (used by magic link handler).
+/// Create a signup token for a user.
 fn create_signup_token(
     crypto: &Crypto,
     user: &crate::domain::entities::User,

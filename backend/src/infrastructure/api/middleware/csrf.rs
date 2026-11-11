@@ -12,6 +12,7 @@
 //! - `/api/v1/auth/logout` - Force-logout CSRF is low-harm; accepted tradeoff
 //! - `/api/v1/auth/oauth/*` - OAuth callbacks come from external providers
 //! - `/api/v1/auth/verify-email` - Email verification uses signed codes
+//! - `/api/v1/auth/verify-magic` - Magic-link token is the credential; no session yet
 //! - `/api/v1/auth/resend-verification` - Uses rate limiting, no session
 //! - `/api/v1/auth/forgot-password` - No session context
 //! - `/api/v1/auth/verify-reset-code` - Uses signed codes
@@ -41,6 +42,7 @@ const EXCLUDED_PATHS: &[&str] = &[
     "/auth/refresh",
     "/auth/logout",
     "/auth/verify-email",
+    "/auth/verify-magic",
     "/auth/resend-verification",
     "/auth/forgot-password",
     "/auth/verify-reset-code",
@@ -152,6 +154,7 @@ mod tests {
         assert!(is_excluded_path("/api/v1/auth/refresh"));
         assert!(is_excluded_path("/api/v1/auth/logout"));
         assert!(is_excluded_path("/api/v1/auth/verify-email"));
+        assert!(is_excluded_path("/api/v1/auth/verify-magic"));
         assert!(is_excluded_path("/api/v1/auth/resend-verification"));
         assert!(is_excluded_path("/api/v1/auth/forgot-password"));
         assert!(is_excluded_path("/api/v1/auth/verify-reset-code"));

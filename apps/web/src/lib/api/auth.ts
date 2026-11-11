@@ -104,6 +104,21 @@ export function createAuthApi(client: HttpClient) {
       return response
     },
 
+    /** Confirm a magic link. Same response shape as {@link verifyEmail}. */
+    verifyMagicLink: async (token: string): Promise<VerifyEmailResponse> => {
+      const response = await client.requestWithFingerprint<VerifyEmailResponse>(
+        '/auth/verify-magic',
+        {
+          method: 'POST',
+          body: JSON.stringify({ token }),
+        }
+      )
+      if (response.expires_at !== undefined) {
+        setTokenExpiry(response.expires_at)
+      }
+      return response
+    },
+
     resendVerification: (data: ResendVerificationRequest): Promise<ResendVerificationResponse> =>
       client.request('/auth/resend-verification', {
         method: 'POST',

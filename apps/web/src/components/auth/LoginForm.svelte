@@ -1,9 +1,12 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert'
+  import InfoIcon from '@lucide/svelte/icons/info'
   import { Alert, AlertDescription } from '$lib/components/ui/alert'
   import { Button } from '$lib/components/ui/button'
   import { FormInput } from '$lib/components/ui/form-input'
   import { api } from '../../lib/api'
+  import { loginNoticeFromSearch, type LoginNotice } from '../../lib/auth/login-notice'
   import { navigate } from '../../lib/navigation'
   import { email, minLength, required, validate } from '../../lib/utils/validation'
   import OAuthButtons from './OAuthButtons.svelte'
@@ -27,6 +30,13 @@
   let passwordError = $state<string | null>(null)
   let formError = $state<string | null>(null)
   let loading = $state(false)
+  // Markers other flows leave in the URL (OAuth failures, verified email,
+  // expired session). Read after mount: the page is prerendered without them.
+  let notice = $state<LoginNotice | null>(null)
+
+  onMount(() => {
+    notice = loginNoticeFromSearch(window.location.search)
+  })
 
   function validateEmail() {
     emailError = validate(emailValue, [required(), email()])
@@ -46,6 +56,7 @@
 
     loading = true
     formError = null
+    notice = null
 
     try {
       await api.auth.login({
@@ -74,6 +85,17 @@
 </script>
 
 <form class="flex flex-col gap-4" method="post" onsubmit={handleSubmit}>
+  {#if notice && !formError}
+    <Alert variant={notice.kind === 'error' ? 'destructive' : 'default'}>
+      {#if notice.kind === 'error'}
+        <CircleAlertIcon class="size-4" />
+      {:else}
+        <InfoIcon class="size-4" />
+      {/if}
+      <AlertDescription>{notice.text}</AlertDescription>
+    </Alert>
+  {/if}
+
   {#if formError}
     <Alert variant="destructive">
       <CircleAlertIcon class="size-4" />

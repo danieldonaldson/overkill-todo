@@ -47,6 +47,7 @@ const PAGES = [
   '/reset-password/',
   '/verify-email/',
   '/set-password/',
+  '/verify-magic/',
   '/dashboard/',
 ]
 

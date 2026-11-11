@@ -168,7 +168,11 @@ pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
     // Verification routes (no auth)
     let verification = Router::new()
         .route("/verify-email", post(verification_handler::verify_email))
-        .route("/verify-magic", get(verification_handler::verify_magic))
+        .route(
+            "/verify-magic",
+            get(verification_handler::verify_magic_redirect)
+                .post(verification_handler::verify_magic),
+        )
         .route(
             "/resend-verification",
             post(verification_handler::resend_verification),
