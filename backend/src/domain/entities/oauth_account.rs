@@ -6,8 +6,7 @@ use uuid::Uuid;
 use crate::domain::value_objects::UserId;
 
 /// Supported OAuth providers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, sqlx::Type)]
-#[sqlx(type_name = "oauth_provider", rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OAuthProvider {
     Google,
     Apple,

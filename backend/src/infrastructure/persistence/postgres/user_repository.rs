@@ -1,13 +1,13 @@
 use super::connection::Database;
 use super::error::persist_err;
-use super::models::UserRow;
+use super::models::{DbUserRole, UserRow};
 use crate::application::ports::outgoing::{
     AccountLifecycleRepository, SessionAuthorizationState, UserRepository,
 };
 use crate::domain::{
     entities::{User, UserParts},
     errors::DomainError,
-    value_objects::{AccountStatus, Email, PendingEmailChange, UserId, UserRole},
+    value_objects::{AccountStatus, Email, PendingEmailChange, UserId},
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -38,7 +38,7 @@ impl PostgresUserRepository {
                 row.pending_email_requested_at,
             ),
             status: AccountStatus::from_columns(row.deleted_at, row.deletion_scheduled_at),
-            role: row.role,
+            role: row.role.into(),
             created_at: row.created_at,
             updated_at: row.updated_at,
             version: row.version,
@@ -85,7 +85,7 @@ impl UserRepository for PostgresUserRepository {
             user.pending_email_requested_at(),
             user.deleted_at(),
             user.deletion_scheduled_at(),
-            user.role() as _,
+            DbUserRole::from(user.role()) as _,
             user.created_at(),
             user.updated_at(),
             user.version(),
@@ -197,7 +197,7 @@ impl UserRepository for PostgresUserRepository {
 
             let row = sqlx::query!(
                 r#"SELECT COUNT(*) AS "count!" FROM users WHERE role = $1 AND deleted_at IS NULL"#,
-                UserRole::SuperAdmin as _,
+                DbUserRole::SuperAdmin as _,
             )
             .fetch_one(&mut *tx)
             .await
@@ -216,7 +216,7 @@ impl UserRepository for PostgresUserRepository {
             SET role = $1, tokens_valid_after = NOW(), updated_at = NOW(), version = version + 1
             WHERE id = $2 AND version = $3
             "#,
-            user.role() as _,
+            DbUserRole::from(user.role()) as _,
             user.id().as_uuid(),
             user.version(),
         )
@@ -240,7 +240,7 @@ impl UserRepository for PostgresUserRepository {
         id: &UserId,
     ) -> Result<Option<SessionAuthorizationState>, DomainError> {
         let row = sqlx::query!(
-            r#"SELECT role AS "role: UserRole", tokens_valid_after FROM users WHERE id = $1"#,
+            r#"SELECT role AS "role: DbUserRole", tokens_valid_after FROM users WHERE id = $1"#,
             id.as_uuid(),
         )
         .fetch_optional(self.db.pool())
@@ -248,7 +248,7 @@ impl UserRepository for PostgresUserRepository {
         .map_err(persist_err)?;
 
         Ok(row.map(|r| SessionAuthorizationState {
-            role: r.role,
+            role: r.role.into(),
             tokens_valid_after: r.tokens_valid_after,
         }))
     }
@@ -470,7 +470,6 @@ impl AccountLifecycleRepository for PostgresUserRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::value_objects::UserRole;
     use crate::infrastructure::persistence::postgres::models::UserRow;
     use chrono::Utc;
     use proptest::prelude::*;
@@ -509,7 +508,7 @@ mod tests {
             pending_email_requested_at: None,
             deleted_at: None,
             deletion_scheduled_at: None,
-            role: UserRole::User,
+            role: DbUserRole::User,
             created_at: now,
             updated_at: now,
             version: 0,
@@ -556,7 +555,7 @@ mod tests {
                 pending_email_requested_at: None,
                 deleted_at: None,
                 deletion_scheduled_at: None,
-                role: UserRole::User,
+                role: DbUserRole::User,
                 created_at: now,
                 updated_at: now,
                 version: 0,
@@ -598,7 +597,7 @@ mod tests {
                 pending_email_requested_at: Some(now),
                 deleted_at: None,
                 deletion_scheduled_at: None,
-                role: UserRole::User,
+                role: DbUserRole::User,
                 created_at: now,
                 updated_at: now,
                 version: 0,
@@ -633,7 +632,7 @@ mod tests {
                 pending_email_requested_at: Some(now),
                 deleted_at: None,
                 deletion_scheduled_at: None,
-                role: UserRole::User,
+                role: DbUserRole::User,
                 created_at: now,
                 updated_at: now,
                 version: 0,
@@ -661,7 +660,7 @@ mod tests {
                 pending_email_requested_at: None,
                 deleted_at: None,
                 deletion_scheduled_at: None,
-                role: UserRole::User,
+                role: DbUserRole::User,
                 created_at: now,
                 updated_at: now,
                 version: 0,
@@ -692,7 +691,7 @@ mod tests {
                 pending_email_requested_at: None,
                 deleted_at: None,
                 deletion_scheduled_at: None,
-                role: UserRole::User,
+                role: DbUserRole::User,
                 created_at: now,
                 updated_at: now,
                 version: 0,

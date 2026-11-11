@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn oauth_state_does_not_carry_device_fingerprint() {
-        let crypto = crate::shared::crypto::Crypto::for_testing();
+        let crypto = crate::infrastructure::crypto::Crypto::for_testing();
 
         let (state, nonce) =
             create_oauth_state(crypto.encoding_key(), "google", "login", None).unwrap();

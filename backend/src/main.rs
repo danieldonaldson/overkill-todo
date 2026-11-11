@@ -21,6 +21,7 @@ use overkill_todo::{
         },
     },
     domain::entities::OAuthProvider,
+    infrastructure::crypto::Crypto,
     infrastructure::{
         api::{
             RouterDeps, create_router,
@@ -44,7 +45,6 @@ use overkill_todo::{
         },
         telemetry,
     },
-    shared::crypto::Crypto,
 };
 
 /// Use mimalloc (secure mode) as the global allocator. Reduces fragmentation
@@ -208,9 +208,16 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         user_repo.clone(),
         oauth_account_repo.clone(),
         email_service.clone(),
+        mx_validator,
     ));
-    let login_uc = Arc::new(LoginUserUseCase::new(user_repo.clone()));
-    let get_current_user_uc = Arc::new(GetCurrentUserUseCase::new(user_repo.clone()));
+    let login_uc = Arc::new(LoginUserUseCase::new(
+        user_repo.clone(),
+        password_hasher.clone(),
+    ));
+    let get_current_user_uc = Arc::new(GetCurrentUserUseCase::new(
+        user_repo.clone(),
+        oauth_account_repo.clone(),
+    ));
     let refresh_token_uc = Arc::new(RefreshTokenUseCase::new(
         refresh_token_repo.clone(),
         user_repo.clone(),
@@ -246,6 +253,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let complete_signup_uc = Arc::new(CompleteSignupUseCase::new(
         user_repo.clone(),
         jwt_service.clone(),
+        password_hasher.clone(),
     ));
     let request_password_reset_uc = Arc::new(RequestPasswordResetUseCase::new(
         user_repo.clone(),
@@ -265,6 +273,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         password_reset_repo.clone(),
         refresh_token_repo.clone(),
         jwt_service.clone(),
+        password_hasher.clone(),
     ));
     let oauth_callback_uc = Arc::new(OAuthCallbackUseCase::new(
         user_repo.clone(),
@@ -326,9 +335,6 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         revoke_token_use_case: revoke_token_uc,
         send_verification_code_use_case: send_verification_uc.clone(),
         turnstile_service: turnstile_service.clone(),
-        mx_validator,
-        oauth_account_repo,
-        password_hasher: password_hasher.clone(),
         crypto: crypto.clone(),
     });
 
@@ -343,7 +349,6 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         refresh_token_use_case: refresh_token_uc.clone(),
         turnstile_service,
         frontend_base_url: settings.server.frontend_base_url.clone(),
-        password_hasher: password_hasher.clone(),
         crypto: crypto.clone(),
     });
 

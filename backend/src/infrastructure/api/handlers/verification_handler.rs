@@ -6,8 +6,6 @@ use axum::{
     http::{StatusCode, header::HeaderMap},
     response::{IntoResponse, Redirect, Response},
 };
-use chrono::{Duration, Utc};
-use jsonwebtoken::{Header, encode};
 use std::sync::Arc;
 
 use crate::{
@@ -20,7 +18,7 @@ use crate::{
             VerifyResetCodeRequest, VerifyResetCodeResponse,
             validation::sanitize_verification_code,
         },
-        ports::{PasswordHasher, TurnstileService},
+        ports::TurnstileService,
         use_cases::auth::{
             CompleteSignupUseCase, RefreshTokenUseCase, RequestPasswordResetUseCase,
             ResendVerificationError, ResendVerificationUseCase, ResetPasswordUseCase,
@@ -40,18 +38,8 @@ use crate::{
             verify_turnstile,
         },
     },
-    shared::crypto::Crypto,
+    infrastructure::crypto::Crypto,
 };
-
-/// JWT claims for signup completion or password reset tokens.
-#[derive(Debug, serde::Serialize)]
-struct ResetTokenClaims {
-    sub: String,
-    email: String,
-    exp: i64,
-    iat: i64,
-    typ: String,
-}
 
 /// Dependencies for verification-related handlers.
 pub struct VerificationHandlerDeps {
@@ -66,8 +54,6 @@ pub struct VerificationHandlerDeps {
     pub turnstile_service: Arc<dyn TurnstileService>,
     /// Frontend base URL for redirects (e.g., `http://localhost:4321` or `https://app.example.com`)
     pub frontend_base_url: String,
-    /// Argon2 hasher; runs the CPU-bound work off the async workers.
-    pub password_hasher: Arc<dyn PasswordHasher>,
     pub crypto: Arc<Crypto>,
 }
 
@@ -149,9 +135,6 @@ pub async fn verify_email(
     }
 }
 
-/// Signup token validity in minutes.
-const SIGNUP_TOKEN_EXPIRY_MINUTES: i64 = 30;
-
 /// Issue appropriate response based on user state after email verification.
 ///
 /// - If user has no password (new signup): returns `signup_token` for completing registration
@@ -163,7 +146,7 @@ async fn issue_tokens_or_signup_token(
 ) -> Response {
     // Check if this is a new signup (no password yet)
     if !user.has_password() {
-        return issue_signup_token(&deps.crypto, user);
+        return issue_signup_token(deps, user);
     }
 
     // User has password - issue auth tokens for auto-login
@@ -171,13 +154,13 @@ async fn issue_tokens_or_signup_token(
 }
 
 /// Issue a signup token for completing registration (setting password).
-fn issue_signup_token(crypto: &Crypto, user: crate::domain::entities::User) -> Response {
-    let signup_token = match create_signup_token(crypto, &user) {
+fn issue_signup_token(
+    deps: &VerificationHandlerDeps,
+    user: crate::domain::entities::User,
+) -> Response {
+    let signup_token = match deps.complete_signup_use_case.issue_signup_token(&user) {
         Ok(t) => t,
-        Err(e) => {
-            let app_error = AppError::Internal(format!("Failed to create signup token: {e}"));
-            return app_error.into_response();
-        }
+        Err(e) => return AppError::from(e).into_response(),
     };
 
     tracing::info!(user_id = %user.id(), "Email verified, signup token issued (no password yet)");
@@ -386,13 +369,10 @@ pub async fn reset_password(
     headers: HeaderMap,
     ValidatedJson(request): ValidatedJson<ResetPasswordRequest>,
 ) -> Result<(HeaderMap, Json<AuthResponse>), AppError> {
-    // Hash the new password with Argon2id
-    let password_hash = deps.password_hasher.hash(&request.new_password).await?;
-
-    // Reset password and get the user
+    // Reset password (hashed in the use case) and get the user
     let reset = deps
         .reset_password_use_case
-        .execute(&request.reset_token, &password_hash)
+        .execute(&request.reset_token, &request.new_password)
         .await?;
     let user = reset.user;
 
@@ -451,13 +431,10 @@ pub async fn complete_signup(
     headers: HeaderMap,
     ValidatedJson(request): ValidatedJson<CompleteRegistrationRequest>,
 ) -> Result<(HeaderMap, Json<AuthResponse>), AppError> {
-    // Hash the password with Argon2id
-    let password_hash = deps.password_hasher.hash(&request.password).await?;
-
-    // Complete signup and get the user
+    // Complete signup (password hashed in the use case) and get the user
     let user = deps
         .complete_signup_use_case
-        .execute(&request.signup_token, &request.email, &password_hash)
+        .execute(&request.signup_token, &request.email, &request.password)
         .await?;
 
     // Extract device fingerprint for auto-login
@@ -546,7 +523,7 @@ pub async fn verify_magic(
         // stopped after verifying) may set one. With a password there is
         // nothing to do: tell them to log in, and never issue a session here.
         Err(VerifyMagicLinkError::AlreadyVerified(user)) if !user.has_password() => {
-            issue_signup_token(&deps.crypto, *user)
+            issue_signup_token(&deps, *user)
         }
         Err(VerifyMagicLinkError::AlreadyVerified(_)) => verification_error(
             "This email is already verified. Please log in.",
@@ -574,24 +551,6 @@ fn verification_error(message: &str, code: VerificationErrorCode) -> Response {
         Json(VerificationErrorResponse::new(message, code)),
     )
         .into_response()
-}
-
-/// Create a signup token for a user.
-fn create_signup_token(
-    crypto: &Crypto,
-    user: &crate::domain::entities::User,
-) -> Result<String, String> {
-    let now = Utc::now();
-    let claims = ResetTokenClaims {
-        sub: user.id().to_string(),
-        email: user.email().as_str().to_string(),
-        exp: (now + Duration::minutes(SIGNUP_TOKEN_EXPIRY_MINUTES)).timestamp(),
-        iat: now.timestamp(),
-        typ: "signup".to_string(),
-    };
-
-    let header = Header::new(jsonwebtoken::Algorithm::RS256);
-    encode(&header, &claims, crypto.encoding_key()).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

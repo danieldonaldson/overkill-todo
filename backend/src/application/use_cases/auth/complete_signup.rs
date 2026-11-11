@@ -5,28 +5,56 @@
 //! 2. User verifies email → signup token issued
 //! 3. User sets password using signup token → account complete
 
-use crate::application::ports::JwtService;
-use crate::application::ports::UserRepository;
+use crate::application::ports::{JwtService, PasswordHasher, UserRepository};
 use crate::domain::entities::User;
 use crate::domain::errors::DomainError;
+use chrono::{Duration, Utc};
 use std::sync::Arc;
+
+/// Signup token validity in minutes.
+const SIGNUP_TOKEN_EXPIRY_MINUTES: i64 = 30;
 
 /// Use case for completing signup by setting a password.
 ///
-/// Validates the signup token (from email verification) and sets the user's password.
-/// Returns the user for auto-login functionality.
+/// Owns both ends of the signup token: [`issue_signup_token`](Self::issue_signup_token)
+/// mints it after email verification, and [`execute`](Self::execute) redeems it
+/// to set the user's password. Returns the user for auto-login functionality.
 pub struct CompleteSignupUseCase {
     user_repo: Arc<dyn UserRepository>,
     jwt_service: Arc<dyn JwtService>,
+    password_hasher: Arc<dyn PasswordHasher>,
 }
 
 impl CompleteSignupUseCase {
     /// Creates a new instance with the given dependencies.
-    pub fn new(user_repo: Arc<dyn UserRepository>, jwt_service: Arc<dyn JwtService>) -> Self {
+    pub fn new(
+        user_repo: Arc<dyn UserRepository>,
+        jwt_service: Arc<dyn JwtService>,
+        password_hasher: Arc<dyn PasswordHasher>,
+    ) -> Self {
         Self {
             user_repo,
             jwt_service,
+            password_hasher,
         }
+    }
+
+    /// Mints the signup token (step 2 of the flow) for a verified user who has
+    /// no password yet.
+    ///
+    /// # Errors
+    ///
+    /// - `BusinessRule` if the user already has a password (there is no signup
+    ///   to complete)
+    /// - whatever the JWT service returns if signing fails
+    pub fn issue_signup_token(&self, user: &User) -> Result<String, DomainError> {
+        if user.has_password() {
+            return Err(DomainError::BusinessRule(
+                "Account already has a password set".into(),
+            ));
+        }
+        let expires_at = Utc::now() + Duration::minutes(SIGNUP_TOKEN_EXPIRY_MINUTES);
+        self.jwt_service.create_signup_token(user.id(), expires_at)
     }
 
     /// Completes signup by setting the user's password.
@@ -35,7 +63,7 @@ impl CompleteSignupUseCase {
     ///
     /// * `signup_token` - The JWT token from email verification (30 min expiry)
     /// * `email` - Email from request (verified against user for security)
-    /// * `password_hash` - The new password hash (already hashed by the handler)
+    /// * `password` - The new plaintext password (hashed here with Argon2id)
     ///
     /// # Returns
     ///
@@ -53,7 +81,7 @@ impl CompleteSignupUseCase {
         &self,
         signup_token: &str,
         email: &str,
-        password_hash: &str,
+        password: &str,
     ) -> Result<User, DomainError> {
         // Validate and decode the signup token
         let user_id = self.jwt_service.validate_signup_token(signup_token)?;
@@ -81,7 +109,9 @@ impl CompleteSignupUseCase {
         // check above is only advisory under concurrency. If another request set
         // a password since we loaded the user, the row's version moved on and
         // this save fails with `Conflict` instead of overwriting that password.
-        user.update_password(password_hash.to_owned());
+        // Hash only once the request is known to be valid.
+        let password_hash = self.password_hasher.hash(password).await?;
+        user.update_password(password_hash);
         self.user_repo.save(&user).await?;
 
         tracing::info!(user_id = %user.id(), "Signup completed, password set");
@@ -94,6 +124,7 @@ impl CompleteSignupUseCase {
 mod tests {
     use super::*;
     use crate::application::ports::outgoing::jwt_service::MockJwtService;
+    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
     use crate::domain::entities::UserBuilder;
     use crate::domain::value_objects::UserId;
@@ -116,6 +147,21 @@ mod tests {
         jwt
     }
 
+    /// A hasher that prefixes the plaintext, so tests can see what was stored.
+    fn hasher() -> Arc<MockPasswordHasher> {
+        let mut hasher = MockPasswordHasher::new();
+        hasher
+            .expect_hash()
+            .returning(|p| Ok(format!("hashed:{p}")));
+        Arc::new(hasher)
+    }
+
+    /// A hasher with no expectations: any call panics. Rejected requests must
+    /// not cost an Argon2 run.
+    fn unused_hasher() -> Arc<MockPasswordHasher> {
+        Arc::new(MockPasswordHasher::new())
+    }
+
     #[tokio::test]
     async fn sets_password_for_valid_token() {
         let user_id = UserId::new();
@@ -125,11 +171,12 @@ mod tests {
             .returning(move |_| Ok(Some(user_with_password(user_id, None))));
         repo.expect_save()
             .times(1)
-            .withf(move |u| u.id() == &user_id && u.password_hash() == Some("new-hash"))
+            .withf(move |u| u.id() == &user_id && u.password_hash() == Some("hashed:new-password"))
             .returning(|_| Ok(()));
 
-        let uc = CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)));
-        let result = uc.execute("token", EMAIL, "new-hash").await;
+        let uc =
+            CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)), hasher());
+        let result = uc.execute("token", EMAIL, "new-password").await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().email().as_str(), EMAIL);
@@ -141,8 +188,15 @@ mod tests {
         jwt.expect_validate_signup_token()
             .returning(|_| Err(DomainError::Authorization("bad token".into())));
 
-        let uc = CompleteSignupUseCase::new(Arc::new(MockUserRepository::new()), Arc::new(jwt));
-        let err = uc.execute("token", EMAIL, "new-hash").await.unwrap_err();
+        let uc = CompleteSignupUseCase::new(
+            Arc::new(MockUserRepository::new()),
+            Arc::new(jwt),
+            unused_hasher(),
+        );
+        let err = uc
+            .execute("token", EMAIL, "new-password")
+            .await
+            .unwrap_err();
         assert!(matches!(err, DomainError::Authorization(_)));
     }
 
@@ -153,8 +207,15 @@ mod tests {
         repo.expect_find_by_id().returning(|_| Ok(None));
         repo.expect_save().never();
 
-        let uc = CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)));
-        let err = uc.execute("token", EMAIL, "new-hash").await.unwrap_err();
+        let uc = CompleteSignupUseCase::new(
+            Arc::new(repo),
+            Arc::new(jwt_returning(user_id)),
+            unused_hasher(),
+        );
+        let err = uc
+            .execute("token", EMAIL, "new-password")
+            .await
+            .unwrap_err();
         assert!(matches!(err, DomainError::NotFound(_)));
     }
 
@@ -169,9 +230,13 @@ mod tests {
             .returning(move |_| Ok(Some(user_with_password(user_id, None))));
         repo.expect_save().never();
 
-        let uc = CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)));
+        let uc = CompleteSignupUseCase::new(
+            Arc::new(repo),
+            Arc::new(jwt_returning(user_id)),
+            unused_hasher(),
+        );
         let err = uc
-            .execute("token", "someone-else@example.com", "new-hash")
+            .execute("token", "someone-else@example.com", "new-password")
             .await
             .unwrap_err();
         assert!(matches!(err, DomainError::Validation(_)));
@@ -185,8 +250,15 @@ mod tests {
             .returning(move |_| Ok(Some(user_with_password(user_id, Some("existing")))));
         repo.expect_save().never();
 
-        let uc = CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)));
-        let err = uc.execute("token", EMAIL, "new-hash").await.unwrap_err();
+        let uc = CompleteSignupUseCase::new(
+            Arc::new(repo),
+            Arc::new(jwt_returning(user_id)),
+            unused_hasher(),
+        );
+        let err = uc
+            .execute("token", EMAIL, "new-password")
+            .await
+            .unwrap_err();
         assert!(matches!(err, DomainError::Validation(_)));
     }
 
@@ -203,8 +275,53 @@ mod tests {
             .times(1)
             .returning(|_| Err(DomainError::Conflict("modified concurrently".into())));
 
-        let uc = CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)));
-        let err = uc.execute("token", EMAIL, "new-hash").await.unwrap_err();
+        let uc =
+            CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)), hasher());
+        let err = uc
+            .execute("token", EMAIL, "new-password")
+            .await
+            .unwrap_err();
         assert!(matches!(err, DomainError::Conflict(_)));
+    }
+
+    #[test]
+    fn issues_signup_token_for_passwordless_user() {
+        let user_id = UserId::new();
+        let mut jwt = MockJwtService::new();
+        jwt.expect_create_signup_token()
+            .withf(move |id, expires_at| {
+                let minutes = (*expires_at - Utc::now()).num_minutes();
+                *id == user_id
+                    && (SIGNUP_TOKEN_EXPIRY_MINUTES - 1..=SIGNUP_TOKEN_EXPIRY_MINUTES)
+                        .contains(&minutes)
+            })
+            .times(1)
+            .returning(|_, _| Ok("signup-token".into()));
+
+        let uc = CompleteSignupUseCase::new(
+            Arc::new(MockUserRepository::new()),
+            Arc::new(jwt),
+            unused_hasher(),
+        );
+        let token = uc
+            .issue_signup_token(&user_with_password(user_id, None))
+            .unwrap();
+        assert_eq!(token, "signup-token");
+    }
+
+    #[test]
+    fn refuses_signup_token_when_password_already_set() {
+        let mut jwt = MockJwtService::new();
+        jwt.expect_create_signup_token().never();
+
+        let uc = CompleteSignupUseCase::new(
+            Arc::new(MockUserRepository::new()),
+            Arc::new(jwt),
+            unused_hasher(),
+        );
+        let err = uc
+            .issue_signup_token(&user_with_password(UserId::new(), Some("existing")))
+            .unwrap_err();
+        assert!(matches!(err, DomainError::BusinessRule(_)));
     }
 }

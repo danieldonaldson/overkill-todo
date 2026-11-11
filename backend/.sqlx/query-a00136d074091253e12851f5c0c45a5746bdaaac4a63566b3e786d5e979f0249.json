@@ -1,11 +1,11 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT role AS \"role: UserRole\", tokens_valid_after FROM users WHERE id = $1",
+  "query": "SELECT role AS \"role: DbUserRole\", tokens_valid_after FROM users WHERE id = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
-        "name": "role: UserRole",
+        "name": "role: DbUserRole",
         "type_info": {
           "Custom": {
             "name": "user_role",
@@ -47,5 +47,5 @@
       true
     ]
   },
-  "hash": "1ce766fba8645e20380775a8a88ec30aee1db5d93fba970dd368938cb11d82bf"
+  "hash": "a00136d074091253e12851f5c0c45a5746bdaaac4a63566b3e786d5e979f0249"
 }

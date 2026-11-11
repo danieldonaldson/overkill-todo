@@ -9,7 +9,7 @@ use async_trait::async_trait;
 
 use crate::application::ports::PasswordHasher;
 use crate::domain::errors::DomainError;
-use crate::shared::crypto::Crypto;
+use crate::infrastructure::crypto::Crypto;
 
 /// Argon2-based password hasher backed by an injected [`Crypto`] handle.
 ///

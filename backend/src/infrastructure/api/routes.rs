@@ -20,11 +20,11 @@ use utoipa_swagger_ui::SwaggerUi;
 use super::openapi::ApiDoc;
 #[cfg(feature = "swagger-ui")]
 use crate::infrastructure::config::is_dev_mode;
+use crate::infrastructure::crypto::Crypto;
 use crate::infrastructure::telemetry::{
     http::{http_trace_layer, record_request_metrics},
     metrics::HttpMetrics,
 };
-use crate::shared::crypto::Crypto;
 
 use super::{
     handlers::{

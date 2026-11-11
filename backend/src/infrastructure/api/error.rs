@@ -159,6 +159,16 @@ impl From<DomainError> for AppError {
     }
 }
 
+impl From<crate::application::use_cases::LoginError> for AppError {
+    fn from(error: crate::application::use_cases::LoginError) -> Self {
+        use crate::application::use_cases::LoginError;
+        match error {
+            LoginError::InvalidCredentials => Self::invalid_credentials(),
+            LoginError::Domain(e) => e.into(),
+        }
+    }
+}
+
 impl From<crate::application::use_cases::VerifyEmailError> for AppError {
     fn from(error: crate::application::use_cases::VerifyEmailError) -> Self {
         use crate::application::use_cases::VerifyEmailError;

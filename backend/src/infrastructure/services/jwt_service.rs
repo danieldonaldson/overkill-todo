@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::application::ports::JwtService;
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{ResetCodeId, UserId};
-use crate::shared::crypto::Crypto;
+use crate::infrastructure::crypto::Crypto;
 
 /// JWT claims for signup/reset tokens.
 #[derive(Debug, Serialize, Deserialize)]
@@ -119,10 +119,6 @@ impl JwtService for CryptoJwtService {
             .ok_or_else(|| DomainError::Authorization("Reset token missing jti".into()))?;
         let reset_code_id = ResetCodeId::from_uuid(parse_token_uuid(&jti, "reset code ID")?);
         Ok((user_id, reset_code_id))
-    }
-
-    fn jwt_expiration_minutes(&self) -> i64 {
-        self.crypto.jwt_expiration_minutes()
     }
 }
 

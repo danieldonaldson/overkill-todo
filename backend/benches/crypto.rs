@@ -19,8 +19,8 @@ use overkill_todo::infrastructure::api::{
     verify_oauth_state,
 };
 use overkill_todo::infrastructure::config::CryptoSettings;
+use overkill_todo::infrastructure::crypto::{Crypto, generate_secure_token, sha256_hex};
 use overkill_todo::infrastructure::services::Argon2Hasher;
-use overkill_todo::shared::crypto::{Crypto, generate_secure_token, sha256_hex};
 use uuid::Uuid;
 
 /// Production Argon2id cost (`backend/.env.example`). Keep in sync if the

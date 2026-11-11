@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use crate::application::ports::TokenService;
-use crate::shared::crypto::Crypto;
-use crate::shared::{generate_secure_token, sha256_hex};
+use crate::infrastructure::crypto::Crypto;
+use crate::infrastructure::crypto::{generate_secure_token, sha256_hex};
 
 /// Token service backed by an injected [`Crypto`] handle.
 pub struct CryptoTokenService {

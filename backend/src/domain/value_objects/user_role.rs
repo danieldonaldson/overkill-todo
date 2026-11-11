@@ -1,6 +1,5 @@
 //! User role for authorization.
 
-use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// The role assigned to a user, determining their access level.
@@ -9,9 +8,7 @@ use std::fmt;
 /// - `User`: Standard user with access to their own data
 /// - `Admin`: Can manage users and view admin panels
 /// - `SuperAdmin`: Full system access, can manage other admins
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, sqlx::Type, Default)]
-#[serde(rename_all = "snake_case")]
-#[sqlx(type_name = "user_role", rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum UserRole {
     /// Standard user - can only access their own data
     #[default]

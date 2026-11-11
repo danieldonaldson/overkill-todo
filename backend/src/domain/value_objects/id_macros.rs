@@ -3,26 +3,16 @@
 /// Generates a newtype wrapper around `Uuid` with:
 /// - `new()` using UUID v7, `from_uuid()`, `as_uuid()`
 /// - `Display`, `Default`, `Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash`
-/// - Optionally `Serialize`/`Deserialize` with `#[serde(transparent)]`
+///
+/// No `serde` derive: the domain stays free of serialization concerns. DTOs
+/// expose IDs as `Uuid`/`String` and convert at the boundary.
 ///
 /// # Usage
 ///
 /// ```ignore
-/// // With serde support (for types that appear in API responses/requests):
-/// uuid_id!(ProjectId, serde);
-///
-/// // Without serde (for internal-only types):
-/// uuid_id!(AuditEventId);
+/// uuid_id!(ProjectId);
 /// ```
 macro_rules! uuid_id {
-    ($name:ident, serde) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-        #[serde(transparent)]
-        pub struct $name(uuid::Uuid);
-
-        $crate::domain::value_objects::id_macros::uuid_id!(@impl $name);
-    };
-
     ($name:ident) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $name(uuid::Uuid);

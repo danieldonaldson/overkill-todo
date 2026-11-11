@@ -13,18 +13,30 @@ src/
 ├── infrastructure/   # All I/O adapters — depends on application + domain
 │   ├── api/          # Axum handlers, routes, middleware (HTTP adapter)
 │   ├── config/       # Settings loaded from env vars
+│   ├── crypto.rs     # `Crypto` handle: Argon2 params, JWT keys, CSRF secret, cipher
 │   ├── oauth/        # Google OAuth client
 │   ├── persistence/  # sqlx Postgres repositories
 │   └── services/     # Concrete service impls (argon2, JWT, token gen, …)
-└── shared/           # Dependency-light cross-cutting utilities (crypto, fingerprint)
+└── shared/           # Dependency-free utilities (error fingerprinting)
 ```
 
 Dependencies only point inward: `infrastructure → application → domain`.
-`shared/` is used by all layers and is a true leaf: it carries no layer-specific
-imports. The HTTP-facing `AppError` (with its `IntoResponse`/`From` mappings) and the
-helpers that produce it — `csrf`, `jwt`, `oauth_state` — live in `infrastructure/api`
-(they import `axum`/`sqlx`/`jsonwebtoken`), so `shared/` holds only `crypto` and
-`fingerprint`.
+The domain imports no `sqlx` or `serde`: Postgres enum mappings live in
+`persistence/postgres/models.rs` (`DbUserRole`, `DbOAuthProvider`) and convert with
+`From` at the repository boundary.
+
+`shared/` is a true leaf: it imports nothing from any layer and holds only
+`fingerprint`. `Crypto` lives in `infrastructure/crypto.rs` because it is built from
+`CryptoSettings` and holds key material. The HTTP-facing `AppError` (with its
+`IntoResponse`/`From` mappings) and the helpers that produce it — `csrf`, `jwt`,
+`oauth_state` — live in `infrastructure/api` (they import `axum`/`sqlx`/`jsonwebtoken`).
+
+Handlers stay thin: they parse the request, run edge admission (Turnstile, device
+fingerprint), call one use case, and turn its result into cookies and a response.
+Credential checks, password hashing, and minting single-purpose tokens (signup,
+reset) happen in use cases. The session access JWT and CSRF token are an HTTP
+concern, so `build_session` mints them in `infrastructure/api`, next to the
+middleware that verifies them.
 
 DTOs (`application/dto/`) are likewise not a purely inward layer: every DTO derives
 `serde` (`Serialize`/`Deserialize`) and `utoipa::ToSchema`, and request DTOs add

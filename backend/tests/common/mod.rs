@@ -45,7 +45,7 @@ use overkill_todo::{
 };
 use sqlx::PgPool;
 
-use overkill_todo::shared::crypto::Crypto;
+use overkill_todo::infrastructure::crypto::Crypto;
 
 static TEST_CRYPTO: OnceLock<Arc<Crypto>> = OnceLock::new();
 
@@ -284,9 +284,16 @@ fn create_test_app_full(
         user_repo.clone(),
         oauth_account_repo.clone(),
         email_service.clone(),
+        mx_validator,
     ));
-    let login_uc = Arc::new(LoginUserUseCase::new(user_repo.clone()));
-    let get_current_user_uc = Arc::new(GetCurrentUserUseCase::new(user_repo.clone()));
+    let login_uc = Arc::new(LoginUserUseCase::new(
+        user_repo.clone(),
+        password_hasher.clone(),
+    ));
+    let get_current_user_uc = Arc::new(GetCurrentUserUseCase::new(
+        user_repo.clone(),
+        oauth_account_repo.clone(),
+    ));
     let refresh_token_uc = Arc::new(RefreshTokenUseCase::new(
         refresh_token_repo.clone(),
         user_repo.clone(),
@@ -322,6 +329,7 @@ fn create_test_app_full(
     let complete_signup_uc = Arc::new(CompleteSignupUseCase::new(
         user_repo.clone(),
         jwt_service.clone(),
+        password_hasher.clone(),
     ));
     let request_password_reset_uc = Arc::new(RequestPasswordResetUseCase::new(
         user_repo.clone(),
@@ -341,6 +349,7 @@ fn create_test_app_full(
         password_reset_repo,
         refresh_token_repo.clone(),
         jwt_service,
+        password_hasher.clone(),
     ));
     let oauth_callback_uc = Arc::new(OAuthCallbackUseCase::new(
         user_repo.clone(),
@@ -365,10 +374,7 @@ fn create_test_app_full(
         password_hasher.clone(),
     ));
     let cancel_account_deletion_uc = Arc::new(CancelAccountDeletionUseCase::new(user_repo.clone()));
-    let set_password_uc = Arc::new(SetPasswordUseCase::new(
-        user_repo.clone(),
-        password_hasher.clone(),
-    ));
+    let set_password_uc = Arc::new(SetPasswordUseCase::new(user_repo.clone(), password_hasher));
 
     let auth_deps = Arc::new(AuthHandlerDeps {
         register_use_case: register_uc,
@@ -378,9 +384,6 @@ fn create_test_app_full(
         revoke_token_use_case: revoke_token_uc,
         send_verification_code_use_case: send_verification_uc,
         turnstile_service: turnstile_service.clone(),
-        mx_validator,
-        oauth_account_repo,
-        password_hasher: password_hasher.clone(),
         crypto: crypto.clone(),
     });
 
@@ -395,7 +398,6 @@ fn create_test_app_full(
         refresh_token_use_case: refresh_token_uc.clone(),
         turnstile_service,
         frontend_base_url: "http://localhost:4321".to_string(),
-        password_hasher,
         crypto: crypto.clone(),
     });
 

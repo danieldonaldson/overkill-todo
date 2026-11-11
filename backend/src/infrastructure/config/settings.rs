@@ -200,7 +200,7 @@ pub struct BotProtectionSettings {
 
 /// Crypto / JWT material. Consumed wholesale by [`Crypto::from_settings`].
 ///
-/// [`Crypto::from_settings`]: crate::shared::crypto::Crypto::from_settings
+/// [`Crypto::from_settings`]: crate::infrastructure::crypto::Crypto::from_settings
 #[derive(Debug, Clone)]
 pub struct CryptoSettings {
     pub argon2_memory_cost: u32,

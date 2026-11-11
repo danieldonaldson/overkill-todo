@@ -1,6 +1,8 @@
 //! Use case for the email-only first step of registration.
 
-use crate::application::ports::{EmailService, OAuthAccountRepository, UserRepository};
+use crate::application::ports::{
+    EmailService, MxValidator, OAuthAccountRepository, UserRepository,
+};
 use crate::domain::entities::User;
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::Email;
@@ -23,6 +25,7 @@ pub struct RegisterUserUseCase {
     user_repository: Arc<dyn UserRepository>,
     oauth_account_repository: Arc<dyn OAuthAccountRepository>,
     email_service: Arc<dyn EmailService>,
+    mx_validator: Arc<dyn MxValidator>,
 }
 
 impl RegisterUserUseCase {
@@ -30,11 +33,30 @@ impl RegisterUserUseCase {
         user_repository: Arc<dyn UserRepository>,
         oauth_account_repository: Arc<dyn OAuthAccountRepository>,
         email_service: Arc<dyn EmailService>,
+        mx_validator: Arc<dyn MxValidator>,
     ) -> Self {
         Self {
             user_repository,
             oauth_account_repository,
             email_service,
+            mx_validator,
+        }
+    }
+
+    /// Logs a warning when the email's domain has no MX records.
+    ///
+    /// Advisory only: registration goes ahead either way. A typo'd domain just
+    /// never receives the code, and a DNS failure shouldn't block signups.
+    async fn warn_if_domain_lacks_mx(&self, email: &Email) {
+        let domain = email.as_str().rsplit_once('@').map_or("", |(_, d)| d);
+        match self.mx_validator.has_mx_record(domain).await {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(email_domain = %domain, "MX record check failed - domain may not receive emails");
+            }
+            Err(e) => {
+                tracing::warn!(email_domain = %domain, error = %e, "MX validation error");
+            }
         }
     }
 
@@ -46,6 +68,7 @@ impl RegisterUserUseCase {
     #[tracing::instrument(name = "usecase.register_user", skip_all)]
     pub async fn execute(&self, email: &str) -> Result<RegisterOutcome, DomainError> {
         let email_vo = Email::new(email)?;
+        self.warn_if_domain_lacks_mx(&email_vo).await;
 
         if let Some(existing_user) = self.user_repository.find_by_email(email).await? {
             if existing_user.has_password() && existing_user.email_verified() {
@@ -114,6 +137,7 @@ impl RegisterUserUseCase {
 mod tests {
     use super::*;
     use crate::application::ports::outgoing::email_service::MockEmailService;
+    use crate::application::ports::outgoing::mx_validator::MockMxValidator;
     use crate::application::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
     use crate::domain::entities::UserParts;
@@ -155,6 +179,13 @@ mod tests {
         })
     }
 
+    /// An MX validator that finds records for every domain.
+    fn mx_ok() -> Arc<MockMxValidator> {
+        let mut mx = MockMxValidator::new();
+        mx.expect_has_mx_record().returning(|_| Ok(true));
+        Arc::new(mx)
+    }
+
     /// An OAuth repository that must not be touched.
     fn no_oauth_writes() -> MockOAuthAccountRepository {
         let mut oauth = MockOAuthAccountRepository::new();
@@ -175,6 +206,7 @@ mod tests {
             Arc::new(mock_repo),
             Arc::new(no_oauth_writes()),
             Arc::new(MockEmailService::new()),
+            mx_ok(),
         );
         let result = use_case.execute("test@example.com").await;
 
@@ -208,6 +240,7 @@ mod tests {
             Arc::new(mock_repo),
             Arc::new(oauth),
             Arc::new(MockEmailService::new()),
+            mx_ok(),
         );
         let result = use_case.execute("test@example.com").await;
 
@@ -234,6 +267,7 @@ mod tests {
             Arc::new(mock_repo),
             Arc::new(no_oauth_writes()),
             Arc::new(MockEmailService::new()),
+            mx_ok(),
         );
         let result = use_case.execute("test@example.com").await;
 
@@ -257,6 +291,7 @@ mod tests {
             Arc::new(mock_repo),
             Arc::new(no_oauth_writes()),
             Arc::new(MockEmailService::new()),
+            mx_ok(),
         );
         let result = use_case.execute("test@example.com").await;
 
@@ -278,6 +313,7 @@ mod tests {
             Arc::new(MockUserRepository::new()),
             Arc::new(no_oauth_writes()),
             Arc::new(email),
+            mx_ok(),
         );
         use_case.notify_existing(&user).await.unwrap();
     }
@@ -290,6 +326,7 @@ mod tests {
             Arc::new(mock_repo),
             Arc::new(no_oauth_writes()),
             Arc::new(MockEmailService::new()),
+            mx_ok(),
         );
         let result = use_case.execute("invalid-email").await;
 
@@ -313,6 +350,7 @@ mod tests {
             Arc::new(mock_repo),
             Arc::new(no_oauth_writes()),
             Arc::new(MockEmailService::new()),
+            mx_ok(),
         );
         let result = use_case.execute("test@example.com").await;
 

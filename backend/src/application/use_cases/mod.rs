@@ -9,7 +9,7 @@ pub mod user;
 pub use admin::{ListUsersUseCase, SetUserRoleUseCase};
 
 pub use auth::{
-    CompleteSignupUseCase, GetCurrentUserUseCase, LoginUserUseCase, OAuthCallbackMode,
+    CompleteSignupUseCase, GetCurrentUserUseCase, LoginError, LoginUserUseCase, OAuthCallbackMode,
     OAuthCallbackResult, OAuthCallbackUseCase, OAuthUnlinkUseCase, RefreshResult,
     RefreshTokenUseCase, RegisterOutcome, RegisterUserUseCase, RequestPasswordResetUseCase,
     ResendResult, ResendVerificationError, ResendVerificationUseCase, ResetPasswordUseCase,

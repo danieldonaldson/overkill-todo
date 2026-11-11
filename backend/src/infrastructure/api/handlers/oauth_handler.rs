@@ -31,7 +31,7 @@ use crate::infrastructure::api::error::AppError;
 use crate::infrastructure::api::handlers::session::build_session;
 use crate::infrastructure::api::middleware::{AuthUser, OptionalAuthUser};
 use crate::infrastructure::api::{create_oauth_state, verify_oauth_state};
-use crate::shared::crypto::Crypto;
+use crate::infrastructure::crypto::Crypto;
 
 /// Check if test bypass mode is enabled.
 #[cfg(debug_assertions)]

@@ -4,6 +4,62 @@ use chrono::{DateTime, Utc};
 use sqlx::FromRow;
 use uuid::Uuid;
 
+/// Postgres `user_role` enum. Mirrors [`UserRole`] so the domain type carries no
+/// `sqlx` derive; convert at the repository boundary with `From`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(type_name = "user_role", rename_all = "snake_case")]
+pub enum DbUserRole {
+    User,
+    Admin,
+    SuperAdmin,
+}
+
+impl From<UserRole> for DbUserRole {
+    fn from(role: UserRole) -> Self {
+        match role {
+            UserRole::User => Self::User,
+            UserRole::Admin => Self::Admin,
+            UserRole::SuperAdmin => Self::SuperAdmin,
+        }
+    }
+}
+
+impl From<DbUserRole> for UserRole {
+    fn from(role: DbUserRole) -> Self {
+        match role {
+            DbUserRole::User => Self::User,
+            DbUserRole::Admin => Self::Admin,
+            DbUserRole::SuperAdmin => Self::SuperAdmin,
+        }
+    }
+}
+
+/// Postgres `oauth_provider` enum. Mirrors [`OAuthProvider`]; see [`DbUserRole`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type)]
+#[sqlx(type_name = "oauth_provider", rename_all = "snake_case")]
+pub enum DbOAuthProvider {
+    Google,
+    Apple,
+}
+
+impl From<OAuthProvider> for DbOAuthProvider {
+    fn from(provider: OAuthProvider) -> Self {
+        match provider {
+            OAuthProvider::Google => Self::Google,
+            OAuthProvider::Apple => Self::Apple,
+        }
+    }
+}
+
+impl From<DbOAuthProvider> for OAuthProvider {
+    fn from(provider: DbOAuthProvider) -> Self {
+        match provider {
+            DbOAuthProvider::Google => Self::Google,
+            DbOAuthProvider::Apple => Self::Apple,
+        }
+    }
+}
+
 #[derive(Debug, FromRow)]
 pub struct UserRow {
     pub id: Uuid,
@@ -16,7 +72,7 @@ pub struct UserRow {
     pub pending_email_requested_at: Option<DateTime<Utc>>,
     pub deleted_at: Option<DateTime<Utc>>,
     pub deletion_scheduled_at: Option<DateTime<Utc>>,
-    pub role: UserRole,
+    pub role: DbUserRole,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub version: i64,
@@ -63,7 +119,7 @@ pub struct PasswordResetCodeRow {
 pub struct OAuthAccountRow {
     pub id: Uuid,
     pub user_id: Uuid,
-    pub provider: OAuthProvider,
+    pub provider: DbOAuthProvider,
     pub provider_user_id: String,
     pub provider_email: Option<String>,
     pub linked_at: DateTime<Utc>,

@@ -42,8 +42,8 @@ mod verify_email;
 mod verify_magic_link;
 
 pub use complete_signup::CompleteSignupUseCase;
-pub use get_current_user::GetCurrentUserUseCase;
-pub use login_user::LoginUserUseCase;
+pub use get_current_user::{CurrentUser, GetCurrentUserUseCase};
+pub use login_user::{LoginError, LoginUserUseCase};
 pub use oauth_callback::{OAuthCallbackMode, OAuthCallbackResult, OAuthCallbackUseCase};
 pub use oauth_unlink::OAuthUnlinkUseCase;
 pub use refresh_token::{RefreshResult, RefreshTokenUseCase};

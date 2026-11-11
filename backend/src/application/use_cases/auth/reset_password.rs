@@ -1,7 +1,9 @@
 //! Use case for resetting a user's password.
 
 use crate::application::ports::UserRepository;
-use crate::application::ports::{JwtService, PasswordResetRepository, RefreshTokenRepository};
+use crate::application::ports::{
+    JwtService, PasswordHasher, PasswordResetRepository, RefreshTokenRepository,
+};
 use crate::domain::entities::User;
 use crate::domain::errors::DomainError;
 use chrono::{DateTime, Utc};
@@ -27,6 +29,7 @@ pub struct ResetPasswordUseCase {
     password_reset_repo: Arc<dyn PasswordResetRepository>,
     refresh_token_repo: Arc<dyn RefreshTokenRepository>,
     jwt_service: Arc<dyn JwtService>,
+    password_hasher: Arc<dyn PasswordHasher>,
 }
 
 impl ResetPasswordUseCase {
@@ -36,12 +39,14 @@ impl ResetPasswordUseCase {
         password_reset_repo: Arc<dyn PasswordResetRepository>,
         refresh_token_repo: Arc<dyn RefreshTokenRepository>,
         jwt_service: Arc<dyn JwtService>,
+        password_hasher: Arc<dyn PasswordHasher>,
     ) -> Self {
         Self {
             user_repo,
             password_reset_repo,
             refresh_token_repo,
             jwt_service,
+            password_hasher,
         }
     }
 
@@ -50,7 +55,7 @@ impl ResetPasswordUseCase {
     /// # Arguments
     ///
     /// * `reset_token` - The JWT token from `validate_reset_code`
-    /// * `new_password_hash` - The new password hash (already hashed by the handler)
+    /// * `new_password` - The new plaintext password (hashed here with Argon2id)
     ///
     /// # Returns
     ///
@@ -64,11 +69,16 @@ impl ResetPasswordUseCase {
     pub async fn execute(
         &self,
         reset_token: &str,
-        new_password_hash: &str,
+        new_password: &str,
     ) -> Result<PasswordReset, DomainError> {
         // Validate and decode the reset token, recovering the reset-code row it
         // is bound to.
         let (user_id, reset_code_id) = self.jwt_service.validate_reset_token(reset_token)?;
+
+        // Hash before consuming the code: if hashing fails, the code is still
+        // usable for a retry. After validating the token, so a bad token doesn't
+        // cost an Argon2 run.
+        let new_password_hash = self.password_hasher.hash(new_password).await?;
 
         // Atomically consume the reset-code row before touching the password.
         // If no row is consumed the token has already been used (or was
@@ -94,7 +104,7 @@ impl ResetPasswordUseCase {
 
         // Update the password
         self.user_repo
-            .update_password(user.id(), new_password_hash)
+            .update_password(user.id(), &new_password_hash)
             .await?;
 
         // Revoke every existing refresh token for this user. Password reset is the
@@ -130,6 +140,7 @@ impl ResetPasswordUseCase {
 mod tests {
     use super::*;
     use crate::application::ports::outgoing::jwt_service::MockJwtService;
+    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
     use crate::application::ports::outgoing::password_reset_repository::MockPasswordResetRepository;
     use crate::application::ports::outgoing::refresh_token_repository::MockRefreshTokenRepository;
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
@@ -144,6 +155,15 @@ mod tests {
         );
         user.mark_email_verified();
         user
+    }
+
+    /// A hasher that prefixes the plaintext, so tests can see what was stored.
+    fn hasher() -> Arc<MockPasswordHasher> {
+        let mut hasher = MockPasswordHasher::new();
+        hasher
+            .expect_hash()
+            .returning(|p| Ok(format!("hashed:{p}")));
+        Arc::new(hasher)
     }
 
     #[tokio::test]
@@ -163,6 +183,8 @@ mod tests {
             .returning(move |_| Ok(Some(user.clone())));
         mock_user_repo
             .expect_update_password()
+            .withf(|_, hash| hash == "hashed:new_password")
+            .times(1)
             .returning(|_, _| Ok(()));
         // ...and cut off access tokens already issued to it.
         mock_user_repo
@@ -186,9 +208,10 @@ mod tests {
             Arc::new(mock_reset_repo),
             Arc::new(mock_refresh_repo),
             Arc::new(mock_jwt),
+            hasher(),
         );
 
-        let result = use_case.execute("valid_token", "new_password_hash").await;
+        let result = use_case.execute("valid_token", "new_password").await;
         assert!(result.is_ok());
         let reset = result.unwrap();
         assert_eq!(reset.user.id(), &user_id);
@@ -220,11 +243,10 @@ mod tests {
             Arc::new(mock_reset_repo),
             Arc::new(mock_refresh_repo),
             Arc::new(mock_jwt),
+            hasher(),
         );
 
-        let result = use_case
-            .execute("replayed_token", "new_password_hash")
-            .await;
+        let result = use_case.execute("replayed_token", "new_password").await;
         match result {
             Err(DomainError::Authorization(_)) => {}
             _ => panic!("Expected Authorization error"),
@@ -247,9 +269,11 @@ mod tests {
             Arc::new(mock_reset_repo),
             Arc::new(mock_refresh_repo),
             Arc::new(mock_jwt),
+            // No expectations: a rejected token must not cost an Argon2 run.
+            Arc::new(MockPasswordHasher::new()),
         );
 
-        let result = use_case.execute("invalid_token", "new_password_hash").await;
+        let result = use_case.execute("invalid_token", "new_password").await;
         assert!(result.is_err());
         match result {
             Err(DomainError::Authorization(_)) => {}
@@ -282,9 +306,10 @@ mod tests {
             Arc::new(mock_reset_repo),
             Arc::new(mock_refresh_repo),
             Arc::new(mock_jwt),
+            hasher(),
         );
 
-        let result = use_case.execute("valid_token", "new_password_hash").await;
+        let result = use_case.execute("valid_token", "new_password").await;
         assert!(result.is_err());
         match result {
             Err(DomainError::NotFound(_)) => {}

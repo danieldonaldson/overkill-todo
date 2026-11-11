@@ -9,14 +9,14 @@ use crate::domain::errors::DomainError;
 use crate::domain::value_objects::UserId;
 use crate::infrastructure::persistence::postgres::connection::Database;
 use crate::infrastructure::persistence::postgres::error::persist_err;
-use crate::infrastructure::persistence::postgres::models::OAuthAccountRow;
+use crate::infrastructure::persistence::postgres::models::{DbOAuthProvider, OAuthAccountRow};
 
 impl From<OAuthAccountRow> for OAuthAccount {
     fn from(row: OAuthAccountRow) -> Self {
         Self::from_persistence(
             row.id,
             UserId::from_uuid(row.user_id),
-            row.provider,
+            row.provider.into(),
             row.provider_user_id,
             row.provider_email,
             row.linked_at,
@@ -50,7 +50,7 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
             FROM user_oauth_accounts
             WHERE provider = $1 AND provider_user_id = $2
             "#,
-            provider as OAuthProvider,
+            DbOAuthProvider::from(provider) as _,
             provider_user_id,
         )
         .fetch_optional(self.db.pool())
@@ -88,7 +88,7 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
             "#,
             account.id(),
             account.user_id().as_uuid(),
-            account.provider() as _,
+            DbOAuthProvider::from(account.provider()) as _,
             account.provider_user_id(),
             account.provider_email(),
             account.linked_at(),
@@ -112,7 +112,7 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
             WHERE user_id = $1 AND provider = $2
             "#,
             user_id.as_uuid(),
-            provider as OAuthProvider,
+            DbOAuthProvider::from(provider) as _,
         )
         .execute(self.db.pool())
         .await

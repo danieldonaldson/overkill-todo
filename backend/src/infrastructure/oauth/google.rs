@@ -281,7 +281,7 @@ impl OAuthProviderClient for GoogleOAuthClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::crypto::Crypto;
+    use crate::infrastructure::crypto::Crypto;
     use jsonwebtoken::{EncodingKey, Header, encode, get_current_timestamp, jwk::Jwk};
     use serde::Serialize;
 

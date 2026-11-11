@@ -12,7 +12,7 @@ use crate::{
             AuthResponse, InitiateRegistrationRequest, InitiateRegistrationResponse, LoginRequest,
             UserResponse,
         },
-        ports::{MxValidator, OAuthAccountRepository, PasswordHasher, TurnstileService},
+        ports::TurnstileService,
         use_cases::{
             GetCurrentUserUseCase, LoginUserUseCase, RefreshTokenUseCase, RegisterOutcome,
             RegisterUserUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
@@ -29,7 +29,7 @@ use crate::{
         },
         middleware::AuthUser,
     },
-    shared::crypto::Crypto,
+    infrastructure::crypto::Crypto,
 };
 
 /// How long registration will wait for the verification email to be handed to
@@ -38,30 +38,10 @@ use crate::{
 /// Registration sends inline because the caller needs to know whether the code
 /// is actually coming — but the transport's full retry sequence (~24.9s) is far
 /// too much of the 30s request budget to spend on one dependency, with a
-/// Turnstile call and an MX lookup already ahead of it in this handler. This cap
+/// Turnstile call and an MX lookup already ahead of it in this request. This cap
 /// leaves a fast-failing blip room to be retried and still succeed, while an
 /// unreachable relay is written off in one attempt's worth of waiting.
 const REGISTRATION_SEND_BUDGET: Duration = Duration::from_secs(10);
-
-/// Returns a stable dummy Argon2 hash, computed once with the configured
-/// parameters. Used to equalize login timing for unknown emails.
-async fn dummy_password_hash(hasher: &dyn PasswordHasher) -> Result<&'static str, AppError> {
-    static DUMMY: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
-    let hash = DUMMY
-        .get_or_try_init(|| hasher.hash("timing-equalization-dummy"))
-        .await?;
-    Ok(hash.as_str())
-}
-
-/// Run an Argon2 verification against a dummy hash and discard the result.
-///
-/// Called on the unknown-email login path so its response time matches that of
-/// a real (wrong-password) verification, preventing user enumeration by timing.
-async fn verify_dummy_password(hasher: &dyn PasswordHasher, password: &str) {
-    if let Ok(dummy) = dummy_password_hash(hasher).await {
-        let _ = hasher.verify(password, dummy).await;
-    }
-}
 
 pub struct AuthHandlerDeps {
     pub register_use_case: Arc<RegisterUserUseCase>,
@@ -71,10 +51,6 @@ pub struct AuthHandlerDeps {
     pub revoke_token_use_case: Arc<RevokeTokenUseCase>,
     pub send_verification_code_use_case: Arc<SendVerificationCodeUseCase>,
     pub turnstile_service: Arc<dyn TurnstileService>,
-    pub mx_validator: Arc<dyn MxValidator>,
-    pub oauth_account_repo: Arc<dyn OAuthAccountRepository>,
-    /// Argon2 hasher; runs the CPU-bound work off the async workers.
-    pub password_hasher: Arc<dyn PasswordHasher>,
     pub crypto: Arc<Crypto>,
 }
 
@@ -109,20 +85,6 @@ pub async fn register(
         request.turnstile_token.as_deref(),
     )
     .await?;
-
-    // Validate email domain has MX records (log warning if check fails, don't block)
-    let email_domain = request.email.split('@').nth(1).unwrap_or("");
-    match deps.mx_validator.has_mx_record(email_domain).await {
-        Ok(true) => {}
-        Ok(false) => {
-            tracing::warn!(email_domain = %email_domain, "MX record check failed - domain may not receive emails");
-            // Don't block - let them try (typos will just not receive the code)
-        }
-        Err(e) => {
-            tracing::warn!(email_domain = %email_domain, error = %e, "MX validation error");
-            // Don't block on MX check failures
-        }
-    }
 
     // Creates a user without a password, reuses an incomplete signup, or finds
     // a completed account. All three get the same response below, so the
@@ -202,43 +164,11 @@ pub async fn login(
     // Extract device fingerprint
     let device_fingerprint = require_device_fingerprint(&headers)?;
 
-    // Execute use case to find user
-    let Some(user) = deps.login_use_case.execute(&request.email).await? else {
-        // Perform a dummy Argon2 verification so the response time for an
-        // unknown email matches that of a wrong password, preventing user
-        // enumeration via timing.
-        verify_dummy_password(deps.password_hasher.as_ref(), &request.password).await;
-        return Err(AppError::invalid_credentials());
-    };
-
-    // A password-less user is either mid-signup (email registered, no password
-    // set yet) or an OAuth-only account (registered via a provider).
-    if !user.has_password() {
-        // Equalize timing with the password-verification path so an attacker
-        // can't distinguish these states from a wrong password by response time
-        // (the unknown-email path does the same dummy verify).
-        verify_dummy_password(deps.password_hasher.as_ref(), &request.password).await;
-
-        // Both get the generic invalid-credentials error: a distinct answer
-        // would confirm the email has an account. An incomplete signup is
-        // finished by registering again, which reuses the pending user.
-        return Err(AppError::invalid_credentials());
-    }
-
-    // Verify password with Argon2. `has_password()` guaranteed Some above; the
-    // fallback keeps this total without panicking. A malformed stored hash is
-    // treated as a failed login, as before, rather than a 500.
-    let password_hash = user
-        .password_hash()
-        .ok_or_else(AppError::invalid_credentials)?;
-    let password_matches = deps
-        .password_hasher
-        .verify(&request.password, password_hash)
-        .await
-        .unwrap_or(false);
-    if !password_matches {
-        return Err(AppError::invalid_credentials());
-    }
+    // Verify credentials (timing-equalized across all failure cases).
+    let user = deps
+        .login_use_case
+        .execute(&request.email, &request.password)
+        .await?;
 
     // Create refresh token, then issue the session (JWT + CSRF + cookies).
     let refresh_token = deps
@@ -354,23 +284,20 @@ pub async fn me(
     State(deps): State<Arc<AuthHandlerDeps>>,
     auth_user: AuthUser,
 ) -> Result<Json<UserResponse>, AppError> {
-    // Both lookups key off the same authenticated user id and are independent, so
-    // run them concurrently to collapse two DB round-trips into one wall-clock
-    // wait on this hot (per-page-load) endpoint.
-    let (user, oauth_accounts) = tokio::try_join!(
-        deps.get_current_user_use_case.execute(&auth_user.user_id),
-        deps.oauth_account_repo.find_by_user_id(&auth_user.user_id),
-    )?;
+    let current = deps
+        .get_current_user_use_case
+        .execute(&auth_user.user_id)
+        .await?
+        .ok_or_else(|| AppError::token_invalid("user not found"))?;
 
-    let user = user.ok_or_else(|| AppError::token_invalid("user not found"))?;
-
-    let oauth_providers: Vec<String> = oauth_accounts
+    let oauth_providers = current
+        .oauth_providers
         .iter()
-        .map(|a| a.provider().as_str().to_string())
+        .map(|p| p.as_str().to_string())
         .collect();
 
     Ok(Json(UserResponse::from_user_with_oauth(
-        user,
+        current.user,
         oauth_providers,
     )))
 }

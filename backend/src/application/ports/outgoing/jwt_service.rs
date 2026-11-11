@@ -1,4 +1,7 @@
 //! JWT service port for token creation and validation.
+// `automock` generates one field per method on `MockJwtService`, and every method
+// here ends in `_token`. Shortening the names would make the port less clear.
+#![cfg_attr(any(test, feature = "mocks"), allow(clippy::struct_field_names))]
 
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{ResetCodeId, UserId};
@@ -96,7 +99,4 @@ pub trait JwtService: Send + Sync {
     ///
     /// Returns an error if the token is invalid, expired, or missing its `jti`.
     fn validate_reset_token(&self, token: &str) -> Result<(UserId, ResetCodeId), DomainError>;
-
-    /// Returns the JWT expiration in minutes.
-    fn jwt_expiration_minutes(&self) -> i64;
 }

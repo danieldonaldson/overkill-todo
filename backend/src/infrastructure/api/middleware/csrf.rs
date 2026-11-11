@@ -27,7 +27,7 @@ use crate::infrastructure::api::cookies::extract_cookie;
 use crate::infrastructure::api::error::AppError;
 use crate::infrastructure::api::middleware::auth::ensure_authenticated;
 use crate::infrastructure::api::verify_csrf_token;
-use crate::shared::crypto::Crypto;
+use crate::infrastructure::crypto::Crypto;
 
 /// Header name for the CSRF token.
 pub const CSRF_TOKEN_HEADER: &str = "x-csrf-token";

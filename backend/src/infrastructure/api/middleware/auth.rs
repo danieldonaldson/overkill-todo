@@ -12,7 +12,7 @@ use crate::{
     application::ports::outgoing::{SessionAuthorizationState, UserRepository},
     domain::value_objects::{UserId, UserRole},
     infrastructure::api::{cookies::extract_cookie, error::AppError, verify_jwt},
-    shared::crypto::Crypto,
+    infrastructure::crypto::Crypto,
 };
 
 #[derive(Clone, Debug)]
