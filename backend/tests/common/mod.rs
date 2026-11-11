@@ -364,7 +364,10 @@ fn create_test_app_full(
         password_hasher.clone(),
     ));
     let cancel_account_deletion_uc = Arc::new(CancelAccountDeletionUseCase::new(user_repo.clone()));
-    let set_password_uc = Arc::new(SetPasswordUseCase::new(user_repo.clone(), password_hasher));
+    let set_password_uc = Arc::new(SetPasswordUseCase::new(
+        user_repo.clone(),
+        password_hasher.clone(),
+    ));
 
     let auth_deps = Arc::new(AuthHandlerDeps {
         register_use_case: register_uc,
@@ -376,6 +379,7 @@ fn create_test_app_full(
         turnstile_service: turnstile_service.clone(),
         mx_validator,
         oauth_account_repo,
+        password_hasher: password_hasher.clone(),
         crypto: crypto.clone(),
     });
 
@@ -390,6 +394,7 @@ fn create_test_app_full(
         refresh_token_use_case: refresh_token_uc.clone(),
         turnstile_service,
         frontend_base_url: "http://localhost:4321".to_string(),
+        password_hasher,
         crypto: crypto.clone(),
     });
 

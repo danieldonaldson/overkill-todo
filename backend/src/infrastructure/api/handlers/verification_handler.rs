@@ -1,6 +1,5 @@
 //! Email verification and password reset handlers.
 
-use argon2::password_hash::PasswordHasher;
 use axum::{
     Json,
     extract::{Query, State},
@@ -20,7 +19,7 @@ use crate::{
             VerifyEmailResponse, VerifyMagicLinkQuery, VerifyResetCodeRequest,
             VerifyResetCodeResponse, validation::sanitize_verification_code,
         },
-        ports::TurnstileService,
+        ports::{PasswordHasher, TurnstileService},
         use_cases::auth::{
             CompleteSignupUseCase, RefreshTokenUseCase, RequestPasswordResetUseCase,
             ResendVerificationError, ResendVerificationUseCase, ResetPasswordUseCase,
@@ -63,6 +62,8 @@ pub struct VerificationHandlerDeps {
     pub turnstile_service: Arc<dyn TurnstileService>,
     /// Frontend base URL for redirects (e.g., `http://localhost:4321` or `https://app.example.com`)
     pub frontend_base_url: String,
+    /// Argon2 hasher; runs the CPU-bound work off the async workers.
+    pub password_hasher: Arc<dyn PasswordHasher>,
     pub crypto: Arc<Crypto>,
 }
 
@@ -382,11 +383,7 @@ pub async fn reset_password(
     ValidatedJson(request): ValidatedJson<ResetPasswordRequest>,
 ) -> Result<(HeaderMap, Json<AuthResponse>), AppError> {
     // Hash the new password with Argon2id
-    let password_hash = deps
-        .crypto
-        .argon2()
-        .hash_password(request.new_password.as_bytes())?
-        .to_string();
+    let password_hash = deps.password_hasher.hash(&request.new_password).await?;
 
     // Reset password and get the user
     let user = deps
@@ -446,11 +443,7 @@ pub async fn complete_signup(
     ValidatedJson(request): ValidatedJson<CompleteRegistrationRequest>,
 ) -> Result<(HeaderMap, Json<AuthResponse>), AppError> {
     // Hash the password with Argon2id
-    let password_hash = deps
-        .crypto
-        .argon2()
-        .hash_password(request.password.as_bytes())?
-        .to_string();
+    let password_hash = deps.password_hasher.hash(&request.password).await?;
 
     // Complete signup and get the user
     let user = deps

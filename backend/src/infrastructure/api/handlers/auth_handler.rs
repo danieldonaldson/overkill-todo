@@ -1,6 +1,3 @@
-use argon2::PasswordHasher as Argon2PasswordHasher;
-use argon2::password_hash::PasswordVerifier;
-use argon2::password_hash::phc::PasswordHash;
 use axum::{
     Json,
     extract::State,
@@ -15,7 +12,7 @@ use crate::{
             AuthResponse, InitiateRegistrationRequest, InitiateRegistrationResponse, LoginRequest,
             UserResponse,
         },
-        ports::{MxValidator, OAuthAccountRepository, TurnstileService},
+        ports::{MxValidator, OAuthAccountRepository, PasswordHasher, TurnstileService},
         use_cases::{
             GetCurrentUserUseCase, LoginUserUseCase, RefreshTokenUseCase, RegisterOutcome,
             RegisterUserUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
@@ -48,26 +45,21 @@ const REGISTRATION_SEND_BUDGET: Duration = Duration::from_secs(10);
 
 /// Returns a stable dummy Argon2 hash, computed once with the configured
 /// parameters. Used to equalize login timing for unknown emails.
-fn dummy_password_hash(crypto: &Crypto) -> &'static str {
-    static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    DUMMY.get_or_init(|| {
-        crypto
-            .argon2()
-            .hash_password(b"timing-equalization-dummy")
-            .expect("dummy password hash should always compute")
-            .to_string()
-    })
+async fn dummy_password_hash(hasher: &dyn PasswordHasher) -> Result<&'static str, AppError> {
+    static DUMMY: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
+    let hash = DUMMY
+        .get_or_try_init(|| hasher.hash("timing-equalization-dummy"))
+        .await?;
+    Ok(hash.as_str())
 }
 
 /// Run an Argon2 verification against a dummy hash and discard the result.
 ///
 /// Called on the unknown-email login path so its response time matches that of
 /// a real (wrong-password) verification, preventing user enumeration by timing.
-fn verify_dummy_password(crypto: &Crypto, password: &str) {
-    if let Ok(parsed) = PasswordHash::new(dummy_password_hash(crypto)) {
-        let _ = crypto
-            .argon2()
-            .verify_password(password.as_bytes(), &parsed);
+async fn verify_dummy_password(hasher: &dyn PasswordHasher, password: &str) {
+    if let Ok(dummy) = dummy_password_hash(hasher).await {
+        let _ = hasher.verify(password, dummy).await;
     }
 }
 
@@ -81,6 +73,8 @@ pub struct AuthHandlerDeps {
     pub turnstile_service: Arc<dyn TurnstileService>,
     pub mx_validator: Arc<dyn MxValidator>,
     pub oauth_account_repo: Arc<dyn OAuthAccountRepository>,
+    /// Argon2 hasher; runs the CPU-bound work off the async workers.
+    pub password_hasher: Arc<dyn PasswordHasher>,
     pub crypto: Arc<Crypto>,
 }
 
@@ -213,7 +207,7 @@ pub async fn login(
         // Perform a dummy Argon2 verification so the response time for an
         // unknown email matches that of a wrong password, preventing user
         // enumeration via timing.
-        verify_dummy_password(&deps.crypto, &request.password);
+        verify_dummy_password(deps.password_hasher.as_ref(), &request.password).await;
         return Err(AppError::invalid_credentials());
     };
 
@@ -223,7 +217,7 @@ pub async fn login(
         // Equalize timing with the password-verification path so an attacker
         // can't distinguish these states from a wrong password by response time
         // (the unknown-email path does the same dummy verify).
-        verify_dummy_password(&deps.crypto, &request.password);
+        verify_dummy_password(deps.password_hasher.as_ref(), &request.password).await;
 
         // Both get the generic invalid-credentials error: a distinct answer
         // would confirm the email has an account. An incomplete signup is
@@ -232,16 +226,19 @@ pub async fn login(
     }
 
     // Verify password with Argon2. `has_password()` guaranteed Some above; the
-    // fallback keeps this total without panicking.
+    // fallback keeps this total without panicking. A malformed stored hash is
+    // treated as a failed login, as before, rather than a 500.
     let password_hash = user
         .password_hash()
         .ok_or_else(AppError::invalid_credentials)?;
-    let parsed_hash =
-        PasswordHash::new(password_hash).map_err(|_| AppError::invalid_credentials())?;
-    deps.crypto
-        .argon2()
-        .verify_password(request.password.as_bytes(), &parsed_hash)
-        .map_err(|_| AppError::invalid_credentials())?;
+    let password_matches = deps
+        .password_hasher
+        .verify(&request.password, password_hash)
+        .await
+        .unwrap_or(false);
+    if !password_matches {
+        return Err(AppError::invalid_credentials());
+    }
 
     // Create refresh token, then issue the session (JWT + CSRF + cookies).
     let refresh_token = deps

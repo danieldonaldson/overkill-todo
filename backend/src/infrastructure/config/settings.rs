@@ -261,6 +261,36 @@ fn check_telemetry_required(
     }
 }
 
+/// Minimum Argon2id memory cost (KiB) outside dev mode: the OWASP Password
+/// Storage Cheat Sheet baseline of 19 MiB.
+pub const MIN_ARGON2_MEMORY_KIB: u32 = 19_456;
+/// Minimum Argon2id iterations outside dev mode (OWASP baseline, paired with
+/// [`MIN_ARGON2_MEMORY_KIB`]).
+pub const MIN_ARGON2_TIME_COST: u32 = 2;
+
+/// Production must not hash passwords with weak Argon2 parameters. The crate only
+/// enforces the algorithm's own lower bounds (8 KiB per lane, 1 iteration), so a
+/// typo such as `ARGON2_MEMORY_COST=64` would otherwise start fine. Dev mode keeps
+/// cheap parameters allowed for fast local logins and tests. A value of 0 means
+/// the variable was missing or malformed, which is already reported elsewhere.
+fn check_argon2_floor(dev_mode: bool, memory_kib: u32, time_cost: u32, problems: &mut Vec<String>) {
+    if dev_mode {
+        return;
+    }
+    if memory_kib != 0 && memory_kib < MIN_ARGON2_MEMORY_KIB {
+        problems.push(format!(
+            "ARGON2_MEMORY_COST must be at least {MIN_ARGON2_MEMORY_KIB} KiB when \
+             DEV_MODE=false (got {memory_kib})"
+        ));
+    }
+    if time_cost != 0 && time_cost < MIN_ARGON2_TIME_COST {
+        problems.push(format!(
+            "ARGON2_TIME_COST must be at least {MIN_ARGON2_TIME_COST} when DEV_MODE=false \
+             (got {time_cost})"
+        ));
+    }
+}
+
 impl Settings {
     /// Loads settings from environment variables.
     ///
@@ -305,6 +335,12 @@ impl Settings {
         let dev_mode = env_is_true("DEV_MODE");
         let otlp_endpoint = optional_env("OTEL_EXPORTER_OTLP_ENDPOINT");
         check_telemetry_required(dev_mode, otlp_endpoint.as_deref(), &mut problems);
+        check_argon2_floor(
+            dev_mode,
+            argon2_memory_cost,
+            argon2_time_cost,
+            &mut problems,
+        );
         let log_json = match optional_env("LOG_FORMAT").map(|v| v.to_ascii_lowercase()) {
             None => None,
             Some(v) if v == "json" => Some(true),
@@ -833,6 +869,41 @@ mod tests {
             assert_eq!(s.telemetry.version, "abc123");
             assert_eq!(s.telemetry.log_json, Some(true));
         });
+    }
+
+    #[test]
+    fn argon2_floor_rejects_weak_params_outside_dev_mode() {
+        let mut problems = Vec::new();
+        check_argon2_floor(false, 4096, 1, &mut problems);
+        assert_eq!(problems.len(), 2);
+        assert!(problems[0].contains("ARGON2_MEMORY_COST"));
+        assert!(problems[1].contains("ARGON2_TIME_COST"));
+    }
+
+    #[test]
+    fn argon2_floor_accepts_owasp_baseline() {
+        let mut problems = Vec::new();
+        check_argon2_floor(
+            false,
+            MIN_ARGON2_MEMORY_KIB,
+            MIN_ARGON2_TIME_COST,
+            &mut problems,
+        );
+        assert_eq!(problems, Vec::<String>::new());
+    }
+
+    #[test]
+    fn argon2_floor_allows_cheap_params_in_dev_mode() {
+        let mut problems = Vec::new();
+        check_argon2_floor(true, 4096, 1, &mut problems);
+        assert_eq!(problems, Vec::<String>::new());
+    }
+
+    #[test]
+    fn argon2_floor_skips_missing_values() {
+        let mut problems = Vec::new();
+        check_argon2_floor(false, 0, 0, &mut problems);
+        assert_eq!(problems, Vec::<String>::new());
     }
 
     #[test]

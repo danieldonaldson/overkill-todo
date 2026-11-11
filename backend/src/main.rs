@@ -323,6 +323,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         turnstile_service: turnstile_service.clone(),
         mx_validator,
         oauth_account_repo,
+        password_hasher: password_hasher.clone(),
         crypto: crypto.clone(),
     });
 
@@ -337,6 +338,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         refresh_token_use_case: refresh_token_uc.clone(),
         turnstile_service,
         frontend_base_url: settings.server.frontend_base_url.clone(),
+        password_hasher: password_hasher.clone(),
         crypto: crypto.clone(),
     });
 
