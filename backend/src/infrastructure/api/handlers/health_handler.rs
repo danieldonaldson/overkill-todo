@@ -4,7 +4,7 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 use std::sync::Arc;
 
-use crate::infrastructure::persistence::Database;
+use crate::infrastructure::persistence::DatabaseHealth;
 
 /// Liveness probe — always returns 200 if the process is running.
 #[utoipa::path(
@@ -37,7 +37,7 @@ pub async fn health_check() -> Json<Value> {
     )
 )]
 #[tracing::instrument(name = "health_ready", skip_all)]
-pub async fn health_ready(State(db): State<Arc<Database>>) -> (StatusCode, Json<Value>) {
+pub async fn health_ready(State(db): State<Arc<dyn DatabaseHealth>>) -> (StatusCode, Json<Value>) {
     match db.ping().await {
         Ok(()) => (
             StatusCode::OK,

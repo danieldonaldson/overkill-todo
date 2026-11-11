@@ -20,7 +20,7 @@ use super::openapi::ApiDoc;
 #[cfg(feature = "swagger-ui")]
 use crate::infrastructure::config::is_dev_mode;
 use crate::infrastructure::crypto::Crypto;
-use crate::infrastructure::persistence::Database;
+use crate::infrastructure::persistence::DatabaseHealth;
 use crate::infrastructure::telemetry::{
     http::{http_trace_layer, record_request_metrics},
     metrics::HttpMetrics,
@@ -97,7 +97,7 @@ pub struct RouterDeps {
     pub profile: Arc<ProfileHandlerDeps>,
     pub admin: Arc<AdminHandlerDeps>,
     /// Database handle for the `/health/ready` probe.
-    pub db: Arc<Database>,
+    pub db: Arc<dyn DatabaseHealth>,
     /// User repository handle for the admin-group [`require_fresh_session`]
     /// middleware, which rejects tokens superseded by a privilege change.
     pub users: Arc<dyn UserRepository>,

@@ -22,7 +22,7 @@ use axum::http::{Request, StatusCode, header};
 use criterion::{Criterion, criterion_group, criterion_main};
 use overkill_todo::application::ports::UserRepository;
 use overkill_todo::domain::value_objects::UserRole;
-use overkill_todo::infrastructure::persistence::{Database, PostgresUserRepository};
+use overkill_todo::infrastructure::persistence::postgres::{Database, PostgresUserRepository};
 use serde_json::{Value, json};
 use sqlx::migrate::MigrateDatabase;
 use sqlx::{PgPool, Postgres};

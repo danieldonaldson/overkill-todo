@@ -2,34 +2,30 @@
 //!
 //! A session-level advisory lock belongs to the database connection that took
 //! it, so an [`AdvisoryLock`] owns the dedicated pooled connection it was
-//! acquired on. Heartbeats run on that same connection, and [`AdvisoryLock::release`]
-//! unlocks on it before handing it back to the pool.
+//! acquired on. Heartbeats run on that same connection, and `release` unlocks
+//! on it before handing it back to the pool.
 
+use async_trait::async_trait;
 use sqlx::{Postgres, pool::PoolConnection};
 
-use super::{Database, error::DatabaseError};
+use super::Database;
+use crate::infrastructure::persistence::{DatabaseError, LeaderLock, LeaderLocks};
 
 /// A held session-level advisory lock and the connection holding it.
 ///
-/// Dropping it without [`release`](Self::release) returns the connection to
-/// the pool with the lock still held: a pooled connection isn't closed on
-/// drop, so always release explicitly.
-pub struct AdvisoryLock {
+/// Dropping it without `release` returns the connection to the pool with the
+/// lock still held: a pooled connection isn't closed on drop.
+struct AdvisoryLock {
     conn: PoolConnection<Postgres>,
     key: i64,
 }
 
-impl Database {
-    /// Takes a dedicated connection from the pool and tries
-    /// `pg_try_advisory_lock(key)` on it, without waiting.
-    ///
-    /// Returns `Ok(Some(lock))` if granted. Returns `Ok(None)` if another
-    /// session holds the lock, or if the lock query itself fails; either way
-    /// the connection goes back to the pool and the caller should stand by.
-    ///
-    /// # Errors
-    /// Returns an error only if no connection can be acquired from the pool.
-    pub async fn try_advisory_lock(&self, key: i64) -> Result<Option<AdvisoryLock>, DatabaseError> {
+#[async_trait]
+impl LeaderLocks for Database {
+    /// `pg_try_advisory_lock(key)` on a dedicated pooled connection. If the
+    /// lock isn't granted (or the query fails) the connection goes straight
+    /// back to the pool.
+    async fn try_lock(&self, key: i64) -> Result<Option<Box<dyn LeaderLock>>, DatabaseError> {
         let mut conn = self.pool().acquire().await?;
 
         let acquired = sqlx::query_scalar!("SELECT pg_try_advisory_lock($1)", key)
@@ -39,31 +35,24 @@ impl Database {
             .flatten()
             .unwrap_or(false);
 
-        Ok(acquired.then_some(AdvisoryLock { conn, key }))
+        Ok(acquired.then(|| Box::new(AdvisoryLock { conn, key }) as Box<dyn LeaderLock>))
     }
 }
 
-impl AdvisoryLock {
-    /// Pings the lock's connection. An error means the connection — and with
-    /// it the lock — is gone.
-    ///
-    /// # Errors
-    /// Returns the driver error if the ping fails.
-    pub async fn ping(&mut self) -> Result<(), DatabaseError> {
+#[async_trait]
+impl LeaderLock for AdvisoryLock {
+    async fn ping(&mut self) -> Result<(), DatabaseError> {
         sqlx::query_scalar!("SELECT 1")
             .fetch_one(&mut *self.conn)
             .await?;
         Ok(())
     }
 
-    /// Unlocks and returns the connection to the pool.
-    ///
-    /// Best-effort: on a dead connection the unlock errors and the lock is
-    /// freed when the socket closes.
-    pub async fn release(mut self) {
-        let _ = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", self.key)
-            .fetch_one(&mut *self.conn)
+    async fn release(self: Box<Self>) {
+        let Self { mut conn, key } = *self;
+        let _ = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", key)
+            .fetch_one(&mut *conn)
             .await;
-        drop(self.conn);
+        drop(conn);
     }
 }

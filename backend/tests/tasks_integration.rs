@@ -25,7 +25,7 @@ use opentelemetry_sdk::metrics::{
     data::{AggregatedMetrics, MetricData, ScopeMetrics},
 };
 use overkill_todo::application::use_cases::PurgeScheduledAccountsUseCase;
-use overkill_todo::infrastructure::persistence::{Database, PostgresUserRepository};
+use overkill_todo::infrastructure::persistence::postgres::{Database, PostgresUserRepository};
 use overkill_todo::infrastructure::tasks::leader::{LeaderMetrics, run_as_leader};
 
 async fn try_lock(pool: &PgPool, key: i64) -> bool {

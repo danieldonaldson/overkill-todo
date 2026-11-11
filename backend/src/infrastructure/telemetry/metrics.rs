@@ -7,7 +7,9 @@
 //! which [`super::init`] wires to the real provider before anything else runs.
 
 use super::{ServiceInfo, resource};
-use crate::infrastructure::persistence::Database;
+use std::sync::Arc;
+
+use crate::infrastructure::persistence::DatabaseHealth;
 use opentelemetry::{
     KeyValue,
     metrics::{Histogram, Meter},
@@ -101,8 +103,8 @@ pub const fn status_class(status: u16) -> &'static str {
 /// Register `db.client.connection.count` (`state` = `idle`/`used`) and
 /// `db.client.connection.max` as observable gauges read from `pool` at each
 /// collection. The callbacks live as long as the meter provider.
-pub fn register_db_pool_gauges(meter: &Meter, db: &Database) {
-    let counts = db.clone();
+pub fn register_db_pool_gauges(meter: &Meter, db: &Arc<dyn DatabaseHealth>) {
+    let counts = Arc::clone(db);
     meter
         .u64_observable_gauge("db.client.connection.count")
         .with_unit("{connection}")

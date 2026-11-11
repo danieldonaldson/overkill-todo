@@ -15,7 +15,7 @@ src/
 │   ├── config/       # Settings loaded from env vars
 │   ├── crypto.rs     # `Crypto` handle: Argon2 params, JWT keys, CSRF secret, cipher
 │   ├── oauth/        # Google OAuth client
-│   ├── persistence/  # sqlx Postgres repositories + DB plumbing (the only sqlx user)
+│   ├── persistence/  # Driver-neutral DB traits; postgres/ = sqlx adapter (only sqlx user)
 │   ├── services/     # Concrete service impls (argon2, JWT, token gen, …)
 │   ├── tasks/        # Background jobs and leader election
 │   └── telemetry/    # Tracing, logs, metrics
@@ -27,15 +27,18 @@ The domain imports no `sqlx` or `serde`: Postgres enum mappings live in
 `persistence/postgres/models.rs` (`DbUserRole`, `DbOAuthProvider`) and convert with
 `From` at the repository boundary.
 
-**`sqlx` is confined to `infrastructure/persistence/`** (plus `main.rs` wiring and
-tests). Other infrastructure modules that need the database go through a sqlx-free
-API there: `Database::try_advisory_lock` / `AdvisoryLock` (leader election in
-`tasks/leader.rs`), `maintenance::run_once` (`tasks/database_maintenance.rs`),
-`Database::ping` (`/health/ready`), `Database::pool_stats` / `max_connections`
-(pool gauges), `STATEMENT_LOG_DIRECTIVE` (trace export filter). Their failures
-surface as the opaque `DatabaseError`; repository failures go through `persist_err`
-to `DomainError`. There is no `From<sqlx::Error> for AppError`, so a handler can't
-`?` a raw driver error. Swapping the driver should touch only `persistence/`.
+**`sqlx` is confined to `infrastructure/persistence/postgres/`**, and only
+`main.rs` wiring and tests name that module. The `persistence` root is
+driver-neutral: other infrastructure modules that need the database depend on its
+traits as `Arc<dyn …>`, never on the adapter's `Database`: `LeaderLocks` /
+`LeaderLock` (leader election in `tasks/leader.rs`), `DatabaseMaintenance`
+(`tasks/database_maintenance.rs`), `DatabaseHealth` (`/health/ready` and the pool
+gauges), plus `STATEMENT_LOG_DIRECTIVE` (trace export filter). Their failures
+surface as the opaque, driver-agnostic `DatabaseError`; repository failures go
+through `persist_err` to `DomainError`. There is no `From<sqlx::Error> for
+AppError`, so a handler can't `?` a raw driver error. A second driver is a sibling
+of `postgres/` implementing the outgoing ports and these traits, chosen in
+`main.rs`.
 
 `shared/` is a true leaf: it imports nothing from any layer and holds only
 `fingerprint`. `Crypto` lives in `infrastructure/crypto.rs` because it is built from

@@ -1,7 +1,7 @@
 //! Integration coverage for bounded expiry and retention maintenance.
 
-use overkill_todo::infrastructure::persistence::Database;
-use overkill_todo::infrastructure::tasks::database_maintenance;
+use overkill_todo::infrastructure::persistence::DatabaseMaintenance as _;
+use overkill_todo::infrastructure::persistence::postgres::Database;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -78,7 +78,8 @@ async fn removes_stale_rows_and_preserves_current_rows(pool: PgPool) {
         .unwrap();
     }
 
-    let report = database_maintenance::run_once(&Database::from_pool(pool.clone()))
+    let report = Database::from_pool(pool.clone())
+        .purge_expired()
         .await
         .unwrap();
     assert_eq!(report.refresh_tokens, 1);
@@ -153,7 +154,8 @@ async fn keeps_expired_code_rows_with_lockouts_until_idle(pool: PgPool) {
             }
         }
 
-        database_maintenance::run_once(&Database::from_pool(pool.clone()))
+        Database::from_pool(pool.clone())
+            .purge_expired()
             .await
             .unwrap();
 

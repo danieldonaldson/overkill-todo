@@ -25,7 +25,7 @@ use opentelemetry::{
     metrics::{Gauge, Meter},
 };
 
-use crate::infrastructure::persistence::{AdvisoryLock, Database};
+use crate::infrastructure::persistence::{LeaderLock, LeaderLocks};
 use crate::infrastructure::telemetry::metrics::global_meter;
 
 /// The `leader.is_leader` gauge. Cheap to clone.
@@ -69,7 +69,7 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 /// the process can exit cleanly. `task_factory` is called fresh each time
 /// leadership is (re)acquired and is expected to run until cancelled.
 pub async fn run_as_leader<F, Fut>(
-    db: Arc<Database>,
+    locks: Arc<dyn LeaderLocks>,
     lock_key: i64,
     label: &'static str,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
@@ -85,7 +85,7 @@ pub async fn run_as_leader<F, Fut>(
             break;
         }
 
-        let mut lock = match db.try_advisory_lock(lock_key).await {
+        let mut lock = match locks.try_lock(lock_key).await {
             Ok(Some(lock)) => lock,
             Ok(None) => {
                 // Another replica leads; the connection is already back in the pool.
@@ -115,7 +115,7 @@ pub async fn run_as_leader<F, Fut>(
             () = task_factory() => {
                 tracing::warn!(label, "Leader workers exited unexpectedly; will re-elect");
             }
-            () = heartbeat(&mut lock, label) => {
+            () = heartbeat(lock.as_mut(), label) => {
                 tracing::warn!(label, "Lost leader lock connection; stepping down");
             }
             () = wait_for_shutdown(&mut shutdown) => {
@@ -165,7 +165,7 @@ async fn wait_for_shutdown(shutdown: &mut tokio::sync::watch::Receiver<bool>) {
 
 /// Pings the lock connection until a ping fails (the connection — and the lock —
 /// is gone), then returns so the caller steps down.
-async fn heartbeat(lock: &mut AdvisoryLock, label: &str) {
+async fn heartbeat(lock: &mut dyn LeaderLock, label: &str) {
     loop {
         tokio::time::sleep(HEARTBEAT_INTERVAL).await;
         if let Err(e) = lock.ping().await {

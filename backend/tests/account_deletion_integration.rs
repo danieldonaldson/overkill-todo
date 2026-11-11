@@ -18,7 +18,7 @@ use overkill_todo::application::ports::{
 };
 use overkill_todo::domain::entities::{EmailVerificationCode, RefreshToken, User};
 use overkill_todo::domain::value_objects::Email;
-use overkill_todo::infrastructure::persistence::{
+use overkill_todo::infrastructure::persistence::postgres::{
     Database, PostgresEmailVerificationRepository, PostgresRefreshTokenRepository,
     PostgresUserRepository,
 };

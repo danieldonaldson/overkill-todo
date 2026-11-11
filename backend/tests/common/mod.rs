@@ -9,10 +9,7 @@ use overkill_todo::domain::entities::OAuthProvider;
 use overkill_todo::domain::errors::DomainError;
 use overkill_todo::{
     application::{
-        ports::{
-            EmailService, MxValidator, OAuthAccountRepository, OAuthProviderClient,
-            TurnstileService,
-        },
+        ports::{EmailService, MxValidator, OAuthProviderClient, TurnstileService},
         use_cases::{
             CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
             ExportUserDataUseCase, GetCurrentUserUseCase, ListUsersUseCase, LoginUserUseCase,
@@ -33,9 +30,8 @@ use overkill_todo::{
             },
         },
         persistence::{
-            Database, PostgresEmailVerificationRepository, PostgresOAuthAccountRepository,
-            PostgresPasswordResetRepository, PostgresRefreshTokenRepository,
-            PostgresUserRepository,
+            Persistence,
+            postgres::{self, Database},
         },
         services::{
             Argon2Hasher, ConsoleEmailService, CryptoJwtService, CryptoTokenService,
@@ -264,20 +260,23 @@ fn create_test_app_full(
 ) -> Router {
     let crypto = test_crypto();
 
-    let db = Arc::new(Database::from_pool(pool));
-
     let code_generator = Arc::new(RandomCodeGenerator::development());
     let jwt_service = Arc::new(CryptoJwtService::new(crypto.clone()));
     let password_hasher = Arc::new(Argon2Hasher::new(crypto.clone()));
     let token_service = Arc::new(CryptoTokenService::new(crypto.clone()));
     let mx_validator: Arc<dyn MxValidator> = Arc::new(NoOpMxValidator);
 
-    let user_repo = Arc::new(PostgresUserRepository::new(db.clone()));
-    let oauth_account_repo: Arc<dyn OAuthAccountRepository> =
-        Arc::new(PostgresOAuthAccountRepository::new(db.clone()));
-    let refresh_token_repo = Arc::new(PostgresRefreshTokenRepository::new(db.clone()));
-    let email_verification_repo = Arc::new(PostgresEmailVerificationRepository::new(db.clone()));
-    let password_reset_repo = Arc::new(PostgresPasswordResetRepository::new(db.clone()));
+    let Persistence {
+        users: user_repo,
+        account_lifecycle: _,
+        oauth_accounts: oauth_account_repo,
+        refresh_tokens: refresh_token_repo,
+        email_verifications: email_verification_repo,
+        password_resets: password_reset_repo,
+        health: db,
+        leader_locks: _,
+        maintenance: _,
+    } = postgres::wire(Arc::new(Database::from_pool(pool)));
 
     let register_uc = Arc::new(RegisterUserUseCase::new(
         user_repo.clone(),

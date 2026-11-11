@@ -20,7 +20,7 @@ use overkill_todo::domain::entities::{
     EmailVerificationCode, OAuthAccount, OAuthProvider, PasswordResetCode, RefreshToken, User,
 };
 use overkill_todo::domain::value_objects::{Email, RefreshTokenId, ResetCodeId, UserId};
-use overkill_todo::infrastructure::persistence::{
+use overkill_todo::infrastructure::persistence::postgres::{
     Database, PostgresEmailVerificationRepository, PostgresOAuthAccountRepository,
     PostgresPasswordResetRepository, PostgresRefreshTokenRepository, PostgresUserRepository,
 };

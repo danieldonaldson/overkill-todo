@@ -13,7 +13,7 @@ use overkill_todo::application::ports::{PasswordResetRepository, UserRepository}
 use overkill_todo::domain::entities::attempt_lockout::{AttemptOutcome, MAX_ATTEMPTS};
 use overkill_todo::domain::entities::{PasswordResetCode, User};
 use overkill_todo::domain::value_objects::{Email, UserId};
-use overkill_todo::infrastructure::persistence::{
+use overkill_todo::infrastructure::persistence::postgres::{
     Database, PostgresPasswordResetRepository, PostgresUserRepository,
 };
 use sqlx::PgPool;

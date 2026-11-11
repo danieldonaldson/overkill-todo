@@ -24,7 +24,7 @@ use overkill_todo::application::ports::{
 use overkill_todo::domain::entities::{OAuthAccount, OAuthProvider, RefreshToken, User};
 use overkill_todo::domain::errors::DomainError;
 use overkill_todo::domain::value_objects::{Email, UserId};
-use overkill_todo::infrastructure::persistence::{
+use overkill_todo::infrastructure::persistence::postgres::{
     Database, PostgresOAuthAccountRepository, PostgresRefreshTokenRepository,
     PostgresUserRepository,
 };

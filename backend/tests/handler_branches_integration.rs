@@ -146,7 +146,7 @@ async fn login_oauth_only_user_returns_401(pool: PgPool) {
     use overkill_todo::application::ports::{OAuthAccountRepository, UserRepository};
     use overkill_todo::domain::entities::{OAuthAccount, OAuthProvider, User};
     use overkill_todo::domain::value_objects::Email;
-    use overkill_todo::infrastructure::persistence::{
+    use overkill_todo::infrastructure::persistence::postgres::{
         Database, PostgresOAuthAccountRepository, PostgresUserRepository,
     };
     use std::sync::Arc;

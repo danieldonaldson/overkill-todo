@@ -5,10 +5,7 @@ use tokio::signal;
 
 use overkill_todo::{
     application::{
-        ports::{
-            AccountLifecycleRepository, EmailService, MxValidator, OAuthAccountRepository,
-            OAuthProviderClient, TurnstileService,
-        },
+        ports::{EmailService, MxValidator, OAuthProviderClient, TurnstileService},
         use_cases::{
             CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
             ExportUserDataUseCase, GetCurrentUserUseCase, ListUsersUseCase, LoginUserUseCase,
@@ -33,11 +30,7 @@ use overkill_todo::{
         },
         config::Settings,
         oauth::GoogleOAuthClient,
-        persistence::{
-            Database, PostgresEmailVerificationRepository, PostgresOAuthAccountRepository,
-            PostgresPasswordResetRepository, PostgresRefreshTokenRepository,
-            PostgresUserRepository, run_migrations,
-        },
+        persistence::{self, Persistence},
         services::{
             Argon2Hasher, CloudflareTurnstileService, ConsoleEmailService, CryptoJwtService,
             CryptoTokenService, HickoryMxValidator, NoOpMxValidator, NoOpTurnstileService,
@@ -118,12 +111,19 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     );
 
     // Database
-    let db = Database::new(&settings.database.url, settings.database.max_connections).await?;
-    run_migrations(db.pool()).await?;
-    tracing::info!("Database migrations applied");
-
-    let db = Arc::new(db);
-    telemetry::metrics::register_db_pool_gauges(&telemetry::metrics::global_meter(), &db);
+    let Persistence {
+        users: user_repo,
+        account_lifecycle: account_lifecycle_repo,
+        oauth_accounts: oauth_account_repo,
+        refresh_tokens: refresh_token_repo,
+        email_verifications: email_verification_repo,
+        password_resets: password_reset_repo,
+        health: db_health,
+        leader_locks,
+        maintenance,
+    } = persistence::postgres::open(&settings.database.url, settings.database.max_connections)
+        .await?;
+    telemetry::metrics::register_db_pool_gauges(&telemetry::metrics::global_meter(), &db_health);
 
     // Services
     let code_generator = Arc::new(if settings.server.dev_mode {
@@ -194,14 +194,6 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             "MX_VALIDATION_ENABLED=true is required in production (the no-op validator is dev-only)."
         );
     };
-
-    // Repositories
-    let user_repo = Arc::new(PostgresUserRepository::new(db.clone()));
-    let oauth_account_repo: Arc<dyn OAuthAccountRepository> =
-        Arc::new(PostgresOAuthAccountRepository::new(db.clone()));
-    let refresh_token_repo = Arc::new(PostgresRefreshTokenRepository::new(db.clone()));
-    let email_verification_repo = Arc::new(PostgresEmailVerificationRepository::new(db.clone()));
-    let password_reset_repo = Arc::new(PostgresPasswordResetRepository::new(db.clone()));
 
     // Use cases
     let register_uc = Arc::new(RegisterUserUseCase::new(
@@ -303,7 +295,6 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     ));
     let cancel_account_deletion_uc = Arc::new(CancelAccountDeletionUseCase::new(user_repo.clone()));
     // Finalizes deletion for accounts past their 14-day grace window.
-    let account_lifecycle_repo: Arc<dyn AccountLifecycleRepository> = user_repo.clone();
     let purge_accounts_uc = Arc::new(PurgeScheduledAccountsUseCase::new(account_lifecycle_repo));
 
     // OAuth providers, registered by provider in the dispatch map.
@@ -389,9 +380,9 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         // Pick a different value per app if several share one database.
         const BACKGROUND_WORKERS_LOCK: i64 = 0x746f_646f_5f77_726b; // "todo_wrk"
 
-        let leader_db = db.clone();
+        let leader_db = leader_locks;
         let purge = purge_accounts_uc;
-        let maintenance_db = db.clone();
+        let maintenance_db = maintenance;
         let leader_shutdown = shutdown_rx.clone();
         let job_metrics = tasks::job::JobMetrics::from_global();
 
@@ -433,7 +424,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             oauth: oauth_deps,
             profile: profile_deps,
             admin: admin_deps,
-            db: db.clone(),
+            db: db_health,
             crypto: crypto.clone(),
             users: user_repo.clone(),
         },
