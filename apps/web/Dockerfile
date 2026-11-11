@@ -49,7 +49,7 @@ RUN setcap -r /usr/bin/caddy
 # Caddy on plain Alpine: busybox sh/awk/sed are all the config-render hook needs. The
 # package manager is removed so a compromised process can't pull tools into the container.
 # Runs as uid 101 on :8080 (no root, no privileged port) — the k8s securityContext pins it.
-FROM alpine:3.24@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 RUN apk --no-cache add ca-certificates mailcap \
     && apk --purge del apk-tools \
     && rm -rf /etc/apk /lib/apk /var/cache/apk /usr/share/apk
