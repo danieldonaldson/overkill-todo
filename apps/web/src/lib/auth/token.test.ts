@@ -171,4 +171,33 @@ describe('ensureValidToken', () => {
     await expect(ensureValidToken(next)).resolves.toBe(true)
     expect(next).toHaveBeenCalledTimes(1)
   })
+
+  it('a reset refresh settling late does not orphan the next in-flight one', async () => {
+    setTokenExpiry(now() + 30)
+    const wedged = vi.fn(() => new Promise<boolean>(() => {}))
+    const stuck = ensureValidToken(wedged)
+    await vi.waitFor(() => expect(wedged).toHaveBeenCalledTimes(1))
+
+    // Reset, then start a new refresh before the aborted one has cleaned up.
+    resetTokenManagerState()
+    let resolveNext: (value: boolean) => void = () => {}
+    const next = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveNext = resolve
+        })
+    )
+    const second = ensureValidToken(next)
+    await expect(stuck).resolves.toBe(false)
+
+    // The aborted refresh's cleanup must not have cleared `second`, so this
+    // caller joins it instead of starting a refresh of its own.
+    const third = ensureValidToken(next)
+    await vi.waitFor(() => expect(next).toHaveBeenCalledTimes(1))
+    resolveNext(true)
+
+    expect(await second).toBe(true)
+    expect(await third).toBe(true)
+    expect(next).toHaveBeenCalledTimes(1)
+  })
 })

@@ -6,11 +6,11 @@ pub mod refresh_token;
 
 pub mod user;
 
-pub use attempt_lockout::{AttemptLockout, AttemptOutcome};
-pub use email_verification_code::EmailVerificationCode;
+pub use attempt_lockout::{AttemptLockout, AttemptOutcome, Reissue};
+pub use email_verification_code::{EmailVerificationCode, MagicToken};
 pub use oauth_account::{OAuthAccount, OAuthProvider};
 pub use password_reset_code::PasswordResetCode;
-pub use refresh_token::RefreshToken;
+pub use refresh_token::{RefreshToken, RefreshTokenStatus};
 
 #[cfg(test)]
 pub use user::UserBuilder;

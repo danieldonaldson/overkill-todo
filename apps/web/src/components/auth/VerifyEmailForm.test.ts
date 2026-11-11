@@ -67,6 +67,25 @@ describe('VerifyEmailForm', () => {
     })
   })
 
+  it('blocks resend while a verification is in flight', async () => {
+    let finishVerify: (value: { signup_token: string }) => void = () => {}
+    vi.mocked(api.auth.verifyEmail).mockReturnValue(
+      new Promise((resolve) => {
+        finishVerify = resolve
+      })
+    )
+    const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
+
+    setCode(screen, '123456')
+
+    await expect.element(screen.getByRole('button', { name: /verifying/i })).toBeDisabled()
+    await expect.element(screen.getByRole('button', { name: /resend code/i })).toBeDisabled()
+
+    finishVerify({ signup_token: 'signup-token' })
+    await expect.element(screen.getByRole('button', { name: /resend code/i })).toBeEnabled()
+    expect(api.auth.resendVerification).not.toHaveBeenCalled()
+  })
+
   it('navigates new users with signup token to set-password', async () => {
     vi.mocked(api.auth.verifyEmail).mockResolvedValue({ signup_token: 'signup-token' })
     const screen = await render(VerifyEmailForm, { props: { email: 'new@example.com' } })
@@ -95,9 +114,7 @@ describe('VerifyEmailForm', () => {
     await vi.waitFor(() => {
       expect(api.auth.resendVerification).toHaveBeenCalled()
     })
-    await expect
-      .element(screen.getByRole('alert'))
-      .toMatchTextContent(/a new code is on its way/i)
+    await expect.element(screen.getByRole('alert')).toMatchTextContent(/a new code is on its way/i)
   })
 
   it('shows the remaining-attempts hint on an invalid code', async () => {

@@ -3,6 +3,18 @@
 use crate::domain::value_objects::{RefreshTokenId, UserId};
 use chrono::{DateTime, Utc};
 
+/// Lifecycle of a [`RefreshToken`]; see [`RefreshToken::status`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshTokenStatus {
+    /// Usable for one rotation.
+    Active,
+    /// Revoked by rotation, logout or reuse detection. Presenting it again
+    /// means it was probably stolen.
+    Revoked,
+    /// Past its expiry without having been revoked.
+    Expired,
+}
+
 /// A refresh token for JWT token rotation.
 ///
 /// Refresh tokens are long-lived tokens stored in the database that can be used
@@ -119,10 +131,28 @@ impl RefreshToken {
         self.created_at
     }
 
+    /// Where this token is in its lifecycle.
+    ///
+    /// A token that is both revoked and expired reports [`Revoked`]: replaying a
+    /// revoked token is the theft signal, and it must not be masked by the
+    /// token also having aged out.
+    ///
+    /// [`Revoked`]: RefreshTokenStatus::Revoked
+    #[must_use]
+    pub fn status(&self) -> RefreshTokenStatus {
+        if self.revoked_at.is_some() {
+            RefreshTokenStatus::Revoked
+        } else if self.expires_at <= Utc::now() {
+            RefreshTokenStatus::Expired
+        } else {
+            RefreshTokenStatus::Active
+        }
+    }
+
     /// Checks if this token is valid (not expired and not revoked).
     #[must_use]
     pub fn is_valid(&self) -> bool {
-        self.revoked_at.is_none() && self.expires_at > Utc::now()
+        self.status() == RefreshTokenStatus::Active
     }
 
     /// Checks if this token has expired.
@@ -176,6 +206,16 @@ mod tests {
             "device_fingerprint".to_string(),
             Utc::now() - Duration::hours(1),
         )
+    }
+
+    #[test]
+    fn test_status_revoked_outranks_expired() {
+        let mut token = create_expired_token();
+        assert_eq!(token.status(), RefreshTokenStatus::Expired);
+
+        token.revoke();
+
+        assert_eq!(token.status(), RefreshTokenStatus::Revoked);
     }
 
     #[test]

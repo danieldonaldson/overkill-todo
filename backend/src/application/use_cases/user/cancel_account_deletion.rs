@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::application::ports::UserRepository;
 use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
+use crate::domain::value_objects::{AccountStatus, UserId};
 
 /// Use case for cancelling a scheduled account deletion.
 pub struct CancelAccountDeletionUseCase {
@@ -37,17 +37,13 @@ impl CancelAccountDeletionUseCase {
             .await?
             .ok_or_else(|| DomainError::NotFound("User not found".into()))?;
 
-        if user.is_deleted() {
-            return Err(DomainError::Validation(
-                "Account is already deleted and cannot be restored".into(),
-            ));
-        }
-
-        if user.deletion_scheduled_at().is_none() {
+        // Nothing scheduled: succeed without a write (and a version bump).
+        if user.status() == AccountStatus::Active {
             return Ok(());
         }
 
-        user.cancel_deletion();
+        // Refuses an already-deleted account.
+        user.cancel_deletion()?;
         self.user_repository.save(&user).await?;
 
         tracing::info!(user_id = %user_id, "Scheduled account deletion cancelled");
@@ -62,20 +58,22 @@ mod tests {
     use crate::domain::entities::{User, UserBuilder};
     use chrono::Utc;
 
-    fn make_user(scheduled: bool, deleted: bool) -> User {
-        let mut user = UserBuilder::new()
+    fn make_user(status: AccountStatus) -> User {
+        UserBuilder::new()
             .password_hash(Some("hash"))
-            .deleted_at(deleted.then(Utc::now))
-            .build();
-        if scheduled {
-            user.schedule_deletion();
+            .status(status)
+            .build()
+    }
+
+    fn pending() -> AccountStatus {
+        AccountStatus::PendingDeletion {
+            scheduled_for: Utc::now() + chrono::Duration::days(14),
         }
-        user
     }
 
     #[tokio::test]
     async fn cancels_a_pending_deletion() {
-        let user = make_user(true, false);
+        let user = make_user(pending());
         let user_id = *user.id();
 
         let mut repo = MockUserRepository::new();
@@ -92,7 +90,7 @@ mod tests {
 
     #[tokio::test]
     async fn nothing_scheduled_is_noop() {
-        let user = make_user(false, false);
+        let user = make_user(AccountStatus::Active);
         let user_id = *user.id();
 
         let mut repo = MockUserRepository::new();
@@ -106,7 +104,9 @@ mod tests {
 
     #[tokio::test]
     async fn already_deleted_is_rejected() {
-        let user = make_user(false, true);
+        let user = make_user(AccountStatus::Deleted {
+            deleted_at: Utc::now(),
+        });
         let user_id = *user.id();
 
         let mut repo = MockUserRepository::new();

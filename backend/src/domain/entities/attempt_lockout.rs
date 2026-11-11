@@ -105,6 +105,55 @@ impl AttemptLockout {
         let allowed_at = self.last_sent_at + Duration::minutes(RESEND_COOLDOWN_MINUTES);
         (allowed_at - Utc::now()).num_seconds().max(0)
     }
+
+    /// Whether a replacement code may be issued now.
+    ///
+    /// Issuing upserts a fresh row with `attempts = 0`, so every issuing path
+    /// must ask this first or it would clear an active lockout. A lock takes
+    /// precedence over the cooldown: it is the longer wait and the one the user
+    /// needs to hear about.
+    #[must_use]
+    pub fn reissue(&self) -> Reissue {
+        let seconds_until_unlock = self.seconds_until_unlock();
+        if seconds_until_unlock > 0 {
+            Reissue::Locked {
+                seconds_remaining: seconds_until_unlock,
+            }
+        } else if !self.can_resend() {
+            Reissue::Cooldown {
+                seconds_remaining: self.seconds_until_resend(),
+            }
+        } else {
+            Reissue::Allowed
+        }
+    }
+}
+
+/// Whether a replacement one-time code may be issued, and if not, why.
+///
+/// See [`AttemptLockout::reissue`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reissue {
+    /// No lock or cooldown applies; a new code may be issued.
+    Allowed,
+    /// The current code is at the attempt cap and inside its lock window.
+    Locked {
+        /// Seconds until the lock window ends.
+        seconds_remaining: i64,
+    },
+    /// The current code was sent within the resend cooldown.
+    Cooldown {
+        /// Seconds until the cooldown ends (may be 0 in its final second).
+        seconds_remaining: i64,
+    },
+}
+
+impl Reissue {
+    /// Whether a new code may be issued now.
+    #[must_use]
+    pub const fn is_allowed(self) -> bool {
+        matches!(self, Self::Allowed)
+    }
 }
 
 /// Outcome of atomically claiming an attempt slot before the expensive code
@@ -188,6 +237,39 @@ mod tests {
         let l = lockout(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1);
         assert!(l.is_locked());
         assert_eq!(l.seconds_until_unlock(), 0);
+    }
+
+    #[test]
+    fn reissue_states() {
+        assert_eq!(
+            lockout(0, RESEND_COOLDOWN_MINUTES + 1).reissue(),
+            Reissue::Allowed
+        );
+        assert!(matches!(
+            lockout(0, 0).reissue(),
+            Reissue::Cooldown { seconds_remaining } if seconds_remaining > 0
+        ));
+        assert!(matches!(
+            lockout(MAX_ATTEMPTS, 0).reissue(),
+            Reissue::Locked { seconds_remaining } if seconds_remaining > 0
+        ));
+    }
+
+    /// Past the cooldown but inside the lock window: the lock is reported.
+    #[test]
+    fn reissue_lock_outranks_cooldown() {
+        let l = lockout(MAX_ATTEMPTS, RESEND_COOLDOWN_MINUTES + 1);
+        assert!(l.can_resend());
+        assert!(matches!(l.reissue(), Reissue::Locked { .. }));
+    }
+
+    /// A locked code whose window has elapsed may be replaced.
+    #[test]
+    fn reissue_allowed_once_lock_elapses() {
+        assert_eq!(
+            lockout(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1).reissue(),
+            Reissue::Allowed
+        );
     }
 
     #[test]

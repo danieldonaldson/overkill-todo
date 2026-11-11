@@ -61,7 +61,7 @@ impl RequestPasswordResetUseCase {
         // suppressed we still report success — surfacing a distinct error would
         // leak that the email exists, violating the open-enumeration policy.
         if let Some(existing) = self.password_reset_repo.find_by_user(user.id()).await?
-            && (existing.seconds_until_unlock() > 0 || !existing.can_resend())
+            && !existing.reissue().is_allowed()
         {
             tracing::info!(
                 user_id = %user.id(),

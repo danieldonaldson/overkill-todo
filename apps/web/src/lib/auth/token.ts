@@ -17,8 +17,8 @@ const REFRESH_THRESHOLD_SECONDS = 60 // Refresh when less than 60 seconds remain
 const REFRESH_LOCK_NAME = 'overkill-todo-token-refresh'
 
 // In-tab single-flight: collapse concurrent refresh callers in this tab onto
-// one promise. Cross-tab coordination is handled separately via the Web Lock.
-let isRefreshing = false
+// one promise, non-null exactly while a refresh is in flight. Cross-tab
+// coordination is handled separately via the Web Lock.
 let refreshPromise: Promise<boolean> | null = null
 // Abort handle for the in-flight refresh, so it can be cancelled even after the
 // Web Lock has been acquired (resetTokenManagerState uses this).
@@ -143,28 +143,31 @@ export function getTimeUntilExpiry(): number {
  */
 export async function coordinateRefresh(refreshFn: () => Promise<boolean>): Promise<boolean> {
   // If this tab is already refreshing, wait for that to complete.
-  if (isRefreshing && refreshPromise) {
+  if (refreshPromise) {
     return refreshPromise
   }
 
-  isRefreshing = true
   const controller = new AbortController()
   refreshAbort = controller
-  refreshPromise = (async () => {
+  const refresh: Promise<boolean> = (async () => {
     try {
       return await withRefreshLock(refreshFn, controller.signal)
     } catch {
       // Aborted (e.g. resetTokenManagerState) or the lock request rejected —
       // treat as a failed refresh rather than letting the rejection escape.
       return false
-    } finally {
-      isRefreshing = false
-      refreshPromise = null
-      if (refreshAbort === controller) refreshAbort = null
     }
   })()
+  refreshPromise = refresh
+  // Registered before any caller can await `refresh`, so the handles are
+  // cleared before callers resume. Clear only our own: after a reset, a newer
+  // refresh may already own them. (`refresh` never rejects, see the catch.)
+  void refresh.finally(() => {
+    if (refreshPromise === refresh) refreshPromise = null
+    if (refreshAbort === controller) refreshAbort = null
+  })
 
-  return refreshPromise
+  return refresh
 }
 
 /** Rejects when `signal` aborts, otherwise settles with `promise`. */
@@ -254,6 +257,5 @@ export async function ensureValidToken(refreshFn: () => Promise<boolean>): Promi
 export function resetTokenManagerState(): void {
   refreshAbort?.abort()
   refreshAbort = null
-  isRefreshing = false
   refreshPromise = null
 }

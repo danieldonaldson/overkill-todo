@@ -2,8 +2,8 @@
 
 use crate::application::ports::UserRepository;
 use crate::application::ports::{RefreshTokenRepository, TokenService};
-use crate::domain::entities::RefreshToken;
 use crate::domain::entities::User;
+use crate::domain::entities::{RefreshToken, RefreshTokenStatus};
 use crate::domain::errors::DomainError;
 use chrono::{Duration, Utc};
 use std::sync::Arc;
@@ -74,13 +74,12 @@ impl RefreshTokenUseCase {
             .await?
             .ok_or_else(|| DomainError::Authorization("Invalid refresh token".into()))?;
 
-        // Check if token is valid (not expired, not revoked)
-        if !refresh_token.is_valid() {
-            // INVARIANT: test the revoked-reuse condition BEFORE expiry. A
-            // stolen refresh token replayed after its natural expiry is both
-            // revoked and expired; checking expiry first would skip full-family
-            // revocation and let the theft go undetected.
-            if refresh_token.is_revoked() {
+        match refresh_token.status() {
+            RefreshTokenStatus::Active => {}
+            // `status()` reports a revoked-and-expired token as `Revoked`, so a
+            // stolen token replayed after its natural expiry still lands here
+            // and triggers full-family revocation.
+            RefreshTokenStatus::Revoked => {
                 // Revoked token presented again — likely stolen; invalidate all sessions.
                 tracing::warn!(
                     user_id = %refresh_token.user_id(),
@@ -93,9 +92,11 @@ impl RefreshTokenUseCase {
                     "Refresh token has been revoked".into(),
                 ));
             }
-            return Err(DomainError::Authorization(
-                "Refresh token has expired".into(),
-            ));
+            RefreshTokenStatus::Expired => {
+                return Err(DomainError::Authorization(
+                    "Refresh token has expired".into(),
+                ));
+            }
         }
 
         // Validate device fingerprint

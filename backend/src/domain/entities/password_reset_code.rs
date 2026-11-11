@@ -1,6 +1,6 @@
 //! Password reset code entity.
 
-use crate::domain::entities::attempt_lockout::AttemptLockout;
+use crate::domain::entities::attempt_lockout::{AttemptLockout, Reissue};
 use crate::domain::value_objects::{ResetCodeId, UserId};
 use chrono::{DateTime, Duration, Utc};
 
@@ -160,25 +160,12 @@ impl PasswordResetCode {
         self.lockout().is_locked()
     }
 
-    /// Seconds until a locked code may be replaced via a new request, measured
-    /// from `last_sent_at`. Returns 0 once the lock window has elapsed (or if the
-    /// code is not locked), at which point a new request issues a fresh code.
+    /// Whether a replacement code may be issued now (see
+    /// [`AttemptLockout::reissue`]). Every path that issues a code for this
+    /// user must check it first, or it would clear an active lockout.
     #[must_use]
-    pub fn seconds_until_unlock(&self) -> i64 {
-        self.lockout().seconds_until_unlock()
-    }
-
-    /// Checks if a new code can be sent (resend cooldown expired).
-    #[must_use]
-    pub fn can_resend(&self) -> bool {
-        self.lockout().can_resend()
-    }
-
-    /// Returns how many seconds until a new code may be sent.
-    /// Returns 0 if a resend is already allowed.
-    #[must_use]
-    pub fn seconds_until_resend(&self) -> i64 {
-        self.lockout().seconds_until_resend()
+    pub fn reissue(&self) -> Reissue {
+        self.lockout().reissue()
     }
 
     /// Increments the attempt counter after a failed verification.
@@ -306,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn test_seconds_until_unlock() {
+    fn test_reissue_while_locked() {
         let make = |attempts, sent_minutes_ago| {
             PasswordResetCode::from_persistence(
                 ResetCodeId::new(),
@@ -319,25 +306,27 @@ mod tests {
             )
         };
 
-        // Not locked → 0 regardless of last_sent_at.
-        assert_eq!(make(0, 0).seconds_until_unlock(), 0);
-
         // Locked, sent just now → within the lock window.
-        let secs = make(MAX_ATTEMPTS, 0).seconds_until_unlock();
-        assert!(secs > 0 && secs <= LOCK_DURATION_MINUTES * 60);
+        assert!(matches!(
+            make(MAX_ATTEMPTS, 0).reissue(),
+            Reissue::Locked { seconds_remaining }
+                if seconds_remaining > 0 && seconds_remaining <= LOCK_DURATION_MINUTES * 60
+        ));
 
-        // Locked, but the lock window has elapsed → 0 (a new request is allowed).
+        // Locked, but the lock window has elapsed → a new request is allowed.
         assert_eq!(
-            make(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1).seconds_until_unlock(),
-            0
+            make(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1).reissue(),
+            Reissue::Allowed
         );
     }
 
     #[test]
-    fn test_can_resend_cooldown() {
+    fn test_reissue_cooldown() {
         let recent = PasswordResetCode::new(UserId::new(), "hash".to_string());
-        assert!(!recent.can_resend());
-        assert!(recent.seconds_until_resend() > 0);
+        assert!(matches!(
+            recent.reissue(),
+            Reissue::Cooldown { seconds_remaining } if seconds_remaining > 0
+        ));
 
         let old = PasswordResetCode::from_persistence(
             ResetCodeId::new(),
@@ -348,7 +337,6 @@ mod tests {
             Utc::now() - Duration::minutes(RESEND_COOLDOWN_MINUTES + 1),
             Utc::now() - Duration::minutes(RESEND_COOLDOWN_MINUTES + 1),
         );
-        assert!(old.can_resend());
-        assert_eq!(old.seconds_until_resend(), 0);
+        assert_eq!(old.reissue(), Reissue::Allowed);
     }
 }

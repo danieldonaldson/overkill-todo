@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO users (email, deleted_at, deletion_scheduled_at)\n        VALUES ('both@example.com', $1, $2)\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09b146bcc4d54906a914ec2f5e87ae7f8a1d43b1684b3f76a1ff2c2666b0a79a"
+}

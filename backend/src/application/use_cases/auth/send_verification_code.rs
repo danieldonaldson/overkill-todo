@@ -160,7 +160,7 @@ impl SendVerificationCodeUseCase {
             .email_verification_repo
             .find_by_user(user_id)
             .await?
-            .is_some_and(|code| code.seconds_until_unlock() > 0 || !code.can_resend());
+            .is_some_and(|code| !code.reissue().is_allowed());
         if withheld {
             tracing::info!(
                 user_id = %user_id,

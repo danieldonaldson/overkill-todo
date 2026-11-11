@@ -94,6 +94,7 @@ mod tests {
     use crate::application::ports::outgoing::email_service::MockEmailService;
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
     use crate::domain::entities::UserParts;
+    use crate::domain::value_objects::AccountStatus;
     use crate::domain::value_objects::{UserId, UserRole};
     use chrono::Utc;
 
@@ -105,10 +106,8 @@ mod tests {
             first_name: String::new(),
             last_name: String::new(),
             email_verified: false, // Not verified
-            pending_email: None,
-            pending_email_requested_at: None,
-            deleted_at: None,
-            deletion_scheduled_at: None,
+            pending_email_change: None,
+            status: AccountStatus::Active,
             role: UserRole::User,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -124,10 +123,8 @@ mod tests {
             first_name: "John".to_string(),
             last_name: "Doe".to_string(),
             email_verified: true, // Verified
-            pending_email: None,
-            pending_email_requested_at: None,
-            deleted_at: None,
-            deletion_scheduled_at: None,
+            pending_email_change: None,
+            status: AccountStatus::Active,
             role: UserRole::User,
             created_at: Utc::now(),
             updated_at: Utc::now(),

@@ -12,15 +12,15 @@
   let { email: propEmail = '' }: { email?: string } = $props()
 
   const email = $derived(propEmail || getEmailFromUrl())
-  const resendDisabled = $derived(resending || cooldownSeconds > 0)
 
   let code = $state('')
   let turnstileToken = $state<string | null>(null)
   let codeError = $state<string | null>(null)
   let formError = $state<string | null>(null)
   let successMessage = $state<string | null>(null)
-  let loading = $state(false)
-  let resending = $state(false)
+  // Verify and resend each clear the other's messages and change the code, so
+  // only one request runs at a time.
+  let pending = $state<'verify' | 'resend' | null>(null)
   let cooldownSeconds = $state(0)
   let turnstileRef = $state<TurnstileRef | undefined>(undefined)
 
@@ -31,9 +31,9 @@
 
   async function handleVerify(submittedCode?: string) {
     const verifyCode = submittedCode || code
-    if (verifyCode.length !== 6) return
+    if (verifyCode.length !== 6 || pending) return
 
-    loading = true
+    pending = 'verify'
     formError = null
     successMessage = null
     codeError = null
@@ -75,7 +75,7 @@
       }
       code = ''
     } finally {
-      loading = false
+      pending = null
     }
   }
 
@@ -89,12 +89,13 @@
   }
 
   async function handleResend() {
+    if (pending) return
     if (!email) {
       formError = 'Email address is required to resend code'
       return
     }
 
-    resending = true
+    pending = 'resend'
     formError = null
     successMessage = null
     codeError = null
@@ -122,7 +123,7 @@
       turnstileRef?.reset()
       turnstileToken = null
     } finally {
-      resending = false
+      pending = null
     }
   }
 
@@ -156,17 +157,17 @@
 
   <CodeInput
     bind:value={code}
-    disabled={loading}
+    disabled={pending !== null}
     error={codeError}
     oncomplete={handleCodeComplete}
   />
 
-  <Button type="submit" disabled={loading || code.length !== 6} class="w-full">
-    {#if loading}
+  <Button type="submit" disabled={pending !== null || code.length !== 6} class="w-full">
+    {#if pending === 'verify'}
       <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
       ></span>
     {/if}
-    {loading ? 'Verifying...' : 'Verify email'}
+    {pending === 'verify' ? 'Verifying...' : 'Verify email'}
   </Button>
 
   <div class="my-2 h-px bg-border"></div>
@@ -179,11 +180,11 @@
       <Button
         type="button"
         variant="ghost"
-        disabled={resendDisabled}
+        disabled={pending !== null}
         onclick={handleResend}
         class="w-full"
       >
-        {#if resending}
+        {#if pending === 'resend'}
           <span
             class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
           ></span>
