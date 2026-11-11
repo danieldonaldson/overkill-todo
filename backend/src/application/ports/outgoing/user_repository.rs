@@ -60,4 +60,13 @@ pub trait UserRepository: Send + Sync {
 
     /// Updates a user's password hash.
     async fn update_password(&self, id: &UserId, password_hash: &str) -> Result<(), DomainError>;
+
+    /// Moves the user's session cutoff (`tokens_valid_after`) forward to
+    /// `cutoff`, never back. Access tokens issued at or before that second are
+    /// rejected by routes that check session freshness.
+    async fn revoke_sessions_issued_before(
+        &self,
+        id: &UserId,
+        cutoff: DateTime<Utc>,
+    ) -> Result<(), DomainError>;
 }

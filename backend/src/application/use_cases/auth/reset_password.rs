@@ -4,7 +4,19 @@ use crate::application::ports::UserRepository;
 use crate::application::ports::{JwtService, PasswordResetRepository, RefreshTokenRepository};
 use crate::domain::entities::User;
 use crate::domain::errors::DomainError;
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
+
+/// A completed password reset.
+#[derive(Debug)]
+pub struct PasswordReset {
+    /// The user whose password was reset (for auto-login).
+    pub user: User,
+    /// Session cutoff recorded by the reset: access tokens issued at or before
+    /// this second are rejected on routes that check session freshness. A new
+    /// session for the resetting device must be issued in a later second.
+    pub sessions_valid_after: DateTime<Utc>,
+}
 
 /// Use case for resetting a user's password.
 ///
@@ -42,7 +54,7 @@ impl ResetPasswordUseCase {
     ///
     /// # Returns
     ///
-    /// The user whose password was reset (for auto-login)
+    /// The user whose password was reset, and the session cutoff it recorded.
     ///
     /// # Errors
     ///
@@ -53,7 +65,7 @@ impl ResetPasswordUseCase {
         &self,
         reset_token: &str,
         new_password_hash: &str,
-    ) -> Result<User, DomainError> {
+    ) -> Result<PasswordReset, DomainError> {
         // Validate and decode the reset token, recovering the reset-code row it
         // is bound to.
         let (user_id, reset_code_id) = self.jwt_service.validate_reset_token(reset_token)?;
@@ -96,9 +108,21 @@ impl ResetPasswordUseCase {
             .await?;
         tracing::info!(user_id = %user.id(), revoked, "Revoked existing sessions on password reset");
 
+        // Revoking refresh tokens stops new sessions; this cuts off the access
+        // tokens already out there (up to their remaining lifetime otherwise),
+        // on the routes that check session freshness. App clock, not the DB's:
+        // it's compared with `iat`, which this process stamps.
+        let sessions_valid_after = Utc::now();
+        self.user_repo
+            .revoke_sessions_issued_before(user.id(), sessions_valid_after)
+            .await?;
+
         tracing::info!(user_id = %user.id(), "Password reset successfully");
 
-        Ok(user)
+        Ok(PasswordReset {
+            user,
+            sessions_valid_after,
+        })
     }
 }
 
@@ -140,6 +164,12 @@ mod tests {
         mock_user_repo
             .expect_update_password()
             .returning(|_, _| Ok(()));
+        // ...and cut off access tokens already issued to it.
+        mock_user_repo
+            .expect_revoke_sessions_issued_before()
+            .withf(move |id, _| *id == user_id)
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let mut mock_reset_repo = MockPasswordResetRepository::new();
         mock_reset_repo.expect_consume().returning(|_, _| Ok(true));
@@ -160,8 +190,8 @@ mod tests {
 
         let result = use_case.execute("valid_token", "new_password_hash").await;
         assert!(result.is_ok());
-        let returned_user = result.unwrap();
-        assert_eq!(returned_user.id(), &user_id);
+        let reset = result.unwrap();
+        assert_eq!(reset.user.id(), &user_id);
     }
 
     #[tokio::test]

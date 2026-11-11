@@ -62,6 +62,18 @@ async fn child_row_count(pool: &PgPool, user_id: Uuid) -> i64 {
     refresh + oauth + verification + reset
 }
 
+/// Put the account in the state the purge looks for: pending deletion with the
+/// grace period over.
+async fn schedule_deletion_in_past(pool: &PgPool, user_id: Uuid) {
+    sqlx::query!(
+        "UPDATE users SET deletion_scheduled_at = NOW() - INTERVAL '1 minute' WHERE id = $1",
+        user_id,
+    )
+    .execute(pool)
+    .await
+    .expect("schedule deletion");
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool.clone()));
@@ -80,6 +92,7 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
     user.mark_email_verified();
     user_repo.save(&user).await.expect("save user");
     let user_id = *user.id().as_uuid();
+    schedule_deletion_in_past(&pool, user_id).await;
 
     refresh_repo
         .save(&RefreshToken::new(
@@ -130,10 +143,11 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
     let mut anonymized = user.clone();
     let anon_email = Email::new(&format!("deleted-{user_id}@anonymized.local")).unwrap();
     anonymized.anonymize(anon_email).unwrap();
-    user_repo
+    let anonymized_now = user_repo
         .anonymize_account(&anonymized)
         .await
         .expect("anonymize");
+    assert!(anonymized_now, "a due account must be anonymized");
 
     // --- Assert: PII scrubbed on the user row.
     let row = sqlx::query!(
@@ -185,5 +199,79 @@ async fn deleted_account_cannot_be_pending_deletion(pool: PgPool) {
     assert_eq!(
         db_err.constraint(),
         Some("users_deleted_not_pending_deletion")
+    );
+}
+
+/// The purge lists due accounts, then anonymizes them one at a time. A user who
+/// cancels in between must keep their account and credentials.
+#[sqlx::test(migrations = "./migrations")]
+async fn anonymize_skips_account_cancelled_after_the_scan(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool.clone()));
+    let user_repo = PostgresUserRepository::new(db.clone());
+    let refresh_repo = PostgresRefreshTokenRepository::new(db);
+
+    let mut user = User::new(
+        Email::new("changed-mind@example.com").unwrap(),
+        Some("argon2-hash".to_string()),
+        "Changed".to_string(),
+        "Mind".to_string(),
+    );
+    user.mark_email_verified();
+    user_repo.save(&user).await.expect("save user");
+    let user_id = *user.id().as_uuid();
+    schedule_deletion_in_past(&pool, user_id).await;
+    refresh_repo
+        .save(&RefreshToken::new(
+            *user.id(),
+            "token-hash".to_string(),
+            "device-fp".to_string(),
+            Utc::now() + Duration::days(30),
+        ))
+        .await
+        .expect("seed refresh token");
+
+    // The scan sees the account as due...
+    let listed = user_repo
+        .find_ready_for_deletion()
+        .await
+        .expect("list due accounts");
+    let listed = listed
+        .into_iter()
+        .find(|u| *u.id().as_uuid() == user_id)
+        .expect("account listed as due");
+
+    // ...then the user cancels before the purge reaches them.
+    sqlx::query!(
+        "UPDATE users SET deletion_scheduled_at = NULL, version = version + 1 WHERE id = $1",
+        user_id,
+    )
+    .execute(&pool)
+    .await
+    .expect("cancel deletion");
+
+    let mut anonymized = listed;
+    anonymized
+        .anonymize(Email::new(&format!("deleted-{user_id}@anonymized.local")).unwrap())
+        .unwrap();
+    let anonymized_now = user_repo
+        .anonymize_account(&anonymized)
+        .await
+        .expect("anonymize");
+
+    assert!(!anonymized_now, "a cancelled account must be skipped");
+    let row = sqlx::query!(
+        "SELECT email, password_hash, deleted_at FROM users WHERE id = $1",
+        user_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("load user");
+    assert_eq!(row.email, "changed-mind@example.com");
+    assert!(row.password_hash.is_some());
+    assert!(row.deleted_at.is_none());
+    assert_eq!(
+        child_row_count(&pool, user_id).await,
+        1,
+        "refresh token kept"
     );
 }

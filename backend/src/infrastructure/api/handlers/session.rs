@@ -9,7 +9,7 @@
 //! the result in its own response DTO.
 
 use axum::http::header::{self, HeaderMap};
-use chrono::{Duration, Utc};
+use chrono::{DateTime, Duration, Utc};
 
 use crate::domain::entities::User;
 use crate::infrastructure::api::cookies::{
@@ -45,6 +45,22 @@ pub(crate) fn require_device_fingerprint(headers: &HeaderMap) -> Result<String, 
 /// Extract the refresh token from the `refresh_token` cookie.
 pub(crate) fn extract_refresh_token_cookie(headers: &HeaderMap) -> Option<String> {
     extract_cookie(headers, "refresh_token")
+}
+
+/// Wait, if needed, until the clock is past the second `cutoff` falls in.
+///
+/// Session freshness compares the token's whole-second `iat` against a
+/// revocation cutoff (`iat > cutoff`), so a session issued in the same second
+/// as the cutoff would be rejected along with the ones it was meant to replace.
+/// Call this before issuing the replacement session; it waits at most a second.
+pub(crate) async fn wait_until_after_second_of(cutoff: DateTime<Utc>) {
+    let next_second_ms = (cutoff.timestamp() + 1) * 1000;
+    let remaining_ms = next_second_ms - Utc::now().timestamp_millis();
+    if let Ok(ms) = u64::try_from(remaining_ms)
+        && ms > 0
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+    }
 }
 
 /// The non-secret pieces of a freshly issued session: the `Set-Cookie` headers

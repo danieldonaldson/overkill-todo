@@ -51,5 +51,12 @@ pub trait AccountLifecycleRepository: Send + Sync {
     /// those must be torn down by their own use cases first. The orchestration
     /// that sequences teardown-then-anonymize lives in
     /// [`PurgeScheduledAccountsUseCase`](crate::application::use_cases::PurgeScheduledAccountsUseCase).
-    async fn anonymize_account(&self, user: &User) -> Result<(), DomainError>;
+    ///
+    /// The scrub only applies while the account is still due: pending deletion,
+    /// grace period over, not yet deleted. If the user cancelled after the purge
+    /// listed them, nothing is written and this returns `Ok(false)`; `Ok(true)`
+    /// means the account was anonymized. It also sets `tokens_valid_after`, so
+    /// access tokens issued before the purge stop working on routes that check
+    /// session freshness.
+    async fn anonymize_account(&self, user: &User) -> Result<bool, DomainError>;
 }

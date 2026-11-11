@@ -10,6 +10,7 @@ use crate::domain::{
     value_objects::{AccountStatus, Email, PendingEmailChange, UserId, UserRole},
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::sync::Arc;
 
 pub struct PostgresUserRepository {
@@ -299,6 +300,35 @@ impl UserRepository for PostgresUserRepository {
 
         Ok(())
     }
+
+    #[tracing::instrument(name = "repo.user.revoke_sessions_issued_before", skip_all, fields(db.system = "postgresql", user_id = %id))]
+    async fn revoke_sessions_issued_before(
+        &self,
+        id: &UserId,
+        cutoff: DateTime<Utc>,
+    ) -> Result<(), DomainError> {
+        // GREATEST ignores NULL, and never moves an existing cutoff backwards.
+        // No version bump: the cutoff isn't part of the `User` entity, so it
+        // can't conflict with a concurrent `save`.
+        let result = sqlx::query!(
+            r#"
+            UPDATE users
+            SET tokens_valid_after = GREATEST(tokens_valid_after, $2)
+            WHERE id = $1
+            "#,
+            id.as_uuid(),
+            cutoff,
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        if result.rows_affected() == 0 {
+            return Err(DomainError::NotFound("User not found".into()));
+        }
+
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -346,7 +376,7 @@ impl AccountLifecycleRepository for PostgresUserRepository {
     }
 
     #[tracing::instrument(name = "repo.user.anonymize_account", skip_all, fields(db.system = "postgresql", user_id = %user.id()))]
-    async fn anonymize_account(&self, user: &User) -> Result<(), DomainError> {
+    async fn anonymize_account(&self, user: &User) -> Result<bool, DomainError> {
         // INVARIANT: every step below runs in ONE transaction. The user
         // row is scrubbed *and* all secret-bearing child rows (refresh tokens,
         // OAuth links, verification/reset codes) are deleted
@@ -357,8 +387,13 @@ impl AccountLifecycleRepository for PostgresUserRepository {
 
         let user_id = user.id().as_uuid();
 
-        // 1. Update user record with anonymized data
-        sqlx::query!(
+        // 1. Update user record with anonymized data — only if the account is
+        // still due. The purge lists accounts, then anonymizes them one by one;
+        // a user who cancels in between must keep their account, so the
+        // condition is re-checked here, atomically with the write. 0 rows means
+        // "no longer due": roll back without touching the child tables.
+        // `tokens_valid_after` cuts off access tokens issued before the purge.
+        let updated = sqlx::query!(
             r#"
             UPDATE users
             SET email = $2,
@@ -369,9 +404,13 @@ impl AccountLifecycleRepository for PostgresUserRepository {
                 pending_email_requested_at = NULL,
                 deleted_at = $5,
                 deletion_scheduled_at = NULL,
+                tokens_valid_after = NOW(),
                 version = version + 1,
                 updated_at = $6
             WHERE id = $1
+              AND deleted_at IS NULL
+              AND deletion_scheduled_at IS NOT NULL
+              AND deletion_scheduled_at <= NOW()
             "#,
             user_id,
             user.email().as_str(),
@@ -383,6 +422,11 @@ impl AccountLifecycleRepository for PostgresUserRepository {
         .execute(&mut *tx)
         .await
         .map_err(persist_err)?;
+
+        if updated.rows_affected() == 0 {
+            tx.rollback().await.map_err(persist_err)?;
+            return Ok(false);
+        }
 
         // 2. Delete refresh tokens
         sqlx::query!(r#"DELETE FROM refresh_tokens WHERE user_id = $1"#, user_id)
@@ -419,7 +463,7 @@ impl AccountLifecycleRepository for PostgresUserRepository {
 
         tx.commit().await.map_err(persist_err)?;
 
-        Ok(())
+        Ok(true)
     }
 }
 

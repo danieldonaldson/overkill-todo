@@ -683,6 +683,21 @@ async fn forgot_password_unknown_email_returns_success(pool: PgPool) {
     assert_eq!(body["success"], true);
 }
 
+async fn export_status(app: &axum::Router, session: &str) -> StatusCode {
+    app.clone()
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/users/me/export")
+                .header(header::AUTHORIZATION, format!("Bearer {session}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+        .status()
+}
+
 /// Full password-reset flow: complete signup, request reset, verify the dev
 /// reset code, then reset the password and auto-login.
 #[sqlx::test(migrations = "./migrations")]
@@ -713,6 +728,7 @@ async fn password_reset_flow_succeeds(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
+    let old_session = common::cookie_value(&resp, "auth_token").expect("signup session");
 
     // Request a reset code (dev code for test emails is 123456).
     let resp = app
@@ -750,9 +766,20 @@ async fn password_reset_flow_succeeds(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK, "reset-password failed");
-    assert!(
-        common::cookie_value(&resp, "auth_token").is_some(),
-        "expected auth cookie after reset"
+    let new_session =
+        common::cookie_value(&resp, "auth_token").expect("expected auth cookie after reset");
+
+    // The reset cuts off sessions issued before it on account-sensitive routes,
+    // but the session it just issued (in a later second) works.
+    assert_eq!(
+        export_status(&app, &old_session).await,
+        StatusCode::UNAUTHORIZED,
+        "pre-reset session must be rejected"
+    );
+    assert_eq!(
+        export_status(&app, &new_session).await,
+        StatusCode::OK,
+        "post-reset session must work"
     );
 
     // New password works for login; old one does not.

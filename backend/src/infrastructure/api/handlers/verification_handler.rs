@@ -33,7 +33,10 @@ use crate::{
         error::AppError,
         extractors::ValidatedJson,
         handlers::{
-            session::{build_session, extract_device_fingerprint, require_device_fingerprint},
+            session::{
+                build_session, extract_device_fingerprint, require_device_fingerprint,
+                wait_until_after_second_of,
+            },
             verify_turnstile,
         },
     },
@@ -387,13 +390,18 @@ pub async fn reset_password(
     let password_hash = deps.password_hasher.hash(&request.new_password).await?;
 
     // Reset password and get the user
-    let user = deps
+    let reset = deps
         .reset_password_use_case
         .execute(&request.reset_token, &password_hash)
         .await?;
+    let user = reset.user;
 
     // Extract device fingerprint for auto-login
     let device_fingerprint = require_device_fingerprint(&headers)?;
+
+    // The reset cut off every access token issued up to its cutoff second;
+    // this device's new one must come after it.
+    wait_until_after_second_of(reset.sessions_valid_after).await;
 
     // Create refresh token, then issue the session (JWT + CSRF + cookies).
     let refresh_token = deps

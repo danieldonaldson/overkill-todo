@@ -50,7 +50,7 @@ pub use refresh_token::{RefreshResult, RefreshTokenUseCase};
 pub use register_user::{RegisterOutcome, RegisterUserUseCase};
 pub use request_password_reset::RequestPasswordResetUseCase;
 pub use resend_verification::{ResendResult, ResendVerificationError, ResendVerificationUseCase};
-pub use reset_password::ResetPasswordUseCase;
+pub use reset_password::{PasswordReset, ResetPasswordUseCase};
 pub use revoke_token::RevokeTokenUseCase;
 pub use send_verification_code::SendVerificationCodeUseCase;
 pub use validate_reset_code::ValidateResetCodeUseCase;

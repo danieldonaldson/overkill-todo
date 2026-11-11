@@ -226,6 +226,15 @@ pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
             "/me/cancel-deletion",
             post(profile_handler::cancel_deletion),
         )
+        // Account-sensitive actions (password, export, deletion): reject
+        // tokens issued before a password reset, account purge or role change.
+        // One extra DB read on these low-traffic routes only; ordinary routes
+        // trust the token until it expires (JWT_EXPIRATION_MINUTES). Innermost,
+        // so the free verified-email check below rejects first.
+        .route_layer(middleware::from_fn_with_state(
+            users.clone(),
+            require_fresh_session,
+        ))
         .route_layer(middleware::from_fn(require_verified_email))
         .route_layer(middleware::from_fn(auth_middleware))
         .with_state(deps.profile);

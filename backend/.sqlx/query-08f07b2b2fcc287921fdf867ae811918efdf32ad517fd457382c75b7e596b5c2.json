@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE users\n            SET tokens_valid_after = GREATEST(tokens_valid_after, $2)\n            WHERE id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "08f07b2b2fcc287921fdf867ae811918efdf32ad517fd457382c75b7e596b5c2"
+}

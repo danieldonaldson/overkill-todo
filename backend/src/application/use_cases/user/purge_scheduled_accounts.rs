@@ -46,7 +46,11 @@ impl PurgeScheduledAccountsUseCase {
         let mut purged = 0;
         for user in ready {
             match self.purge_one(&user).await {
-                Ok(()) => purged += 1,
+                Ok(true) => purged += 1,
+                // Cancelled (or otherwise no longer due) since the scan listed it.
+                Ok(false) => {
+                    tracing::info!(user_id = %user.id(), "account no longer due for deletion; skipped");
+                }
                 Err(e) => {
                     tracing::error!(user_id = %user.id(), error = %e, "account purge failed; will retry next pass");
                 }
@@ -57,7 +61,10 @@ impl PurgeScheduledAccountsUseCase {
 
     /// Tears down external resources, then anonymizes the user. Ordering matters —
     /// see the module-level INVARIANT.
-    async fn purge_one(&self, user: &User) -> Result<(), DomainError> {
+    ///
+    /// Returns `Ok(false)` when the account stopped being due (the user cancelled
+    /// after the scan) and nothing was anonymized.
+    async fn purge_one(&self, user: &User) -> Result<bool, DomainError> {
         let user_id = user.id();
 
         // External teardown goes here, before the scrub (see the module docs).
@@ -65,10 +72,12 @@ impl PurgeScheduledAccountsUseCase {
         let anonymous_email = Email::new(&format!("deleted-{user_id}@anonymized.local"))?;
         let mut anonymized = user.clone();
         anonymized.anonymize(anonymous_email)?;
-        self.lifecycle.anonymize_account(&anonymized).await?;
+        if !self.lifecycle.anonymize_account(&anonymized).await? {
+            return Ok(false);
+        }
 
         tracing::info!(%user_id, "Account purged");
-        Ok(())
+        Ok(true)
     }
 }
 
@@ -88,7 +97,7 @@ mod tests {
             .expect_anonymize_account()
             .withf(|u| u.email().as_str().ends_with("@anonymized.local"))
             .times(2)
-            .returning(|_| Ok(()));
+            .returning(|_| Ok(true));
 
         let purged = PurgeScheduledAccountsUseCase::new(Arc::new(lifecycle))
             .run_once()
@@ -112,7 +121,7 @@ mod tests {
                 if calls == 1 {
                     Err(DomainError::Persistence("db blip".into()))
                 } else {
-                    Ok(())
+                    Ok(true)
                 }
             });
 
@@ -121,5 +130,23 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(purged, 1);
+    }
+
+    #[tokio::test]
+    async fn account_cancelled_after_the_scan_is_not_counted() {
+        let mut lifecycle = MockAccountLifecycleRepository::new();
+        lifecycle
+            .expect_find_ready_for_deletion()
+            .returning(|| Ok(vec![UserBuilder::new().build()]));
+        lifecycle
+            .expect_anonymize_account()
+            .times(1)
+            .returning(|_| Ok(false));
+
+        let purged = PurgeScheduledAccountsUseCase::new(Arc::new(lifecycle))
+            .run_once()
+            .await
+            .unwrap();
+        assert_eq!(purged, 0);
     }
 }

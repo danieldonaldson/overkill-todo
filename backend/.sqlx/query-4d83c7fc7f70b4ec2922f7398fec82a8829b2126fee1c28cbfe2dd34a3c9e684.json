@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE users\n            SET email = $2,\n                password_hash = NULL,\n                first_name = $3,\n                last_name = $4,\n                pending_email = NULL,\n                pending_email_requested_at = NULL,\n                deleted_at = $5,\n                deletion_scheduled_at = NULL,\n                tokens_valid_after = NOW(),\n                version = version + 1,\n                updated_at = $6\n            WHERE id = $1\n              AND deleted_at IS NULL\n              AND deletion_scheduled_at IS NOT NULL\n              AND deletion_scheduled_at <= NOW()\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Varchar",
+        "Varchar",
+        "Timestamptz",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "4d83c7fc7f70b4ec2922f7398fec82a8829b2126fee1c28cbfe2dd34a3c9e684"
+}
