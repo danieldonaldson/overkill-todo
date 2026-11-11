@@ -1,21 +1,20 @@
 <script lang="ts">
-  import { getContext, onMount } from 'svelte'
+  import { onMount } from 'svelte'
   import HomeIcon from '@lucide/svelte/icons/home'
   import SettingsIcon from '@lucide/svelte/icons/settings'
   import ShieldIcon from '@lucide/svelte/icons/shield'
   import ThemeToggle from '../ui/custom/ThemeToggle.svelte'
-  import { AUTH_CONTEXT_KEY, type AuthContext } from '../../lib/auth/cookie'
+  import { session } from '../../lib/auth/session.svelte'
   import { isAdminRole } from '../../lib/types'
 
   // `pathname` is injectable for tests; in the app it tracks the real location,
   // updated on Astro client-side navigations (astro:page-load).
   let { pathname: pathnameProp }: { pathname?: string } = $props()
 
-  // Rendered inside AuthProvider (see DashboardShell), so the auth context is
-  // available. The Admin link is shown only to admins / super-admins; the
-  // backend enforces access regardless.
-  const auth = getContext<AuthContext>(AUTH_CONTEXT_KEY)
-  const isAdmin = $derived(isAdminRole(auth?.user?.role))
+  // The Admin link is shown only once the account is known to be an admin or
+  // super-admin, never guessed (design D5): an unknown role means no link, so
+  // a Member never sees it flash. The backend enforces access regardless.
+  const isAdmin = $derived(isAdminRole(session.user?.role))
 
   let currentPath = $state('')
 

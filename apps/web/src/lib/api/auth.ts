@@ -49,9 +49,14 @@ export function createAuthApi(client: HttpClient) {
 
     me: (): Promise<User> => client.request<User>('/auth/me'),
 
-    logout: async (): Promise<void> => {
+    /**
+     * End the server session. `keepalive` lets the request outlive the page,
+     * for callers that navigate away without waiting for it.
+     */
+    logout: async (options: { keepalive?: boolean } = {}): Promise<void> => {
       await client.request<void>('/auth/logout', {
         method: 'POST',
+        ...(options.keepalive ? { keepalive: true } : {}),
       })
       clearTokenExpiry()
     },

@@ -11,16 +11,15 @@
     CardTitle,
   } from '$lib/components/ui/card'
   import { api } from '../../lib/api'
-  import { getCurrentUser } from '../../lib/auth/current-user'
+  import { isApiStatus } from '../../lib/api/errors'
+  import { session } from '../../lib/auth/session.svelte'
   import { formatDate } from '../../lib/format'
   import { navigateReplace } from '../../lib/navigation'
   import { isAdminRole } from '../../lib/types'
-  import type { AdminUserRow, User, UserRole } from '../../lib/types'
+  import type { AdminUserRow, UserRole } from '../../lib/types'
 
   const ROLES: UserRole[] = ['user', 'admin', 'super_admin']
 
-  // AuthGuard already fetched this from /auth/me for this page load.
-  const currentUser: User | null = getCurrentUser()
   let loading = $state(true)
   let message = $state<string | null>(null)
   let error = $state<string | null>(null)
@@ -29,20 +28,36 @@
   let users = $state<AdminUserRow[]>([])
   let busyUserId = $state<string | null>(null)
 
-  const isSuperAdmin = currentUser?.role === 'super_admin'
+  // Role selects need a known super-admin; until then the table is read-only.
+  const isSuperAdmin = $derived(session.user?.role === 'super_admin')
+  // Only a confirmed non-admin role redirects: a stale or missing cache is
+  // not enough to send an Admin away (design D5).
+  const confirmedNonAdmin = $derived(
+    session.status === 'confirmed' && !isAdminRole(session.user?.role)
+  )
+  let leaving = $state(false)
 
+  function leave() {
+    if (leaving) return
+    leaving = true
+    navigateReplace('/dashboard')
+  }
+
+  $effect(() => {
+    if (confirmedNonAdmin) leave()
+  })
+
+  // Load at once without checking the role first (D5): the server decides,
+  // and a 403 sends a non-admin Home before any list could be shown.
   onMount(async () => {
-    // Confirm the viewer is an admin before loading anything; the backend
-    // enforces this too, but redirecting avoids rendering a dead page.
-    if (!isAdminRole(currentUser?.role)) {
-      navigateReplace('/dashboard')
-      return
-    }
-
     try {
       const list = await api.admin.listUsers()
       users = list.users
     } catch (loadError: unknown) {
+      if (isApiStatus(loadError, 403)) {
+        leave()
+        return
+      }
       error = loadError instanceof Error ? loadError.message : 'Failed to load admin data'
     } finally {
       loading = false
@@ -91,8 +106,24 @@
     </Alert>
   {/if}
 
-  {#if loading}
-    <p class="text-sm text-muted-foreground">Loading…</p>
+  {#if leaving}
+    <!-- On the way Home: never show a list to a non-admin. -->
+  {:else if loading}
+    <Card aria-hidden="true" data-testid="admin-skeleton">
+      <CardHeader>
+        <div class="h-4 w-16 animate-pulse rounded bg-muted"></div>
+        <div class="h-3.5 w-40 animate-pulse rounded bg-muted"></div>
+      </CardHeader>
+      <CardContent>
+        {#each Array.from({ length: 5 }, (_, i) => i) as row (row)}
+          <div class="flex items-center gap-4 border-b border-border/60 py-3">
+            <div class="h-3.5 w-48 animate-pulse rounded bg-muted"></div>
+            <div class="h-3.5 w-16 animate-pulse rounded bg-muted"></div>
+            <div class="ml-auto h-3.5 w-20 animate-pulse rounded bg-muted"></div>
+          </div>
+        {/each}
+      </CardContent>
+    </Card>
   {:else}
     <Card>
       <CardHeader>

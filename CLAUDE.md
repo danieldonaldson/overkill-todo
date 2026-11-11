@@ -35,6 +35,16 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
   rendered from `PUBLIC_*` env at container start. No secrets in the frontend.
 - Inline scripts are CSP-pinned by sha256 in `apps/web/Caddyfile`; changing one means
   updating the hash (the CSP spec fails otherwise).
+- Hydration: primary page content is `client:load`; content that starts below the
+  fold is `client:visible`. The first `client:visible` adds an inline hydration
+  script, so add its sha256 to the Caddyfile.
+- The dashboard is optimistic: render first, never wait on a sign-in check.
+  The server authorises every call and `HttpClient` handles 401/403; panels
+  handle their own failures. Static HTML holds no user data, and privileged UI
+  (e.g. the Admin link) is shown only once the role is known, never guessed.
+- The signed-in user lives in `lib/auth/session.svelte.ts`, shared by all
+  islands. The dashboard header is persisted (`transition:persist`), so it
+  must hold no page-specific state.
 - Component tests: Vitest browser mode. Flows: Playwright with the API mocked
   (`tests/`); real-backend flows go in `tests/integration/`.
 

@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { seedSession } from './helpers/session'
 
 const TEST_USER = {
   id: 'test-user',
@@ -16,9 +17,9 @@ const TEST_USER = {
 // danger-zone flow in the browser.
 test.describe('account data export & deletion', () => {
   test.beforeEach(async ({ page }) => {
-    // The /users/me/* calls are non-auth endpoints, so the client silently
-    // refreshes first (no token expiry stored yet). Mock it so the request
-    // doesn't fall through the dev proxy to an absent backend.
+    await seedSession(page)
+    // Kept as a safety net: should the client decide to refresh, the request
+    // must not fall through the preview proxy to an absent backend.
     await page.route('**/api/v1/auth/refresh', async (route) => {
       await route.fulfill({ json: { expires_at: Math.floor(Date.now() / 1000) + 3600 } })
     })

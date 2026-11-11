@@ -1,12 +1,11 @@
 /**
  * Per-tab cache of the last user fetched from /api/v1/auth/me (sessionStorage).
  *
- * AuthGuard trusts it in place of /auth/me while the tab has a session hint
- * (stored token expiry) and the cached user is verified; the server still
- * checks every API call, and a 401 clears it. GuestGuard uses its presence
- * to decide whether a session is worth verifying, and AuthProvider seeds the
- * dashboard nav's context from it. Dashboard panels read the guard's user from
- * `current-user.ts` instead.
+ * The storage layer under the reactive session store (`session.svelte.ts`),
+ * which starts from it so a reload or a new page in the tab shows the last
+ * known account at once; the server still checks every API call, and a 401
+ * clears it. GuestGuard uses its presence to decide whether a session is worth
+ * verifying. Dashboard components read the store, not this module.
  */
 
 import type { User } from '../types'

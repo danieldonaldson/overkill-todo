@@ -5,6 +5,8 @@
  * but we track the expiry time to know when to proactively refresh.
  */
 
+// Also read by public/scripts/dashboard-session-hint.js (plain JS, cannot
+// import this): keep the two key names in step.
 const TOKEN_EXPIRY_KEY = 'jwt_expiry'
 // Monotonic counter (shared across tabs via localStorage) bumped on every
 // successful refresh. Used to detect "a peer already refreshed" reliably — unlike

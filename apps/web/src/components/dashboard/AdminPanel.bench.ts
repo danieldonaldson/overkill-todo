@@ -18,7 +18,7 @@ vi.mock('../../lib/navigation', () => ({
 }))
 
 import { api } from '../../lib/api'
-import { setCurrentUser } from '../../lib/auth/current-user'
+import { resetSession, session } from '../../lib/auth/session.svelte'
 import type { AdminUserRow, User, UserRole } from '../../lib/types'
 
 const PAGE = 50
@@ -50,7 +50,8 @@ vi.mocked(api.admin.listUsers).mockResolvedValue({ users, limit: PAGE, offset: 0
 
 async function renderTable(role: UserRole) {
   sessionStorage.clear()
-  setCurrentUser(viewer(role))
+  resetSession()
+  session.set(viewer(role))
   const screen = await render(AdminPanel)
   const lastEmail = users[PAGE - 1].email
   await vi.waitFor(

@@ -61,14 +61,17 @@ export function getErrorMessage(body: ApiError | null | undefined): string | und
 }
 
 /**
- * Error subclass for structured API failures (bodies carrying `error_code`).
+ * Error thrown by `HttpClient` for every non-OK response.
  *
  * Being a real {@link Error} means `instanceof Error` callers get a usable
- * `.message`, while the structured fields are copied onto the instance so
+ * `.message`, while the parsed body's fields are copied onto the instance so
  * `'error_code' in err` narrowing (and `err.attempts_remaining`, etc.) keeps
- * working for the auth flows that inspect them.
+ * working for the auth flows that inspect them. `status` is the HTTP status;
+ * narrow on it with {@link isApiStatus}.
  */
 export class ApiErrorException extends Error implements ApiError {
+  /** HTTP status of the response, when the error came from one. */
+  status?: number
   code?: string
   error_code?: string
   error?: string
@@ -76,9 +79,23 @@ export class ApiErrorException extends Error implements ApiError {
   cooldown_seconds?: number
   email?: string
 
-  constructor(body: ApiError) {
-    super(getErrorMessage(body) ?? 'Request failed')
+  /**
+   * @param body Parsed response body, or null when it had none (or wasn't JSON).
+   * @param options.status HTTP status of the response.
+   * @param options.message Overrides the message derived from the body.
+   */
+  constructor(body: ApiError | null, options: { status?: number; message?: string } = {}) {
+    const message = options.message ?? getErrorMessage(body) ?? 'Request failed'
+    super(message)
     this.name = 'ApiErrorException'
-    Object.assign(this, body)
+    if (body) Object.assign(this, body)
+    // After the body, whose own `message` / `status` fields would shadow these.
+    this.message = message
+    this.status = options.status
   }
+}
+
+/** True when `err` is an {@link ApiErrorException} for an HTTP `status` response. */
+export function isApiStatus(err: unknown, status: number): boolean {
+  return err instanceof ApiErrorException && err.status === status
 }

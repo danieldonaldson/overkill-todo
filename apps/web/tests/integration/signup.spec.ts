@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test'
 // Real end-to-end signup against the live backend + Postgres (no mocking).
 // Exercises the actual wire contract: register → verify (fixed dev code) →
 // complete-signup, with real CSRF cookies and the session cookie that lets the
-// dashboard's AuthGuard load /auth/me afterwards.
+// dashboard's background account check load /auth/me afterwards.
 //
 // Requires the dev stack (`just dev`). The backend's dev mode issues the
 // fixed code 123456 to e2e-* emails and skips real email + Turnstile.
@@ -59,6 +59,6 @@ test('a new user can register, verify, set a password, and land on the dashboard
   })
 
   // 4. Completing signup logs the user in (real session cookie) and the
-  //    dashboard's AuthGuard successfully loads the protected shell.
+  //    dashboard shows Home, its account check succeeding with that cookie.
   await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
 })

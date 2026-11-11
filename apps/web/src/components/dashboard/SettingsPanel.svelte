@@ -11,17 +11,16 @@
   import { Button } from '$lib/components/ui/button'
   import { FormInput } from '$lib/components/ui/form-input'
   import { api } from '../../lib/api'
-  import { getCurrentUser } from '../../lib/auth/current-user'
-  import { clearSessionUser, setSessionUser } from '../../lib/auth/session'
+  import { session } from '../../lib/auth/session.svelte'
   import { formatDateTime } from '../../lib/format'
-  import { navigateReplace } from '../../lib/navigation'
-  import type { User } from '../../lib/types'
   import { minLength, required, validate } from '../../lib/utils/validation'
 
-  // AuthGuard fetched this user from /auth/me on this page load, so it is
-  // fresh (has_password / oauth_providers included). Actions below update it
-  // locally from their responses rather than re-fetching.
-  let user = $state<User | null>(getCurrentUser())
+  // The tab's one record of the account (design D3): possibly a stale cache
+  // until the background check answers, and null in a fresh tab until then.
+  // Which forms to show depends on has_password, so the sections render as
+  // skeletons while it is null (D4). Successful actions patch the store, so
+  // the change shows everywhere and survives moves between pages.
+  const user = $derived(session.user)
   let savingPassword = $state(false)
   let unlinkingGoogle = $state(false)
   let currentPassword = $state('')
@@ -67,8 +66,7 @@
         message = 'Password changed.'
       } else {
         await api.users.setPassword({ new_password: newPassword })
-        user = { ...user, has_password: true }
-        setSessionUser(user)
+        session.patch({ has_password: true })
         message = 'Password set.'
       }
       currentPassword = ''
@@ -99,11 +97,11 @@
 
     try {
       await api.oauth.unlink('google')
-      user = {
-        ...user,
-        oauth_providers: user.oauth_providers.filter((provider) => provider !== 'google'),
-      }
-      setSessionUser(user)
+      session.patch({
+        oauth_providers: (session.user?.oauth_providers ?? []).filter(
+          (provider) => provider !== 'google'
+        ),
+      })
       message = 'Google account unlinked.'
     } catch (unlinkError: unknown) {
       error = unlinkError instanceof Error ? unlinkError.message : 'Failed to unlink Google'
@@ -155,8 +153,7 @@
         confirmation: deleteConfirmation,
         ...(user.has_password ? { password: deletePassword } : {}),
       })
-      user = { ...user, deletion_scheduled_at: result.deletion_scheduled_at ?? null }
-      setSessionUser(user)
+      session.patch({ deletion_scheduled_at: result.deletion_scheduled_at ?? null })
       deleteConfirmation = ''
       deletePassword = ''
       message = 'Account deletion scheduled. You can cancel during the grace period.'
@@ -174,8 +171,7 @@
     message = null
     try {
       await api.users.cancelDeletion()
-      user = { ...user, deletion_scheduled_at: null }
-      setSessionUser(user)
+      session.patch({ deletion_scheduled_at: null })
       message = 'Account deletion cancelled.'
     } catch (cancelError: unknown) {
       error = cancelError instanceof Error ? cancelError.message : 'Failed to cancel deletion'
@@ -184,14 +180,12 @@
     }
   }
 
+  let signingOut = $state(false)
+
   async function handleLogout() {
-    try {
-      await api.auth.logout()
-    } catch {
-      // Always clear local state on logout.
-    }
-    clearSessionUser()
-    navigateReplace('/login')
+    signingOut = true
+    // Clears local state first, then waits at most 1 s for the server (D6).
+    await session.signOut()
   }
 </script>
 
@@ -448,8 +442,36 @@
           </span>
           <p class="text-sm font-medium">Sign out of this device</p>
         </div>
-        <Button type="button" variant="outline" size="sm" onclick={handleLogout}>Log out</Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          loading={signingOut}
+          onclick={handleLogout}
+        >
+          Log out
+        </Button>
       </div>
     </section>
+  {:else}
+    <!-- Account details unknown until the background check answers (D4). -->
+    <div class="flex flex-col gap-6" aria-hidden="true" data-testid="settings-skeleton">
+      {#each [1, 2, 2, 1] as rows, index (index)}
+        <div class="overflow-hidden rounded-[var(--radius)] border border-border bg-card">
+          <div class="border-b border-border px-5 py-3">
+            <div class="h-3 w-20 animate-pulse rounded bg-muted"></div>
+          </div>
+          {#each Array.from({ length: rows }, (_, i) => i) as row (row)}
+            <div class="flex items-center gap-3 border-b border-border px-5 py-4 last:border-b-0">
+              <div class="size-9 shrink-0 animate-pulse rounded-full bg-muted"></div>
+              <div class="flex flex-1 flex-col gap-2">
+                <div class="h-3.5 w-32 animate-pulse rounded bg-muted"></div>
+                <div class="h-3.5 w-48 animate-pulse rounded bg-muted"></div>
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/each}
+    </div>
   {/if}
 </section>

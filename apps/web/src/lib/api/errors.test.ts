@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { ApiErrorException, getErrorCode, getErrorMessage, isApiError } from './errors'
+import { ApiErrorException, getErrorCode, getErrorMessage, isApiError, isApiStatus } from './errors'
 
 describe('isApiError', () => {
   it('accepts objects carrying a recognized string field', () => {
@@ -84,5 +84,44 @@ describe('ApiErrorException', () => {
   it('falls back to a generic message when the body has none', () => {
     const err = new ApiErrorException({ code: 'X' })
     expect(err.message).toBe('Request failed')
+  })
+})
+
+describe('ApiErrorException status', () => {
+  it('carries the status and an explicit message', () => {
+    const err = new ApiErrorException(
+      { code: 'forbidden', message: 'Admins only' },
+      { status: 403, message: 'Admins only (trace: t-1)' }
+    )
+    expect(err.status).toBe(403)
+    expect(err.code).toBe('forbidden')
+    expect(err.message).toBe('Admins only (trace: t-1)')
+  })
+
+  it('accepts a missing body', () => {
+    const err = new ApiErrorException(null, { status: 500 })
+    expect(err.status).toBe(500)
+    expect(err.message).toBe('Request failed')
+  })
+
+  it('keeps the real status even if the body has a status field', () => {
+    const body = { message: 'x', status: 200 } as unknown as { message: string }
+    expect(new ApiErrorException(body, { status: 503 }).status).toBe(503)
+  })
+})
+
+describe('isApiStatus', () => {
+  it('matches an ApiErrorException with that status only', () => {
+    const err = new ApiErrorException({ code: 'forbidden' }, { status: 403 })
+    expect(isApiStatus(err, 403)).toBe(true)
+    expect(isApiStatus(err, 500)).toBe(false)
+  })
+
+  it('rejects other errors and values', () => {
+    expect(isApiStatus(new Error('403'), 403)).toBe(false)
+    expect(isApiStatus(new TypeError('Failed to fetch'), 403)).toBe(false)
+    expect(isApiStatus({ status: 403 }, 403)).toBe(false)
+    expect(isApiStatus(null, 403)).toBe(false)
+    expect(isApiStatus(new ApiErrorException({ code: 'x' }), 403)).toBe(false)
   })
 })

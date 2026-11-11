@@ -106,6 +106,15 @@ describe('auth api', () => {
     expect(clearTokenExpiry).toHaveBeenCalledTimes(1)
   })
 
+  it('passes keepalive through to the logout request when asked', async () => {
+    const { client, request } = fakeClient()
+    const api = createAuthApi(client)
+
+    await api.logout({ keepalive: true })
+
+    expect(request).toHaveBeenCalledWith('/auth/logout', { method: 'POST', keepalive: true })
+  })
+
   it('refreshes via fingerprinted POST /auth/refresh and records expiry', async () => {
     const { client, requestWithFingerprint } = fakeClient({ expires_at: 1_700_000_200 })
     const api = createAuthApi(client)

@@ -1,6 +1,8 @@
 import { expect, test } from '@playwright/test'
 
 test.describe('auth pages', () => {
+  // `/` opens the dashboard; with no session hint, its head script sends the
+  // visitor on to sign-in before the dashboard is drawn.
   test('the site root sends visitors to sign in', async ({ page }) => {
     await page.goto('/')
 

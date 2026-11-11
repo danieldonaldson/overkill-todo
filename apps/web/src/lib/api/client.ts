@@ -11,7 +11,7 @@ import {
 } from '../auth/token'
 import { API_BASE } from '../config'
 import type { ApiError } from './errors'
-import { ApiErrorException, getErrorCode, getErrorMessage } from './errors'
+import { ApiErrorException, getErrorCode, getErrorMessage, isApiError } from './errors'
 
 /**
  * Get the API base URL for direct fetch calls.
@@ -202,7 +202,10 @@ export class HttpClient {
     if (!response.ok) {
       let errorBody: ApiError | null = null
       try {
-        errorBody = await response.json()
+        const parsed: unknown = await response.json()
+        // Only keep a recognisable error object: a string or array body would
+        // make the field checks below throw.
+        errorBody = isApiError(parsed) ? parsed : null
       } catch {
         // Could not parse JSON
       }
@@ -210,18 +213,13 @@ export class HttpClient {
       const errorMessage =
         getErrorMessage(errorBody) ?? `Request failed with status ${response.status}`
 
-      // If the error has error_code (structured API error), throw a typed Error
-      // that still carries error_code, attempts_remaining, etc. so callers can
-      // inspect them while `instanceof Error` checks keep working.
-      if (errorBody && 'error_code' in errorBody) {
-        throw new ApiErrorException(errorBody)
-      }
-
-      // Otherwise, throw a plain Error with the message
-      const errorWithTrace = lastTraceId
-        ? `${errorMessage} (trace: ${lastTraceId})`
-        : String(errorMessage)
-      throw new Error(errorWithTrace)
+      // Structured auth errors (with error_code) keep their message as-is: the
+      // auth forms show it directly. Everything else gets the trace ID appended
+      // for support. Both carry the status and the body's fields.
+      const isStructured = errorBody?.error_code !== undefined
+      const message =
+        !isStructured && lastTraceId ? `${errorMessage} (trace: ${lastTraceId})` : errorMessage
+      throw new ApiErrorException(errorBody, { status: response.status, message })
     }
 
     // Handle 204 No Content

@@ -18,6 +18,7 @@ vi.mock('../auth/token', () => ({
 }))
 
 import { getApiBaseUrl, getLastTraceId, HttpClient } from './client'
+import { ApiErrorException, isApiStatus } from './errors'
 import { clearTokenExpiry, ensureValidToken, getTokenExpiry, setTokenExpiry } from '../auth/token'
 import { clearSessionUser } from '../auth/session'
 import { redirect } from '../navigation'
@@ -249,6 +250,75 @@ describe('HttpClient.request', () => {
 
     await expect(new HttpClient().request('/items')).rejects.toThrow('Boom (trace: trace-123)')
     expect(getLastTraceId()).toBe('trace-123')
+  })
+})
+
+describe('HttpClient.request errors carry the HTTP status', () => {
+  async function failure(response: ReturnType<typeof fakeResponse>): Promise<unknown> {
+    mockFetch.mockResolvedValueOnce(response)
+    return new HttpClient()
+      .request('/items')
+      .then(() => null)
+      .catch((e: unknown) => e)
+  }
+
+  it('throws ApiErrorException with status 403 and the trace id for a {code, message} body', async () => {
+    const error = await failure(
+      fakeResponse({
+        status: 403,
+        body: { code: 'forbidden', message: 'Admins only' },
+        traceId: 'trace-403',
+      })
+    )
+
+    expect(error).toBeInstanceOf(ApiErrorException)
+    expect(error).toBeInstanceOf(Error)
+    expect(isApiStatus(error, 403)).toBe(true)
+    expect(error).toMatchObject({ status: 403, code: 'forbidden' })
+    expect((error as Error).message).toBe('Admins only (trace: trace-403)')
+  })
+
+  it('throws ApiErrorException with status 500 and the trace id', async () => {
+    const error = await failure(
+      fakeResponse({ status: 500, body: { message: 'Boom' }, traceId: 'trace-500' })
+    )
+
+    expect(isApiStatus(error, 500)).toBe(true)
+    expect((error as Error).message).toBe('Boom (trace: trace-500)')
+  })
+
+  it('still carries the status when the body is not an error object', async () => {
+    const error = await failure(fakeResponse({ status: 502, body: 'Bad Gateway', traceId: 't' }))
+
+    expect(isApiStatus(error, 502)).toBe(true)
+    expect((error as Error).message).toBe('Request failed with status 502 (trace: t)')
+  })
+
+  it('still exposes error_code (and keeps its message as-is) for structured bodies', async () => {
+    const error = await failure(
+      fakeResponse({
+        status: 400,
+        body: { error_code: 'CODE_INVALID', attempts_remaining: 1, message: 'Wrong code' },
+        traceId: 'trace-400',
+      })
+    )
+
+    expect(isApiStatus(error, 400)).toBe(true)
+    expect(error !== null && typeof error === 'object' && 'error_code' in error).toBe(true)
+    expect(error).toMatchObject({ error_code: 'CODE_INVALID', attempts_remaining: 1 })
+    expect((error as Error).message).toBe('Wrong code')
+  })
+
+  it('lets a network failure through as the browser TypeError', async () => {
+    mockFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    const error = await new HttpClient()
+      .request('/items')
+      .then(() => null)
+      .catch((e: unknown) => e)
+
+    expect(error).toBeInstanceOf(TypeError)
+    expect(error).not.toBeInstanceOf(ApiErrorException)
   })
 })
 

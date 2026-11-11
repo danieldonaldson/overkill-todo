@@ -28,7 +28,9 @@ vi.mock('../../lib/navigation', () => ({
 }))
 
 import { api } from '../../lib/api'
-import { setCurrentUser } from '../../lib/auth/current-user'
+import { resetSession, session } from '../../lib/auth/session.svelte'
+import { getSessionUser } from '../../lib/auth/session'
+import { getTokenExpiry, setTokenExpiry } from '../../lib/auth/token'
 import { navigateReplace } from '../../lib/navigation'
 import type { User } from '../../lib/types'
 
@@ -42,11 +44,14 @@ const passwordUser: User = {
   oauth_providers: ['google'],
 }
 
+/** Seed the tab's session store (and its sessionStorage cache). */
+function setCurrentUser(user: User) {
+  session.set(user)
+}
+
 describe('SettingsPanel', () => {
   beforeEach(() => {
-    sessionStorage.clear()
-    vi.clearAllMocks()
-    setCurrentUser(null)
+    resetSession()
   })
 
   it('loads and displays account details', async () => {
@@ -56,8 +61,64 @@ describe('SettingsPanel', () => {
 
     await expect.element(screen.getByText('test@example.com')).toBeInTheDocument()
     await expect.element(screen.getByRole('button', { name: /unlink google/i })).toBeInTheDocument()
-    // The user comes from AuthGuard; the panel must not re-fetch /auth/me.
+    // The header owns the account check; the panel must not trigger it.
     expect(api.auth.me).not.toHaveBeenCalled()
+  })
+
+  it('shows section placeholders, not forms, until the account is known', async () => {
+    const screen = await render(SettingsPanel)
+
+    await expect.element(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument()
+    await expect.element(screen.getByTestId('settings-skeleton')).toBeInTheDocument()
+    // Which password form to show depends on has_password, so neither is shown.
+    expect(screen.container.querySelector('form')).toBeNull()
+    expect(screen.container.textContent).not.toMatch(/loading/i)
+
+    // The background check answers: the real sections replace the placeholders.
+    setCurrentUser({ ...passwordUser, has_password: false })
+
+    await expect.element(screen.getByText('Set a password')).toBeInTheDocument()
+    await expect.element(screen.getByTestId('settings-skeleton')).not.toBeInTheDocument()
+  })
+
+  it('shows the server details when the check corrects a stale cache', async () => {
+    setCurrentUser({ ...passwordUser, has_password: false })
+    const screen = await render(SettingsPanel)
+    await expect.element(screen.getByText('Set a password')).toBeInTheDocument()
+
+    setCurrentUser(passwordUser)
+
+    await expect.element(screen.getByLabelText(/current password/i)).toBeInTheDocument()
+    expect(screen.container.textContent).not.toContain('Set a password')
+  })
+
+  it('records a newly set password in the session store', async () => {
+    setCurrentUser({ ...passwordUser, has_password: false })
+    vi.mocked(api.users.setPassword).mockResolvedValue(undefined)
+    const screen = await render(SettingsPanel)
+
+    await screen.getByLabelText(/^new password/i).fill('newpassword123')
+    await screen.getByRole('button', { name: /set password/i }).click()
+
+    await expect.element(screen.getByText('Password set.')).toBeInTheDocument()
+    expect(api.users.setPassword).toHaveBeenCalledWith({ new_password: 'newpassword123' })
+    expect(session.user?.has_password).toBe(true)
+    // Written through, so a later page in the tab starts from it.
+    expect(getSessionUser()?.has_password).toBe(true)
+    await expect.element(screen.getByLabelText(/current password/i)).toBeInTheDocument()
+  })
+
+  it('records an unlinked Google account in the session store', async () => {
+    setCurrentUser(passwordUser)
+    vi.mocked(api.oauth.unlink).mockResolvedValue(undefined)
+    const screen = await render(SettingsPanel)
+
+    await screen.getByRole('button', { name: /unlink google/i }).click()
+
+    await expect.element(screen.getByText('Google account unlinked.')).toBeInTheDocument()
+    expect(session.user?.oauth_providers).toEqual([])
+    expect(getSessionUser()?.oauth_providers).toEqual([])
+    await expect.element(screen.getByText('Not linked')).toBeInTheDocument()
   })
 
   it('changes password for users with an existing password', async () => {
@@ -104,6 +165,8 @@ describe('SettingsPanel', () => {
       })
     })
     await expect.element(screen.getByText(/scheduled for deletion/i)).toBeInTheDocument()
+    expect(session.user?.deletion_scheduled_at).toBe('2026-07-04T00:00:00Z')
+    expect(getSessionUser()?.deletion_scheduled_at).toBe('2026-07-04T00:00:00Z')
   })
 
   it('blocks deletion until the password is provided', async () => {
@@ -139,6 +202,10 @@ describe('SettingsPanel', () => {
     await screen.getByRole('button', { name: /unlink google/i }).click()
 
     await expect.element(screen.getByRole('alert')).toHaveTextContent('Unlink failed')
+    // A failed change leaves the record as it was.
+    expect(session.user?.oauth_providers).toEqual(['google'])
+    expect(getSessionUser()?.oauth_providers).toEqual(['google'])
+    await expect.element(screen.getByText('Linked', { exact: true })).toBeInTheDocument()
   })
 
   it('exports account data as a downloadable JSON file', async () => {
@@ -189,9 +256,13 @@ describe('SettingsPanel', () => {
     await vi.waitFor(() => {
       expect(api.users.cancelDeletion).toHaveBeenCalled()
     })
+    await expect.element(screen.getByText('Account deletion cancelled.')).toBeInTheDocument()
+    expect(session.user?.deletion_scheduled_at).toBeNull()
+    expect(getSessionUser()?.deletion_scheduled_at).toBeNull()
   })
 
-  it('logs out and navigates to login', async () => {
+  it('logs out through the session store and navigates to login', async () => {
+    setTokenExpiry(1_700_000_000)
     setCurrentUser(passwordUser)
     vi.mocked(api.auth.logout).mockResolvedValue(undefined)
     const screen = await render(SettingsPanel)
@@ -199,8 +270,12 @@ describe('SettingsPanel', () => {
     await screen.getByRole('button', { name: /log out/i }).click()
 
     await vi.waitFor(() => {
-      expect(api.auth.logout).toHaveBeenCalled()
+      expect(api.auth.logout).toHaveBeenCalledWith({ keepalive: true })
       expect(navigateReplace).toHaveBeenCalledWith('/login')
     })
+    // Local state, the cache and the session hint are gone.
+    expect(session.user).toBeNull()
+    expect(getSessionUser()).toBeNull()
+    expect(getTokenExpiry()).toBeNull()
   })
 })

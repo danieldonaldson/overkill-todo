@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { seedSession } from './helpers/session'
 
 test.describe('dashboard dark mode', () => {
   test('saved dark preference is applied before paint', async ({ page }) => {
@@ -13,6 +14,7 @@ test.describe('dashboard dark mode', () => {
   })
 
   test('theme toggle exists in dashboard chrome', async ({ page }) => {
+    await seedSession(page)
     await page.route('**/api/v1/auth/me', async (route) => {
       await route.fulfill({
         json: {
@@ -33,6 +35,7 @@ test.describe('dashboard dark mode', () => {
   })
 
   test('theme toggle switches to dark mode and persists the preference', async ({ page }) => {
+    await seedSession(page)
     await page.route('**/api/v1/auth/me', async (route) => {
       await route.fulfill({
         json: {

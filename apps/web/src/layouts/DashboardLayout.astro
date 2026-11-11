@@ -1,17 +1,22 @@
 ---
 import Base from './Base.astro'
-import DashboardApp from '../components/dashboard/DashboardApp.svelte'
+import DashboardHeader from '../components/dashboard/DashboardHeader.svelte'
 
 interface Props {
   title?: string
-  skipVerificationCheck?: boolean
 }
 
-const { title = 'Overkill Todo Dashboard', skipVerificationCheck = false } = Astro.props
+const { title = 'Overkill Todo Dashboard' } = Astro.props
 ---
 
 <Base {title}>
-  <DashboardApp client:load {skipVerificationCheck}>
-    <slot />
-  </DashboardApp>
+  {/* Before paint: no session hint means straight to /login (design D2). */}
+  <script is:inline slot="head" src="/scripts/dashboard-session-hint.js"></script>
+  {/* The header island survives client-side moves between dashboard pages
+      (design D1), so it must not wrap the page content: a persisted island
+      keeps its slot too. Panels are per-page islands, rebuilt on each move. */}
+  <div class="min-h-screen bg-background text-foreground">
+    <DashboardHeader client:load transition:persist="dashboard-header" />
+    <main class="mx-auto w-full max-w-6xl px-4 py-6"><slot /></main>
+  </div>
 </Base>

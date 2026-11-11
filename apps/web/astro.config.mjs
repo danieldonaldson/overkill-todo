@@ -27,9 +27,11 @@ const devAllowedHosts = process.env.DEV_ALLOWED_HOSTS
 
 export default defineConfig({
   output: 'static',
-  // No landing page: `/` goes to sign-in. Put marketing in its own site (shared
-  // design tokens only). Under `output: 'static'` this emits a meta-refresh index.html.
-  redirects: { '/': '/login' },
+  // No landing page: `/` opens the dashboard, which is optimistic. Its head
+  // script sends a browser with no session hint on to /login before paint. Put
+  // marketing in its own site (shared design tokens only). Under
+  // `output: 'static'` this emits a meta-refresh index.html.
+  redirects: { '/': '/dashboard' },
   integrations: [svelte()],
   server: { port: webPort },
   // The Astro dev toolbar wedges behind single-origin proxies (its entrypoint.js

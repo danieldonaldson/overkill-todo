@@ -27,6 +27,8 @@ const { title = 'Overkill Todo Dashboard' } = Astro.props
         (per-env runtime config) before any island hydrates — see src/lib/config.ts. */}
     <script is:inline src="/config.js"></script>
     <script is:inline src="/scripts/theme-init.js"></script>
+    {/* Per-layout head content, e.g. DashboardLayout's session hint check. */}
+    <slot name="head" />
   </head>
   <body class="bg-background font-body text-foreground antialiased">
     <ModeWatcher client:load />

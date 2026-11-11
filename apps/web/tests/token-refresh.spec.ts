@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test'
+import { seedSession } from './helpers/session'
 
 const TEST_USER = {
   id: 'test-user',
@@ -16,6 +17,7 @@ const TEST_USER = {
 // end-to-end in the browser, which previously had no E2E coverage.
 test.describe('silent token refresh', () => {
   test('a 401 is recovered by one silent refresh + retry, no redirect', async ({ page }) => {
+    await seedSession(page)
     let refreshCount = 0
     await page.route('**/api/v1/auth/refresh', async (route) => {
       refreshCount += 1
@@ -50,6 +52,9 @@ test.describe('silent token refresh', () => {
   })
 
   test('a failed refresh after a 401 redirects to the login page', async ({ page }) => {
+    // With a hint, so the redirect comes from the failed refresh, not the
+    // dashboard's no-hint check.
+    await seedSession(page)
     // The refresh cookie is also dead → refresh fails, session is truly expired.
     await page.route('**/api/v1/auth/refresh', async (route) => {
       await route.fulfill({ status: 401, json: { message: 'refresh expired' } })
@@ -69,9 +74,7 @@ test.describe('silent token refresh', () => {
   }) => {
     // A returning visitor whose access token expired: the stored expiry is in
     // the past, the refresh cookie (not visible here) is still good.
-    await page.addInitScript(() => {
-      localStorage.setItem('jwt_expiry', String(Math.floor(Date.now() / 1000) - 60))
-    })
+    await seedSession(page, { expiry: Math.floor(Date.now() / 1000) - 60 })
 
     const calls: string[] = []
     await page.route('**/api/v1/auth/refresh', async (route) => {

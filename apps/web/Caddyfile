@@ -72,7 +72,7 @@
 	# is what lets the Cache-Control matchers below see the path AFTER try_files rewrote it.
 	route {
 		# Probe target for the kubelet readiness/liveness probes. `/` is only a meta-refresh
-		# stub to /login (astro.config.mjs `redirects`), so probing it says nothing about the
+		# stub to /dashboard (astro.config.mjs `redirects`), so probing it says nothing about the
 		# app being served. Answered directly — no filesystem hit, no redirect.
 		respond /healthz "ok" 200
 

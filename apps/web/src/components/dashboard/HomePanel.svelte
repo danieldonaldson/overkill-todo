@@ -6,19 +6,23 @@
     CardHeader,
     CardTitle,
   } from '$lib/components/ui/card'
-  import { getCurrentUser } from '../../lib/auth/current-user'
+  import { session } from '../../lib/auth/session.svelte'
 
   // Placeholder home: replace with the product's first real panel. The user
-  // comes from AuthGuard, which already fetched /auth/me for this page load.
-  const user = getCurrentUser()
+  // comes from the tab's session store; it is null only until the background
+  // check answers in a tab with nothing cached (design D4).
 </script>
 
 <div class="space-y-6">
   <div>
     <h1 class="text-2xl font-semibold">Home</h1>
-    <p class="text-sm text-muted-foreground">
-      {user ? `Signed in as ${user.email}` : 'Loading…'}
-    </p>
+    {#if session.user}
+      <p class="text-sm text-muted-foreground">Signed in as {session.user.email}</p>
+    {:else}
+      <div class="flex h-5 items-center" aria-hidden="true">
+        <div class="h-3.5 w-56 animate-pulse rounded bg-muted"></div>
+      </div>
+    {/if}
   </div>
 
   <Card>
