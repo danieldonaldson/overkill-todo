@@ -129,7 +129,7 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
     // --- Act: anonymize (the data-scrub half of account deletion).
     let mut anonymized = user.clone();
     let anon_email = Email::new(&format!("deleted-{user_id}@anonymized.local")).unwrap();
-    anonymized.anonymize(anon_email);
+    anonymized.anonymize(anon_email).unwrap();
     user_repo
         .anonymize_account(&anonymized)
         .await
@@ -161,5 +161,29 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
         child_row_count(&pool, user_id).await,
         0,
         "all child rows must be purged",
+    );
+}
+
+/// The schema enforces what `AccountStatus` encodes: a deleted account cannot
+/// also be pending deletion, whichever code path tries to write it.
+#[sqlx::test(migrations = "./migrations")]
+async fn deleted_account_cannot_be_pending_deletion(pool: PgPool) {
+    let now = Utc::now();
+    let err = sqlx::query!(
+        r#"
+        INSERT INTO users (email, deleted_at, deletion_scheduled_at)
+        VALUES ('both@example.com', $1, $2)
+        "#,
+        now,
+        now + Duration::days(14),
+    )
+    .execute(&pool)
+    .await
+    .expect_err("deleted + scheduled must violate the check constraint");
+
+    let db_err = err.as_database_error().expect("a database error");
+    assert_eq!(
+        db_err.constraint(),
+        Some("users_deleted_not_pending_deletion")
     );
 }

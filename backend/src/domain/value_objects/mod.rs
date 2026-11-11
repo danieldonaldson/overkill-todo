@@ -9,10 +9,12 @@ id_macros::uuid_id!(RefreshTokenId);
 id_macros::uuid_id!(VerificationCodeId);
 id_macros::uuid_id!(ResetCodeId);
 
+pub mod account_status;
 pub mod email;
 
 pub mod user_role;
 
+pub use account_status::AccountStatus;
 pub use email::Email;
 
 pub use user_role::UserRole;

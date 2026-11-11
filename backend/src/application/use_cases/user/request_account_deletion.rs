@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 
 use crate::application::ports::{PasswordHasher, UserRepository};
 use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
+use crate::domain::value_objects::{AccountStatus, UserId};
 
 /// Use case for requesting account deletion (soft, grace-period-gated).
 pub struct RequestAccountDeletionUseCase {
@@ -42,7 +42,8 @@ impl RequestAccountDeletionUseCase {
     ///
     /// # Errors
     /// - `NotFound` if the user doesn't exist.
-    /// - `Validation` if a password user omitted their password.
+    /// - `Validation` if a password user omitted their password, or the account
+    ///   is already deleted.
     /// - `Authorization` if the supplied password is wrong.
     #[tracing::instrument(name = "usecase.request_account_deletion", skip_all, fields(user_id = %user_id))]
     pub async fn execute(
@@ -56,9 +57,9 @@ impl RequestAccountDeletionUseCase {
             .await?
             .ok_or_else(|| DomainError::NotFound("User not found".into()))?;
 
-        // Idempotent: already scheduled → return the existing date.
-        if let Some(scheduled_at) = user.deletion_scheduled_at() {
-            return Ok(scheduled_at);
+        // Idempotent: already scheduled → return the existing date, no re-auth.
+        if let AccountStatus::PendingDeletion { scheduled_for } = user.status() {
+            return Ok(scheduled_for);
         }
 
         // Re-authenticate password users.
@@ -71,10 +72,8 @@ impl RequestAccountDeletionUseCase {
             }
         }
 
-        user.schedule_deletion();
-        let scheduled_at = user
-            .deletion_scheduled_at()
-            .ok_or_else(|| DomainError::Persistence("deletion schedule not set".into()))?;
+        // Refuses an already-deleted account.
+        let scheduled_at = user.schedule_deletion()?;
         self.user_repository.save(&user).await?;
 
         tracing::info!(user_id = %user_id, %scheduled_at, "Account deletion scheduled");
@@ -92,7 +91,7 @@ mod tests {
     fn make_user(password_hash: Option<&str>, scheduled: bool) -> User {
         let mut user = UserBuilder::new().password_hash(password_hash).build();
         if scheduled {
-            user.schedule_deletion();
+            user.schedule_deletion().unwrap();
         }
         user
     }
@@ -180,6 +179,29 @@ mod tests {
         let uc =
             RequestAccountDeletionUseCase::new(Arc::new(repo), Arc::new(MockPasswordHasher::new()));
         assert_eq!(uc.execute(&user_id, None).await.unwrap(), existing);
+    }
+
+    /// An anonymized account has no password, so it would skip re-auth; the
+    /// domain transition must still refuse to schedule it.
+    #[tokio::test]
+    async fn deleted_account_is_rejected() {
+        let user = UserBuilder::new()
+            .password_hash(None)
+            .status(AccountStatus::Deleted {
+                deleted_at: Utc::now(),
+            })
+            .build();
+        let user_id = *user.id();
+
+        let mut repo = MockUserRepository::new();
+        repo.expect_find_by_id()
+            .returning(move |_| Ok(Some(user.clone())));
+        repo.expect_save().never();
+
+        let uc =
+            RequestAccountDeletionUseCase::new(Arc::new(repo), Arc::new(MockPasswordHasher::new()));
+        let err = uc.execute(&user_id, None).await.unwrap_err();
+        assert!(matches!(err, DomainError::Validation(_)));
     }
 
     #[tokio::test]

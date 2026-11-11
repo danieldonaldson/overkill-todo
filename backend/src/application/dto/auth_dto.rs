@@ -251,7 +251,7 @@ impl UserResponse {
             oauth_providers,
             pending_email: parts.pending_email.map(Email::into_string),
             pending_email_requested_at: parts.pending_email_requested_at,
-            deletion_scheduled_at: parts.deletion_scheduled_at,
+            deletion_scheduled_at: parts.status.deletion_scheduled_at(),
             role: parts.role.to_db_str().to_string(),
             created_at: parts.created_at,
         }

@@ -94,6 +94,7 @@ mod tests {
     use crate::application::ports::outgoing::email_service::MockEmailService;
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
     use crate::domain::entities::UserParts;
+    use crate::domain::value_objects::AccountStatus;
     use crate::domain::value_objects::{UserId, UserRole};
     use chrono::Utc;
 
@@ -107,8 +108,7 @@ mod tests {
             email_verified: false, // Not verified
             pending_email: None,
             pending_email_requested_at: None,
-            deleted_at: None,
-            deletion_scheduled_at: None,
+            status: AccountStatus::Active,
             role: UserRole::User,
             created_at: Utc::now(),
             updated_at: Utc::now(),
@@ -126,8 +126,7 @@ mod tests {
             email_verified: true, // Verified
             pending_email: None,
             pending_email_requested_at: None,
-            deleted_at: None,
-            deletion_scheduled_at: None,
+            status: AccountStatus::Active,
             role: UserRole::User,
             created_at: Utc::now(),
             updated_at: Utc::now(),

@@ -46,6 +46,8 @@ impl CompleteSignupUseCase {
     /// - `Authorization` if the token is invalid or expired
     /// - `Validation` if email doesn't match or user already has password
     /// - `NotFound` if the user doesn't exist
+    /// - `Conflict` if a concurrent request changed the user first (e.g. the
+    ///   same signup token redeemed twice at once)
     #[tracing::instrument(name = "usecase.complete_signup", skip_all)]
     pub async fn execute(
         &self,
@@ -57,7 +59,7 @@ impl CompleteSignupUseCase {
         let user_id = self.jwt_service.validate_signup_token(signup_token)?;
 
         // Find the user by ID from token
-        let user = self
+        let mut user = self
             .user_repo
             .find_by_id(&user_id)
             .await?
@@ -75,21 +77,16 @@ impl CompleteSignupUseCase {
             ));
         }
 
-        // Set the password
-        self.user_repo
-            .update_password(user.id(), password_hash)
-            .await?;
-
-        // Reload user to get updated state
-        let updated_user = self
-            .user_repo
-            .find_by_id(user.id())
-            .await?
-            .ok_or_else(|| DomainError::Persistence("User not found after update".into()))?;
+        // Write through the versioned `save`, not an unconditional UPDATE: the
+        // check above is only advisory under concurrency. If another request set
+        // a password since we loaded the user, the row's version moved on and
+        // this save fails with `Conflict` instead of overwriting that password.
+        user.update_password(password_hash.to_owned());
+        self.user_repo.save(&user).await?;
 
         tracing::info!(user_id = %user.id(), "Signup completed, password set");
 
-        Ok(updated_user)
+        Ok(user)
     }
 }
 
@@ -126,10 +123,10 @@ mod tests {
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user_with_password(user_id, None))));
-        repo.expect_update_password()
+        repo.expect_save()
             .times(1)
-            .withf(move |id, hash| id == &user_id && hash == "new-hash")
-            .returning(|_, _| Ok(()));
+            .withf(move |u| u.id() == &user_id && u.password_hash() == Some("new-hash"))
+            .returning(|_| Ok(()));
 
         let uc = CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)));
         let result = uc.execute("token", EMAIL, "new-hash").await;
@@ -154,7 +151,7 @@ mod tests {
         let user_id = UserId::new();
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id().returning(|_| Ok(None));
-        repo.expect_update_password().never();
+        repo.expect_save().never();
 
         let uc = CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)));
         let err = uc.execute("token", EMAIL, "new-hash").await.unwrap_err();
@@ -170,7 +167,7 @@ mod tests {
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user_with_password(user_id, None))));
-        repo.expect_update_password().never();
+        repo.expect_save().never();
 
         let uc = CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)));
         let err = uc
@@ -186,10 +183,28 @@ mod tests {
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user_with_password(user_id, Some("existing")))));
-        repo.expect_update_password().never();
+        repo.expect_save().never();
 
         let uc = CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)));
         let err = uc.execute("token", EMAIL, "new-hash").await.unwrap_err();
         assert!(matches!(err, DomainError::Validation(_)));
+    }
+
+    /// Two requests redeeming the same signup token both pass the
+    /// `has_password` check; the loser's versioned save must surface the
+    /// conflict rather than overwrite the winner's password.
+    #[tokio::test]
+    async fn concurrent_completion_loses_with_conflict() {
+        let user_id = UserId::new();
+        let mut repo = MockUserRepository::new();
+        repo.expect_find_by_id()
+            .returning(move |_| Ok(Some(user_with_password(user_id, None))));
+        repo.expect_save()
+            .times(1)
+            .returning(|_| Err(DomainError::Conflict("modified concurrently".into())));
+
+        let uc = CompleteSignupUseCase::new(Arc::new(repo), Arc::new(jwt_returning(user_id)));
+        let err = uc.execute("token", EMAIL, "new-hash").await.unwrap_err();
+        assert!(matches!(err, DomainError::Conflict(_)));
     }
 }

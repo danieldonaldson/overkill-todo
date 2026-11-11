@@ -7,7 +7,7 @@ use crate::application::ports::outgoing::{
 use crate::domain::{
     entities::{User, UserParts},
     errors::DomainError,
-    value_objects::{Email, UserId, UserRole},
+    value_objects::{AccountStatus, Email, UserId, UserRole},
 };
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -34,8 +34,7 @@ impl PostgresUserRepository {
             email_verified: row.email_verified,
             pending_email,
             pending_email_requested_at: row.pending_email_requested_at,
-            deleted_at: row.deleted_at,
-            deletion_scheduled_at: row.deletion_scheduled_at,
+            status: AccountStatus::from_columns(row.deleted_at, row.deletion_scheduled_at),
             role: row.role,
             created_at: row.created_at,
             updated_at: row.updated_at,
