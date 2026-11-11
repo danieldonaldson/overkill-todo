@@ -136,6 +136,7 @@ pub async fn csrf_middleware(mut req: Request, next: Next) -> Result<Response, A
         &header_token,
         crypto.csrf_secret(),
         &user.user_id.to_string(),
+        crypto.csrf_lifetime_secs(),
     )?;
 
     Ok(next.run(req).await)

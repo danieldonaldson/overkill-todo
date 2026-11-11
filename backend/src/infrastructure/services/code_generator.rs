@@ -15,12 +15,8 @@ const TEST_EMAIL_PATTERNS: &[&str] = &[
 /// Fixed code used for test emails.
 pub const TEST_CODE: &str = "123456";
 
-/// Checks if an email matches a test pattern.
-///
-/// This is used by the email service to skip sending emails to test addresses.
-/// Returns true if the email starts with any of the test patterns.
-#[must_use]
-pub fn is_test_email(email: &str) -> bool {
+/// Whether an email's local part starts with one of the test prefixes.
+fn matches_test_pattern(email: &str) -> bool {
     let local_part = email.split('@').next().unwrap_or("");
     TEST_EMAIL_PATTERNS
         .iter()
@@ -29,9 +25,10 @@ pub fn is_test_email(email: &str) -> bool {
 
 /// Production code generator that uses random 6-digit codes.
 ///
-/// In dev mode only (`debug_assertions`), emails matching test patterns
-/// (e.g., `e2e-*`, `test-*`) receive a fixed code to enable E2E testing.
-/// In release builds, all emails receive random codes.
+/// In `DEV_MODE` only ([`RandomCodeGenerator::development`], chosen in
+/// `main.rs`), emails matching test patterns (e.g., `e2e-*`, `test-*`) receive a
+/// fixed code to enable E2E testing. Otherwise every email gets a random code.
+/// Emails to test addresses are still sent; nothing here suppresses delivery.
 pub struct RandomCodeGenerator {
     /// Whether to allow test email patterns (dev mode only).
     allow_test_emails: bool,
@@ -61,14 +58,7 @@ impl RandomCodeGenerator {
 
     /// Checks if an email matches a test pattern.
     fn is_test_email(&self, email: &str) -> bool {
-        if !self.allow_test_emails {
-            return false;
-        }
-
-        let local_part = email.split('@').next().unwrap_or("");
-        TEST_EMAIL_PATTERNS
-            .iter()
-            .any(|pattern| local_part.starts_with(pattern))
+        self.allow_test_emails && matches_test_pattern(email)
     }
 }
 
@@ -186,29 +176,29 @@ mod tests {
 
     #[test]
     fn test_is_test_email_e2e() {
-        assert!(is_test_email("e2e-test@example.com"));
-        assert!(is_test_email("e2e-user@domain.com"));
-        assert!(is_test_email("e2e-1234567890@test.org"));
+        assert!(matches_test_pattern("e2e-test@example.com"));
+        assert!(matches_test_pattern("e2e-user@domain.com"));
+        assert!(matches_test_pattern("e2e-1234567890@test.org"));
     }
 
     #[test]
     fn test_is_test_email_test_prefix() {
-        assert!(is_test_email("test-user@example.com"));
-        assert!(is_test_email("test-something@domain.com"));
+        assert!(matches_test_pattern("test-user@example.com"));
+        assert!(matches_test_pattern("test-something@domain.com"));
     }
 
     #[test]
     fn test_is_test_email_playwright() {
-        assert!(is_test_email("playwright@example.com"));
-        assert!(is_test_email("playwright123@test.com"));
+        assert!(matches_test_pattern("playwright@example.com"));
+        assert!(matches_test_pattern("playwright123@test.com"));
     }
 
     #[test]
     fn test_is_test_email_regular_emails() {
-        assert!(!is_test_email("user@example.com"));
-        assert!(!is_test_email("john.doe@company.com"));
-        assert!(!is_test_email("testing@example.com")); // "testing" doesn't start with "test-"
-        assert!(!is_test_email("note2e@example.com")); // doesn't start with "e2e-"
+        assert!(!matches_test_pattern("user@example.com"));
+        assert!(!matches_test_pattern("john.doe@company.com"));
+        assert!(!matches_test_pattern("testing@example.com")); // "testing" doesn't start with "test-"
+        assert!(!matches_test_pattern("note2e@example.com")); // doesn't start with "e2e-"
     }
 
     // =========================================================================
@@ -238,7 +228,7 @@ mod tests {
         ) {
             let email = format!("{local}@{domain}");
             prop_assert!(
-                is_test_email(&email),
+                matches_test_pattern(&email),
                 "Expected {email} to be detected as test email"
             );
         }
@@ -260,7 +250,7 @@ mod tests {
 
             let email = format!("{local}@{domain}");
             prop_assert!(
-                !is_test_email(&email),
+                !matches_test_pattern(&email),
                 "Expected {email} to NOT be detected as test email"
             );
         }

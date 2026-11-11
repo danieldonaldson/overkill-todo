@@ -82,7 +82,14 @@ fn csrf(c: &mut Criterion) {
     });
     // Runs on every mutating request (CSRF middleware).
     g.bench_function("verify", |b| {
-        b.iter(|| verify_csrf_token(black_box(&token), crypto.csrf_secret(), &user_id));
+        b.iter(|| {
+            verify_csrf_token(
+                black_box(&token),
+                crypto.csrf_secret(),
+                &user_id,
+                crypto.csrf_lifetime_secs(),
+            )
+        });
     });
     g.finish();
 }

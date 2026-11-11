@@ -16,7 +16,7 @@
 //! # Security Properties
 //!
 //! - Tokens are cryptographically signed with HMAC-SHA256
-//! - Tokens expire after 15 minutes
+//! - Tokens expire with the session's access token (`JWT_EXPIRATION_MINUTES`)
 //! - Random component prevents token prediction
 //! - Tokens are bound to the authenticated user id
 
@@ -30,9 +30,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::error::AppError;
 
 type HmacSha256 = Hmac<Sha256>;
-
-/// CSRF token lifetime in seconds (15 minutes).
-const TOKEN_LIFETIME_SECS: u64 = 15 * 60;
 
 /// Clock skew tolerance in seconds (5 seconds into the future).
 const CLOCK_SKEW_TOLERANCE_SECS: u64 = 5;
@@ -88,13 +85,15 @@ pub fn generate_csrf_token(secret: &[u8], user_id: &str) -> String {
 /// Checks that:
 /// 1. The token has the correct format (3 parts)
 /// 2. The HMAC signature is valid
-/// 3. The token has not expired (15 minute lifetime)
+/// 3. The token has not expired (older than `lifetime_secs`)
 ///
 /// # Arguments
 ///
 /// * `token` - The token to verify
 /// * `secret` - The CSRF secret key for HMAC verification
 /// * `user_id` - The authenticated principal the token must be bound to
+/// * `lifetime_secs` - How long a token stays valid; the session's access-token
+///   lifetime, so the CSRF token and the session it pairs with expire together
 ///
 /// # Errors
 ///
@@ -104,7 +103,12 @@ pub fn generate_csrf_token(secret: &[u8], user_id: &str) -> String {
 ///
 /// Panics if the system time is before the Unix epoch (should never happen on
 /// properly configured systems).
-pub fn verify_csrf_token(token: &str, secret: &[u8], user_id: &str) -> Result<(), AppError> {
+pub fn verify_csrf_token(
+    token: &str,
+    secret: &[u8],
+    user_id: &str,
+    lifetime_secs: u64,
+) -> Result<(), AppError> {
     // Split token into parts
     let parts: Vec<&str> = token.split('.').collect();
     if parts.len() != 3 {
@@ -132,7 +136,7 @@ pub fn verify_csrf_token(token: &str, secret: &[u8], user_id: &str) -> Result<()
     }
 
     // Check if expired
-    if now > timestamp + TOKEN_LIFETIME_SECS {
+    if now > timestamp.saturating_add(lifetime_secs) {
         return Err(AppError::csrf_invalid());
     }
 
@@ -161,6 +165,7 @@ mod tests {
 
     const TEST_SECRET: &[u8] = b"test-csrf-secret-key-32-bytes!!";
     const TEST_USER: &str = "11111111-1111-1111-1111-111111111111";
+    const TEST_LIFETIME_SECS: u64 = 15 * 60;
 
     #[test]
     fn test_generate_token_format() {
@@ -190,63 +195,75 @@ mod tests {
     #[test]
     fn test_verify_valid_token() {
         let token = generate_csrf_token(TEST_SECRET, TEST_USER);
-        assert!(verify_csrf_token(&token, TEST_SECRET, TEST_USER).is_ok());
+        assert!(verify_csrf_token(&token, TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS).is_ok());
+    }
+
+    /// A correctly signed token for `TEST_USER` with a chosen issue time.
+    fn token_issued_at(timestamp: u64) -> String {
+        let mut random_bytes = [0u8; 16];
+        rand::rng().fill_bytes(&mut random_bytes);
+        let random_part = URL_SAFE_NO_PAD.encode(random_bytes);
+        let mut mac = HmacSha256::new_from_slice(TEST_SECRET).unwrap();
+        mac.update(format!("{random_part}.{timestamp}.{TEST_USER}").as_bytes());
+        let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
+        format!("{random_part}.{timestamp}.{signature}")
     }
 
     #[test]
     fn test_verify_expired_token() {
-        // Create a token with an old timestamp
-        let mut random_bytes = [0u8; 16];
-        rand::rng().fill_bytes(&mut random_bytes);
-        let random_part = URL_SAFE_NO_PAD.encode(random_bytes);
-
-        // Timestamp from 20 minutes ago (beyond 15 minute lifetime)
+        // Validly signed, so only the age can fail it: 20 minutes old against
+        // a 15 minute lifetime.
         let old_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs()
             - (20 * 60);
+        let token = token_issued_at(old_timestamp);
 
-        let message = format!("{random_part}.{old_timestamp}");
-        let mut mac = HmacSha256::new_from_slice(TEST_SECRET).unwrap();
-        mac.update(message.as_bytes());
-        let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
-
-        let token = format!("{message}.{signature}");
-        let result = verify_csrf_token(&token, TEST_SECRET, TEST_USER);
+        let result = verify_csrf_token(&token, TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS);
 
         assert!(result.is_err());
     }
 
+    /// The lifetime is the caller's (the session's), not a fixed 15 minutes.
     #[test]
-    fn test_verify_invalid_signature() {
-        let token = generate_csrf_token(TEST_SECRET, TEST_USER);
-
-        // Tamper with the token by changing a character in the signature
-        let mut chars: Vec<char> = token.chars().collect();
-        let last_idx = chars.len() - 1;
-        chars[last_idx] = if chars[last_idx] == 'a' { 'b' } else { 'a' };
-        let tampered_token: String = chars.into_iter().collect();
-
-        let result = verify_csrf_token(&tampered_token, TEST_SECRET, TEST_USER);
-        assert!(result.is_err());
+    fn test_verify_honours_configured_lifetime() {
+        let issued = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 20 * 60;
+        let token = token_issued_at(issued);
+        assert!(verify_csrf_token(&token, TEST_SECRET, TEST_USER, 15 * 60).is_err());
+        assert!(verify_csrf_token(&token, TEST_SECRET, TEST_USER, 30 * 60).is_ok());
     }
 
-    /// A token minted for one user must not verify for another.
     #[test]
     fn test_verify_rejects_other_user() {
         let token = generate_csrf_token(TEST_SECRET, TEST_USER);
         let other_user = "22222222-2222-2222-2222-222222222222";
-        assert!(verify_csrf_token(&token, TEST_SECRET, other_user).is_err());
-        assert!(verify_csrf_token(&token, TEST_SECRET, TEST_USER).is_ok());
+        assert!(verify_csrf_token(&token, TEST_SECRET, other_user, TEST_LIFETIME_SECS).is_err());
+        assert!(verify_csrf_token(&token, TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS).is_ok());
     }
 
     #[test]
     fn test_verify_malformed_token() {
         // Missing parts
-        assert!(verify_csrf_token("only-one-part", TEST_SECRET, TEST_USER).is_err());
-        assert!(verify_csrf_token("two.parts", TEST_SECRET, TEST_USER).is_err());
-        assert!(verify_csrf_token("too.many.parts.here", TEST_SECRET, TEST_USER).is_err());
+        assert!(
+            verify_csrf_token("only-one-part", TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS).is_err()
+        );
+        assert!(
+            verify_csrf_token("two.parts", TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS).is_err()
+        );
+        assert!(
+            verify_csrf_token(
+                "too.many.parts.here",
+                TEST_SECRET,
+                TEST_USER,
+                TEST_LIFETIME_SECS
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -254,7 +271,7 @@ mod tests {
         let token = generate_csrf_token(TEST_SECRET, TEST_USER);
         let wrong_secret = b"different-secret-key-32-bytes!!";
 
-        let result = verify_csrf_token(&token, wrong_secret, TEST_USER);
+        let result = verify_csrf_token(&token, wrong_secret, TEST_USER, TEST_LIFETIME_SECS);
         assert!(result.is_err());
     }
 
@@ -279,7 +296,7 @@ mod tests {
 
         let token = format!("{random_part}.{future_timestamp}.{signature}");
         assert!(
-            verify_csrf_token(&token, TEST_SECRET, TEST_USER).is_ok(),
+            verify_csrf_token(&token, TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS).is_ok(),
             "Token with small future timestamp should be valid"
         );
 
@@ -296,7 +313,7 @@ mod tests {
         let signature = URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes());
 
         let token = format!("{message}.{signature}");
-        let result = verify_csrf_token(&token, TEST_SECRET, TEST_USER);
+        let result = verify_csrf_token(&token, TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS);
         assert!(result.is_err());
     }
 
@@ -314,7 +331,7 @@ mod tests {
         #[test]
         fn prop_generated_tokens_verify(_seed in 0u64..1000) {
             let token = generate_csrf_token(TEST_SECRET, TEST_USER);
-            prop_assert!(verify_csrf_token(&token, TEST_SECRET, TEST_USER).is_ok());
+            prop_assert!(verify_csrf_token(&token, TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS).is_ok());
         }
 
         /// Tokens with wrong number of parts should fail.
@@ -326,7 +343,7 @@ mod tests {
             // Skip the valid case (3 parts)
             prop_assume!(num_parts != 3);
             let token = parts.into_iter().take(num_parts).collect::<Vec<_>>().join(".");
-            prop_assert!(verify_csrf_token(&token, TEST_SECRET, TEST_USER).is_err());
+            prop_assert!(verify_csrf_token(&token, TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS).is_err());
         }
 
         /// Non-numeric timestamps should fail parsing.
@@ -337,7 +354,7 @@ mod tests {
             signature in "[a-zA-Z0-9_-]{43}"
         ) {
             let token = format!("{random_part}.{bad_timestamp}.{signature}");
-            let result = verify_csrf_token(&token, TEST_SECRET, TEST_USER);
+            let result = verify_csrf_token(&token, TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS);
             prop_assert!(result.is_err());
         }
 
@@ -353,7 +370,7 @@ mod tests {
                 .unwrap()
                 .as_secs();
             let token = format!("{random_part}.{timestamp}.{bad_signature}");
-            let result = verify_csrf_token(&token, TEST_SECRET, TEST_USER);
+            let result = verify_csrf_token(&token, TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS);
             prop_assert!(result.is_err());
         }
 
@@ -365,7 +382,7 @@ mod tests {
         ) {
             prop_assume!(secret1 != secret2);
             let token = generate_csrf_token(&secret1, TEST_USER);
-            let result = verify_csrf_token(&token, &secret2, TEST_USER);
+            let result = verify_csrf_token(&token, &secret2, TEST_USER, TEST_LIFETIME_SECS);
             prop_assert!(result.is_err());
         }
 
@@ -374,7 +391,7 @@ mod tests {
         fn prop_arbitrary_strings_fail(s in "\\PC{0,100}") {
             // Almost all arbitrary strings should fail verification
             // (statistically impossible to hit a valid signed token)
-            let result = verify_csrf_token(&s, TEST_SECRET, TEST_USER);
+            let result = verify_csrf_token(&s, TEST_SECRET, TEST_USER, TEST_LIFETIME_SECS);
             prop_assert!(result.is_err());
         }
     }

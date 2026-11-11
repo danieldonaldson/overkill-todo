@@ -13,12 +13,7 @@ version = 2
 # RustSec advisory handling. Vulnerabilities and yanked crates deny by default.
 # Every ignore entry needs a justification and should be dropped the moment a
 # fix is available.
-ignore = [
-    # RUSTSEC-2026-0173 — `proc-macro-error2` unmaintained. Build-time proc-macro
-    # dependency of `validator_derive`; not in the runtime binary. Drop once
-    # `validator` migrates off it.
-    "RUSTSEC-2026-0173",
-]
+ignore = []
 
 [licenses]
 version = 2

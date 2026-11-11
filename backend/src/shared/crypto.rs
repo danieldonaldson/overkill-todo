@@ -305,6 +305,14 @@ impl Crypto {
     pub fn csrf_secret(&self) -> &[u8] {
         &self.csrf_secret
     }
+
+    /// How long a CSRF token stays valid: the access token's lifetime, so the
+    /// pair is issued and expires together. Zero if the configured lifetime
+    /// were ever negative (settings validation rejects that at startup).
+    #[must_use]
+    pub fn csrf_lifetime_secs(&self) -> u64 {
+        u64::try_from(self.jwt_expiration_minutes.saturating_mul(60)).unwrap_or(0)
+    }
 }
 
 /// Generates a cryptographically secure random token.

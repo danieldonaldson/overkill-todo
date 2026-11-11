@@ -60,7 +60,11 @@ pub fn verify_oauth_state(
 
     decode::<OAuthStateClaims>(state, decoding_key, &validation)
         .map(|data| data.claims)
-        .map_err(|e| AppError::Validation(format!("Invalid OAuth state: {e}")))
+        .map_err(|e| {
+            // The decoder's reason stays in the logs; clients get a fixed message.
+            tracing::debug!(error = %e, "OAuth state rejected");
+            AppError::Validation("Invalid OAuth state".into())
+        })
 }
 
 #[cfg(test)]

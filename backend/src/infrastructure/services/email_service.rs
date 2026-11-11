@@ -326,7 +326,6 @@ impl EmailService for ConsoleEmailService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::services::code_generator::is_test_email;
 
     // =========================================================================
     // ConsoleEmailService tests
@@ -439,50 +438,6 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-    }
-
-    // =========================================================================
-    // is_test_email tests (case-sensitive - only lowercase patterns)
-    // =========================================================================
-
-    #[test]
-    fn is_test_email_detects_e2e_prefix() {
-        assert!(is_test_email("e2e-test@example.com"));
-        assert!(is_test_email("e2e-user123@domain.com"));
-        // Note: is_test_email is case-sensitive, uppercase won't match
-        assert!(!is_test_email("E2E-caps@example.com"));
-    }
-
-    #[test]
-    fn is_test_email_detects_test_prefix() {
-        assert!(is_test_email("test-user@example.com"));
-        assert!(is_test_email("test-123@domain.com"));
-        // Note: is_test_email is case-sensitive, uppercase won't match
-        assert!(!is_test_email("TEST-upper@example.com"));
-    }
-
-    #[test]
-    fn is_test_email_detects_playwright_prefix() {
-        assert!(is_test_email("playwright@example.com"));
-        assert!(is_test_email("playwright-user@domain.com"));
-        // Note: is_test_email is case-sensitive, uppercase won't match
-        assert!(!is_test_email("PLAYWRIGHT123@example.com"));
-    }
-
-    #[test]
-    fn is_test_email_rejects_normal_emails() {
-        assert!(!is_test_email("user@example.com"));
-        assert!(!is_test_email("john.doe@company.com"));
-        assert!(!is_test_email("testing@example.com")); // "testing" != "test-"
-        assert!(!is_test_email("latest@example.com")); // contains "test" but not prefix
-        assert!(!is_test_email("note2e@example.com")); // contains "e2e" but not prefix
-    }
-
-    #[test]
-    fn is_test_email_handles_edge_cases() {
-        assert!(!is_test_email(""));
-        assert!(!is_test_email("@example.com"));
-        assert!(is_test_email("test-@example.com")); // minimal test- prefix
     }
 
     // =========================================================================

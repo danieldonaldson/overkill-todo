@@ -139,7 +139,7 @@ pub(crate) fn build_session_cookies(
     }
     headers.append(
         header::SET_COOKIE,
-        create_csrf_cookie(csrf_token)
+        create_csrf_cookie(csrf_token, jwt_expiration_minutes * 60)
             .ok_or_else(|| AppError::Internal("Invalid CSRF token characters".into()))?,
     );
     Ok(headers)

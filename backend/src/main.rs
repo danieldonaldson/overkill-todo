@@ -186,9 +186,13 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             HickoryMxValidator::new()
                 .map_err(|e| anyhow::anyhow!("Failed to initialise DNS resolver: {e}"))?,
         )
-    } else {
+    } else if settings.server.dev_mode {
         tracing::warn!("MX_VALIDATION_ENABLED not set — MX validation disabled");
         Arc::new(NoOpMxValidator)
+    } else {
+        anyhow::bail!(
+            "MX_VALIDATION_ENABLED=true is required in production (the no-op validator is dev-only)."
+        );
     };
 
     // Repositories

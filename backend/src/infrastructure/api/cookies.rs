@@ -31,8 +31,6 @@ pub(crate) fn extract_cookie(headers: &HeaderMap, name: &str) -> Option<String> 
         })
 }
 
-/// CSRF token cookie lifetime in seconds (15 minutes, matches the JWT).
-pub const CSRF_TOKEN_MAX_AGE: i64 = 15 * 60;
 /// OAuth fingerprint handoff cookie lifetime in seconds (5 minutes, matches OAuth state).
 pub const OAUTH_DEVICE_FINGERPRINT_MAX_AGE: i64 = 5 * 60;
 /// OAuth state-binding cookie lifetime in seconds (5 minutes, matches the state JWT).
@@ -68,16 +66,17 @@ pub fn create_refresh_cookie(token: &str, max_age_seconds: i64) -> Option<Header
     .ok()
 }
 
-/// Build a cookie for the CSRF token.
+/// Build a cookie for the CSRF token. `max_age_seconds` is the session's
+/// access-token lifetime, so the cookie and the token's validity match.
 ///
 /// This cookie is intentionally NOT httpOnly so JavaScript can read it and echo
 /// it back in the `X-CSRF-Token` header (double-submit pattern).
 /// Returns `None` only if the token contains invalid header characters (extremely rare).
 #[must_use]
-pub fn create_csrf_cookie(token: &str) -> Option<HeaderValue> {
+pub fn create_csrf_cookie(token: &str, max_age_seconds: i64) -> Option<HeaderValue> {
     let s = secure();
     HeaderValue::from_str(&format!(
-        "csrf_token={token}; Path=/; SameSite=Lax; Max-Age={CSRF_TOKEN_MAX_AGE}{s}"
+        "csrf_token={token}; Path=/; SameSite=Lax; Max-Age={max_age_seconds}{s}"
     ))
     .ok()
 }
@@ -207,10 +206,10 @@ mod tests {
 
     #[test]
     fn csrf_cookie_is_readable_by_js_but_secure() {
-        let c = create_csrf_cookie("csrf456").unwrap();
+        let c = create_csrf_cookie("csrf456", 900).unwrap();
         let s = c.to_str().unwrap();
         assert!(s.contains("csrf_token=csrf456"));
-        assert!(s.contains(&format!("Max-Age={CSRF_TOKEN_MAX_AGE}")));
+        assert!(s.contains("Max-Age=900"));
         // Not HttpOnly: the SPA reads it to echo back in the X-CSRF-Token header.
         assert!(!s.contains("HttpOnly"));
         assert!(s.contains("Secure"));
@@ -240,11 +239,6 @@ mod tests {
         assert!(s.contains("SameSite=Lax"));
         assert!(s.contains(&format!("Max-Age={OAUTH_DEVICE_FINGERPRINT_MAX_AGE}")));
         assert!(s.contains("Secure"));
-    }
-
-    #[test]
-    fn csrf_max_age_matches_jwt_lifetime() {
-        assert_eq!(CSRF_TOKEN_MAX_AGE, 15 * 60);
     }
 
     fn headers_with_cookie(value: &str) -> HeaderMap {
@@ -319,7 +313,7 @@ mod tests {
         let bad = "abc\ndef";
         assert!(create_jwt_cookie(bad, 3600).is_none());
         assert!(create_refresh_cookie(bad, 3600).is_none());
-        assert!(create_csrf_cookie(bad).is_none());
+        assert!(create_csrf_cookie(bad, 900).is_none());
         assert!(create_oauth_state_cookie(bad).is_none());
         assert!(create_oauth_device_fingerprint_cookie(bad).is_none());
     }
