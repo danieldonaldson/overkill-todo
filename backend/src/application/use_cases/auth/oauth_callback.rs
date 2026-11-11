@@ -161,7 +161,21 @@ impl OAuthCallbackUseCase {
             return Ok(OAuthCallbackResult::EmailConflict);
         }
 
-        // No existing user - create new OAuth-only user
+        // No existing user. INVARIANT: never create an account (or persist a
+        // link) for a provider identity whose email the provider hasn't
+        // verified. Otherwise anyone whose provider lets them claim an address
+        // could pre-create `victim@x` with their own `sub` linked; when the real
+        // owner later signs up by email, that row is reused and the attacker's
+        // link would log them straight in (the existing-link branch above
+        // deliberately does not re-check `email_verified`).
+        if !user_info.email_verified {
+            tracing::warn!(
+                provider = %provider.as_str(),
+                "OAuth signup rejected: provider reports email unverified"
+            );
+            return Ok(OAuthCallbackResult::EmailConflict);
+        }
+
         let email = user_info
             .email
             .as_ref()
@@ -178,10 +192,8 @@ impl OAuthCallbackUseCase {
 
         let mut user = User::new(email, None, first_name, last_name);
 
-        // If provider verified email, mark it verified (skip email verification flow)
-        if user_info.email_verified {
-            user.mark_email_verified();
-        }
+        // Verified by the provider (checked above): skip our own verification flow.
+        user.mark_email_verified();
 
         self.user_repo.save(&user).await?;
 
@@ -425,6 +437,38 @@ mod tests {
             }
             _ => panic!("Expected LoggedIn result"),
         }
+    }
+
+    /// An unverified provider email must not create an account or a link: that
+    /// row would otherwise be reused by the real owner's later email signup,
+    /// leaving the provider identity able to log into it.
+    #[tokio::test]
+    async fn test_login_unverified_new_user_is_rejected_without_writes() {
+        let mut mock_user_repo = MockUserRepository::new();
+        let mut mock_oauth_repo = MockOAuthAccountRepository::new();
+
+        mock_oauth_repo
+            .expect_find_by_provider_user_id()
+            .returning(|_, _| Ok(None));
+        mock_user_repo
+            .expect_find_by_email()
+            .returning(|_| Ok(None));
+        mock_user_repo.expect_save().never();
+        mock_oauth_repo.expect_save().never();
+
+        let use_case =
+            OAuthCallbackUseCase::new(Arc::new(mock_user_repo), Arc::new(mock_oauth_repo));
+
+        let result = use_case
+            .execute(
+                OAuthProvider::Google,
+                create_oauth_user_info(false),
+                OAuthCallbackMode::Login,
+                None,
+            )
+            .await;
+
+        assert!(matches!(result, Ok(OAuthCallbackResult::EmailConflict)));
     }
 
     #[tokio::test]

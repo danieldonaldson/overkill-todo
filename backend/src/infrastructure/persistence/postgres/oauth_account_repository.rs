@@ -121,6 +121,19 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
         Ok(result.rows_affected() > 0)
     }
 
+    #[tracing::instrument(name = "repo.oauth.delete_all_for_user", skip_all, fields(db.system = "postgresql"))]
+    async fn delete_all_for_user(&self, user_id: &UserId) -> Result<u64, DomainError> {
+        let result = sqlx::query!(
+            r#"DELETE FROM user_oauth_accounts WHERE user_id = $1"#,
+            user_id.as_uuid(),
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        Ok(result.rows_affected())
+    }
+
     #[tracing::instrument(name = "repo.oauth.count_by_user_id", skip_all, fields(db.system = "postgresql"))]
     async fn count_by_user_id(&self, user_id: &UserId) -> Result<i64, DomainError> {
         let count = sqlx::query_scalar!(

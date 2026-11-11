@@ -29,6 +29,9 @@ pub trait OAuthAccountRepository: Send + Sync {
         provider: OAuthProvider,
     ) -> Result<bool, DomainError>;
 
+    /// Delete every OAuth link for a user. Returns how many links were removed.
+    async fn delete_all_for_user(&self, user_id: &UserId) -> Result<u64, DomainError>;
+
     /// Count OAuth accounts for a user.
     async fn count_by_user_id(&self, user_id: &UserId) -> Result<i64, DomainError>;
 }

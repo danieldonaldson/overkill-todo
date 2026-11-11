@@ -1,6 +1,6 @@
 //! Use case for the email-only first step of registration.
 
-use crate::application::ports::{EmailService, UserRepository};
+use crate::application::ports::{EmailService, OAuthAccountRepository, UserRepository};
 use crate::domain::entities::User;
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::Email;
@@ -21,16 +21,19 @@ pub enum RegisterOutcome {
 
 pub struct RegisterUserUseCase {
     user_repository: Arc<dyn UserRepository>,
+    oauth_account_repository: Arc<dyn OAuthAccountRepository>,
     email_service: Arc<dyn EmailService>,
 }
 
 impl RegisterUserUseCase {
     pub fn new(
         user_repository: Arc<dyn UserRepository>,
+        oauth_account_repository: Arc<dyn OAuthAccountRepository>,
         email_service: Arc<dyn EmailService>,
     ) -> Self {
         Self {
             user_repository,
+            oauth_account_repository,
             email_service,
         }
     }
@@ -51,6 +54,25 @@ impl RegisterUserUseCase {
                     "Registration attempted for an existing account"
                 );
                 return Ok(RegisterOutcome::AlreadyRegistered(existing_user));
+            }
+
+            // INVARIANT: an unverified row is about to be handed to whoever
+            // proves ownership of this email. Nobody has proven it yet, so no
+            // OAuth identity may stay linked to it: a link here would let that
+            // provider account log into the account the real owner completes.
+            // (OAuth no longer creates such links; this clears any made before.)
+            if !existing_user.email_verified() {
+                let removed = self
+                    .oauth_account_repository
+                    .delete_all_for_user(existing_user.id())
+                    .await?;
+                if removed > 0 {
+                    tracing::warn!(
+                        user_id = %existing_user.id(),
+                        removed,
+                        "Removed OAuth links from an unverified signup being reused"
+                    );
+                }
             }
 
             tracing::info!(
@@ -92,6 +114,7 @@ impl RegisterUserUseCase {
 mod tests {
     use super::*;
     use crate::application::ports::outgoing::email_service::MockEmailService;
+    use crate::application::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
     use crate::domain::entities::UserParts;
     use crate::domain::value_objects::AccountStatus;
@@ -132,6 +155,13 @@ mod tests {
         })
     }
 
+    /// An OAuth repository that must not be touched.
+    fn no_oauth_writes() -> MockOAuthAccountRepository {
+        let mut oauth = MockOAuthAccountRepository::new();
+        oauth.expect_delete_all_for_user().never();
+        oauth
+    }
+
     #[tokio::test]
     async fn test_register_new_user_success() {
         let mut mock_repo = MockUserRepository::new();
@@ -141,8 +171,11 @@ mod tests {
             .returning(|_| Ok(None));
         mock_repo.expect_save().times(1).returning(|_| Ok(()));
 
-        let use_case =
-            RegisterUserUseCase::new(Arc::new(mock_repo), Arc::new(MockEmailService::new()));
+        let use_case = RegisterUserUseCase::new(
+            Arc::new(mock_repo),
+            Arc::new(no_oauth_writes()),
+            Arc::new(MockEmailService::new()),
+        );
         let result = use_case.execute("test@example.com").await;
 
         let Ok(RegisterOutcome::PendingVerification(user)) = result else {
@@ -164,15 +197,50 @@ mod tests {
             .times(1)
             .returning(move |_| Ok(Some(incomplete_user.clone())));
         // Note: save() should NOT be called - we reuse existing user
+        let mut oauth = MockOAuthAccountRepository::new();
+        oauth
+            .expect_delete_all_for_user()
+            .withf(move |id| *id == user_id)
+            .times(1)
+            .returning(|_| Ok(0));
 
-        let use_case =
-            RegisterUserUseCase::new(Arc::new(mock_repo), Arc::new(MockEmailService::new()));
+        let use_case = RegisterUserUseCase::new(
+            Arc::new(mock_repo),
+            Arc::new(oauth),
+            Arc::new(MockEmailService::new()),
+        );
         let result = use_case.execute("test@example.com").await;
 
         let Ok(RegisterOutcome::PendingVerification(user)) = result else {
             panic!("expected a pending signup, got {result:?}");
         };
         assert_eq!(user.id(), &user_id); // Same user returned
+    }
+
+    /// A verified, password-less account (an OAuth-only user) keeps its links:
+    /// its owner already proved the email, and anyone can type it into the form.
+    #[tokio::test]
+    async fn test_register_keeps_oauth_links_of_verified_passwordless_user() {
+        let mut oauth_only = create_incomplete_user();
+        oauth_only.mark_email_verified();
+
+        let mut mock_repo = MockUserRepository::new();
+        mock_repo
+            .expect_find_by_email()
+            .times(1)
+            .returning(move |_| Ok(Some(oauth_only.clone())));
+
+        let use_case = RegisterUserUseCase::new(
+            Arc::new(mock_repo),
+            Arc::new(no_oauth_writes()),
+            Arc::new(MockEmailService::new()),
+        );
+        let result = use_case.execute("test@example.com").await;
+
+        assert!(matches!(
+            result,
+            Ok(RegisterOutcome::PendingVerification(_))
+        ));
     }
 
     #[tokio::test]
@@ -185,8 +253,11 @@ mod tests {
             .times(1)
             .returning(move |_| Ok(Some(complete_user.clone())));
 
-        let use_case =
-            RegisterUserUseCase::new(Arc::new(mock_repo), Arc::new(MockEmailService::new()));
+        let use_case = RegisterUserUseCase::new(
+            Arc::new(mock_repo),
+            Arc::new(no_oauth_writes()),
+            Arc::new(MockEmailService::new()),
+        );
         let result = use_case.execute("test@example.com").await;
 
         // Not an error: the handler must answer exactly as for a new signup.
@@ -203,8 +274,11 @@ mod tests {
             .times(1)
             .returning(|_, _| Ok(()));
 
-        let use_case =
-            RegisterUserUseCase::new(Arc::new(MockUserRepository::new()), Arc::new(email));
+        let use_case = RegisterUserUseCase::new(
+            Arc::new(MockUserRepository::new()),
+            Arc::new(no_oauth_writes()),
+            Arc::new(email),
+        );
         use_case.notify_existing(&user).await.unwrap();
     }
 
@@ -212,8 +286,11 @@ mod tests {
     async fn test_register_invalid_email() {
         let mock_repo = MockUserRepository::new();
 
-        let use_case =
-            RegisterUserUseCase::new(Arc::new(mock_repo), Arc::new(MockEmailService::new()));
+        let use_case = RegisterUserUseCase::new(
+            Arc::new(mock_repo),
+            Arc::new(no_oauth_writes()),
+            Arc::new(MockEmailService::new()),
+        );
         let result = use_case.execute("invalid-email").await;
 
         assert!(result.is_err());
@@ -232,8 +309,11 @@ mod tests {
             .times(1)
             .returning(|_| Err(DomainError::Persistence("Database error".into())));
 
-        let use_case =
-            RegisterUserUseCase::new(Arc::new(mock_repo), Arc::new(MockEmailService::new()));
+        let use_case = RegisterUserUseCase::new(
+            Arc::new(mock_repo),
+            Arc::new(no_oauth_writes()),
+            Arc::new(MockEmailService::new()),
+        );
         let result = use_case.execute("test@example.com").await;
 
         assert!(result.is_err());

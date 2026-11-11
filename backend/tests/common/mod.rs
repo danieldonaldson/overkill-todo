@@ -282,6 +282,7 @@ fn create_test_app_full(
 
     let register_uc = Arc::new(RegisterUserUseCase::new(
         user_repo.clone(),
+        oauth_account_repo.clone(),
         email_service.clone(),
     ));
     let login_uc = Arc::new(LoginUserUseCase::new(user_repo.clone()));
