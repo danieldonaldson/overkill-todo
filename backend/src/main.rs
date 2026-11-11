@@ -426,6 +426,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     // Translate OS signals into the shutdown watch so the HTTP server and the
     // background leader task drain together rather than the workers being
     // abandoned mid-flight when the process exits.
+    let dev_mode = settings.server.dev_mode;
     tokio::spawn(async move {
         shutdown_signal().await;
         // Pre-drain delay: keep accepting connections for a few seconds after the
@@ -434,8 +435,13 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         // can still be routed to a pod that has already begun draining. The scratch
         // image has no shell for a preStop hook, so this lives here instead. Kept
         // well under the pod's terminationGracePeriodSeconds.
-        tracing::info!("Shutdown signal received; waiting 5s for endpoint deregistration");
-        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        // Nothing routes to a local dev server, so Ctrl-C there stops at once.
+        if dev_mode {
+            tracing::info!("Shutdown signal received");
+        } else {
+            tracing::info!("Shutdown signal received; waiting 5s for endpoint deregistration");
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        }
         let _ = shutdown_tx.send(true);
     });
 

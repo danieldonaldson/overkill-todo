@@ -38,13 +38,25 @@ setup:
 # ── Local dev ────────────────────────────────────────────────────────────────────
 
 # Backend (auto-reload) + web dev server. Web :4321 proxies /api to :4322 (WEB_PORT/API_PORT in a worktree).
+# Each half runs in its own process group (setsid), and the trap kills both
+# groups, so Ctrl-C leaves nothing behind holding the ports. Astro runs directly:
+# `pnpm --filter … dev` moves it into a group of its own, out of reach of the trap.
 dev: db-up
     #!/usr/bin/env bash
     set -euo pipefail
-    trap 'kill 0' EXIT
-    (cd {{backend}} && if command -v cargo-watch >/dev/null; then cargo watch -q -x run; else cargo run; fi) &
-    {{pnpm}} --filter {{web}} dev &
-    wait
+    pids=()
+    cleanup() {
+        trap - EXIT INT TERM
+        for pid in "${pids[@]}"; do kill -TERM -- "-$pid" 2>/dev/null || true; done
+        wait 2>/dev/null || true
+    }
+    trap cleanup EXIT
+    trap 'exit 0' INT TERM  # Ctrl-C is how you stop it, not a failure
+    setsid bash -c 'cd {{backend}} && if command -v cargo-watch >/dev/null; then exec cargo watch -q -x run; else exec cargo run; fi' &
+    pids+=($!)
+    setsid bash -c 'cd apps/web && exec node_modules/.bin/astro dev' &
+    pids+=($!)
+    wait -n
 
 # Prod-like stack in Docker: real images behind a Caddy edge on :8080 (EDGE_PORT).
 up:
