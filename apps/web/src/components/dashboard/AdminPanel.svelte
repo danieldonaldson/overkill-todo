@@ -11,7 +11,7 @@
     CardTitle,
   } from '$lib/components/ui/card'
   import { api } from '../../lib/api'
-  import { getSessionUser, setSessionUser } from '../../lib/auth/session'
+  import { getCurrentUser } from '../../lib/auth/current-user'
   import { formatDate } from '../../lib/format'
   import { navigateReplace } from '../../lib/navigation'
   import { isAdminRole } from '../../lib/types'
@@ -19,7 +19,8 @@
 
   const ROLES: UserRole[] = ['user', 'admin', 'super_admin']
 
-  let currentUser = $state<User | null>(null)
+  // AuthGuard already fetched this from /auth/me for this page load.
+  const currentUser: User | null = getCurrentUser()
   let loading = $state(true)
   let message = $state<string | null>(null)
   let error = $state<string | null>(null)
@@ -28,35 +29,18 @@
   let users = $state<AdminUserRow[]>([])
   let busyUserId = $state<string | null>(null)
 
-  const isSuperAdmin = $derived(currentUser?.role === 'super_admin')
+  const isSuperAdmin = currentUser?.role === 'super_admin'
 
   onMount(async () => {
     // Confirm the viewer is an admin before loading anything; the backend
     // enforces this too, but redirecting avoids rendering a dead page.
-    const cached = getSessionUser()
-    if (cached) currentUser = cached
-
-    // Fire the admin loads now, concurrently with the identity refresh; their
-    // results are only consumed after we've confirmed the viewer is an admin.
-    const adminData = api.admin.listUsers()
-    // Swallow rejection here so a non-admin redirect can't leave an unhandled one.
-    adminData.catch(() => {})
-
-    try {
-      const fresh = await api.auth.me()
-      currentUser = fresh
-      setSessionUser(fresh)
-    } catch {
-      // fall through to the admin check below
-    }
-
     if (!isAdminRole(currentUser?.role)) {
       navigateReplace('/dashboard')
       return
     }
 
     try {
-      const list = await adminData
+      const list = await api.admin.listUsers()
       users = list.users
     } catch (loadError: unknown) {
       error = loadError instanceof Error ? loadError.message : 'Failed to load admin data'

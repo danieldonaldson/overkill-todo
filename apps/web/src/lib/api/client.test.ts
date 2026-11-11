@@ -90,6 +90,41 @@ describe('HttpClient.request', () => {
     expect(ensureValidToken).not.toHaveBeenCalled()
   })
 
+  it('ensures a valid token before /auth/me, unlike the other auth endpoints', async () => {
+    mockFetch.mockResolvedValueOnce(fakeResponse({ body: { id: 'user-1' } }))
+    await new HttpClient().request('/auth/me')
+    expect(ensureValidToken).toHaveBeenCalledTimes(1)
+  })
+
+  it('refreshes an expired token before /auth/me instead of taking a 401 round trip', async () => {
+    // Expired token: ensureValidToken runs the refresh.
+    ;(ensureValidToken as Mock).mockImplementation((refresh: () => Promise<boolean>) => refresh())
+    mockFetch
+      .mockResolvedValueOnce(fakeResponse({ body: { expires_at: 1_700_000_100 } }))
+      .mockResolvedValueOnce(fakeResponse({ body: { id: 'user-1' } }))
+
+    const result = await new HttpClient().request('/auth/me')
+
+    expect(result).toEqual({ id: 'user-1' })
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      '/api/v1/auth/refresh',
+      expect.objectContaining({ method: 'POST' })
+    )
+    expect(mockFetch).toHaveBeenNthCalledWith(2, '/api/v1/auth/me', expect.anything())
+  })
+
+  it.each(['/auth/refresh', '/auth/logout', '/auth/register', '/auth/forgot-password'])(
+    'skips the token check for %s',
+    async (endpoint) => {
+      document.cookie = 'csrf_token=csrf-abc; path=/'
+      mockFetch.mockResolvedValueOnce(fakeResponse({ body: {} }))
+      await new HttpClient().request(endpoint, { method: 'POST' })
+      expect(ensureValidToken).not.toHaveBeenCalled()
+    }
+  )
+
   it('returns undefined for a 204 No Content response', async () => {
     // csrf cookie present so the DELETE doesn't first fire a proactive refresh.
     document.cookie = 'csrf_token=csrf-abc; path=/'

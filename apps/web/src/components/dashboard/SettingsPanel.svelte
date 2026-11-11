@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert'
   import CircleCheckIcon from '@lucide/svelte/icons/circle-check'
   import MailIcon from '@lucide/svelte/icons/mail'
@@ -12,14 +11,17 @@
   import { Button } from '$lib/components/ui/button'
   import { FormInput } from '$lib/components/ui/form-input'
   import { api } from '../../lib/api'
-  import { clearSessionUser, getSessionUser, setSessionUser } from '../../lib/auth/session'
+  import { getCurrentUser } from '../../lib/auth/current-user'
+  import { clearSessionUser, setSessionUser } from '../../lib/auth/session'
   import { formatDateTime } from '../../lib/format'
   import { navigateReplace } from '../../lib/navigation'
   import type { User } from '../../lib/types'
   import { minLength, required, validate } from '../../lib/utils/validation'
 
-  let user = $state<User | null>(null)
-  let loading = $state(true)
+  // AuthGuard fetched this user from /auth/me on this page load, so it is
+  // fresh (has_password / oauth_providers included). Actions below update it
+  // locally from their responses rather than re-fetching.
+  let user = $state<User | null>(getCurrentUser())
   let savingPassword = $state(false)
   let unlinkingGoogle = $state(false)
   let currentPassword = $state('')
@@ -36,25 +38,6 @@
 
   const googleLinked = $derived(user?.oauth_providers?.includes('google') ?? false)
   const deletionScheduledAt = $derived(user?.deletion_scheduled_at ?? null)
-
-  onMount(async () => {
-    // Paint instantly from cache, but always revalidate: this page renders
-    // has_password / oauth_providers, which the cache can have stale.
-    const cached = getSessionUser()
-    if (cached) user = cached
-    try {
-      const fresh = await api.auth.me()
-      user = fresh
-      setSessionUser(fresh)
-    } catch (loadError: unknown) {
-      // Only surface the error if we have nothing cached to show.
-      if (!cached) {
-        error = loadError instanceof Error ? loadError.message : 'Failed to load account settings'
-      }
-    } finally {
-      loading = false
-    }
-  })
 
   function validatePasswordForm() {
     currentPasswordError = user?.has_password ? validate(currentPassword, [required()]) : null
@@ -232,26 +215,7 @@
     </Alert>
   {/if}
 
-  {#if loading}
-    <!-- Skeleton rows: no layout shift when the real groups swap in. -->
-    <div class="flex flex-col gap-6" aria-hidden="true">
-      {#each [0, 1, 2] as i (i)}
-        <div class="rounded-[var(--radius)] border border-border bg-card">
-          <div class="border-b border-border px-5 py-3">
-            <div class="h-3 w-24 animate-pulse rounded-full bg-muted"></div>
-          </div>
-          <div class="flex items-center justify-between gap-4 px-5 py-4">
-            <div class="flex items-center gap-3">
-              <div class="size-9 animate-pulse rounded-full bg-muted"></div>
-              <div class="h-4 w-40 animate-pulse rounded-full bg-muted"></div>
-            </div>
-            <div class="h-8 w-24 animate-pulse rounded-full bg-muted"></div>
-          </div>
-        </div>
-      {/each}
-    </div>
-    <p class="sr-only" role="status" aria-live="polite">Loading settings…</p>
-  {:else if user}
+  {#if user}
     <!-- Account -->
     <section
       aria-labelledby="settings-account"

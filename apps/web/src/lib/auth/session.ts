@@ -1,9 +1,12 @@
 /**
- * Session storage for auth state persistence across View Transitions.
+ * Per-tab cache of the last user fetched from /api/v1/auth/me (sessionStorage).
  *
- * This allows the AuthGuard to skip /api/v1/auth/me calls when navigating
- * between pages, since View Transitions preserve the browser tab but
- * still trigger component onMount.
+ * AuthGuard trusts it in place of /auth/me while the tab has a session hint
+ * (stored token expiry) and the cached user is verified; the server still
+ * checks every API call, and a 401 clears it. GuestGuard uses its presence
+ * to decide whether a session is worth verifying, and AuthProvider seeds the
+ * dashboard nav's context from it. Dashboard panels read the guard's user from
+ * `current-user.ts` instead.
  */
 
 import type { User } from '../types'

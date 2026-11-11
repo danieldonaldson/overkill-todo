@@ -16,6 +16,8 @@ vi.mock('../../lib/navigation', () => ({
 }))
 
 import { api } from '../../lib/api'
+import { getCurrentUser, setCurrentUser } from '../../lib/auth/current-user'
+import { clearTokenExpiry, setTokenExpiry } from '../../lib/auth/token'
 import { navigateReplace } from '../../lib/navigation'
 
 const verifiedUser: User = {
@@ -31,6 +33,7 @@ const verifiedUser: User = {
 describe('AuthGuard', () => {
   beforeEach(() => {
     sessionStorage.clear()
+    clearTokenExpiry()
     vi.clearAllMocks()
   })
 
@@ -50,7 +53,54 @@ describe('AuthGuard', () => {
     expect(onAuthenticated).toHaveBeenCalledWith(verifiedUser)
   })
 
-  it('revalidates cached users before rendering protected content', async () => {
+  it('publishes the fetched user for the panels it renders, with one /auth/me call', async () => {
+    vi.mocked(api.auth.me).mockResolvedValue(verifiedUser)
+
+    const screen = await render(AuthGuardWrapper)
+
+    await expect.element(screen.getByTestId('protected-content')).toBeInTheDocument()
+    expect(getCurrentUser()).toEqual(verifiedUser)
+    expect(api.auth.me).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the published user when /auth/me fails', async () => {
+    setCurrentUser(verifiedUser)
+    vi.mocked(api.auth.me).mockRejectedValue(new Error('Unauthorized'))
+
+    await render(AuthGuardWrapper)
+
+    await vi.waitFor(() => expect(navigateReplace).toHaveBeenCalledWith('/login'))
+    expect(getCurrentUser()).toBeNull()
+  })
+
+  it('trusts a cached verified user while the tab has a session, without calling /auth/me', async () => {
+    sessionStorage.setItem('overkill-todo-auth-user', JSON.stringify(verifiedUser))
+    setTokenExpiry(Math.floor(Date.now() / 1000) + 900)
+    const onAuthenticated = vi.fn()
+
+    const screen = await render(AuthGuardWrapper, {
+      props: { childText: 'Secret content', onAuthenticated },
+    })
+
+    await expect.element(screen.getByText('Secret content')).toBeInTheDocument()
+    expect(api.auth.me).not.toHaveBeenCalled()
+    expect(onAuthenticated).toHaveBeenCalledWith(verifiedUser)
+    expect(getCurrentUser()).toEqual(verifiedUser)
+  })
+
+  it('still fetches /auth/me for a cached user who is not verified yet', async () => {
+    const unverified = { ...verifiedUser, email_verified: false }
+    sessionStorage.setItem('overkill-todo-auth-user', JSON.stringify(unverified))
+    setTokenExpiry(Math.floor(Date.now() / 1000) + 900)
+    vi.mocked(api.auth.me).mockResolvedValue(verifiedUser)
+
+    const screen = await render(AuthGuardWrapper, { props: { childText: 'Secret content' } })
+
+    await expect.element(screen.getByText('Secret content')).toBeInTheDocument()
+    expect(api.auth.me).toHaveBeenCalledTimes(1)
+  })
+
+  it('revalidates a cached user when the tab has no session hint', async () => {
     sessionStorage.setItem('overkill-todo-auth-user', JSON.stringify(verifiedUser))
     vi.mocked(api.auth.me).mockRejectedValue(new Error('Unauthorized'))
 

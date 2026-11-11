@@ -28,6 +28,7 @@ vi.mock('../../lib/navigation', () => ({
 }))
 
 import { api } from '../../lib/api'
+import { setCurrentUser } from '../../lib/auth/current-user'
 import { navigateReplace } from '../../lib/navigation'
 import type { User } from '../../lib/types'
 
@@ -45,19 +46,22 @@ describe('SettingsPanel', () => {
   beforeEach(() => {
     sessionStorage.clear()
     vi.clearAllMocks()
+    setCurrentUser(null)
   })
 
   it('loads and displays account details', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
+    setCurrentUser(passwordUser)
 
     const screen = await render(SettingsPanel)
 
     await expect.element(screen.getByText('test@example.com')).toBeInTheDocument()
     await expect.element(screen.getByRole('button', { name: /unlink google/i })).toBeInTheDocument()
+    // The user comes from AuthGuard; the panel must not re-fetch /auth/me.
+    expect(api.auth.me).not.toHaveBeenCalled()
   })
 
   it('changes password for users with an existing password', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
+    setCurrentUser(passwordUser)
     vi.mocked(api.users.changePassword).mockResolvedValue(undefined)
     const screen = await render(SettingsPanel)
 
@@ -74,7 +78,7 @@ describe('SettingsPanel', () => {
   })
 
   it('links Google when not already linked', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue({ ...passwordUser, oauth_providers: [] })
+    setCurrentUser({ ...passwordUser, oauth_providers: [] })
     const screen = await render(SettingsPanel)
 
     await screen.getByRole('button', { name: /link google/i }).click()
@@ -83,7 +87,7 @@ describe('SettingsPanel', () => {
   })
 
   it('schedules account deletion after typing DELETE and password', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
+    setCurrentUser(passwordUser)
     vi.mocked(api.users.requestDeletion).mockResolvedValue({
       deletion_scheduled_at: '2026-07-04T00:00:00Z',
     })
@@ -103,7 +107,7 @@ describe('SettingsPanel', () => {
   })
 
   it('blocks deletion until the password is provided', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
+    setCurrentUser(passwordUser)
     const screen = await render(SettingsPanel)
 
     await screen.getByLabelText(/type delete to confirm/i).fill('DELETE')
@@ -116,7 +120,7 @@ describe('SettingsPanel', () => {
   })
 
   it('surfaces an error when scheduling deletion fails', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
+    setCurrentUser(passwordUser)
     vi.mocked(api.users.requestDeletion).mockRejectedValue(new Error('Deletion service down'))
     const screen = await render(SettingsPanel)
 
@@ -128,7 +132,7 @@ describe('SettingsPanel', () => {
   })
 
   it('surfaces an error when unlinking Google fails', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
+    setCurrentUser(passwordUser)
     vi.mocked(api.oauth.unlink).mockRejectedValue(new Error('Unlink failed'))
     const screen = await render(SettingsPanel)
 
@@ -138,7 +142,7 @@ describe('SettingsPanel', () => {
   })
 
   it('exports account data as a downloadable JSON file', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
+    setCurrentUser(passwordUser)
     vi.mocked(api.users.exportData).mockResolvedValue({
       id: 'user-1',
       email: 'test@example.com',
@@ -173,7 +177,7 @@ describe('SettingsPanel', () => {
   })
 
   it('cancels a pending deletion', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue({
+    setCurrentUser({
       ...passwordUser,
       deletion_scheduled_at: '2026-07-04T00:00:00Z',
     })
@@ -188,7 +192,7 @@ describe('SettingsPanel', () => {
   })
 
   it('logs out and navigates to login', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(passwordUser)
+    setCurrentUser(passwordUser)
     vi.mocked(api.auth.logout).mockResolvedValue(undefined)
     const screen = await render(SettingsPanel)
 

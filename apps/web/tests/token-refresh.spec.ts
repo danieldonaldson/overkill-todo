@@ -42,7 +42,7 @@ test.describe('silent token refresh', () => {
     await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
 
     // The original request is retried after exactly one silent refresh.
-    await expect.poll(() => meCount).toBeGreaterThanOrEqual(2)
+    await expect.poll(() => meCount).toBe(2)
     expect(refreshCount).toBe(1)
 
     // The user was never bounced to /login.
@@ -62,5 +62,35 @@ test.describe('silent token refresh', () => {
 
     // A truly-expired session lands on /login with the session=expired marker.
     await expect(page).toHaveURL(/\/login/)
+  })
+
+  test('an expired stored token is refreshed before /auth/me, with no 401 round trip', async ({
+    page,
+  }) => {
+    // A returning visitor whose access token expired: the stored expiry is in
+    // the past, the refresh cookie (not visible here) is still good.
+    await page.addInitScript(() => {
+      localStorage.setItem('jwt_expiry', String(Math.floor(Date.now() / 1000) - 60))
+    })
+
+    const calls: string[] = []
+    await page.route('**/api/v1/auth/refresh', async (route) => {
+      calls.push('refresh')
+      await route.fulfill({
+        json: { expires_at: Math.floor(Date.now() / 1000) + 3600 },
+      })
+    })
+    await page.route('**/api/v1/auth/me', async (route) => {
+      calls.push('me')
+      await route.fulfill({ json: TEST_USER })
+    })
+
+    await page.goto('/dashboard')
+
+    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    // Refresh first, then one /auth/me: two requests, never a 401.
+    expect(calls).toEqual(['refresh', 'me'])
+    await expect(page).toHaveURL(/\/dashboard$/)
   })
 })

@@ -91,8 +91,12 @@ export class HttpClient {
   }
 
   async request<T>(endpoint: string, options: RequestInit = {}, isRetry = false): Promise<T> {
-    // For non-auth endpoints, ensure we have a valid token
-    const isAuthEndpoint = endpoint.startsWith('/auth/')
+    // For authenticated endpoints, refresh an expiring token up front rather
+    // than waiting for a 401. /auth/me is an ordinary authenticated call; the
+    // other /auth/* endpoints are public or manage the session themselves.
+    // With no stored expiry (never logged in) this is a no-op, so a logged-out
+    // visitor still gets a plain 401 and no refresh attempt from here.
+    const isAuthEndpoint = endpoint.startsWith('/auth/') && endpoint !== '/auth/me'
     if (!isAuthEndpoint) {
       const hadSession = getTokenExpiry() !== null
       const tokenValid = await ensureValidToken(() => this.refreshToken())

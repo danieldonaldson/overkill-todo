@@ -15,6 +15,7 @@ vi.mock('../../lib/navigation', () => ({
 }))
 
 import { api } from '../../lib/api'
+import { setCurrentUser } from '../../lib/auth/current-user'
 import { navigateReplace } from '../../lib/navigation'
 import type { AdminUserRow, User, UserRole } from '../../lib/types'
 
@@ -55,20 +56,22 @@ describe('AdminPanel', () => {
   beforeEach(() => {
     sessionStorage.clear()
     vi.clearAllMocks()
+    setCurrentUser(null)
     vi.mocked(api.admin.listUsers).mockResolvedValue({ users: [alice, bob], limit: 50, offset: 0 })
   })
 
   it('redirects non-admins to the dashboard without rendering users', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(viewer('user'))
+    setCurrentUser(viewer('user'))
 
     const screen = await render(AdminPanel)
 
     await vi.waitFor(() => expect(navigateReplace).toHaveBeenCalledWith('/dashboard'))
     expect(screen.container.textContent).not.toContain('alice@example.com')
+    expect(api.admin.listUsers).not.toHaveBeenCalled()
   })
 
-  it('redirects when the identity check fails and nothing is cached', async () => {
-    vi.mocked(api.auth.me).mockRejectedValue(new Error('network down'))
+  it('redirects when the guard has published no user', async () => {
+    setCurrentUser(null)
 
     await render(AdminPanel)
 
@@ -76,7 +79,7 @@ describe('AdminPanel', () => {
   })
 
   it('shows a read-only user list to admins', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(viewer('admin'))
+    setCurrentUser(viewer('admin'))
 
     const screen = await render(AdminPanel)
 
@@ -86,10 +89,12 @@ describe('AdminPanel', () => {
     // An unparseable timestamp is shown as-is rather than "Invalid Date".
     await expect.element(screen.getByText('not-a-date')).toBeInTheDocument()
     expect(navigateReplace).not.toHaveBeenCalled()
+    // The viewer comes from AuthGuard; the panel must not re-fetch /auth/me.
+    expect(api.auth.me).not.toHaveBeenCalled()
   })
 
   it('shows the load error when listing users fails', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(viewer('admin'))
+    setCurrentUser(viewer('admin'))
     vi.mocked(api.admin.listUsers).mockRejectedValue(new Error('Forbidden'))
 
     const screen = await render(AdminPanel)
@@ -98,7 +103,7 @@ describe('AdminPanel', () => {
   })
 
   it('shows an empty state when there are no users', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(viewer('admin'))
+    setCurrentUser(viewer('admin'))
     vi.mocked(api.admin.listUsers).mockResolvedValue({ users: [], limit: 50, offset: 0 })
 
     const screen = await render(AdminPanel)
@@ -107,7 +112,7 @@ describe('AdminPanel', () => {
   })
 
   it('lets super-admins change a role', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(viewer('super_admin'))
+    setCurrentUser(viewer('super_admin'))
     vi.mocked(api.admin.setRole).mockResolvedValue({ ...alice, role: 'admin' })
 
     const screen = await render(AdminPanel)
@@ -123,7 +128,7 @@ describe('AdminPanel', () => {
   })
 
   it('resets the select to the stored role when the change fails', async () => {
-    vi.mocked(api.auth.me).mockResolvedValue(viewer('super_admin'))
+    setCurrentUser(viewer('super_admin'))
     vi.mocked(api.admin.setRole).mockRejectedValue(new Error('Cannot demote the last super admin'))
 
     const screen = await render(AdminPanel)
