@@ -6,4 +6,10 @@
 	handle {
 		reverse_proxy web:8080
 	}
+
+	# Same JSON access log as production, so the local stack mirrors it.
+	log {
+		output stdout
+		format json
+	}
 }

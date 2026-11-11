@@ -104,7 +104,7 @@ pub struct AuthHandlerDeps {
 /// # Errors
 ///
 /// Returns an error if registration fails due to validation, duplicate email, or service errors.
-#[tracing::instrument(name = "handler.register", skip(deps, request), fields(email = %request.email))]
+#[tracing::instrument(name = "handler.register", skip_all)]
 pub async fn register(
     State(deps): State<Arc<AuthHandlerDeps>>,
     ValidatedJson(request): ValidatedJson<InitiateRegistrationRequest>,
@@ -121,11 +121,11 @@ pub async fn register(
     match deps.mx_validator.has_mx_record(email_domain).await {
         Ok(true) => {}
         Ok(false) => {
-            tracing::warn!(email = %request.email, domain = %email_domain, "MX record check failed - domain may not receive emails");
+            tracing::warn!(email_domain = %email_domain, "MX record check failed - domain may not receive emails");
             // Don't block - let them try (typos will just not receive the code)
         }
         Err(e) => {
-            tracing::warn!(email = %request.email, domain = %email_domain, error = %e, "MX validation error");
+            tracing::warn!(email_domain = %email_domain, error = %e, "MX validation error");
             // Don't block on MX check failures
         }
     }
@@ -192,7 +192,7 @@ pub async fn register(
 /// # Errors
 ///
 /// Returns an error if login fails due to invalid credentials, validation errors, or service errors.
-#[tracing::instrument(name = "handler.login", skip(deps, request, headers), fields(email = %request.email))]
+#[tracing::instrument(name = "handler.login", skip_all)]
 pub async fn login(
     State(deps): State<Arc<AuthHandlerDeps>>,
     headers: HeaderMap,
@@ -273,7 +273,7 @@ pub async fn login(
 /// # Errors
 ///
 /// Returns an error if the refresh token is missing, invalid, expired, or service errors occur.
-#[tracing::instrument(name = "handler.refresh", skip(deps, headers))]
+#[tracing::instrument(name = "handler.refresh", skip_all)]
 pub async fn refresh(
     State(deps): State<Arc<AuthHandlerDeps>>,
     headers: HeaderMap,
@@ -313,7 +313,7 @@ pub async fn refresh(
         (status = 200, description = "Logout successful")
     )
 )]
-#[tracing::instrument(name = "handler.logout", skip(deps, headers))]
+#[tracing::instrument(name = "handler.logout", skip_all)]
 pub async fn logout(
     State(deps): State<Arc<AuthHandlerDeps>>,
     headers: HeaderMap,
@@ -352,7 +352,7 @@ pub async fn logout(
 /// # Errors
 ///
 /// Returns an error if the user is not found or service errors occur.
-#[tracing::instrument(name = "handler.me", skip(deps))]
+#[tracing::instrument(name = "handler.me", skip_all)]
 pub async fn me(
     State(deps): State<Arc<AuthHandlerDeps>>,
     auth_user: AuthUser,

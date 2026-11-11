@@ -29,7 +29,7 @@ impl CancelAccountDeletionUseCase {
     /// # Errors
     /// - `NotFound` if the user doesn't exist.
     /// - `Validation` if the account is already deleted/anonymized.
-    #[tracing::instrument(name = "usecase.cancel_account_deletion", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "usecase.cancel_account_deletion", skip_all, fields(user_id = %user_id))]
     pub async fn execute(&self, user_id: &UserId) -> Result<(), DomainError> {
         let mut user = self
             .user_repository

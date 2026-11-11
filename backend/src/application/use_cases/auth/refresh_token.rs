@@ -58,7 +58,7 @@ impl RefreshTokenUseCase {
     /// - The token is invalid, expired, or revoked
     /// - The device fingerprint doesn't match
     /// - The user no longer exists
-    #[tracing::instrument(name = "usecase.refresh_token", skip(self, token, device_fingerprint))]
+    #[tracing::instrument(name = "usecase.refresh_token", skip_all)]
     pub async fn execute(
         &self,
         token: &str,

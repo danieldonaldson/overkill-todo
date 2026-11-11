@@ -171,7 +171,7 @@ impl SmtpEmailService {
 
 #[async_trait]
 impl EmailService for SmtpEmailService {
-    #[tracing::instrument(name = "service.email.send_verification", skip(self, code, magic_link), fields(to = %to))]
+    #[tracing::instrument(name = "service.email.send_verification", skip_all)]
     async fn send_verification_email(
         &self,
         to: &str,
@@ -183,7 +183,7 @@ impl EmailService for SmtpEmailService {
         self.send(to, rendered).await
     }
 
-    #[tracing::instrument(name = "service.email.send_password_reset", skip(self, code), fields(to = %to))]
+    #[tracing::instrument(name = "service.email.send_password_reset", skip_all)]
     async fn send_password_reset_email(
         &self,
         to: &str,
@@ -194,7 +194,7 @@ impl EmailService for SmtpEmailService {
         self.send(to, rendered).await
     }
 
-    #[tracing::instrument(name = "service.email.send_account_exists", skip(self), fields(to = %to))]
+    #[tracing::instrument(name = "service.email.send_account_exists", skip_all)]
     async fn notify_account_exists(&self, to: &str, first_name: &str) -> Result<(), DomainError> {
         let rendered = account_exists_email(&self.app_name, first_name);
         self.send(to, rendered).await
@@ -262,9 +262,21 @@ impl ConsoleEmailService {
     }
 }
 
+/// Print a dev "email" straight to stderr. This stand-in for an inbox is not
+/// telemetry: going through `tracing` would put recipients and codes into the
+/// log pipeline (and redaction would hide the very code the developer needs).
+fn print_console_email(app_name: &str, kind: &str, fields: &[(&str, &str)]) {
+    use std::fmt::Write as _;
+    let mut out = format!("📧 {kind} (console mode, {app_name})\n");
+    for (k, v) in fields {
+        let _ = writeln!(out, "    {k}: {v}");
+    }
+    eprint!("{out}");
+}
+
 #[async_trait]
 impl EmailService for ConsoleEmailService {
-    #[tracing::instrument(name = "service.email.send_verification_console", skip(self, code, magic_link), fields(to = %to))]
+    #[tracing::instrument(name = "service.email.send_verification_console", skip_all)]
     async fn send_verification_email(
         &self,
         to: &str,
@@ -272,41 +284,40 @@ impl EmailService for ConsoleEmailService {
         first_name: &str,
         magic_link: Option<String>,
     ) -> Result<(), DomainError> {
-        tracing::info!(
-            app = %self.app_name,
-            to = %to,
-            first_name = %first_name,
-            code = %code,
-            magic_link = magic_link.as_deref().unwrap_or("(none)"),
-            "📧 VERIFICATION EMAIL (console mode)"
+        print_console_email(
+            &self.app_name,
+            "VERIFICATION EMAIL",
+            &[
+                ("to", to),
+                ("first_name", first_name),
+                ("code", code),
+                ("magic_link", magic_link.as_deref().unwrap_or("(none)")),
+            ],
         );
         Ok(())
     }
 
-    #[tracing::instrument(name = "service.email.send_password_reset_console", skip(self), fields(to = %to))]
+    #[tracing::instrument(name = "service.email.send_password_reset_console", skip_all)]
     async fn send_password_reset_email(
         &self,
         to: &str,
         code: &str,
         first_name: &str,
     ) -> Result<(), DomainError> {
-        tracing::info!(
-            app = %self.app_name,
-            to = %to,
-            first_name = %first_name,
-            code = %code,
-            "📧 PASSWORD RESET EMAIL (console mode)"
+        print_console_email(
+            &self.app_name,
+            "PASSWORD RESET EMAIL",
+            &[("to", to), ("first_name", first_name), ("code", code)],
         );
         Ok(())
     }
 
-    #[tracing::instrument(name = "service.email.send_account_exists_console", skip(self), fields(to = %to))]
+    #[tracing::instrument(name = "service.email.send_account_exists_console", skip_all)]
     async fn notify_account_exists(&self, to: &str, first_name: &str) -> Result<(), DomainError> {
-        tracing::info!(
-            app = %self.app_name,
-            to = %to,
-            first_name = %first_name,
-            "📧 ACCOUNT EXISTS EMAIL (console mode)"
+        print_console_email(
+            &self.app_name,
+            "ACCOUNT EXISTS EMAIL",
+            &[("to", to), ("first_name", first_name)],
         );
         Ok(())
     }

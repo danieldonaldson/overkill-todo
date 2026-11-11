@@ -194,11 +194,7 @@ impl SendVerificationCodeUseCase {
     ///
     /// # Errors
     /// Returns an error if code hashing or persisting the code fails.
-    #[tracing::instrument(
-        name = "usecase.issue_verification_code",
-        skip(self, user),
-        fields(user_id = %user.id())
-    )]
+    #[tracing::instrument(name = "usecase.issue_verification_code", skip_all, fields(user_id = %user.id()))]
     pub async fn issue_code(&self, user: &User) -> Result<PendingVerificationEmail, DomainError> {
         self.persist_code(*user.id(), user.email(), user.first_name())
             .await
@@ -208,7 +204,7 @@ impl SendVerificationCodeUseCase {
     ///
     /// # Errors
     /// Returns an error if the email service fails to send.
-    #[tracing::instrument(name = "usecase.send_verification_email", skip(self, pending))]
+    #[tracing::instrument(name = "usecase.send_verification_email", skip_all)]
     pub async fn send_pending(&self, pending: PendingVerificationEmail) -> Result<(), DomainError> {
         self.email_service
             .send_verification_email(
@@ -246,11 +242,7 @@ impl SendVerificationCodeUseCase {
     /// # Errors
     /// [`DispatchError::Issue`] if the code could not be persisted;
     /// [`DispatchError::Delivery`] if it was persisted but not delivered.
-    #[tracing::instrument(
-        name = "usecase.issue_and_deliver_verification_code",
-        skip(self, user),
-        fields(user_id = %user.id())
-    )]
+    #[tracing::instrument(name = "usecase.issue_and_deliver_verification_code", skip_all, fields(user_id = %user.id()))]
     pub async fn issue_and_deliver(
         &self,
         user: &User,
@@ -308,11 +300,7 @@ impl SendVerificationCodeUseCase {
     ///
     /// # Errors
     /// Returns an error if code hashing or repository operations fail.
-    #[tracing::instrument(
-        name = "usecase.send_verification_code",
-        skip(self, user),
-        fields(user_id = %user.id())
-    )]
+    #[tracing::instrument(name = "usecase.send_verification_code", skip_all, fields(user_id = %user.id()))]
     pub async fn execute(&self, user: &User) -> Result<(), DomainError> {
         self.issue(*user.id(), user.email(), user.first_name())
             .await
@@ -324,11 +312,7 @@ impl SendVerificationCodeUseCase {
     ///
     /// # Errors
     /// Returns an error if code hashing or repository operations fail.
-    #[tracing::instrument(
-        name = "usecase.send_verification_code_by_id",
-        skip(self),
-        fields(user_id = %user_id)
-    )]
+    #[tracing::instrument(name = "usecase.send_verification_code_by_id", skip_all, fields(user_id = %user_id))]
     pub async fn execute_for_user(
         &self,
         user_id: UserId,

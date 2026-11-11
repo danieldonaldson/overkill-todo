@@ -38,7 +38,7 @@ impl LoginUserUseCase {
     ///
     /// # Errors
     /// Returns an error if the repository fails to retrieve the user.
-    #[tracing::instrument(name = "usecase.login_user", skip(self), fields(email = %email))]
+    #[tracing::instrument(name = "usecase.login_user", skip_all)]
     pub async fn execute(&self, email: &str) -> Result<Option<User>, DomainError> {
         // Find user by email
         let user = self.user_repository.find_by_email(email).await?;

@@ -40,7 +40,7 @@ impl RegisterUserUseCase {
     /// # Errors
     /// Returns [`DomainError::Validation`] for a malformed email, or a
     /// persistence error from the repository.
-    #[tracing::instrument(name = "usecase.register_user", skip(self), fields(email = %email))]
+    #[tracing::instrument(name = "usecase.register_user", skip_all)]
     pub async fn execute(&self, email: &str) -> Result<RegisterOutcome, DomainError> {
         let email_vo = Email::new(email)?;
 
@@ -80,7 +80,7 @@ impl RegisterUserUseCase {
     ///
     /// # Errors
     /// Returns the email service's error if the notice could not be sent.
-    #[tracing::instrument(name = "usecase.register_user.notify_existing", skip(self, user), fields(user_id = %user.id()))]
+    #[tracing::instrument(name = "usecase.register_user.notify_existing", skip_all, fields(user_id = %user.id()))]
     pub async fn notify_existing(&self, user: &User) -> Result<(), DomainError> {
         self.email_service
             .notify_account_exists(user.email().as_str(), user.first_name())

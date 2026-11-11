@@ -36,7 +36,7 @@ impl PostgresRefreshTokenRepository {
 
 #[async_trait]
 impl RefreshTokenRepository for PostgresRefreshTokenRepository {
-    #[tracing::instrument(name = "repo.refresh_token.save", skip(self, token), fields(user_id = %token.user_id()))]
+    #[tracing::instrument(name = "repo.refresh_token.save", skip_all, fields(db.system = "postgresql", user_id = %token.user_id()))]
     async fn save(&self, token: &RefreshToken) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
@@ -58,7 +58,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.refresh_token.find_by_hash", skip(self, token_hash))]
+    #[tracing::instrument(name = "repo.refresh_token.find_by_hash", skip_all, fields(db.system = "postgresql"))]
     async fn find_by_hash(&self, token_hash: &str) -> Result<Option<RefreshToken>, DomainError> {
         let row = sqlx::query_as!(
             RefreshTokenRow,
@@ -76,7 +76,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         Ok(row.map(Self::row_to_entity))
     }
 
-    #[tracing::instrument(name = "repo.refresh_token.revoke", skip(self), fields(token_id = %id))]
+    #[tracing::instrument(name = "repo.refresh_token.revoke", skip_all, fields(db.system = "postgresql", token_id = %id))]
     async fn revoke(&self, id: &RefreshTokenId) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
@@ -93,7 +93,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.refresh_token.revoke_all_for_user", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.refresh_token.revoke_all_for_user", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn revoke_all_for_user(&self, user_id: &UserId) -> Result<u64, DomainError> {
         let result = sqlx::query!(
             r#"
@@ -110,7 +110,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         Ok(result.rows_affected())
     }
 
-    #[tracing::instrument(name = "repo.refresh_token.revoke_all_for_user_except", skip(self, keep_token_hash), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.refresh_token.revoke_all_for_user_except", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn revoke_all_for_user_except(
         &self,
         user_id: &UserId,
@@ -132,7 +132,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         Ok(result.rows_affected())
     }
 
-    #[tracing::instrument(name = "repo.refresh_token.rotate", skip(self, new_token))]
+    #[tracing::instrument(name = "repo.refresh_token.rotate", skip_all, fields(db.system = "postgresql"))]
     async fn rotate(
         &self,
         old_id: &RefreshTokenId,
@@ -181,7 +181,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.refresh_token.delete_expired", skip(self))]
+    #[tracing::instrument(name = "repo.refresh_token.delete_expired", skip_all, fields(db.system = "postgresql"))]
     async fn delete_expired(&self) -> Result<u64, DomainError> {
         let result = sqlx::query!(
             r#"

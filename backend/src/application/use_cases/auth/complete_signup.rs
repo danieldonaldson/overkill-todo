@@ -46,11 +46,7 @@ impl CompleteSignupUseCase {
     /// - `Authorization` if the token is invalid or expired
     /// - `Validation` if email doesn't match or user already has password
     /// - `NotFound` if the user doesn't exist
-    #[tracing::instrument(
-        name = "usecase.complete_signup",
-        skip(self, signup_token, password_hash),
-        fields(email = %email)
-    )]
+    #[tracing::instrument(name = "usecase.complete_signup", skip_all)]
     pub async fn execute(
         &self,
         signup_token: &str,

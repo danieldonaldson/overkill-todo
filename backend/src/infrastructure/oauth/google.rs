@@ -219,7 +219,7 @@ impl OAuthProviderClient for GoogleOAuthClient {
     }
 
     /// Exchange authorization code for tokens and extract user info.
-    #[tracing::instrument(skip(self, code))]
+    #[tracing::instrument(skip_all)]
     async fn exchange_code(&self, code: &str) -> Result<OAuthUserInfo, DomainError> {
         // Exchange code for tokens
         let response = self
@@ -240,8 +240,15 @@ impl OAuthProviderClient for GoogleOAuthClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let body = response.text().await.unwrap_or_default();
-            tracing::error!(status = %status, body = %body, "Google token exchange failed");
+            // Log only the OAuth error code (e.g. `invalid_grant`), never the body:
+            // it can echo request data and is not ours to store.
+            let error_kind = response
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(str::to_owned))
+                .unwrap_or_else(|| "unknown".to_owned());
+            tracing::error!(status = %status, error_kind = %error_kind, "Google token exchange failed");
             return Err(DomainError::ExternalService(format!(
                 "Google token exchange failed: {status}"
             )));

@@ -37,7 +37,7 @@ impl PostgresOAuthAccountRepository {
 
 #[async_trait]
 impl OAuthAccountRepository for PostgresOAuthAccountRepository {
-    #[tracing::instrument(name = "repo.oauth.find_by_provider_user_id", skip(self))]
+    #[tracing::instrument(name = "repo.oauth.find_by_provider_user_id", skip_all, fields(db.system = "postgresql"))]
     async fn find_by_provider_user_id(
         &self,
         provider: OAuthProvider,
@@ -60,7 +60,7 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
         Ok(row.map(OAuthAccount::from))
     }
 
-    #[tracing::instrument(name = "repo.oauth.find_by_user_id", skip(self))]
+    #[tracing::instrument(name = "repo.oauth.find_by_user_id", skip_all, fields(db.system = "postgresql"))]
     async fn find_by_user_id(&self, user_id: &UserId) -> Result<Vec<OAuthAccount>, DomainError> {
         let rows = sqlx::query_as!(
             OAuthAccountRow,
@@ -79,7 +79,7 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
         Ok(rows.into_iter().map(OAuthAccount::from).collect())
     }
 
-    #[tracing::instrument(name = "repo.oauth.save", skip(self, account))]
+    #[tracing::instrument(name = "repo.oauth.save", skip_all, fields(db.system = "postgresql"))]
     async fn save(&self, account: &OAuthAccount) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
@@ -100,7 +100,7 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.oauth.delete_by_user_and_provider", skip(self))]
+    #[tracing::instrument(name = "repo.oauth.delete_by_user_and_provider", skip_all, fields(db.system = "postgresql"))]
     async fn delete_by_user_and_provider(
         &self,
         user_id: &UserId,
@@ -121,7 +121,7 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "repo.oauth.count_by_user_id", skip(self))]
+    #[tracing::instrument(name = "repo.oauth.count_by_user_id", skip_all, fields(db.system = "postgresql"))]
     async fn count_by_user_id(&self, user_id: &UserId) -> Result<i64, DomainError> {
         let count = sqlx::query_scalar!(
             r#"

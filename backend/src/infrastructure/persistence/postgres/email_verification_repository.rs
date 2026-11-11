@@ -41,7 +41,7 @@ impl PostgresEmailVerificationRepository {
 
 #[async_trait]
 impl EmailVerificationRepository for PostgresEmailVerificationRepository {
-    #[tracing::instrument(name = "repo.email_verification.save", skip(self, code), fields(user_id = %code.user_id()))]
+    #[tracing::instrument(name = "repo.email_verification.save", skip_all, fields(db.system = "postgresql", user_id = %code.user_id()))]
     async fn save(&self, code: &EmailVerificationCode) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
@@ -82,7 +82,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.email_verification.find_by_user", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.email_verification.find_by_user", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn find_by_user(
         &self,
         user_id: &UserId,
@@ -103,7 +103,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         Ok(row.map(Self::row_to_entity))
     }
 
-    #[tracing::instrument(name = "repo.email_verification.delete_for_user", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.email_verification.delete_for_user", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn delete_for_user(&self, user_id: &UserId) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
@@ -119,7 +119,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.email_verification.register_attempt", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.email_verification.register_attempt", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn register_attempt(
         &self,
         user_id: &UserId,
@@ -155,7 +155,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         })
     }
 
-    #[tracing::instrument(name = "repo.email_verification.release_attempt", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.email_verification.release_attempt", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn release_attempt(&self, user_id: &UserId) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
@@ -172,7 +172,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.email_verification.set_last_sent_at", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.email_verification.set_last_sent_at", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn set_last_sent_at(
         &self,
         user_id: &UserId,
@@ -194,7 +194,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.email_verification.update_for_resend", skip(self, code_hash), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.email_verification.update_for_resend", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn update_for_resend(
         &self,
         user_id: &UserId,
@@ -220,7 +220,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.email_verification.delete_expired", skip(self))]
+    #[tracing::instrument(name = "repo.email_verification.delete_expired", skip_all, fields(db.system = "postgresql"))]
     async fn delete_expired(&self) -> Result<u64, DomainError> {
         let result = sqlx::query!(
             r#"
@@ -237,7 +237,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         Ok(result.rows_affected())
     }
 
-    #[tracing::instrument(name = "repo.email_verification.save_magic_token", skip(self, magic_token_hash), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.email_verification.save_magic_token", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn save_magic_token(
         &self,
         user_id: &UserId,
@@ -268,10 +268,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         Ok(())
     }
 
-    #[tracing::instrument(
-        name = "repo.email_verification.find_by_magic_token_hash",
-        skip(self, magic_token_hash)
-    )]
+    #[tracing::instrument(name = "repo.email_verification.find_by_magic_token_hash", skip_all, fields(db.system = "postgresql"))]
     async fn find_by_magic_token_hash(
         &self,
         magic_token_hash: &str,

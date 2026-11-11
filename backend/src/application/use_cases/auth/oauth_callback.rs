@@ -64,11 +64,7 @@ impl OAuthCallbackUseCase {
     ///
     /// # Errors
     /// Returns an error if repository operations fail or if required parameters are invalid.
-    #[tracing::instrument(
-        name = "usecase.oauth_callback",
-        skip(self, user_info),
-        fields(provider = %provider.as_str(), mode = ?mode)
-    )]
+    #[tracing::instrument(name = "usecase.oauth_callback", skip_all, fields(provider = %provider.as_str(), mode = ?mode))]
     pub async fn execute(
         &self,
         provider: OAuthProvider,
@@ -157,7 +153,7 @@ impl OAuthCallbackUseCase {
             }
             // Email exists but verification mismatch - security concern
             tracing::warn!(
-                email = %email_str,
+                user_id = %existing_user.id(),
                 oauth_verified = user_info.email_verified,
                 user_verified = existing_user.email_verified(),
                 "OAuth email conflict - verification mismatch"

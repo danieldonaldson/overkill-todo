@@ -41,7 +41,7 @@ impl SetPasswordUseCase {
     /// Returns an error if:
     /// - The user doesn't exist
     /// - The user already has a password (should use change password instead)
-    #[tracing::instrument(name = "usecase.set_password", skip(self, new_password), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "usecase.set_password", skip_all, fields(user_id = %user_id))]
     pub async fn execute(&self, user_id: &UserId, new_password: &str) -> Result<(), DomainError> {
         // Find the user
         let mut user = self

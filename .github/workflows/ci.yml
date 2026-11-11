@@ -218,6 +218,18 @@ jobs:
           path: apps/web/playwright-report
           retention-days: 7
 
+  # Cheap and always run: the collector config is validated by the pinned
+  # collector image itself (same check as `just obs-check`).
+  observability:
+    name: Observability config
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate collector config
+        run: |
+          img=$(docker compose --profile observability config --images | grep opentelemetry-collector)
+          docker run --rm -v "$PWD/deploy/observability/collector/config.yaml:/c.yaml:ro" "$img" validate --config=/c.yaml
+
   # Cheap and always run, needs no keys: deploy/secrets/access.yaml, the generated
   # .sops.yaml and every secret's recipients agree, and nothing there is plaintext.
   # yq is preinstalled on the runner image.
@@ -235,7 +247,7 @@ jobs:
   images:
     name: Build ${{ matrix.component }} image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [backend, web, web-e2e, secrets]
+    needs: [backend, web, web-e2e, observability, secrets]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -270,6 +282,8 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          # Baked into the backend as `service.version` (ignored by the web image).
+          build-args: APP_VERSION=${{ github.sha }}
           cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache
           cache-to: type=registry,ref=${{ steps.image.outputs.name }}:buildcache,mode=max
           provenance: mode=max

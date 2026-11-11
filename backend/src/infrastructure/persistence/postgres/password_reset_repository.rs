@@ -38,7 +38,7 @@ impl PostgresPasswordResetRepository {
 
 #[async_trait]
 impl PasswordResetRepository for PostgresPasswordResetRepository {
-    #[tracing::instrument(name = "repo.password_reset.save", skip(self, code), fields(user_id = %code.user_id()))]
+    #[tracing::instrument(name = "repo.password_reset.save", skip_all, fields(db.system = "postgresql", user_id = %code.user_id()))]
     async fn save(&self, code: &PasswordResetCode) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
@@ -71,7 +71,7 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.password_reset.find_by_user", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.password_reset.find_by_user", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn find_by_user(
         &self,
         user_id: &UserId,
@@ -92,7 +92,7 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
         Ok(row.map(Self::row_to_entity))
     }
 
-    #[tracing::instrument(name = "repo.password_reset.consume", skip(self), fields(user_id = %user_id, code_id = %code_id))]
+    #[tracing::instrument(name = "repo.password_reset.consume", skip_all, fields(db.system = "postgresql", user_id = %user_id, code_id = %code_id))]
     async fn consume(&self, user_id: &UserId, code_id: &ResetCodeId) -> Result<bool, DomainError> {
         let result = sqlx::query!(
             r#"
@@ -109,7 +109,7 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
         Ok(result.rows_affected() > 0)
     }
 
-    #[tracing::instrument(name = "repo.password_reset.register_attempt", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.password_reset.register_attempt", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn register_attempt(
         &self,
         user_id: &UserId,
@@ -145,7 +145,7 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
         })
     }
 
-    #[tracing::instrument(name = "repo.password_reset.release_attempt", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "repo.password_reset.release_attempt", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
     async fn release_attempt(&self, user_id: &UserId) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
@@ -162,7 +162,7 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.password_reset.delete_expired", skip(self))]
+    #[tracing::instrument(name = "repo.password_reset.delete_expired", skip_all, fields(db.system = "postgresql"))]
     async fn delete_expired(&self) -> Result<u64, DomainError> {
         let result = sqlx::query!(
             r#"

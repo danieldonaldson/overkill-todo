@@ -37,7 +37,7 @@ impl RevokeTokenUseCase {
     ///
     /// # Errors
     /// Returns an error if repository operations fail.
-    #[tracing::instrument(name = "usecase.revoke_token", skip(self, token))]
+    #[tracing::instrument(name = "usecase.revoke_token", skip_all)]
     pub async fn execute(&self, token: &str) -> Result<(), DomainError> {
         let token_hash = self.token_service.hash_token(token);
 

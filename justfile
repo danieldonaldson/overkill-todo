@@ -97,6 +97,18 @@ secrets-decrypt env:
 
 # ── Database ─────────────────────────────────────────────────────────────────────
 
+# Observability stack (collector, Tempo, VictoriaLogs, Grafana on :3000).
+# With `just dev`, export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318.
+obs-up:
+    docker compose --profile observability up -d
+
+obs-down:
+    docker compose --profile observability down
+
+# Validate the collector config with the pinned collector image (part of `just ci`).
+obs-check:
+    docker run --rm -v "$PWD/deploy/observability/collector/config.yaml:/c.yaml:ro" "$(docker compose --profile observability config --images | grep opentelemetry-collector)" validate --config=/c.yaml
+
 db-up:
     docker compose up -d --wait db
 
@@ -216,7 +228,7 @@ machete:
     cd {{backend}} && cargo machete
 
 # Everything CI gates on. Green here means green CI.
-ci: toolchain-check fmt-check lint machete lint-js secrets-check test test-integration db-prepare-check test-web e2e
+ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check test test-integration db-prepare-check test-web e2e
 
 # ── Images ───────────────────────────────────────────────────────────────────────
 

@@ -43,7 +43,7 @@ pub struct AdminHandlerDeps {
 )]
 /// # Errors
 /// Returns an error if the user store is unreachable.
-#[tracing::instrument(name = "handler.admin.list_users", skip(deps, _admin))]
+#[tracing::instrument(name = "handler.admin.list_users", skip_all)]
 pub async fn list_users(
     State(deps): State<Arc<AdminHandlerDeps>>,
     _admin: AdminUser,
@@ -76,7 +76,7 @@ pub async fn list_users(
 )]
 /// # Errors
 /// Returns an error on an invalid role, insufficient authority, or a missing user.
-#[tracing::instrument(name = "handler.admin.set_user_role", skip(deps, super_admin, request))]
+#[tracing::instrument(name = "handler.admin.set_user_role", skip_all)]
 pub async fn set_user_role(
     State(deps): State<Arc<AdminHandlerDeps>>,
     super_admin: SuperAdminUser,

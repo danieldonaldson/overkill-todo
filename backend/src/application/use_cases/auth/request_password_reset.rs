@@ -46,11 +46,7 @@ impl RequestPasswordResetUseCase {
     ///
     /// # Errors
     /// Returns an error if repository operations or email service fails.
-    #[tracing::instrument(
-        name = "usecase.request_password_reset",
-        skip(self),
-        fields(email = %email)
-    )]
+    #[tracing::instrument(name = "usecase.request_password_reset", skip_all)]
     pub async fn execute(&self, email: &str) -> Result<bool, DomainError> {
         // Find the user by email
         let Some(user) = self.user_repo.find_by_email(email).await? else {

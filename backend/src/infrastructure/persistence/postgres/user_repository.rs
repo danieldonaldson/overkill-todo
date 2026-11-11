@@ -46,7 +46,7 @@ impl PostgresUserRepository {
 
 #[async_trait]
 impl UserRepository for PostgresUserRepository {
-    #[tracing::instrument(name = "repo.user.save", skip(self, user), fields(user_id = %user.id()))]
+    #[tracing::instrument(name = "repo.user.save", skip_all, fields(db.system = "postgresql", user_id = %user.id()))]
     async fn save(&self, user: &User) -> Result<(), DomainError> {
         // Optimistic concurrency: a fresh user INSERTs at version 0; an update
         // takes the `ON CONFLICT` branch and applies ONLY when the persisted
@@ -101,7 +101,7 @@ impl UserRepository for PostgresUserRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.user.find_by_id", skip(self), fields(user_id = %id))]
+    #[tracing::instrument(name = "repo.user.find_by_id", skip_all, fields(db.system = "postgresql", user_id = %id))]
     async fn find_by_id(&self, id: &UserId) -> Result<Option<User>, DomainError> {
         let row = sqlx::query_as!(
             UserRow,
@@ -119,7 +119,7 @@ impl UserRepository for PostgresUserRepository {
         row.map(Self::row_to_user).transpose()
     }
 
-    #[tracing::instrument(name = "repo.user.find_by_email", skip(self), fields(email = %email))]
+    #[tracing::instrument(name = "repo.user.find_by_email", skip_all, fields(db.system = "postgresql"))]
     async fn find_by_email(&self, email: &str) -> Result<Option<User>, DomainError> {
         let row = sqlx::query_as!(
             UserRow,
@@ -137,7 +137,7 @@ impl UserRepository for PostgresUserRepository {
         row.map(Self::row_to_user).transpose()
     }
 
-    #[tracing::instrument(name = "repo.user.find_by_verified_email", skip(self), fields(email = %email))]
+    #[tracing::instrument(name = "repo.user.find_by_verified_email", skip_all, fields(db.system = "postgresql"))]
     async fn find_by_verified_email(&self, email: &str) -> Result<Option<User>, DomainError> {
         let row = sqlx::query_as!(
             UserRow,
@@ -155,7 +155,7 @@ impl UserRepository for PostgresUserRepository {
         row.map(Self::row_to_user).transpose()
     }
 
-    #[tracing::instrument(name = "repo.user.find_all", skip(self))]
+    #[tracing::instrument(name = "repo.user.find_all", skip_all, fields(db.system = "postgresql"))]
     async fn find_all(&self, limit: i64, offset: i64) -> Result<Vec<User>, DomainError> {
         let rows = sqlx::query_as!(
             UserRow,
@@ -176,7 +176,7 @@ impl UserRepository for PostgresUserRepository {
         rows.into_iter().map(Self::row_to_user).collect()
     }
 
-    #[tracing::instrument(name = "repo.user.save_role_change", skip(self, user), fields(user_id = %user.id(), removing_super_admin))]
+    #[tracing::instrument(name = "repo.user.save_role_change", skip_all, fields(db.system = "postgresql", user_id = %user.id(), removing_super_admin))]
     async fn save_role_change(
         &self,
         user: &User,
@@ -232,7 +232,7 @@ impl UserRepository for PostgresUserRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.user.session_authorization_state", skip(self), fields(user_id = %id))]
+    #[tracing::instrument(name = "repo.user.session_authorization_state", skip_all, fields(db.system = "postgresql", user_id = %id))]
     async fn session_authorization_state(
         &self,
         id: &UserId,
@@ -251,7 +251,7 @@ impl UserRepository for PostgresUserRepository {
         }))
     }
 
-    #[tracing::instrument(name = "repo.user.mark_email_verified", skip(self), fields(user_id = %id))]
+    #[tracing::instrument(name = "repo.user.mark_email_verified", skip_all, fields(db.system = "postgresql", user_id = %id))]
     async fn mark_email_verified(&self, id: &UserId) -> Result<(), DomainError> {
         let result = sqlx::query!(
             r#"
@@ -275,7 +275,7 @@ impl UserRepository for PostgresUserRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.user.update_password", skip(self, password_hash), fields(user_id = %id))]
+    #[tracing::instrument(name = "repo.user.update_password", skip_all, fields(db.system = "postgresql", user_id = %id))]
     async fn update_password(&self, id: &UserId, password_hash: &str) -> Result<(), DomainError> {
         let result = sqlx::query!(
             r#"
@@ -302,7 +302,7 @@ impl UserRepository for PostgresUserRepository {
 
 #[async_trait]
 impl AccountLifecycleRepository for PostgresUserRepository {
-    #[tracing::instrument(name = "repo.user.find_ready_for_deletion", skip(self))]
+    #[tracing::instrument(name = "repo.user.find_ready_for_deletion", skip_all, fields(db.system = "postgresql"))]
     async fn find_ready_for_deletion(&self) -> Result<Vec<User>, DomainError> {
         let rows = sqlx::query_as!(
             UserRow,
@@ -328,7 +328,7 @@ impl AccountLifecycleRepository for PostgresUserRepository {
     // goes through `anonymize_account`, which scrubs PII and secrets while
     // leaving audit/financial history intact. This method is not used in
     // production.
-    #[tracing::instrument(name = "repo.user.delete", skip(self), fields(user_id = %id))]
+    #[tracing::instrument(name = "repo.user.delete", skip_all, fields(db.system = "postgresql", user_id = %id))]
     async fn delete(&self, id: &UserId) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
@@ -344,7 +344,7 @@ impl AccountLifecycleRepository for PostgresUserRepository {
         Ok(())
     }
 
-    #[tracing::instrument(name = "repo.user.anonymize_account", skip(self, user), fields(user_id = %user.id()))]
+    #[tracing::instrument(name = "repo.user.anonymize_account", skip_all, fields(db.system = "postgresql", user_id = %user.id()))]
     async fn anonymize_account(&self, user: &User) -> Result<(), DomainError> {
         // INVARIANT: every step below runs in ONE transaction. The user
         // row is scrubbed *and* all secret-bearing child rows (refresh tokens,

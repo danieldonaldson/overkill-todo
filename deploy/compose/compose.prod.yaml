@@ -8,6 +8,8 @@
 #     (`just secrets-decrypt prod` → deploy/compose/.secrets/, see deploy/secrets/)
 #   - the edge serves $DOMAIN on 80/443 with automatic TLS
 #   - a nightly pg_dump runs (copy it off the host; see README)
+#   - with `--profile observability`: telemetry stack, Grafana on the host's
+#     loopback only (reach it through an SSH tunnel; see README)
 services:
   db:
     environment:
@@ -25,6 +27,9 @@ services:
     environment:
       DATABASE_URL: !reset null
       FRONTEND_BASE_URL: https://${DOMAIN:?set DOMAIN}
+      # Required when DEV_MODE=false: the backend refuses to start without it.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      DEPLOYMENT_ENVIRONMENT: production
     restart: unless-stopped
 
   web:
@@ -75,9 +80,35 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # ---- observability (`--profile observability`) ----------------------
+  otel-collector:
+    # No host port in production: only the backend (same network) sends to it.
+    ports: !reset []
+    restart: unless-stopped
+
+  tempo:
+    restart: unless-stopped
+
+  victorialogs:
+    restart: unless-stopped
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: !reset null
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    secrets: [grafana_admin_password]
+    # Host loopback only. Caddy routes nothing here, so the public domain
+    # can't reach it: `ssh -L 3000:localhost:3000 <host>`.
+    ports: !override
+      - '127.0.0.1:3000:3000'
+    restart: unless-stopped
+
 secrets:
   db_password:
     file: ./deploy/compose/.secrets/db_password
+  grafana_admin_password:
+    file: ./deploy/compose/.secrets/grafana_admin_password
 
 volumes:
   caddy-data:

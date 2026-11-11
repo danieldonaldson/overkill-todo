@@ -20,6 +20,7 @@ use utoipa_swagger_ui::SwaggerUi;
 use super::openapi::ApiDoc;
 #[cfg(feature = "swagger-ui")]
 use crate::infrastructure::config::is_dev_mode;
+use crate::infrastructure::telemetry::http::http_trace_layer;
 use crate::shared::crypto::Crypto;
 
 use super::{
@@ -285,7 +286,10 @@ pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
         // Make the crypto handle available as a request extension to every inner
         // middleware/extractor (auth, CSRF, OptionalAuthUser).
         .layer(Extension(crypto))
-        // Outermost: stamp every response (including ones produced by inner
-        // middleware) with an `X-Trace-Id` header for request correlation.
+        // Stamp every response (including ones produced by inner middleware)
+        // with the request's `X-Trace-Id`, read from the span opened below.
         .layer(middleware::from_fn(trace_id_middleware))
+        // Outermost: one server span per request. `Router::layer` runs after
+        // routing, so the span is named after the matched route template.
+        .layer(http_trace_layer())
 }

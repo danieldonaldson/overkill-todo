@@ -20,7 +20,7 @@ impl ListUsersUseCase {
 
     /// # Errors
     /// Propagates persistence failures.
-    #[tracing::instrument(name = "usecase.admin.list_users", skip(self))]
+    #[tracing::instrument(name = "usecase.admin.list_users", skip_all, fields(limit = limit, offset = offset))]
     pub async fn execute(&self, limit: i64, offset: i64) -> Result<Vec<User>, DomainError> {
         self.users.find_all(limit, offset).await
     }
@@ -51,7 +51,7 @@ impl SetUserRoleUseCase {
     ///   last super-admin.
     /// - [`DomainError::NotFound`] if the user does not exist.
     /// - Persistence / [`DomainError::Conflict`] from the repository.
-    #[tracing::instrument(name = "usecase.admin.set_user_role", skip(self), fields(actor = %actor_id, target = %target, new_role))]
+    #[tracing::instrument(name = "usecase.admin.set_user_role", skip_all, fields(actor = %actor_id, target = %target, new_role))]
     pub async fn execute(
         &self,
         actor_role: UserRole,

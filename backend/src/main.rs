@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
-use tower_http::trace::TraceLayer;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use overkill_todo::{
     application::{
@@ -44,6 +42,7 @@ use overkill_todo::{
             CryptoTokenService, HickoryMxValidator, NoOpMxValidator, NoOpTurnstileService,
             RandomCodeGenerator, SmtpEmailService,
         },
+        telemetry,
     },
     shared::crypto::Crypto,
 };
@@ -110,27 +109,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         "TEST_OAUTH_BYPASS is set but DEV_MODE=false — this bypass must not run in production"
     );
 
-    // Default verbosity follows the environment: debug in dev, info in prod.
-    // Always overridable via RUST_LOG.
-    let default_filter = if settings.server.dev_mode {
-        "overkill_todo=debug,tower_http=debug"
-    } else {
-        "overkill_todo=info,tower_http=info"
-    };
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| default_filter.parse().unwrap());
-
-    if settings.server.dev_mode {
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt::layer())
-            .init();
-    } else {
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(fmt::layer().json())
-            .init();
-    }
+    let telemetry = telemetry::init(&settings.telemetry, settings.server.dev_mode)?;
 
     tracing::info!(
         "Starting {} on {}",
@@ -438,8 +417,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             users: user_repo.clone(),
         },
         &settings.server.frontend_origin,
-    )
-    .layer(TraceLayer::new_for_http());
+    );
 
     let addr = settings.server.address();
     let listener = TcpListener::bind(&addr).await?;
@@ -484,6 +462,8 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     } else {
         tracing::warn!("Background workers did not stop within 10s; exiting anyway");
     }
+
+    telemetry.shutdown().await;
 
     Ok(std::process::ExitCode::SUCCESS)
 }

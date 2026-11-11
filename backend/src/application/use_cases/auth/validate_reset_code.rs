@@ -54,11 +54,7 @@ impl ValidateResetCodeUseCase {
     /// - `Validation` if the code is invalid, expired, locked, or the email has no
     ///   pending reset code (an unknown email is reported identically to a known
     ///   email with no code, to avoid an account-enumeration oracle)
-    #[tracing::instrument(
-        name = "usecase.validate_reset_code",
-        skip(self, code),
-        fields(email = %email)
-    )]
+    #[tracing::instrument(name = "usecase.validate_reset_code", skip_all)]
     pub async fn execute(&self, email: &str, code: &str) -> Result<String, DomainError> {
         // Find the user by email. An unknown email returns the SAME generic
         // "no reset code" error as a known email without a valid code: the

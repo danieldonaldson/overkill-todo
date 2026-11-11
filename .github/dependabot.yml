@@ -22,6 +22,10 @@ updates:
     cooldown:
       default-days: 3
     groups:
+      # The OpenTelemetry crates release in lockstep and break on 0.x minors, so
+      # they must move together (all update types), ahead of the generic group.
+      opentelemetry:
+        patterns: ['opentelemetry*', 'tracing-opentelemetry']
       cargo-minor:
         update-types: [minor, patch]
 

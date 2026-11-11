@@ -48,10 +48,7 @@ impl ResetPasswordUseCase {
     ///
     /// - `Authorization` if the token is invalid or expired
     /// - `NotFound` if the user doesn't exist
-    #[tracing::instrument(
-        name = "usecase.reset_password",
-        skip(self, reset_token, new_password_hash)
-    )]
+    #[tracing::instrument(name = "usecase.reset_password", skip_all)]
     pub async fn execute(
         &self,
         reset_token: &str,

@@ -75,7 +75,7 @@ fn is_excluded_path(path: &str) -> bool {
 /// - The header and cookie tokens don't match
 /// - The token signature is invalid or expired
 /// - The token is not bound to the authenticated principal
-#[tracing::instrument(name = "middleware.csrf", skip(req, next), fields(method = %req.method(), path = %req.uri().path()))]
+#[tracing::instrument(name = "middleware.csrf", skip_all, fields(method = %req.method(), path = %req.uri().path()))]
 pub async fn csrf_middleware(mut req: Request, next: Next) -> Result<Response, AppError> {
     let method = req.method();
     let path = req.uri().path();

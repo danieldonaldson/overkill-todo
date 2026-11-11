@@ -10,14 +10,15 @@ Move to Kubernetes only when the workload needs it (see `../k8s/README.md`).
 
 ## Files
 
-| File                               | Committed        | What                                                   |
-| ---------------------------------- | ---------------- | ------------------------------------------------------ |
-| `compose.prod.yaml`                | yes              | Override on top of `../../compose.yaml`                |
-| `Caddyfile`                        | yes              | TLS edge for `$DOMAIN` (automatic certificates)        |
-| `../secrets/prod/backend.sops.env` | yes, encrypted   | Backend config, the contract is `backend/.env.example` |
-| `../secrets/prod/db_password.sops` | yes, encrypted   | Postgres password                                      |
-| `.secrets/`                        | **never**        | The above, decrypted on the host (gitignored)          |
-| `.env`                             | on the host only | `DOMAIN`, `BACKEND_IMAGE`, `WEB_IMAGE` (digests)       |
+| File                                          | Committed        | What                                                   |
+| --------------------------------------------- | ---------------- | ------------------------------------------------------ |
+| `compose.prod.yaml`                           | yes              | Override on top of `../../compose.yaml`                |
+| `Caddyfile`                                   | yes              | TLS edge for `$DOMAIN` (automatic certificates)        |
+| `../secrets/prod/backend.sops.env`            | yes, encrypted   | Backend config, the contract is `backend/.env.example` |
+| `../secrets/prod/db_password.sops`            | yes, encrypted   | Postgres password                                      |
+| `../secrets/prod/grafana_admin_password.sops` | yes, encrypted   | Grafana `admin` password (observability)               |
+| `.secrets/`                                   | **never**        | The above, decrypted on the host (gitignored)          |
+| `.env`                                        | on the host only | `DOMAIN`, `BACKEND_IMAGE`, `WEB_IMAGE` (digests)       |
 
 Who can decrypt what, and how to add people or hosts, is in
 [`../secrets/README.md`](../secrets/README.md). The host needs its own age key
@@ -84,6 +85,46 @@ dc start backend
 ```
 
 Time it and write the number down. See `dev-workflows/runbooks/dr-rehearsal.md`.
+
+## Observability
+
+Traces (Tempo), logs (VictoriaLogs) and Grafana run on the same host, under the
+`observability` profile. Config lives in `deploy/observability/`; the design is
+`openspec/changes/ot-001-observability/design.md` (archived to `openspec/specs/`
+once done). Everything is kept 30 days.
+
+**Deploy order matters.** A backend with `DEV_MODE=false` refuses to start
+without `OTEL_EXPORTER_OTLP_ENDPOINT` (set in `compose.prod.yaml`), so bring the
+stack up first, then roll the backend digest:
+
+```bash
+just secrets-decrypt prod        # includes grafana_admin_password
+
+alias dc='docker compose -f compose.yaml -f deploy/compose/compose.prod.yaml --profile full --profile observability'
+dc up -d otel-collector tempo victorialogs grafana   # 1. the stack
+dc up -d                                            # 2. then the new backend digest
+just smoke https://app.example.com
+```
+
+**Access.** Nothing observability-related is routed by Caddy or published on a
+public port. Grafana listens on the host's loopback only:
+
+```bash
+ssh -L 3000:localhost:3000 <host>    # then open http://localhost:3000, user admin
+```
+
+In Explore, an expanded log line has **Links → trace_id → View trace**; in a
+trace, a span's **Related logs** button shows that trace's log lines (backend and
+edge).
+
+**Rollback.** Roll the backend digest back as usual; an older backend ignores the
+telemetry variables. The observability services can be stopped at any time
+(`dc stop otel-collector tempo victorialogs grafana`) without affecting the app:
+the backend keeps serving and logs a warning that telemetry isn't delivered.
+
+**Disk.** VictoriaLogs is capped by `VLOGS_MAX_DISK` (default 10 GiB, set in
+`.env`); Tempo and VictoriaLogs data live in the `tempo-data` and `vlogs-data`
+volumes. Alerts on disk use arrive in a later slice.
 
 ## Not covered here
 

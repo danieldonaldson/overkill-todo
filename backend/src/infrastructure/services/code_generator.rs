@@ -82,7 +82,7 @@ impl Default for RandomCodeGenerator {
 impl CodeGenerator for RandomCodeGenerator {
     fn generate_code(&self, email: &str) -> String {
         if self.is_test_email(email) {
-            tracing::debug!(email = %email, "Using fixed test code for test email");
+            tracing::debug!("Using fixed test code for test email");
             return TEST_CODE.to_string();
         }
 

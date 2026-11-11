@@ -44,7 +44,7 @@ impl RequestAccountDeletionUseCase {
     /// - `NotFound` if the user doesn't exist.
     /// - `Validation` if a password user omitted their password.
     /// - `Authorization` if the supplied password is wrong.
-    #[tracing::instrument(name = "usecase.request_account_deletion", skip(self, password), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "usecase.request_account_deletion", skip_all, fields(user_id = %user_id))]
     pub async fn execute(
         &self,
         user_id: &UserId,

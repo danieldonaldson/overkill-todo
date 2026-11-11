@@ -57,7 +57,7 @@ impl ChangePasswordUseCase {
     /// - The user doesn't have a password (OAuth-only users)
     /// - The current password is incorrect
     /// - The new password is the same as the current password
-    #[tracing::instrument(name = "usecase.change_password", skip(self, current_password, new_password, current_refresh_token), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "usecase.change_password", skip_all, fields(user_id = %user_id))]
     pub async fn execute(
         &self,
         user_id: &UserId,

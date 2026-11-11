@@ -34,11 +34,7 @@ impl OAuthUnlinkUseCase {
     ///
     /// - `NotFound` - User or OAuth link not found
     /// - `Validation` - Cannot unlink last sign-in method
-    #[tracing::instrument(
-        name = "usecase.oauth_unlink",
-        skip(self),
-        fields(user_id = %user_id, provider = %provider.as_str())
-    )]
+    #[tracing::instrument(name = "usecase.oauth_unlink", skip_all, fields(user_id = %user_id, provider = %provider.as_str()))]
     pub async fn execute(
         &self,
         user_id: &UserId,

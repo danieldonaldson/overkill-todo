@@ -216,6 +216,23 @@ pub struct CryptoSettings {
     pub secrets_encryption_key_b64: String,
 }
 
+/// Telemetry export settings (OpenTelemetry). See `infrastructure::telemetry`.
+#[derive(Debug, Clone)]
+pub struct TelemetrySettings {
+    /// OTLP/HTTP base URL of the collector (e.g. `http://otel-collector:4318`).
+    /// `None` disables export: allowed only in dev mode.
+    pub otlp_endpoint: Option<String>,
+    /// `service.name` resource attribute.
+    pub service_name: String,
+    /// `deployment.environment.name` resource attribute (e.g. `production`).
+    pub environment: String,
+    /// `service.version` resource attribute: `APP_VERSION` at runtime, else the
+    /// value baked in at build time, else the crate version.
+    pub version: String,
+    /// `LOG_FORMAT=json|pretty` override; `None` means JSON outside dev mode.
+    pub log_json: Option<bool>,
+}
+
 /// Application configuration settings, grouped by concern.
 #[derive(Debug, Clone)]
 pub struct Settings {
@@ -225,6 +242,23 @@ pub struct Settings {
     pub google_oauth: GoogleOAuthSettings,
     pub smtp: SmtpSettings,
     pub bot_protection: BotProtectionSettings,
+    pub telemetry: TelemetrySettings,
+}
+
+/// Production must export telemetry: refuse to start without a destination
+/// unless in dev mode (mirrors the SMTP / Turnstile rule in `main.rs`).
+fn check_telemetry_required(
+    dev_mode: bool,
+    otlp_endpoint: Option<&str>,
+    problems: &mut Vec<String>,
+) {
+    if !dev_mode && otlp_endpoint.is_none() {
+        problems.push(
+            "missing required environment variable: OTEL_EXPORTER_OTLP_ENDPOINT \
+             (telemetry export is required when DEV_MODE=false)"
+                .to_string(),
+        );
+    }
 }
 
 impl Settings {
@@ -269,6 +303,17 @@ impl Settings {
             .and_then(|base| derive_origin(&base).map_err(|e| problems.push(e)).ok());
 
         let dev_mode = env_is_true("DEV_MODE");
+        let otlp_endpoint = optional_env("OTEL_EXPORTER_OTLP_ENDPOINT");
+        check_telemetry_required(dev_mode, otlp_endpoint.as_deref(), &mut problems);
+        let log_json = match optional_env("LOG_FORMAT").map(|v| v.to_ascii_lowercase()) {
+            None => None,
+            Some(v) if v == "json" => Some(true),
+            Some(v) if v == "pretty" => Some(false),
+            Some(v) => {
+                problems.push(format!("LOG_FORMAT must be json or pretty (got {v:?})"));
+                None
+            }
+        };
 
         if !problems.is_empty() {
             return Err(config::ConfigError::Message(format!(
@@ -328,6 +373,24 @@ impl Settings {
             mx_validation_enabled: env_is_true("MX_VALIDATION_ENABLED"),
         };
 
+        let telemetry = TelemetrySettings {
+            otlp_endpoint,
+            service_name: optional_env("OTEL_SERVICE_NAME")
+                .unwrap_or_else(|| "overkill-todo-backend".to_string()),
+            environment: optional_env("DEPLOYMENT_ENVIRONMENT").unwrap_or_else(|| {
+                if dev_mode {
+                    "development"
+                } else {
+                    "production"
+                }
+                .to_string()
+            }),
+            version: optional_env("APP_VERSION")
+                .or_else(|| option_env!("APP_VERSION").map(str::to_string))
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
+            log_json,
+        };
+
         Ok(Self {
             server,
             database,
@@ -335,6 +398,7 @@ impl Settings {
             google_oauth,
             smtp,
             bot_protection,
+            telemetry,
         })
     }
 }
@@ -706,6 +770,11 @@ mod tests {
             ("SMTP_FROM_NAME", ""),
             ("TURNSTILE_SECRET_KEY", "turnstile"),
             ("MX_VALIDATION_ENABLED", "no"),
+            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.test:4318"),
+            ("OTEL_SERVICE_NAME", "svc-test"),
+            ("DEPLOYMENT_ENVIRONMENT", "staging"),
+            ("APP_VERSION", "abc123"),
+            ("LOG_FORMAT", "JSON"),
         ];
 
         with_env_vars(&vars, || {
@@ -754,6 +823,37 @@ mod tests {
                 Some("turnstile")
             );
             assert!(!s.bot_protection.mx_validation_enabled);
+
+            assert_eq!(
+                s.telemetry.otlp_endpoint.as_deref(),
+                Some("http://collector.test:4318")
+            );
+            assert_eq!(s.telemetry.service_name, "svc-test");
+            assert_eq!(s.telemetry.environment, "staging");
+            assert_eq!(s.telemetry.version, "abc123");
+            assert_eq!(s.telemetry.log_json, Some(true));
         });
+    }
+
+    #[test]
+    fn telemetry_endpoint_required_outside_dev_mode() {
+        let mut problems = Vec::new();
+        check_telemetry_required(false, None, &mut problems);
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("OTEL_EXPORTER_OTLP_ENDPOINT"));
+    }
+
+    #[test]
+    fn telemetry_endpoint_optional_in_dev_mode() {
+        let mut problems = Vec::new();
+        check_telemetry_required(true, None, &mut problems);
+        assert_eq!(problems, Vec::<String>::new());
+    }
+
+    #[test]
+    fn telemetry_endpoint_satisfies_production() {
+        let mut problems = Vec::new();
+        check_telemetry_required(false, Some("http://collector:4318"), &mut problems);
+        assert_eq!(problems, Vec::<String>::new());
     }
 }

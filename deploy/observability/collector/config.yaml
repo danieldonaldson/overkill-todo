@@ -1,0 +1,174 @@
+# OpenTelemetry Collector: the single intake for telemetry (design Decision 1).
+#
+#   traces: backend (OTLP/HTTP) ──────────────────────────────► Tempo
+#   logs:   docker container stdout (json-file) ──► parse ──────► VictoriaLogs
+#
+# Both pipelines run the same second-line redaction as the backend
+# (design Decision 8): sensitive key names, JWTs, email addresses and
+# sensitive URL query values. Nothing here is exposed publicly.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+  # Docker json-file logs. Each compose service sets the json-file `labels`
+  # option, so every line carries `attrs.com.docker.compose.service`.
+  file_log/docker:
+    include: [/var/lib/docker/containers/*/*-json.log]
+    start_at: end
+    include_file_path: false
+    include_file_name: false
+    operators:
+      - id: docker
+        type: json_parser
+        parse_to: attributes
+        timestamp:
+          parse_from: attributes.time
+          layout_type: gotime
+          layout: '2006-01-02T15:04:05.999999999Z07:00'
+      - id: service
+        type: move
+        from: attributes.attrs["com.docker.compose.service"]
+        to: resource["service.name"]
+        on_error: send_quiet
+      # Only app containers; never the observability stack itself.
+      - id: keep-app-services
+        type: filter
+        expr: 'resource["service.name"] == nil or not (resource["service.name"] in ["backend", "edge", "web", "db"])'
+      - id: stream
+        type: move
+        from: attributes.stream
+        to: attributes["log.iostream"]
+      - id: line
+        type: move
+        from: attributes.log
+        to: body
+      - type: remove
+        field: attributes.attrs
+        on_error: send_quiet
+      - type: remove
+        field: attributes.time
+      # Structured app lines (backend, Caddy) are JSON; anything else stays text.
+      - id: app-json
+        type: json_parser
+        if: 'body matches "^\\s*\\{"'
+        parse_from: body
+        parse_to: attributes
+        on_error: send_quiet
+      # The backend names itself (`service.name` etc. on every JSON line); that
+      # identity wins over the compose service label, so logs and traces agree.
+      - type: move
+        if: 'attributes["service.name"] != nil'
+        from: attributes["service.name"]
+        to: resource["service.name"]
+      - type: move
+        if: 'attributes["service.version"] != nil'
+        from: attributes["service.version"]
+        to: resource["service.version"]
+      - type: move
+        if: 'attributes["deployment.environment.name"] != nil'
+        from: attributes["deployment.environment.name"]
+        to: resource["deployment.environment.name"]
+      # Backend lines: `message` is the log message, `trace_id`/`span_id` link
+      # to the trace. Caddy lines: `msg`, and `traceID` once edge tracing is on.
+      - type: move
+        if: 'attributes.message != nil'
+        from: attributes.message
+        to: body
+      - type: move
+        if: 'attributes.msg != nil'
+        from: attributes.msg
+        to: body
+      - type: move
+        if: 'attributes.traceID != nil'
+        from: attributes.traceID
+        to: attributes.trace_id
+      - type: trace_parser
+        if: 'attributes.trace_id != nil'
+        trace_id:
+          parse_from: attributes.trace_id
+        span_id:
+          parse_from: attributes.span_id
+        on_error: send_quiet
+      - type: severity_parser
+        if: 'attributes.level != nil'
+        parse_from: attributes.level
+        on_error: send_quiet
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  # Flatten nested JSON (e.g. Caddy's request.uri) so the rules below and
+  # field search in VictoriaLogs see every value, then strip sensitive URL
+  # query values from any attribute.
+  transform/logs:
+    error_mode: ignore
+    log_statements:
+      - flatten(log.attributes)
+      # Edge access lines: the backend's X-Trace-Id response header links the
+      # line to the request's trace (until the edge traces itself, slice 3).
+      - set(log.attributes["trace_id"], log.attributes["resp_headers.X-Trace-Id.0"]) where log.attributes["trace_id"] == nil and log.attributes["resp_headers.X-Trace-Id.0"] != nil
+      - replace_all_patterns(log.attributes, "value", "([?&](?i:token|code|password|secret|key|state)=)[^&\\s\"]*", "$${1}[REDACTED]")
+      - replace_pattern(log.body, "([?&](?i:token|code|password|secret|key|state)=)[^&\\s\"]*", "$${1}[REDACTED]")
+
+  transform/traces:
+    error_mode: ignore
+    trace_statements:
+      - replace_all_patterns(span.attributes, "value", "([?&](?i:token|code|password|secret|key|state)=)[^&\\s\"]*", "$${1}[REDACTED]")
+
+  # Second line of defence behind the backend's own redaction. `code` is
+  # matched only as a whole key name here, so `http.response.status_code` and
+  # `code.*` source-location attributes survive.
+  redaction:
+    allow_all_keys: true
+    blocked_key_patterns:
+      - '(?i).*(password|passwd|secret|token|otp|session|cookie|authorization|csrf).*'
+      - '(?i)^(code|reset_code|verification_code|auth_code)$'
+    blocked_values:
+      - 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'
+      - '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'
+    summary: silent
+
+  batch:
+    send_batch_size: 1024
+    timeout: 2s
+
+exporters:
+  otlp_http/tempo:
+    endpoint: http://tempo:4318
+    tls:
+      insecure: true
+
+  otlp_http/victorialogs:
+    logs_endpoint: http://victorialogs:9428/insert/opentelemetry/v1/logs
+    headers:
+      # Fields that VictoriaLogs groups log streams by.
+      VL-Stream-Fields: service.name,deployment.environment.name
+    tls:
+      insecure: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/traces, redaction, batch]
+      exporters: [otlp_http/tempo]
+    logs:
+      receivers: [file_log/docker]
+      processors: [memory_limiter, transform/logs, redaction, batch]
+      exporters: [otlp_http/victorialogs]

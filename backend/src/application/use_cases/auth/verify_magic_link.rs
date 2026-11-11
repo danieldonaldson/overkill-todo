@@ -80,7 +80,7 @@ impl VerifyMagicLinkUseCase {
     /// # Errors
     ///
     /// Returns `VerifyMagicLinkError` for specific error types.
-    #[tracing::instrument(name = "usecase.verify_magic_link", skip(self, token))]
+    #[tracing::instrument(name = "usecase.verify_magic_link", skip_all)]
     pub async fn execute(&self, token: &str) -> Result<User, VerifyMagicLinkError> {
         // Hash the token with SHA-256 (magic link tokens are random UUIDs, not guessable)
         let mut hasher = Sha256::new();

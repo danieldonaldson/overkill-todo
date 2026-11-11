@@ -50,6 +50,10 @@ ENV SQLX_OFFLINE=true
 COPY . .
 # Touch to bust the dep-cache timestamp.
 RUN touch src/main.rs src/lib.rs
+# Telemetry `service.version` (read with `option_env!` at compile time). Declared
+# here, after the dependency layer, so a new value only rebuilds our crate.
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
 RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
     cargo auditable build --release --locked --no-default-features

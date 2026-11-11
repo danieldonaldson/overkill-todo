@@ -84,11 +84,7 @@ impl VerifyEmailUseCase {
     ///
     /// Returns `VerifyEmailError` for specific error types that the handler
     /// can use to provide detailed feedback to the frontend.
-    #[tracing::instrument(
-        name = "usecase.verify_email",
-        skip(self, code),
-        fields(email = %email)
-    )]
+    #[tracing::instrument(name = "usecase.verify_email", skip_all)]
     pub async fn execute(&self, email: &str, code: &str) -> Result<User, VerifyEmailError> {
         // Find the user by email
         let user = self

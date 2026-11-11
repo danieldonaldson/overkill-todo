@@ -34,7 +34,7 @@ impl ExportUserDataUseCase {
     /// # Errors
     /// - `NotFound` if the user doesn't exist.
     /// - `Persistence` on a repository failure.
-    #[tracing::instrument(name = "usecase.export_user_data", skip(self), fields(user_id = %user_id))]
+    #[tracing::instrument(name = "usecase.export_user_data", skip_all, fields(user_id = %user_id))]
     pub async fn execute(
         &self,
         user_id: &UserId,

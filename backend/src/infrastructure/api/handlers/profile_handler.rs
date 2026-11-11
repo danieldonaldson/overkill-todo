@@ -50,7 +50,7 @@ pub struct ProfileHandlerDeps {
 /// # Errors
 ///
 /// Returns an error if the user is not found, current password is wrong, or validation fails.
-#[tracing::instrument(name = "handler.change_password", skip(deps, request, headers))]
+#[tracing::instrument(name = "handler.change_password", skip_all)]
 pub async fn change_password(
     State(deps): State<Arc<ProfileHandlerDeps>>,
     auth_user: AuthUser,
@@ -90,7 +90,7 @@ pub async fn change_password(
 /// # Errors
 ///
 /// Returns an error if the user is not found, already has a password, or validation fails.
-#[tracing::instrument(name = "handler.set_password", skip(deps, request))]
+#[tracing::instrument(name = "handler.set_password", skip_all)]
 pub async fn set_password(
     State(deps): State<Arc<ProfileHandlerDeps>>,
     auth_user: AuthUser,
@@ -153,7 +153,7 @@ fn build_export(
 /// # Errors
 ///
 /// Returns an error if the user is not found or a repository call fails.
-#[tracing::instrument(name = "handler.export_user_data", skip(deps))]
+#[tracing::instrument(name = "handler.export_user_data", skip_all)]
 pub async fn export_data(
     State(deps): State<Arc<ProfileHandlerDeps>>,
     auth_user: AuthUser,
@@ -183,7 +183,7 @@ pub async fn export_data(
 ///
 /// Returns an error if confirmation is missing, the password is wrong, or the
 /// user is not found.
-#[tracing::instrument(name = "handler.request_account_deletion", skip(deps, request))]
+#[tracing::instrument(name = "handler.request_account_deletion", skip_all)]
 pub async fn request_deletion(
     State(deps): State<Arc<ProfileHandlerDeps>>,
     auth_user: AuthUser,
@@ -223,7 +223,7 @@ pub async fn request_deletion(
 /// # Errors
 ///
 /// Returns an error if the account is already deleted or the user is not found.
-#[tracing::instrument(name = "handler.cancel_account_deletion", skip(deps))]
+#[tracing::instrument(name = "handler.cancel_account_deletion", skip_all)]
 pub async fn cancel_deletion(
     State(deps): State<Arc<ProfileHandlerDeps>>,
     auth_user: AuthUser,

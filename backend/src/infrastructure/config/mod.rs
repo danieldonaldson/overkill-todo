@@ -4,5 +4,5 @@ pub mod settings;
 
 pub use settings::{
     BotProtectionSettings, CryptoSettings, DatabaseSettings, GoogleOAuthSettings, ServerSettings,
-    Settings, SmtpSettings, is_dev_mode,
+    Settings, SmtpSettings, TelemetrySettings, is_dev_mode,
 };

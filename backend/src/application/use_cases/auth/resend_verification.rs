@@ -69,11 +69,7 @@ impl ResendVerificationUseCase {
     /// # Errors
     ///
     /// Returns `ResendVerificationError` for specific error types.
-    #[tracing::instrument(
-        name = "usecase.resend_verification",
-        skip(self),
-        fields(email = %email)
-    )]
+    #[tracing::instrument(name = "usecase.resend_verification", skip_all)]
     pub async fn execute(&self, email: &str) -> Result<ResendResult, ResendVerificationError> {
         // Find the user by email
         let user = self

@@ -13,7 +13,7 @@ use sqlx::PgPool;
         (status = 200, description = "Service is running", body = Value)
     )
 )]
-#[tracing::instrument(name = "health_check")]
+#[tracing::instrument(name = "health_check", skip_all)]
 pub async fn health_check() -> Json<Value> {
     // Intentionally omits the build version: this endpoint is unauthenticated, so
     // disclosing the exact version only helps an attacker fingerprint the build
@@ -34,7 +34,7 @@ pub async fn health_check() -> Json<Value> {
         (status = 503, description = "Service is not ready", body = Value)
     )
 )]
-#[tracing::instrument(name = "health_ready", skip(pool))]
+#[tracing::instrument(name = "health_ready", skip_all)]
 pub async fn health_ready(State(pool): State<PgPool>) -> (StatusCode, Json<Value>) {
     match sqlx::query!("SELECT 1 as ping").fetch_one(&pool).await {
         Ok(_) => (

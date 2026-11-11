@@ -35,7 +35,7 @@ impl PurgeScheduledAccountsUseCase {
     ///
     /// # Errors
     /// Persistence errors from listing the ready-for-deletion set.
-    #[tracing::instrument(name = "usecase.purge_scheduled_accounts", skip(self))]
+    #[tracing::instrument(name = "usecase.purge_scheduled_accounts", skip_all)]
     pub async fn run_once(&self) -> Result<usize, DomainError> {
         let ready = self.lifecycle.find_ready_for_deletion().await?;
         if ready.is_empty() {

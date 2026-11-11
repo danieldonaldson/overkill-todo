@@ -81,7 +81,7 @@ pub struct VerificationHandlerDeps {
         (status = 404, description = "User not found")
     )
 )]
-#[tracing::instrument(name = "handler.verify_email", skip(deps, request, headers), fields(email = %request.email))]
+#[tracing::instrument(name = "handler.verify_email", skip_all)]
 pub async fn verify_email(
     State(deps): State<Arc<VerificationHandlerDeps>>,
     headers: HeaderMap,
@@ -244,7 +244,7 @@ async fn issue_auth_tokens(
         (status = 200, description = "Same response whether or not a code was sent (unknown email, already verified, cooldown, and lock are not distinguished)", body = ResendVerificationResponse)
     )
 )]
-#[tracing::instrument(name = "handler.resend_verification", skip(deps, request), fields(email = %request.email))]
+#[tracing::instrument(name = "handler.resend_verification", skip_all)]
 pub async fn resend_verification(
     State(deps): State<Arc<VerificationHandlerDeps>>,
     ValidatedJson(request): ValidatedJson<ResendVerificationRequest>,
@@ -304,7 +304,7 @@ pub async fn resend_verification(
 /// # Errors
 ///
 /// Returns an error if service errors occur. Always returns success to prevent email enumeration.
-#[tracing::instrument(name = "handler.forgot_password", skip(deps, request), fields(email = %request.email))]
+#[tracing::instrument(name = "handler.forgot_password", skip_all)]
 pub async fn forgot_password(
     State(deps): State<Arc<VerificationHandlerDeps>>,
     ValidatedJson(request): ValidatedJson<ForgotPasswordRequest>,
@@ -343,7 +343,7 @@ pub async fn forgot_password(
 /// # Errors
 ///
 /// Returns an error if the code is invalid, expired, or service errors occur.
-#[tracing::instrument(name = "handler.verify_reset_code", skip(deps, request), fields(email = %request.email))]
+#[tracing::instrument(name = "handler.verify_reset_code", skip_all)]
 pub async fn verify_reset_code(
     State(deps): State<Arc<VerificationHandlerDeps>>,
     ValidatedJson(request): ValidatedJson<VerifyResetCodeRequest>,
@@ -375,7 +375,7 @@ pub async fn verify_reset_code(
 /// # Errors
 ///
 /// Returns an error if the reset token is invalid, expired, missing device fingerprint, or service errors occur.
-#[tracing::instrument(name = "handler.reset_password", skip(deps, request, headers))]
+#[tracing::instrument(name = "handler.reset_password", skip_all)]
 pub async fn reset_password(
     State(deps): State<Arc<VerificationHandlerDeps>>,
     headers: HeaderMap,
@@ -439,7 +439,7 @@ pub async fn reset_password(
         (status = 401, description = "Invalid or expired signup token")
     )
 )]
-#[tracing::instrument(name = "handler.complete_signup", skip(deps, request, headers), fields(email = %request.email))]
+#[tracing::instrument(name = "handler.complete_signup", skip_all)]
 pub async fn complete_signup(
     State(deps): State<Arc<VerificationHandlerDeps>>,
     headers: HeaderMap,
@@ -496,7 +496,7 @@ pub async fn complete_signup(
         (status = 302, description = "Redirects to /login?error=... on error")
     )
 )]
-#[tracing::instrument(name = "handler.verify_magic", skip(deps, query))]
+#[tracing::instrument(name = "handler.verify_magic", skip_all)]
 pub async fn verify_magic(
     State(deps): State<Arc<VerificationHandlerDeps>>,
     Query(query): Query<VerifyMagicLinkQuery>,

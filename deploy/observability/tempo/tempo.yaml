@@ -1,0 +1,44 @@
+# Grafana Tempo 3, monolithic mode (no Kafka), local disk. Design Decisions 1, 9.
+# Receives OTLP from the collector only; never exposed publicly.
+
+stream_over_http_enabled: true
+
+server:
+  http_listen_port: 3200
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        # Tempo binds localhost by default; the collector reaches it over the
+        # compose network, so bind all interfaces (the port is not published).
+        http:
+          endpoint: 0.0.0.0:4318
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+# 30-day retention (720h). Set on the backend scheduler and worker (global) and
+# as the tenant default, so no layer falls back to Tempo's 14-day default.
+# Verified against /status/config on 3.1.1.
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        block_retention: 720h
+backend_worker:
+  compaction:
+    block_retention: 720h
+overrides:
+  defaults:
+    compaction:
+      block_retention: 720h
+
+usage_report:
+  reporting_enabled: false

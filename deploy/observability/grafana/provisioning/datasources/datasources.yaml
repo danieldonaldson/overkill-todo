@@ -1,0 +1,39 @@
+# Provisioned datasources (design Decision 7). Nothing is set up by hand.
+#   log line → trace : VictoriaLogs derived field on trace_id → Tempo
+#   trace → log lines: Tempo tracesToLogsV2 custom query → VictoriaLogs
+apiVersion: 1
+
+datasources:
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    isDefault: true
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: victorialogs
+        spanStartTimeShift: '-5m'
+        spanEndTimeShift: '5m'
+        filterByTraceID: false
+        filterBySpanID: false
+        customQuery: true
+        query: 'trace_id:"$${__trace.traceId}"'
+      nodeGraph:
+        enabled: true
+      search:
+        hide: false
+
+  - name: VictoriaLogs
+    uid: victorialogs
+    type: victoriametrics-logs-datasource
+    access: proxy
+    url: http://victorialogs:9428
+    jsonData:
+      derivedFields:
+        - name: trace_id
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: tempo
+          url: '$${__value.raw}'
+          urlDisplayLabel: View trace
