@@ -38,15 +38,27 @@ impl Database {
 /// # Errors
 /// Returns an error if the connection string is invalid or the pool cannot be created.
 pub async fn create_pool(database_url: &str, max_connections: u32) -> Result<PgPool, sqlx::Error> {
-    let connect_options = PgConnectOptions::from_str(database_url)?
-        .log_statements(LevelFilter::Debug)
-        .log_slow_statements(LevelFilter::Warn, Duration::from_millis(100));
+    let connect_options = with_statement_logging(PgConnectOptions::from_str(database_url)?);
 
     PgPoolOptions::new()
         .max_connections(max_connections)
         .acquire_timeout(Duration::from_secs(10))
         .connect_with(connect_options)
         .await
+}
+
+/// Statement logging used by every production pool.
+///
+/// Statements are logged at info so the trace export filter
+/// (`sqlx::query=info`) attaches each one's SQL text (never bound values) to
+/// its `repo.*` span. The default stdout filter has no `sqlx` directive, so
+/// they stay out of the logs. Public so tests can apply the same settings to a
+/// `#[sqlx::test]` pool.
+#[must_use]
+pub fn with_statement_logging(options: PgConnectOptions) -> PgConnectOptions {
+    options
+        .log_statements(LevelFilter::Info)
+        .log_slow_statements(LevelFilter::Warn, Duration::from_millis(100))
 }
 
 /// Runs database migrations from the migrations directory.

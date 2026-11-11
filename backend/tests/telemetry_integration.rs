@@ -24,10 +24,13 @@ use opentelemetry_sdk::trace::{
 use overkill_todo::{
     application::ports::EmailService,
     domain::errors::DomainError,
-    infrastructure::telemetry::{self, LogFormat, ServiceInfo},
+    infrastructure::{
+        persistence::postgres::connection::with_statement_logging,
+        telemetry::{self, LogFormat, ServiceInfo},
+    },
 };
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
 use tracing_subscriber::EnvFilter;
 
@@ -112,6 +115,13 @@ impl Captured {
         }
         out
     }
+}
+
+/// The `#[sqlx::test]` database with production statement logging, so SQL
+/// text reaches the spans exactly as it does in a deployed backend.
+async fn production_pool(pool: &PgPool) -> PgPool {
+    let options = with_statement_logging((*pool.connect_options()).clone());
+    PgPoolOptions::new().connect_with(options).await.unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -268,7 +278,7 @@ async fn client_supplied_traceparent_is_ignored(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 async fn login_trace_contains_repository_spans(pool: PgPool) {
     let telemetry = Captured::install();
-    let app = common::create_test_app(pool);
+    let app = common::create_test_app(production_pool(&pool).await);
 
     let (resp, _) = send(
         &app,
@@ -313,6 +323,18 @@ async fn login_trace_contains_repository_spans(pool: PgPool) {
         reached_server,
         "repo span does not descend from the server span"
     );
+    // Each statement's SQL text is an event on its repository span.
+    assert!(
+        in_trace
+            .iter()
+            .filter(|s| s.name.starts_with("repo."))
+            .flat_map(|s| s.events.events.iter())
+            .any(|e| e
+                .attributes
+                .iter()
+                .any(|kv| kv.key.as_str() == "db.statement")),
+        "no db.statement event on any repo.* span"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -327,7 +349,10 @@ async fn login_trace_contains_repository_spans(pool: PgPool) {
 async fn auth_flows_leave_no_secrets_in_telemetry(pool: PgPool) {
     let telemetry = Captured::install();
     let email_service = Arc::new(CapturingEmail::default());
-    let app = common::create_test_app_with_email_service(pool, email_service.clone());
+    let app = common::create_test_app_with_email_service(
+        production_pool(&pool).await,
+        email_service.clone(),
+    );
 
     // Test-pattern emails get the fixed dev code (see `RandomCodeGenerator`).
     let email = "test-leakcheck@example.com";
