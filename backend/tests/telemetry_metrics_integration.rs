@@ -6,6 +6,7 @@ use opentelemetry_sdk::metrics::{
     InMemoryMetricExporter, PeriodicReader, SdkMeterProvider,
     data::{AggregatedMetrics, MetricData, ScopeMetrics},
 };
+use overkill_todo::infrastructure::persistence::Database;
 use overkill_todo::infrastructure::telemetry::metrics::{METER_NAME, register_db_pool_gauges};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
@@ -52,7 +53,10 @@ async fn pool_gauges_report_connection_use_and_max(test_pool: PgPool) {
     let provider = SdkMeterProvider::builder()
         .with_reader(PeriodicReader::builder(exporter.clone()).build())
         .build();
-    register_db_pool_gauges(&provider.meter(METER_NAME), &pool);
+    register_db_pool_gauges(
+        &provider.meter(METER_NAME),
+        &Database::from_pool(pool.clone()),
+    );
     provider.force_flush().unwrap();
 
     assert_eq!(

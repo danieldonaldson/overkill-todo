@@ -2,7 +2,7 @@
 //!
 //! This layer also owns the HTTP-facing error type ([`error::AppError`], with its
 //! `IntoResponse`/`From` mappings) and the JWT / OAuth-state helpers that produce
-//! it — they import axum/sqlx/jsonwebtoken, so they belong here rather than in the
+//! it — they import axum/jsonwebtoken, so they belong here rather than in the
 //! dependency-light `shared` leaf.
 
 pub mod cookies;

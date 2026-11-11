@@ -1,5 +1,6 @@
 //! Integration coverage for bounded expiry and retention maintenance.
 
+use overkill_todo::infrastructure::persistence::Database;
 use overkill_todo::infrastructure::tasks::database_maintenance;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -77,7 +78,9 @@ async fn removes_stale_rows_and_preserves_current_rows(pool: PgPool) {
         .unwrap();
     }
 
-    let report = database_maintenance::run_once(&pool).await.unwrap();
+    let report = database_maintenance::run_once(&Database::from_pool(pool.clone()))
+        .await
+        .unwrap();
     assert_eq!(report.refresh_tokens, 1);
     assert_eq!(report.email_verification_codes, 1);
     assert_eq!(report.password_reset_codes, 1);
@@ -150,7 +153,9 @@ async fn keeps_expired_code_rows_with_lockouts_until_idle(pool: PgPool) {
             }
         }
 
-        database_maintenance::run_once(&pool).await.unwrap();
+        database_maintenance::run_once(&Database::from_pool(pool.clone()))
+            .await
+            .unwrap();
 
         let remaining: Vec<Uuid> = sqlx::query_scalar(select_sql)
             .fetch_all(&pool)

@@ -6,14 +6,13 @@
 //! an in-memory exporter; production code takes it from [`global_meter`],
 //! which [`super::init`] wires to the real provider before anything else runs.
 
+use super::{ServiceInfo, resource};
+use crate::infrastructure::persistence::Database;
 use opentelemetry::{
     KeyValue,
     metrics::{Histogram, Meter},
 };
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider, exporter::PushMetricExporter};
-use sqlx::PgPool;
-
-use super::{ServiceInfo, resource};
 
 /// Instrumentation scope name for the backend's own metrics.
 pub const METER_NAME: &str = "overkill-todo";
@@ -102,23 +101,22 @@ pub const fn status_class(status: u16) -> &'static str {
 /// Register `db.client.connection.count` (`state` = `idle`/`used`) and
 /// `db.client.connection.max` as observable gauges read from `pool` at each
 /// collection. The callbacks live as long as the meter provider.
-pub fn register_db_pool_gauges(meter: &Meter, pool: &PgPool) {
-    let counts = pool.clone();
+pub fn register_db_pool_gauges(meter: &Meter, db: &Database) {
+    let counts = db.clone();
     meter
         .u64_observable_gauge("db.client.connection.count")
         .with_unit("{connection}")
         .with_description("Connections in the pool, by state")
         .with_callback(move |observer| {
-            let size = u64::from(counts.size());
-            let idle = u64::try_from(counts.num_idle())
-                .unwrap_or(u64::MAX)
-                .min(size);
+            let stats = counts.pool_stats();
+            let size = u64::from(stats.size);
+            let idle = u64::try_from(stats.idle).unwrap_or(u64::MAX).min(size);
             observer.observe(idle, &[KeyValue::new("state", "idle")]);
             observer.observe(size - idle, &[KeyValue::new("state", "used")]);
         })
         .build();
 
-    let max = pool.options().get_max_connections();
+    let max = db.max_connections();
     meter
         .u64_observable_gauge("db.client.connection.max")
         .with_unit("{connection}")

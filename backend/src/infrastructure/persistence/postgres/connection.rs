@@ -4,6 +4,21 @@ use sqlx::{ConnectOptions, PgPool, postgres::PgConnectOptions, postgres::PgPoolO
 use std::{str::FromStr, time::Duration};
 use tracing::log::LevelFilter;
 
+use super::error::DatabaseError;
+
+/// `tracing` filter directive for the driver's per-statement events (SQL text
+/// only, never bound values), as emitted under [`with_statement_logging`].
+pub const STATEMENT_LOG_DIRECTIVE: &str = "sqlx::query=info";
+
+/// Connection counts at one instant, for the pool gauges.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PoolStats {
+    /// Connections currently open (idle + in use).
+    pub size: u32,
+    /// Open connections not checked out.
+    pub idle: usize,
+}
+
 /// Holds a single database connection pool.
 #[derive(Clone)]
 pub struct Database {
@@ -31,6 +46,32 @@ impl Database {
     pub const fn pool(&self) -> &PgPool {
         &self.pool
     }
+
+    /// Runs `SELECT 1` to confirm the database is reachable (readiness probe).
+    ///
+    /// # Errors
+    /// Returns the driver error if no connection is available or the query fails.
+    pub async fn ping(&self) -> Result<(), DatabaseError> {
+        sqlx::query!("SELECT 1 as ping")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Current open and idle connection counts.
+    #[must_use]
+    pub fn pool_stats(&self) -> PoolStats {
+        PoolStats {
+            size: self.pool.size(),
+            idle: self.pool.num_idle(),
+        }
+    }
+
+    /// The most connections the pool may open.
+    #[must_use]
+    pub fn max_connections(&self) -> u32 {
+        self.pool.options().get_max_connections()
+    }
 }
 
 /// Creates a `PostgreSQL` connection pool.
@@ -50,7 +91,7 @@ pub async fn create_pool(database_url: &str, max_connections: u32) -> Result<PgP
 /// Statement logging used by every production pool.
 ///
 /// Statements are logged at info so the trace export filter
-/// (`sqlx::query=info`) attaches each one's SQL text (never bound values) to
+/// ([`STATEMENT_LOG_DIRECTIVE`]) attaches each one's SQL text (never bound values) to
 /// its `repo.*` span. The default stdout filter has no `sqlx` directive, so
 /// they stay out of the logs. Public so tests can apply the same settings to a
 /// `#[sqlx::test]` pool.

@@ -278,7 +278,6 @@ fn create_test_app_full(
     let refresh_token_repo = Arc::new(PostgresRefreshTokenRepository::new(db.clone()));
     let email_verification_repo = Arc::new(PostgresEmailVerificationRepository::new(db.clone()));
     let password_reset_repo = Arc::new(PostgresPasswordResetRepository::new(db.clone()));
-    let db_pool = db.pool().clone();
 
     let register_uc = Arc::new(RegisterUserUseCase::new(
         user_repo.clone(),
@@ -429,7 +428,7 @@ fn create_test_app_full(
             oauth: oauth_deps,
             profile: profile_deps,
             admin: admin_deps,
-            db_pool,
+            db,
             crypto,
             users: user_repo,
         },

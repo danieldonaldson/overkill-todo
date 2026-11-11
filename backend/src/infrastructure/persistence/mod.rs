@@ -3,7 +3,8 @@
 pub mod postgres;
 
 pub use postgres::{
-    Database, PostgresEmailVerificationRepository, PostgresOAuthAccountRepository,
-    PostgresPasswordResetRepository, PostgresRefreshTokenRepository, PostgresUserRepository,
+    AdvisoryLock, Database, DatabaseError, PoolStats, PostgresEmailVerificationRepository,
+    PostgresOAuthAccountRepository, PostgresPasswordResetRepository,
+    PostgresRefreshTokenRepository, PostgresUserRepository, STATEMENT_LOG_DIRECTIVE,
     run_migrations,
 };

@@ -15,8 +15,10 @@ src/
 │   ├── config/       # Settings loaded from env vars
 │   ├── crypto.rs     # `Crypto` handle: Argon2 params, JWT keys, CSRF secret, cipher
 │   ├── oauth/        # Google OAuth client
-│   ├── persistence/  # sqlx Postgres repositories
-│   └── services/     # Concrete service impls (argon2, JWT, token gen, …)
+│   ├── persistence/  # sqlx Postgres repositories + DB plumbing (the only sqlx user)
+│   ├── services/     # Concrete service impls (argon2, JWT, token gen, …)
+│   ├── tasks/        # Background jobs and leader election
+│   └── telemetry/    # Tracing, logs, metrics
 └── shared/           # Dependency-free utilities (error fingerprinting)
 ```
 
@@ -25,11 +27,21 @@ The domain imports no `sqlx` or `serde`: Postgres enum mappings live in
 `persistence/postgres/models.rs` (`DbUserRole`, `DbOAuthProvider`) and convert with
 `From` at the repository boundary.
 
+**`sqlx` is confined to `infrastructure/persistence/`** (plus `main.rs` wiring and
+tests). Other infrastructure modules that need the database go through a sqlx-free
+API there: `Database::try_advisory_lock` / `AdvisoryLock` (leader election in
+`tasks/leader.rs`), `maintenance::run_once` (`tasks/database_maintenance.rs`),
+`Database::ping` (`/health/ready`), `Database::pool_stats` / `max_connections`
+(pool gauges), `STATEMENT_LOG_DIRECTIVE` (trace export filter). Their failures
+surface as the opaque `DatabaseError`; repository failures go through `persist_err`
+to `DomainError`. There is no `From<sqlx::Error> for AppError`, so a handler can't
+`?` a raw driver error. Swapping the driver should touch only `persistence/`.
+
 `shared/` is a true leaf: it imports nothing from any layer and holds only
 `fingerprint`. `Crypto` lives in `infrastructure/crypto.rs` because it is built from
 `CryptoSettings` and holds key material. The HTTP-facing `AppError` (with its
 `IntoResponse`/`From` mappings) and the helpers that produce it — `csrf`, `jwt`,
-`oauth_state` — live in `infrastructure/api` (they import `axum`/`sqlx`/`jsonwebtoken`).
+`oauth_state` — live in `infrastructure/api` (they import `axum`/`jsonwebtoken`).
 
 Handlers stay thin: they parse the request, run edge admission (Turnstile, device
 fingerprint), call one use case, and turn its result into cookies and a response.

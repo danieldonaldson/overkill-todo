@@ -6,7 +6,6 @@ use axum::{
     middleware,
     routing::{delete, get, post, put},
 };
-use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tower_http::cors::CorsLayer;
@@ -21,6 +20,7 @@ use super::openapi::ApiDoc;
 #[cfg(feature = "swagger-ui")]
 use crate::infrastructure::config::is_dev_mode;
 use crate::infrastructure::crypto::Crypto;
+use crate::infrastructure::persistence::Database;
 use crate::infrastructure::telemetry::{
     http::{http_trace_layer, record_request_metrics},
     metrics::HttpMetrics,
@@ -96,7 +96,8 @@ pub struct RouterDeps {
     pub oauth: Arc<OAuthHandlerDeps>,
     pub profile: Arc<ProfileHandlerDeps>,
     pub admin: Arc<AdminHandlerDeps>,
-    pub db_pool: PgPool,
+    /// Database handle for the `/health/ready` probe.
+    pub db: Arc<Database>,
     /// User repository handle for the admin-group [`require_fresh_session`]
     /// middleware, which rejects tokens superseded by a privilege change.
     pub users: Arc<dyn UserRepository>,
@@ -265,7 +266,7 @@ pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
         .route("/health", get(health_handler::health_check))
         .route(
             "/health/ready",
-            get(health_handler::health_ready).with_state(deps.db_pool),
+            get(health_handler::health_ready).with_state(deps.db),
         );
 
     let api = Router::new()

@@ -25,7 +25,7 @@ use opentelemetry::{
     metrics::{Gauge, Meter},
 };
 
-use crate::infrastructure::persistence::postgres::connection::Database;
+use crate::infrastructure::persistence::{AdvisoryLock, Database};
 use crate::infrastructure::telemetry::metrics::global_meter;
 
 /// The `leader.is_leader` gauge. Cheap to clone.
@@ -85,8 +85,16 @@ pub async fn run_as_leader<F, Fut>(
             break;
         }
 
-        let mut conn = match db.pool().acquire().await {
-            Ok(conn) => conn,
+        let mut lock = match db.try_advisory_lock(lock_key).await {
+            Ok(Some(lock)) => lock,
+            Ok(None) => {
+                // Another replica leads; the connection is already back in the pool.
+                tracing::debug!(label, "Leader lock held elsewhere; standing by");
+                if standby_or_shutdown(&mut shutdown).await {
+                    break;
+                }
+                continue;
+            }
             Err(e) => {
                 tracing::error!(label, error = %e, "Leader election: cannot acquire DB connection");
                 if standby_or_shutdown(&mut shutdown).await {
@@ -95,23 +103,6 @@ pub async fn run_as_leader<F, Fut>(
                 continue;
             }
         };
-
-        let acquired = sqlx::query_scalar!("SELECT pg_try_advisory_lock($1)", lock_key)
-            .fetch_one(&mut *conn)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or(false);
-
-        if !acquired {
-            // Another replica leads; return the connection and stand by.
-            drop(conn);
-            tracing::debug!(label, "Leader lock held elsewhere; standing by");
-            if standby_or_shutdown(&mut shutdown).await {
-                break;
-            }
-            continue;
-        }
 
         tracing::info!(label, "Acquired leader lock; running background workers");
         metrics.set(label, true);
@@ -124,7 +115,7 @@ pub async fn run_as_leader<F, Fut>(
             () = task_factory() => {
                 tracing::warn!(label, "Leader workers exited unexpectedly; will re-elect");
             }
-            () = heartbeat(&mut conn, label) => {
+            () = heartbeat(&mut lock, label) => {
                 tracing::warn!(label, "Lost leader lock connection; stepping down");
             }
             () = wait_for_shutdown(&mut shutdown) => {
@@ -136,10 +127,7 @@ pub async fn run_as_leader<F, Fut>(
         // Release explicitly: a pooled connection isn't closed on drop, so the
         // session-level lock would otherwise linger. Best-effort — on a dead
         // connection this errors and the lock is freed when the socket closes.
-        let _ = sqlx::query_scalar!("SELECT pg_advisory_unlock($1)", lock_key)
-            .fetch_one(&mut *conn)
-            .await;
-        drop(conn);
+        lock.release().await;
         metrics.set(label, false);
 
         if stopping || *shutdown.borrow() {
@@ -177,10 +165,10 @@ async fn wait_for_shutdown(shutdown: &mut tokio::sync::watch::Receiver<bool>) {
 
 /// Pings the lock connection until a ping fails (the connection — and the lock —
 /// is gone), then returns so the caller steps down.
-async fn heartbeat(conn: &mut sqlx::pool::PoolConnection<sqlx::Postgres>, label: &str) {
+async fn heartbeat(lock: &mut AdvisoryLock, label: &str) {
     loop {
         tokio::time::sleep(HEARTBEAT_INTERVAL).await;
-        if let Err(e) = sqlx::query_scalar!("SELECT 1").fetch_one(&mut **conn).await {
+        if let Err(e) = lock.ping().await {
             tracing::error!(label, error = %e, "Leader heartbeat failed");
             return;
         }

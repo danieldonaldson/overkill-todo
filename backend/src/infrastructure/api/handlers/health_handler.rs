@@ -2,7 +2,9 @@ use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use std::sync::Arc;
+
+use crate::infrastructure::persistence::Database;
 
 /// Liveness probe — always returns 200 if the process is running.
 #[utoipa::path(
@@ -35,9 +37,9 @@ pub async fn health_check() -> Json<Value> {
     )
 )]
 #[tracing::instrument(name = "health_ready", skip_all)]
-pub async fn health_ready(State(pool): State<PgPool>) -> (StatusCode, Json<Value>) {
-    match sqlx::query!("SELECT 1 as ping").fetch_one(&pool).await {
-        Ok(_) => (
+pub async fn health_ready(State(db): State<Arc<Database>>) -> (StatusCode, Json<Value>) {
+    match db.ping().await {
+        Ok(()) => (
             StatusCode::OK,
             Json(json!({ "status": "ready", "db": "ok" })),
         ),

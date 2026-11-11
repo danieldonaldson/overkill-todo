@@ -13,6 +13,16 @@
 
 use crate::domain::errors::DomainError;
 
+/// A database failure from an infrastructure-internal operation (leader lock,
+/// maintenance, health probe) that has no domain meaning.
+///
+/// Wraps the driver error so callers outside `persistence/` can log or
+/// propagate it without naming `sqlx`. `Display` is the driver error's own
+/// message, unchanged.
+#[derive(Debug, thiserror::Error)]
+#[error(transparent)]
+pub struct DatabaseError(#[from] sqlx::Error);
+
 /// Maps a [`sqlx::Error`] to a [`DomainError`], preserving constraint classification.
 ///
 /// - `RowNotFound` → [`DomainError::NotFound`]

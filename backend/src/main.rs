@@ -123,7 +123,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     tracing::info!("Database migrations applied");
 
     let db = Arc::new(db);
-    telemetry::metrics::register_db_pool_gauges(&telemetry::metrics::global_meter(), db.pool());
+    telemetry::metrics::register_db_pool_gauges(&telemetry::metrics::global_meter(), &db);
 
     // Services
     let code_generator = Arc::new(if settings.server.dev_mode {
@@ -391,7 +391,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
 
         let leader_db = db.clone();
         let purge = purge_accounts_uc;
-        let maintenance_pool = db.pool().clone();
+        let maintenance_db = db.clone();
         let leader_shutdown = shutdown_rx.clone();
         let job_metrics = tasks::job::JobMetrics::from_global();
 
@@ -404,7 +404,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
                 tasks::leader::LeaderMetrics::from_global(),
                 move || {
                     let purge = purge.clone();
-                    let maintenance_pool = maintenance_pool.clone();
+                    let maintenance_db = maintenance_db.clone();
                     let job_metrics = job_metrics.clone();
                     Box::pin(async move {
                         tokio::join!(
@@ -414,7 +414,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
                                 job_metrics.clone(),
                             ),
                             tasks::database_maintenance::run(
-                                maintenance_pool,
+                                maintenance_db,
                                 Duration::from_hours(1),
                                 job_metrics,
                             ),
@@ -433,7 +433,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             oauth: oauth_deps,
             profile: profile_deps,
             admin: admin_deps,
-            db_pool: db.pool().clone(),
+            db: db.clone(),
             crypto: crypto.clone(),
             users: user_repo.clone(),
         },

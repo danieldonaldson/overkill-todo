@@ -34,6 +34,7 @@ use tracing_subscriber::{
 };
 
 use crate::infrastructure::config::TelemetrySettings;
+use crate::infrastructure::persistence::STATEMENT_LOG_DIRECTIVE;
 pub use log_format::ServiceInfo;
 use log_format::{JsonFields, JsonFormat, TraceIdLayer, pretty_fields};
 use redact::RedactingSpanProcessor;
@@ -41,10 +42,15 @@ use redact::RedactingSpanProcessor;
 /// Instrumentation scope name for spans created through `tracing`.
 const TRACER_NAME: &str = "overkill-todo";
 
-/// Spans exported to the collector: our own code, `tower_http`, and sqlx's
-/// per-query events (SQL text only, never bound parameters), which attach to
-/// the enclosing repository span.
-const EXPORT_FILTER: &str = "overkill_todo=info,tower_http=info,sqlx::query=info";
+/// Spans exported to the collector: our own code, `tower_http`, and the
+/// database driver's per-statement events (SQL text only, never bound
+/// parameters, see [`STATEMENT_LOG_DIRECTIVE`]), which attach to the enclosing
+/// repository span.
+fn export_filter() -> EnvFilter {
+    EnvFilter::new(format!(
+        "overkill_todo=info,tower_http=info,{STATEMENT_LOG_DIRECTIVE}"
+    ))
+}
 
 /// How log lines are written to stdout.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +141,7 @@ where
 /// Assemble the subscriber: stdout logs plus the OpenTelemetry layer.
 ///
 /// The log layer is filtered by `log_filter`, the OpenTelemetry layer by
-/// [`EXPORT_FILTER`]. Exposed so tests capture spans and logs with exactly the
+/// [`export_filter`]. Exposed so tests capture spans and logs with exactly the
 /// production stack.
 pub fn subscriber<W>(
     provider: &SdkTracerProvider,
@@ -149,7 +155,7 @@ where
 {
     let otel = tracing_opentelemetry::layer()
         .with_tracer(provider.tracer(TRACER_NAME))
-        .with_filter(EnvFilter::new(EXPORT_FILTER));
+        .with_filter(export_filter());
 
     let fmt_layer = match format {
         LogFormat::Json => tracing_subscriber::fmt::layer()

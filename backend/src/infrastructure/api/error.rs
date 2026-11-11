@@ -210,23 +210,6 @@ impl From<crate::application::use_cases::ResendVerificationError> for AppError {
     }
 }
 
-impl From<sqlx::Error> for AppError {
-    fn from(error: sqlx::Error) -> Self {
-        match error {
-            sqlx::Error::RowNotFound => Self::NotFound("Resource not found".into()),
-            sqlx::Error::Database(db_err) => {
-                if let Some(code) = db_err.code()
-                    && code == "23505"
-                {
-                    return Self::Conflict("Resource already exists".into());
-                }
-                Self::Database(db_err.to_string())
-            }
-            _ => Self::Database(error.to_string()),
-        }
-    }
-}
-
 impl From<argon2::password_hash::Error> for AppError {
     fn from(error: argon2::password_hash::Error) -> Self {
         Self::Internal(format!("Password hashing error: {error}"))
@@ -583,12 +566,6 @@ mod tests {
             AppError::from(DomainError::ExternalService("e".into())),
             AppError::ExternalService(_)
         ));
-    }
-
-    #[test]
-    fn test_from_sqlx_row_not_found_maps_to_not_found() {
-        let err: AppError = sqlx::Error::RowNotFound.into();
-        assert!(matches!(err, AppError::NotFound(_)));
     }
 
     #[test]
