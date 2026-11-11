@@ -1,12 +1,12 @@
 # Tasks
 
-Slices 1 and 2 are planned here. Slices 3–4 (see `design.md` Decision 13) get
-added once slice 2 has shipped.
+All four slices (see `design.md` Decision 13) are planned here. Slices 3–4
+were added after slice 2 shipped, from what slices 1–2 showed.
 
 There is no production host yet (2026-11-07). A slice "ships" when it's merged
 with `just ci` green and checked on the full local stack
 (`--profile full --profile observability`). The production steps are collected
-in group 3 and run at the first production deploy.
+in group 5 and run at the first production deploy.
 
 ## 1. Slice 1 (first slice): backend traces and logs end to end on compose, with redaction
 
@@ -56,7 +56,7 @@ This slice delivers these scenarios:
 ### Done
 
 - [x] 1.19 `just ci` is green.
-- [x] 1.20 Checked on the full local stack (no production host yet): a sign-in's `X-Trace-Id` opens in Grafana, log → trace and trace → log links work (driven with Playwright), the leak search finds nothing, and Grafana and the collector are bound to loopback only. Results are in `design.md` Hypothesis. The production run of the same checks is 3.2.
+- [x] 1.20 Checked on the full local stack (no production host yet): a sign-in's `X-Trace-Id` opens in Grafana, log → trace and trace → log links work (driven with Playwright), the leak search finds nothing, and Grafana and the collector are bound to loopback only. Results are in `design.md` Hypothesis. The production run of the same checks is 5.2.
 - [x] 1.22 Update `design.md` with what slice 1 showed (Hypothesis outcome, any revised decisions), then add slice 2 to this file.
 
 ## 2. Slice 2: metrics, dashboards and alerts
@@ -76,37 +76,83 @@ This slice delivers these scenarios:
 
 ### Backend
 
-- [ ] 2.1 Enable the `metrics` features of the OpenTelemetry crates. `telemetry::init` adds a meter provider with a periodic OTLP/HTTP reader (`/v1/metrics`, cumulative temporality) when an endpoint is set, and a provider with no reader otherwise. Shut it down with the guard. Verify: a unit test with the SDK's in-memory metric exporter sees a recorded value, and `just lint`, `just machete` and `just deny` pass.
-- [ ] 2.2 Record `http.server.request.duration` (seconds, buckets 5 ms … 10 s) with `http.route`, `http.request.method` and `status_class` (`2xx`…`5xx`) in `telemetry::http`, using the same route label as spans (`unmatched` fallback, health probes excluded). Verify: lib tests show a templated route recorded under its template, 1,000 distinct unknown paths producing a single `unmatched` series, and no series for health probes.
-- [ ] 2.3 Add observable gauges `db.client.connection.count` (`state` = idle/used) and `db.client.connection.max` from the `PgPool`, registered in `main.rs`. Verify: a `#[sqlx::test]` reads both gauges back through the in-memory exporter.
+- [x] 2.1 Enable the `metrics` features of the OpenTelemetry crates. `telemetry::init` adds a meter provider with a periodic OTLP/HTTP reader (`/v1/metrics`, cumulative temporality) when an endpoint is set, and a provider with no reader otherwise. Shut it down with the guard. Verify: a unit test with the SDK's in-memory metric exporter sees a recorded value, and `just lint`, `just machete` and `just deny` pass.
+- [x] 2.2 Record `http.server.request.duration` (seconds, buckets 5 ms … 10 s) with `http.route`, `http.request.method` and `status_class` (`2xx`…`5xx`) in `telemetry::http`, using the same route label as spans (`unmatched` fallback, health probes excluded). Verify: lib tests show a templated route recorded under its template, 1,000 distinct unknown paths producing a single `unmatched` series, and no series for health probes.
+- [x] 2.3 Add observable gauges `db.client.connection.count` (`state` = idle/used) and `db.client.connection.max` from the `PgPool`, registered in `main.rs`. Verify: a `#[sqlx::test]` reads both gauges back through the in-memory exporter.
 
 ### Pipeline and storage
 
-- [ ] 2.4 Add VictoriaMetrics (single node, `-retentionPeriod=30d`, pinned digest, named volume, `mem_limit`) to the `observability` profile, and a metrics pipeline in the collector: OTLP in, then out to VictoriaMetrics' OTLP endpoint. Verify: `just obs-check`, and locally the request histogram is queryable in VictoriaMetrics after a few requests.
-- [ ] 2.5 Add `postgres_exporter` (pinned digest, the DB credentials from the existing secret in prod) scraped by the collector's `prometheus` receiver; the collector's own telemetry (export failures, queue size) scraped the same way; an `httpcheck` receiver probing the backend's `/health/ready` every 15 s; and a `hostmetrics` filesystem scraper covering the volumes of Tempo, VictoriaLogs and VictoriaMetrics. Verify: each metric family is queryable locally.
+- [x] 2.4 Add VictoriaMetrics (single node, `-retentionPeriod=30d`, pinned digest, named volume, `mem_limit`) to the `observability` profile, and a metrics pipeline in the collector: OTLP in, then out to VictoriaMetrics' OTLP endpoint. Verify: `just obs-check`, and locally the request histogram is queryable in VictoriaMetrics after a few requests.
+- [x] 2.5 Add `postgres_exporter` (pinned digest, the DB credentials from the existing secret in prod) scraped by the collector's `prometheus` receiver; the collector's own telemetry (export failures, queue size) scraped the same way; an `httpcheck` receiver probing the backend's `/health/ready` every 15 s; and a `hostmetrics` filesystem scraper covering the volumes of Tempo, VictoriaLogs and VictoriaMetrics. Verify: each metric family is queryable locally.
 
 ### Alerts
 
-- [ ] 2.6 Add vmalert and Alertmanager (pinned digests, profile `observability`, no public ports). Rules in `deploy/observability/alerts/*.yml` for: 5xx rate above 2% for 5 m (only above 1 request/minute), p95 above 1 s for 10 m, readiness probe failing for 2 m, database down for 2 m or connections above 80% of max for 10 m, any telemetry volume above 80% for 15 m, and collector export failures for 10 m. Each alert links to its dashboard panel. Verify: `vmalert-tool unittest` covers each rule firing, plus the low-traffic case (1 of 3 requests failing) not firing.
-- [ ] 2.7 Alertmanager config: `group_by: [alertname]`, `repeat_interval: 4h`, `send_resolved: true`. Locally a `null` receiver; in prod an email receiver whose SMTP password comes from a new SOPS secret (`deploy/secrets/prod/alertmanager_smtp_password.sops`, read with `smtp_auth_password_file`). Verify: `amtool check-config` passes for both configs (in `just obs-check`), and locally a firing test alert shows in the Alertmanager UI with no email sent.
+- [x] 2.6 Add vmalert and Alertmanager (pinned digests, profile `observability`, no public ports). Rules in `deploy/observability/alerts/*.yml` for: 5xx rate above 2% for 5 m (only above 1 request/minute), p95 above 1 s for 10 m, readiness probe failing for 2 m, database down for 2 m or connections above 80% of max for 10 m, any telemetry volume above 80% for 15 m, and collector export failures for 10 m. Each alert links to its dashboard panel. Verify: `vmalert-tool unittest` covers each rule firing, plus the low-traffic case (1 of 3 requests failing) not firing.
+- [x] 2.7 Alertmanager config: `group_by: [alertname]`, `repeat_interval: 4h`, `send_resolved: true`. Locally a `null` receiver; in prod an email receiver whose SMTP password comes from a new SOPS secret (`deploy/secrets/prod/alertmanager_smtp_password.sops`, read with `smtp_auth_password_file`). Verify: `amtool check-config` passes for both configs (in `just obs-check`), and locally a firing test alert shows in the Alertmanager UI with no email sent.
 
 ### Dashboard
 
-- [ ] 2.8 Provision the VictoriaMetrics datasource (Prometheus type) and a "Service overview" dashboard. It shows request rate, 5xx rate and p50/p95/p99, overall and per route, plus DB connections and probe status, over any range up to 30 days. Latency panels carry a data link to Tempo search (`{ span.http.route = "${route}" }`) for the panel's time range. Verify: Playwright opens the dashboard and follows a route's link to a list of traces for that route.
+- [x] 2.8 Provision the VictoriaMetrics datasource (Prometheus type) and a "Service overview" dashboard. It shows request rate, 5xx rate and p50/p95/p99, overall and per route, plus DB connections and probe status, over any range up to 30 days. Latency panels carry a data link to Tempo search (`{ span.http.route = "${route}" }`) for the panel's time range. Verify: Playwright opens the dashboard and follows a route's link to a list of traces for that route.
 
 ### Done
 
-- [ ] 2.9 On the full local stack: stop the backend and see the backend-down alert fire and then resolve in Alertmanager, and force 5xx responses (DB stopped) and see the error-rate alert fire. Record the results in `design.md`.
-- [ ] 2.10 `just ci` is green.
-- [ ] 2.11 Update `design.md` with what slice 2 showed, then add slices 3–4 to this file.
+- [x] 2.9 On the full local stack: stop the backend and see the backend-down alert fire and then resolve in Alertmanager, and force 5xx responses (DB stopped) and see the error-rate alert fire. Record the results in `design.md`.
+- [x] 2.10 `just ci` is green.
+- [x] 2.11 Update `design.md` with what slice 2 showed, then add slices 3–4 to this file.
 
-## 3. First production deploy (deferred: no production host yet)
+## 3. Slice 3: edge and background jobs
 
-- [ ] 3.1 Check host memory and disk headroom against the measured limits (`design.md` Open Questions) before deploying. Add the host's age key under `machines:` in `deploy/secrets/access.yaml` with `env: prod`, then run `just secrets-sync`. Verify: `just secrets-decrypt prod` works on the host.
-- [ ] 3.2 Deploy to compose prod: the observability services first, then the backend digest (`deploy/compose/README.md`). Verify with `just smoke <url>`, then repeat the 1.20 checks there: a sign-in's `X-Trace-Id` opens in Grafana through the SSH tunnel, the log ↔ trace links work, a search for the test account's email and password returns nothing, and `https://<domain>` gives 404 for `/grafana` while `:3000`, `:4317` and `:4318` are unreachable. Record the results in `design.md` Hypothesis.
+This slice delivers these scenarios:
+- **Every request is traceable.** Successful request produces a full trace (now
+  including the edge span). Client-supplied trace context is ignored, now
+  enforced at the edge, since the backend starts trusting incoming context.
+- **Logs are correlated with traces.** The edge's access log line carries the
+  trace ID from its own span. Logs outside a request carry the job run's trace
+  ID.
+- **Background work and dependencies are observable.** Job runs are visible.
+  Failed job run. Leader visibility.
+- **Operator is alerted to problems.** Stuck background job alert, and the
+  leader alert (none or more than one holding the lock for 5 minutes).
 
-## 4. Feature done
+### Edge
 
-- [ ] 4.1 All slices shipped, and telemetry is on in every deployed environment (the endpoint is set, so there's no flag to remove). Verify: the backend in production refuses to start without the endpoint (spec scenario), and the dashboards show live data.
-- [ ] 4.2 Update `README.md` (new env vars, `just obs-up`/`just obs-down`, how to open Grafana locally), `backend/.env.example`, `backend/ARCHITECTURE.md` (the `infrastructure/telemetry` module, the `skip_all` instrumentation convention, the redaction rule) and `CLAUDE.md` (a one-line rule: never record secrets or emails in spans and logs). Verify: docs reviewed against the final env and recipes.
-- [ ] 4.3 Archive the change with `/opsx:archive`. Verify: `openspec/specs/observability/spec.md` exists and `openspec validate --strict` passes.
+- [ ] 3.1 Turn on Caddy's `tracing` directive in `Caddyfile` and `Caddyfile.local`, exporting to the collector over OTLP (gRPC 4317 on the compose network). Before it, strip client-supplied `traceparent`/`tracestate` (`request_header -traceparent`, `-tracestate`). Point Caddy's OTLP env at the collector in `compose.yaml` and `compose.prod.yaml`. Remove the collector's `resp_headers.X-Trace-Id` fallback once `traceID` is in the access log. Verify: a request through the edge produces one trace whose root span is the edge's, with the backend request span as its child, and its access log line's `trace_id` matches.
+
+### Backend
+
+- [ ] 3.2 Extract W3C context from incoming headers in `MakeHttpSpan` (`TraceContextPropagator`, already installed globally) and use it as the span's parent. Verify: a lib test asserts that a supplied `traceparent` is adopted by the backend span. Replace `client_supplied_traceparent_is_ignored` with an edge-level check (a `traceparent` sent to the edge does not appear as the trace ID in `X-Trace-Id`), run on the full local stack and recorded in 3.8.
+- [ ] 3.3 Run each job iteration (`account_purger`, `database_maintenance`) inside a root span `job.<name>` with an `outcome` attribute (`success`/`failure`), and log failures at error level inside that span. Record `job.run.duration` (histogram, seconds), `job.last_success_timestamp` and `job.interval_seconds` (gauges), labelled by `job`, in `infrastructure/tasks`. Verify: tests with the in-memory span and metric exporters see a `job.account_purger` span with `outcome=success`, the duration and both gauges; and, for a failing run, `outcome=failure` plus an error log line carrying that span's trace ID.
+- [ ] 3.4 Add the `leader.is_leader` gauge (0/1) to `tasks::leader`, so every replica reports, labelled by `service.instance.id` (already on the resource). Verify: a `#[sqlx::test]` with two leader loops on one database sees exactly one reporting 1.
+
+### Alerts and dashboard
+
+- [ ] 3.5 Add rules: job not run successfully for `2 × job_interval_seconds + 900` (design Decision 10), and `sum(leader_is_leader) != 1` for 5m (covers none and more than one). Verify: `vmalert-tool` tests cover the hourly purge alerting at 2h15m and not before, no leader, and two leaders.
+- [ ] 3.6 Add a "Jobs" dashboard: last run time, outcome and duration per job, a link from a job to its recent `job.<name>` traces, and the current leader instance. Verify: Playwright opens it and follows a job's link to its traces.
+
+### Done
+
+- [ ] 3.7 `just ci` is green.
+- [ ] 3.8 On the full local stack: a sign-in's trace starts at the edge, a client `traceparent` is not adopted, the purge job's run appears as a trace and on the Jobs dashboard, and with two backend replicas exactly one shows as leader; stopping the leader moves it to the other. Record the results in `design.md`.
+- [ ] 3.9 Update `design.md` with what slice 3 showed.
+
+## 4. Slice 4: Kubernetes
+
+This slice delivers the same scenarios as slices 1–3 on the Kubernetes
+manifests. They render but aren't applied anywhere, so "delivered" here means
+they render and pass the checks below, not that they are deployed.
+
+- [ ] 4.1 Add `deploy/k8s/observability/` as a kustomize component: the collector as a DaemonSet (OTLP, `filelog` on `/var/log/pods`, `kubeletstats` for volume usage instead of `hostmetrics`), Tempo, VictoriaLogs and VictoriaMetrics as StatefulSets with PVCs, vmalert, Alertmanager, postgres_exporter and Grafana, all reusing the config under `deploy/observability/`. Services are `ClusterIP` only. Verify: `kubectl kustomize deploy/k8s/overlays/example` renders with the component enabled.
+- [ ] 4.2 Add NetworkPolicies: OTLP ingress to the collector only from the app namespace, the backend reachable only from the edge (the precondition for trusting incoming trace context, design Decision 3), and nothing in the observability namespace reachable from outside it except through `kubectl port-forward`. Verify: the rendered policies are reviewed against design Decision 11, and a `kubeconform` (or equivalent) check runs in `just ci`.
+- [ ] 4.3 Secrets for Grafana admin and the Alertmanager SMTP password come from the same SOPS files as compose. Verify: the rendered manifests reference Secrets, never literal values.
+- [ ] 4.4 `just ci` is green, and `design.md` is updated with what slice 4 showed.
+
+## 5. First production deploy (deferred: no production host yet)
+
+- [ ] 5.1 Check host memory and disk headroom against the measured limits (`design.md` Open Questions) before deploying. Add the host's age key under `machines:` in `deploy/secrets/access.yaml` with `env: prod`, then run `just secrets-sync`. Create the Alertmanager SMTP password secret (`printf %s "$PASSWORD" | just secrets-new deploy/secrets/prod/alertmanager_smtp_password.sops`), and set the SMTP host, username, sender and operator address in `deploy/observability/alertmanager/alertmanager.prod.yml`. Verify: `just secrets-decrypt prod` works on the host and writes `alertmanager_smtp_password`.
+- [ ] 5.2 Deploy to compose prod: the observability services first, then the backend digest (`deploy/compose/README.md`). Verify with `just smoke <url>`, then repeat the 1.20 checks there: a sign-in's `X-Trace-Id` opens in Grafana through the SSH tunnel, the log ↔ trace links work, a search for the test account's email and password returns nothing, and `https://<domain>` gives 404 for `/grafana` while `:3000`, `:4317`, `:4318` and `:9093` are unreachable. Also fire a test alert (`amtool alert add`) and confirm the operator receives the email and then the resolved notice. Record the results in `design.md` Hypothesis.
+
+## 6. Feature done
+
+- [ ] 6.1 All slices shipped, and telemetry is on in every deployed environment (the endpoint is set, so there's no flag to remove). Verify: the backend in production refuses to start without the endpoint (spec scenario), and the dashboards show live data.
+- [ ] 6.2 Update `README.md` (new env vars including `BACKEND_READY_URL`, `just obs-up`/`just obs-down`, how to open Grafana and Alertmanager locally), `backend/.env.example`, `backend/ARCHITECTURE.md` (the `infrastructure/telemetry` module, the `skip_all` instrumentation convention, the redaction rule, metric instruments built from an explicit `Meter`) and `CLAUDE.md` (a one-line rule: never record secrets or emails in spans and logs). Verify: docs reviewed against the final env and recipes.
+- [ ] 6.3 Archive the change with `/opsx:archive`. Verify: `openspec/specs/observability/spec.md` exists and `openspec validate --strict` passes.

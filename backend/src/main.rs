@@ -123,6 +123,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     tracing::info!("Database migrations applied");
 
     let db = Arc::new(db);
+    telemetry::metrics::register_db_pool_gauges(&telemetry::metrics::global_meter(), db.pool());
 
     // Services
     let code_generator = Arc::new(if settings.server.dev_mode {

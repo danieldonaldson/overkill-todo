@@ -20,7 +20,10 @@ use utoipa_swagger_ui::SwaggerUi;
 use super::openapi::ApiDoc;
 #[cfg(feature = "swagger-ui")]
 use crate::infrastructure::config::is_dev_mode;
-use crate::infrastructure::telemetry::http::http_trace_layer;
+use crate::infrastructure::telemetry::{
+    http::{http_trace_layer, record_request_metrics},
+    metrics::HttpMetrics,
+};
 use crate::shared::crypto::Crypto;
 
 use super::{
@@ -289,6 +292,12 @@ pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
         // Stamp every response (including ones produced by inner middleware)
         // with the request's `X-Trace-Id`, read from the span opened below.
         .layer(middleware::from_fn(trace_id_middleware))
+        // Request duration per route template (`http.server.request.duration`),
+        // measured inside the span so it covers every inner layer.
+        .layer(middleware::from_fn_with_state(
+            HttpMetrics::from_global(),
+            record_request_metrics,
+        ))
         // Outermost: one server span per request. `Router::layer` runs after
         // routing, so the span is named after the matched route template.
         .layer(http_trace_layer())

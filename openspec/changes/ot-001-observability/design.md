@@ -90,8 +90,54 @@ profile, real requests through the Caddy edge):**
   wins. The backend logs no ongoing warning while exports fail (only the startup
   probe does). The pipeline-health alert in slice 2 covers that.
 
+**Slice 2, local result (2026-11-11, full compose stack + `observability`
+profile):**
+- Metrics flow end to end: backend OTLP push (every 15s), postgres_exporter,
+  the collector's own metrics, vmalert, Alertmanager, VictoriaMetrics, the
+  readiness probe and volume usage all land in VictoriaMetrics.
+- The "Service overview" dashboard shows rate, 5xx share and p50/p95/p99,
+  overall and per route. Playwright clicked a point on the per-route p95 panel,
+  followed **Traces for /api/v1/auth/me**, and got a Tempo search for
+  `{ span.http.route = "/api/v1/auth/me" }` over the panel's range, listing that
+  route's traces.
+- **Backend down** (backend container stopped): BackendDown reached
+  Alertmanager after 200s, and resolved 90s after the backend came back.
+- **5xx spike** (DB stopped, about 2 req/s, half of them sign-ins answering
+  500): DatabaseDown after 2m44s, BackendDown after 3m34s (readiness checks the
+  DB), and BackendErrorRateHigh ("Backend 5xx rate is 50%") after 6m32s of
+  traffic: 5 minutes of `for`, plus the rate window filling and the evaluation
+  and grouping delays.
+  BackendLatencyHigh fired as well after 11m26s: while the DB was down,
+  sign-ins waited out the pool's 10s acquire timeout before answering 500, so
+  p95 sat above 1s. Once the DB was back, every alert resolved, with a resolved
+  notice, within 6.5 minutes of the last failing request.
+- Rule unit tests (`vmalert-tool`, in `just obs-check`) cover every rule firing,
+  and the low-traffic case (a steady 33% failing at under 1 request/minute)
+  staying quiet. Each test was checked by breaking its rule and watching it
+  fail.
+- Found and fixed along the way:
+  - **BackendDown fired after ~8 minutes, not 2.** A passing probe reports
+    `httpcheck_status_ratio{http_status_class="2xx", http_status_code="200"} = 1`;
+    a failing one reports a *different* series (no status code) = 0. OTLP has
+    no staleness markers, so VictoriaMetrics kept returning the old series' 1
+    for about 5 minutes and `max()` stayed at 1. The rule (and dashboard panel)
+    now use `max(last_over_time(...[30s]))`, and a rule test reproduces the
+    series swap.
+  - **Two replicas would overwrite each other's metrics.** Every backend sent an
+    identical resource, so their series collided. The resource now carries
+    `service.instance.id` (`HOSTNAME`, which is the container ID or pod name,
+    else a random UUID per process).
+  - **Volume usage reported nothing.** In a container, the host's block device
+    isn't in `/dev`, so the `hostmetrics` filesystem scraper counts the volume
+    mounts as virtual and skips them. `include_virtual_filesystems: true`
+    fixes it. Docker named volumes on one disk all report that disk, so the
+    disk alert is in effect a host-disk alert. That's what it should catch.
+  - **Memory.** VictoriaMetrics used 233 of 256 MiB (it sizes its caches to
+    the limit) and Alertmanager 55 of 64 MiB, so their limits are now 512m and
+    128m. See Open Questions.
+
 There is no production host yet (2026-11-07). The same checks run at the first
-production deploy (tasks group 3). Until then, the full local stack is where
+production deploy (tasks group 5). Until then, the full local stack is where
 each slice is checked.
 
 ## Decisions
@@ -209,8 +255,21 @@ collector, which remote-writes to VictoriaMetrics.
 - `job.run.duration` (histogram) and `job.last_success_timestamp` (gauge),
   labelled by `job`.
 - `leader.is_leader`: gauge, 0 or 1, labelled by `instance`.
-- `db.pool.connections`: gauge, labelled by `state` (idle/used), plus
-  `db.pool.max`.
+- `db.client.connection.count`: gauge, labelled by `state` (idle/used), plus
+  `db.client.connection.max`. *Renamed in slice 2* from `db.pool.*` to the
+  OpenTelemetry database semantic-convention names.
+
+*Decided in slice 2:*
+- The HTTP histogram's labels are the semantic-convention names `http.route`
+  and `http.request.method`, plus `status_class`, the same route label spans
+  use.
+- VictoriaMetrics runs with `-opentelemetry.usePrometheusNaming`, so queries
+  use Prometheus-style names: `http_server_request_duration_seconds_bucket`,
+  `db_client_connection_count`, `http_route`.
+- Instruments are built from an explicit `Meter` (production takes the global
+  one that `telemetry::init` installs), so tests read them back through the
+  SDK's in-memory exporter without touching global state.
+- The resource carries `service.instance.id`, so replicas' series stay apart.
 
 **Collected by the collector:**
 - `postgres_exporter`, scraped through the collector's `prometheus` receiver.
@@ -363,6 +422,9 @@ thresholds are the ones in the spec.
   from a `job_interval_seconds` gauge the job sets, so the rule doesn't hardcode
   1h.
 - Leader: `sum(leader_is_leader) != 1` for 5m.
+- *Decided in slice 2:* the readiness rule reads
+  `max(last_over_time(httpcheck_status_ratio{http_status_class="2xx"}[30s])) < 1`,
+  not a plain `max()`. See the slice 2 result under Hypothesis for why.
 
 **Alertmanager settings:**
 - `group_by: [alertname]`, `group_wait: 30s`, `repeat_interval: 4h`,
@@ -370,6 +432,11 @@ thresholds are the ones in the spec.
 - Email receiver using SMTP credentials from a dedicated secret file. These can
   be the same account as the app's, kept as a separate file so the backend env
   isn't shared with another container.
+- *Decided in slice 2:* Alertmanager can't read settings from the environment,
+  so `alertmanager.prod.yml` holds the non-secret SMTP settings (host,
+  username, sender, operator address). They're `example.com` placeholders until
+  the first deploy (task 5.1). Only the password is a SOPS secret
+  (`smtp_auth_password_file`).
 - Locally, the receiver is a `null` route. Alerts show in the Alertmanager UI
   only.
 
@@ -491,8 +558,20 @@ There's no schema change. Each slice deploys independently:
 
 - Exact memory limits per service. Measured locally after slice 1 (idle with
   light traffic): collector 77 MB, Tempo 187 MB, VictoriaLogs 35 MB, Grafana
-  336 MB (OOM at 256 MB). Limits are set at 256/512/256/512 MB. Confirm them
-  against production host headroom before the first deploy (task 1.18). This
+  336 MB (OOM at 256 MB). Limits are set at 256/512/256/512 MB. After slice 2
+  (light traffic, all services): collector 109 MiB, Tempo 328 MiB, VictoriaLogs
+  61 MiB, VictoriaMetrics 233 MiB, vmalert 22 MiB, Alertmanager 55 MiB,
+  postgres_exporter 17 MiB, Grafana 233 MiB, about 1.06 GiB in total. Limits:
+  collector 256, Tempo 512, VictoriaLogs 256, VictoriaMetrics 512, vmalert 128,
+  Alertmanager 128, postgres_exporter 64, Grafana 512 (MiB). Confirm them
+  against production host headroom before the first deploy (task 5.1). This
   doesn't change the approach.
 - Whether the alert email should use a different sender address from app email.
   This is a config value only.
+- "From a slow route to example traces" asks for traces **slowest first**. The
+  dashboard link opens a Tempo search for the route over the panel's time range,
+  but Tempo returns results newest first and TraceQL can't sort by duration, so
+  the operator clicks the Duration column to sort. Either accept that second
+  click (and reword the scenario), or narrow the link to traces at or above the
+  clicked p95 (`&& duration >= ${__value.raw}s`). That still isn't sorted, but
+  it lists only the slow ones. Operator's call.

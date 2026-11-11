@@ -1,9 +1,11 @@
 # OpenTelemetry Collector: the single intake for telemetry (design Decision 1).
 #
-#   traces: backend (OTLP/HTTP) ──────────────────────────────► Tempo
-#   logs:   docker container stdout (json-file) ──► parse ──────► VictoriaLogs
+#   traces:  backend (OTLP/HTTP) ─────────────────────────────► Tempo
+#   logs:    docker container stdout (json-file) ──► parse ─────► VictoriaLogs
+#   metrics: backend (OTLP/HTTP), postgres_exporter, the stack's
+#            own /metrics, readiness probe, volume usage ───────► VictoriaMetrics
 #
-# Both pipelines run the same second-line redaction as the backend
+# Every pipeline runs the same second-line redaction as the backend
 # (design Decision 8): sensitive key names, JWTs, email addresses and
 # sensitive URL query values. Nothing here is exposed publicly.
 
@@ -99,6 +101,50 @@ receivers:
         parse_from: attributes.level
         on_error: send_quiet
 
+  # Scraped /metrics: database health (postgres_exporter), this collector's
+  # own pipeline health (export failures, queue size), and the rest of the
+  # stack, so a broken rule file or store shows up too.
+  prometheus:
+    config:
+      global:
+        scrape_interval: 15s
+      scrape_configs:
+        - job_name: postgres
+          static_configs: [{ targets: ['postgres-exporter:9187'] }]
+        - job_name: otel-collector
+          static_configs: [{ targets: ['127.0.0.1:8888'] }]
+        - job_name: victoriametrics
+          static_configs: [{ targets: ['victoriametrics:8428'] }]
+        - job_name: vmalert
+          static_configs: [{ targets: ['vmalert:8880'] }]
+        - job_name: alertmanager
+          static_configs: [{ targets: ['alertmanager:9093'] }]
+
+  # Readiness probe from inside the network; drives the backend-down alert.
+  http_check/backend:
+    collection_interval: 15s
+    targets:
+      - endpoint: ${env:BACKEND_READY_URL:-http://backend:4322/health/ready}
+        method: GET
+
+  # Usage of the telemetry volumes (mounted read-only at /telemetry/*). The
+  # host's block device isn't in the container's /dev, so the scraper counts
+  # these mounts as virtual: without include_virtual_filesystems it reports none.
+  host_metrics:
+    collection_interval: 30s
+    scrapers:
+      filesystem:
+        include_virtual_filesystems: true
+        metrics:
+          system.filesystem.utilization:
+            enabled: true
+        include_mount_points:
+          match_type: strict
+          mount_points:
+            - /telemetry/tempo
+            - /telemetry/victorialogs
+            - /telemetry/victoriametrics
+
 processors:
   memory_limiter:
     check_interval: 1s
@@ -146,6 +192,11 @@ exporters:
     tls:
       insecure: true
 
+  otlp_http/victoriametrics:
+    metrics_endpoint: http://victoriametrics:8428/opentelemetry/v1/metrics
+    tls:
+      insecure: true
+
   otlp_http/victorialogs:
     logs_endpoint: http://victorialogs:9428/insert/opentelemetry/v1/logs
     headers:
@@ -163,6 +214,14 @@ service:
   telemetry:
     logs:
       level: info
+    # Own metrics for the `otel-collector` scrape job above (loopback only).
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 127.0.0.1
+                port: 8888
   pipelines:
     traces:
       receivers: [otlp]
@@ -172,3 +231,7 @@ service:
       receivers: [file_log/docker]
       processors: [memory_limiter, transform/logs, redaction, batch]
       exporters: [otlp_http/victorialogs]
+    metrics:
+      receivers: [otlp, prometheus, http_check/backend, host_metrics]
+      processors: [memory_limiter, redaction, batch]
+      exporters: [otlp_http/victoriametrics]

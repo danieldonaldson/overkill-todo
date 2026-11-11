@@ -1,0 +1,101 @@
+# vmalert rules (design Decision 10). Thresholds are the spec's
+# ("Operator is alerted to problems"). Unit tests: tests/*.yml
+# (`just obs-check` runs them with vmalert-tool).
+#
+# Metric names are VictoriaMetrics' Prometheus-style translation of the OTLP
+# names (`-opentelemetry.usePrometheusNaming`), e.g.
+# http.server.request.duration → http_server_request_duration_seconds_*.
+#
+# `dashboard` links open the matching panel in Grafana through the operator's
+# tunnel (http://localhost:3000, design Decision 11).
+
+groups:
+  - name: backend
+    rules:
+      # Only above 1 request/minute, so a single failure on a quiet night
+      # (1 of 3 requests) doesn't page anyone.
+      - alert: BackendErrorRateHigh
+        expr: |
+          (
+            sum(rate(http_server_request_duration_seconds_count{status_class="5xx"}[5m]))
+              / sum(rate(http_server_request_duration_seconds_count[5m]))
+          ) > 0.02
+          and sum(rate(http_server_request_duration_seconds_count[5m])) > 1/60
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: 'Backend 5xx rate is {{ $value | humanizePercentage }} (threshold 2%)'
+          dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-2'
+
+      - alert: BackendLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_server_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: 'Backend p95 latency is {{ $value | humanizeDuration }} (threshold 1s)'
+          dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-3'
+
+      # httpcheck probes /health/ready every 15s from inside the network.
+      # A successful probe reports {http_status_class="2xx",
+      # http_status_code="200"} = 1; a failed one reports a different series
+      # (no status code) = 0. The old series has no staleness marker, so plain
+      # max() would keep seeing its last 1 for ~5 minutes: only samples from
+      # the last 30s count.
+      - alert: BackendDown
+        expr: max(last_over_time(httpcheck_status_ratio{http_status_class="2xx"}[30s])) < 1
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: 'Backend readiness check has been failing for 2 minutes'
+          dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-6'
+
+  - name: database
+    rules:
+      - alert: DatabaseDown
+        expr: min(pg_up) == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: 'Database is unreachable from postgres_exporter'
+          dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-7'
+
+      - alert: DatabaseConnectionsHigh
+        expr: |
+          sum(pg_stat_activity_count) / max(pg_settings_max_connections) > 0.8
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: 'Database connections at {{ $value | humanizePercentage }} of max_connections (threshold 80%)'
+          dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-7'
+
+  - name: telemetry
+    rules:
+      - alert: TelemetryVolumeFilling
+        expr: max by (mountpoint) (system_filesystem_utilization_ratio) > 0.8
+        for: 15m
+        labels:
+          severity: page
+        annotations:
+          summary: 'Telemetry volume {{ $labels.mountpoint }} is {{ $value | humanizePercentage }} full (threshold 80%)'
+          dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-8'
+
+      # Any exporter (Tempo, VictoriaLogs, VictoriaMetrics) dropping data.
+      - alert: TelemetryExportFailing
+        expr: |
+          sum by (exporter) (
+            rate({__name__=~"otelcol_exporter_send_failed_(spans|log_records|metric_points)_total"}[5m])
+          ) > 0
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: 'Collector exporter {{ $labels.exporter }} is failing to deliver telemetry'
+          dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-8'

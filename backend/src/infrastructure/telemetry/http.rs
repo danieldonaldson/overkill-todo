@@ -1,14 +1,18 @@
-//! HTTP server spans: one per request, named `"{METHOD} {route}"`.
+//! HTTP server spans and request metrics: one span per request, named
+//! `"{METHOD} {route}"`, and one `http.server.request.duration` sample labelled
+//! with the same route.
 //!
 //! Records only the HTTP semantic-convention attributes below: no headers
 //! (except `user-agent`), no bodies, and the query string with sensitive values
-//! redacted. Health probes get no span. Must be added with `Router::layer` so
-//! axum has already routed the request and [`MatchedPath`] is available.
+//! redacted. Health probes get no span and no metric. Both layers must be added
+//! with `Router::layer` so axum has already routed the request and
+//! [`MatchedPath`] is available.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use axum::extract::MatchedPath;
+use axum::extract::{MatchedPath, State};
 use axum::http::{Request, Response, header::USER_AGENT};
+use axum::{body::Body, middleware::Next};
 use opentelemetry::trace::TraceContextExt;
 use tower_http::{
     classify::{ServerErrorsAsFailures, SharedClassifier},
@@ -17,6 +21,7 @@ use tower_http::{
 use tracing::{Span, field::Empty};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use super::metrics::HttpMetrics;
 use super::redact::redact_query;
 
 /// Route label for requests that matched no route (keeps span names and, later,
@@ -35,12 +40,17 @@ const HEALTH_ROUTES: &[&str] = &[
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MakeHttpSpan;
 
+/// The route template a request matched, or [`UNMATCHED_ROUTE`].
+fn route_of<B>(request: &Request<B>) -> &str {
+    request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or(UNMATCHED_ROUTE, MatchedPath::as_str)
+}
+
 impl<B> MakeSpan<B> for MakeHttpSpan {
     fn make_span(&mut self, request: &Request<B>) -> Span {
-        let route = request
-            .extensions()
-            .get::<MatchedPath>()
-            .map_or(UNMATCHED_ROUTE, MatchedPath::as_str);
+        let route = route_of(request);
         if HEALTH_ROUTES.contains(&route) {
             return Span::none();
         }
@@ -98,6 +108,30 @@ pub fn http_trace_layer() -> HttpTraceLayer {
     TraceLayer::new_for_http()
         .make_span_with(MakeHttpSpan)
         .on_response(RecordHttpResponse)
+}
+
+/// Middleware recording `http.server.request.duration` for every request
+/// except health probes. Install with
+/// `middleware::from_fn_with_state(HttpMetrics::from_global(), record_request_metrics)`.
+pub async fn record_request_metrics(
+    State(metrics): State<HttpMetrics>,
+    request: Request<Body>,
+    next: Next,
+) -> Response<Body> {
+    let route = route_of(&request).to_owned();
+    if HEALTH_ROUTES.contains(&route.as_str()) {
+        return next.run(request).await;
+    }
+    let method = request.method().clone();
+    let start = Instant::now();
+    let response = next.run(request).await;
+    metrics.record(
+        &route,
+        method.as_str(),
+        response.status().as_u16(),
+        start.elapsed().as_secs_f64(),
+    );
+    response
 }
 
 /// Trace ID (32 lowercase hex) of the current span, if it has a valid
@@ -221,5 +255,83 @@ mod tests {
     #[tokio::test]
     async fn health_probe_produces_no_span() {
         assert_eq!(spans_for("/health").await.len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use axum::{
+        Router,
+        body::Body,
+        http::{Request, StatusCode},
+        middleware,
+        routing::get,
+    };
+    use opentelemetry::metrics::MeterProvider as _;
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::infrastructure::telemetry::metrics::{
+        METER_NAME,
+        testing::{Attrs, f64_histogram_points, in_memory},
+    };
+
+    const DURATION: &str = "http.server.request.duration";
+
+    /// Send each URI through a router with the metrics layer, then return the
+    /// exported histogram points.
+    async fn points_for(uris: &[&str]) -> Vec<(Attrs, u64)> {
+        let (provider, exporter) = in_memory();
+        let metrics = HttpMetrics::new(&provider.meter(METER_NAME));
+        let app = Router::new()
+            .route("/items/{id}", get(|| async { "ok" }))
+            .route(
+                "/boom",
+                get(|| async { (StatusCode::INTERNAL_SERVER_ERROR, "boom") }),
+            )
+            .route("/health", get(|| async { "ok" }))
+            .route("/health/ready", get(|| async { "ok" }))
+            .layer(middleware::from_fn_with_state(
+                metrics,
+                record_request_metrics,
+            ));
+        for uri in uris {
+            let request = Request::builder().uri(*uri).body(Body::empty()).unwrap();
+            drop(app.clone().oneshot(request).await.unwrap());
+        }
+        provider.force_flush().unwrap();
+        f64_histogram_points(&exporter, DURATION)
+    }
+
+    fn attrs(route: &str, status_class: &str) -> Attrs {
+        vec![
+            ("http.request.method".into(), "GET".into()),
+            ("http.route".into(), route.into()),
+            ("status_class".into(), status_class.into()),
+        ]
+    }
+
+    #[tokio::test]
+    async fn templated_route_is_recorded_under_its_template() {
+        let points = points_for(&["/items/1", "/items/2", "/items/3", "/boom"]).await;
+        assert_eq!(points.len(), 2, "{points:?}");
+        assert!(
+            points.contains(&(attrs("/items/{id}", "2xx"), 3)),
+            "{points:?}"
+        );
+        assert!(points.contains(&(attrs("/boom", "5xx"), 1)), "{points:?}");
+    }
+
+    #[tokio::test]
+    async fn distinct_unknown_paths_share_one_unmatched_series() {
+        let uris: Vec<String> = (0..1000).map(|i| format!("/probe/{i}/x")).collect();
+        let uris: Vec<&str> = uris.iter().map(String::as_str).collect();
+        let points = points_for(&uris).await;
+        assert_eq!(points, vec![(attrs(UNMATCHED_ROUTE, "4xx"), 1000)]);
+    }
+
+    #[tokio::test]
+    async fn health_probes_record_nothing() {
+        assert_eq!(points_for(&["/health", "/health/ready"]).await, vec![]);
     }
 }

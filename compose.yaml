@@ -8,7 +8,8 @@
 # workable single-VPS deployment: see deploy/compose/README.md.
 #
 # Observability (opt-in, `just obs-up`): collector + Tempo + VictoriaLogs +
-# Grafana on http://localhost:3000. See deploy/observability/ and OT-001.
+# VictoriaMetrics + vmalert + Alertmanager (http://localhost:9093) + Grafana
+# on http://localhost:3000. See deploy/observability/ and OT-001.
 #
 # COMPOSE_PROJECT_NAME overrides `name:` below; `just wt-new` sets it per worktree
 # so each checkout gets its own database container and volume.
@@ -91,14 +92,23 @@ services:
     # Root only to read other containers' json-file logs (root-owned, 0640).
     # Read-only mount, no public port.
     user: '0'
+    environment:
+      # Readiness probe target (httpcheck). With `just dev` the backend runs on
+      # the host: BACKEND_READY_URL=http://host.docker.internal:4322/health/ready
+      BACKEND_READY_URL: ${BACKEND_READY_URL:-http://backend:4322/health/ready}
+    extra_hosts: ['host.docker.internal:host-gateway']
     volumes:
       - ./deploy/observability/collector/config.yaml:/etc/otelcol/config.yaml:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Telemetry stores, mounted only so `hostmetrics` can report their usage.
+      - tempo-data:/telemetry/tempo:ro
+      - vlogs-data:/telemetry/victorialogs:ro
+      - vmetrics-data:/telemetry/victoriametrics:ro
     ports:
       # For a natively running backend (`just dev`): OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
       - '127.0.0.1:4318:4318'
     mem_limit: 256m
-    depends_on: [tempo, victorialogs]
+    depends_on: [tempo, victorialogs, victoriametrics]
 
   tempo:
     profiles: ['observability']
@@ -121,6 +131,67 @@ services:
       - vlogs-data:/vlogs
     mem_limit: 256m
 
+  victoriametrics:
+    profiles: ['observability']
+    image: victoriametrics/victoria-metrics:v1.156.0@sha256:da8a90ac0912f16589be2b96a6441a2fca4bca415c83783d972d92e3b5b66970
+    command:
+      - -storageDataPath=/vmetrics
+      - -retentionPeriod=30d
+      # OTLP names become Prometheus-style: http_server_request_duration_seconds_bucket.
+      - -opentelemetry.usePrometheusNaming
+    volumes:
+      - vmetrics-data:/vmetrics
+    # Sizes its caches to this limit; 256m left no headroom (233 MiB measured, OT-001 slice 2).
+    mem_limit: 512m
+
+  # Database availability and connection use, scraped by the collector.
+  postgres-exporter:
+    profiles: ['observability']
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    environment:
+      DATA_SOURCE_URI: db:5432/overkill_todo?sslmode=disable
+      DATA_SOURCE_USER: overkill_todo
+      # Local only; production reads it from the db_password secret (compose.prod.yaml).
+      DATA_SOURCE_PASS: overkill_todo
+    mem_limit: 64m
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Evaluates deploy/observability/alerts/*.yml against VictoriaMetrics.
+  vmalert:
+    profiles: ['observability']
+    image: victoriametrics/vmalert:v1.156.0@sha256:4fea7d1a888d4db4ff18804434ef0f3ca8eb6482e289c50d32001c2db218287c
+    command:
+      - -rule=/etc/alerts/*.yml
+      - -datasource.url=http://victoriametrics:8428
+      # Alert state survives restarts: written to and restored from VictoriaMetrics.
+      - -remoteWrite.url=http://victoriametrics:8428
+      - -remoteRead.url=http://victoriametrics:8428
+      - -notifier.url=http://alertmanager:9093
+      - -evaluationInterval=30s
+      - -external.url=http://localhost:3000
+    volumes:
+      - ./deploy/observability/alerts:/etc/alerts:ro
+    mem_limit: 128m
+    depends_on: [victoriametrics, alertmanager]
+
+  alertmanager:
+    profiles: ['observability']
+    image: prom/alertmanager:v0.35.0@sha256:e638797febd034838eca8b98cdbd46f951e9bf7f178777aa8669167406a9946c
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      # Local: null receiver, no email. Production mounts alertmanager.prod.yml.
+      - ./deploy/observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      # Local alert view. Not published in production.
+      - '127.0.0.1:${ALERTMANAGER_PORT:-9093}:9093'
+    # 55 MiB measured at 64m (OT-001 slice 2).
+    mem_limit: 128m
+
   grafana:
     profiles: ['observability']
     image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
@@ -136,15 +207,18 @@ services:
       GF_PLUGINS_PREINSTALL_SYNC: victoriametrics-logs-datasource@0.33.1
     volumes:
       - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana/dashboards:/etc/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     ports:
       - '127.0.0.1:${GRAFANA_PORT:-3000}:3000'
     # Grafana 13 was OOM-killed at 256m rendering Explore (measured, OT-001 slice 1).
     mem_limit: 512m
-    depends_on: [tempo, victorialogs]
+    depends_on: [tempo, victorialogs, victoriametrics]
 
 volumes:
   db-data:
   tempo-data:
   vlogs-data:
+  vmetrics-data:
+  alertmanager-data:
   grafana-data:

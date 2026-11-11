@@ -18,6 +18,8 @@ web := "@overkill-todo/web"
 # Refuse npm releases younger than 24h, even if someone bypasses pnpm-workspace.yaml.
 pnpm := "env PNPM_CONFIG_MINIMUM_RELEASE_AGE=1440 pnpm"
 # Host-side DB access for sqlx / tests / psql. Matches compose.yaml.
+# Rule unit-test runner; same release as the vmalert image in compose.yaml.
+vmalert_tool := "victoriametrics/vmalert-tool:v1.156.0@sha256:5db1f962282311fe37212711fce72d55983a49a627c632feb38b318d949920fa"
 db_url := "postgres://overkill_todo:overkill_todo@localhost:" + env("DB_PORT", "5432") + "/overkill_todo"
 # Compose project: "overkill-todo" in the main checkout, per-worktree otherwise.
 project := env("COMPOSE_PROJECT_NAME", "overkill-todo")
@@ -109,17 +111,28 @@ secrets-decrypt env:
 
 # ── Database ─────────────────────────────────────────────────────────────────────
 
-# Observability stack (collector, Tempo, VictoriaLogs, Grafana on :3000).
-# With `just dev`, export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318.
+# Observability stack (collector, Tempo, VictoriaLogs, VictoriaMetrics, vmalert,
+# Alertmanager on :9093, Grafana on :3000). With `just dev`, export
+# OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318, and start the stack with
+# BACKEND_READY_URL=http://host.docker.internal:4322/health/ready for the probe.
 obs-up:
     docker compose --profile observability up -d
 
 obs-down:
     docker compose --profile observability down
 
-# Validate the collector config with the pinned collector image (part of `just ci`).
+# Check the observability config with the pinned images (part of `just ci`):
+# collector config, alert rule unit tests, and both Alertmanager configs.
 obs-check:
-    docker run --rm -v "$PWD/deploy/observability/collector/config.yaml:/c.yaml:ro" "$(docker compose --profile observability config --images | grep opentelemetry-collector)" validate --config=/c.yaml
+    #!/usr/bin/env bash
+    set -euo pipefail
+    images=$(docker compose --profile observability config --images)
+    obs=$PWD/deploy/observability
+    docker run --rm -v "$obs/collector/config.yaml:/c.yaml:ro" "$(grep opentelemetry-collector <<<"$images")" validate --config=/c.yaml
+    docker run --rm -v "$obs/alerts:/alerts:ro" {{vmalert_tool}} unittest --disableAlertgroupLabel --files=/alerts/tests/*.yml
+    for f in alertmanager.yml alertmanager.prod.yml; do
+      docker run --rm --entrypoint amtool -v "$obs/alertmanager:/am:ro" "$(grep alertmanager <<<"$images")" check-config "/am/$f"
+    done
 
 db-up:
     docker compose up -d --wait db

@@ -1,0 +1,166 @@
+# vmalert-tool unit tests for ../overkill-todo.yml: each rule fires on its
+# condition, and the error-rate rule stays quiet on low traffic.
+# Run: `just obs-check`.
+rule_files:
+  - ../overkill-todo.yml
+evaluation_interval: 30s
+
+tests:
+  # 1 req/s, ~9% of them 5xx: pending at first, firing once held for 5m.
+  - name: error spike fires
+    interval: 30s
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{status_class="2xx"}'
+        values: '0+30x40'
+      - series: 'http_server_request_duration_seconds_count{status_class="5xx"}'
+        values: '0+3x40'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BackendErrorRateHigh
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: BackendErrorRateHigh
+        exp_alerts:
+          - exp_labels: { severity: page }
+            exp_annotations:
+              summary: 'Backend 5xx rate is 9.091% (threshold 2%)'
+              dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-2'
+
+  # Spec scenario "No alert on low traffic noise": steady traffic of 3
+  # requests per 5 minutes, 1 of each 3 failing (33%) for 20 minutes. That's
+  # under 1 request/minute, so the guard keeps it quiet.
+  - name: low traffic noise does not fire
+    interval: 1m
+    input_series:
+      - series: 'http_server_request_duration_seconds_count{status_class="2xx"}'
+        values: '0 1 1 2 2 2 3 3 4 4 4 5 5 6 6 6 7 7 8 8 8'
+      - series: 'http_server_request_duration_seconds_count{status_class="5xx"}'
+        values: '0 0 0 0 1 1 1 1 1 2 2 2 2 2 3 3 3 3 3 4 4'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: BackendErrorRateHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: BackendErrorRateHigh
+        exp_alerts: []
+
+  # Every request lands in the (1s, 2.5s] bucket, so p95 is well over 1s.
+  - name: slow responses fire
+    interval: 30s
+    input_series:
+      - series: 'http_server_request_duration_seconds_bucket{le="1"}'
+        values: '0+0x40'
+      - series: 'http_server_request_duration_seconds_bucket{le="2.5"}'
+        values: '0+30x40'
+      - series: 'http_server_request_duration_seconds_bucket{le="+Inf"}'
+        values: '0+30x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: BackendLatencyHigh
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: BackendLatencyHigh
+        exp_alerts:
+          - exp_labels: { severity: page }
+            exp_annotations:
+              summary: 'Backend p95 latency is 2.425s (threshold 1s)'
+              dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-3'
+
+  # Readiness fails from 1m on: firing once it has failed for 2m. As in the
+  # real probe, success and failure are different series (the success one
+  # carries the status code), and the success series just stops.
+  - name: backend down fires
+    interval: 15s
+    input_series:
+      - series: 'httpcheck_status_ratio{http_status_class="2xx",http_status_code="200"}'
+        values: '1 1 1 1 _x40'
+      - series: 'httpcheck_status_ratio{http_status_class="2xx"}'
+        values: '_ _ _ _ 0x40'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: BackendDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: BackendDown
+        exp_alerts:
+          - exp_labels: { severity: page }
+            exp_annotations:
+              summary: 'Backend readiness check has been failing for 2 minutes'
+              dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-6'
+
+  - name: database down fires
+    interval: 30s
+    input_series:
+      - series: 'pg_up'
+        values: '1 1 0x20'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: DatabaseDown
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: DatabaseDown
+        exp_alerts:
+          - exp_labels: { severity: page }
+            exp_annotations:
+              summary: 'Database is unreachable from postgres_exporter'
+              dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-7'
+
+  # 90 of 100 connections in use.
+  - name: database connections high fires
+    interval: 1m
+    input_series:
+      - series: 'pg_stat_activity_count{state="active"}'
+        values: '50x20'
+      - series: 'pg_stat_activity_count{state="idle"}'
+        values: '40x20'
+      - series: 'pg_settings_max_connections'
+        values: '100x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: DatabaseConnectionsHigh
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: DatabaseConnectionsHigh
+        exp_alerts:
+          - exp_labels: { severity: page }
+            exp_annotations:
+              summary: 'Database connections at 90% of max_connections (threshold 80%)'
+              dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-7'
+
+  - name: telemetry volume filling fires
+    interval: 1m
+    input_series:
+      - series: 'system_filesystem_utilization_ratio{mountpoint="/telemetry/tempo"}'
+        values: '0.85x20'
+      - series: 'system_filesystem_utilization_ratio{mountpoint="/telemetry/victorialogs"}'
+        values: '0.30x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: TelemetryVolumeFilling
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: TelemetryVolumeFilling
+        exp_alerts:
+          - exp_labels: { severity: page, mountpoint: /telemetry/tempo }
+            exp_annotations:
+              summary: 'Telemetry volume /telemetry/tempo is 85% full (threshold 80%)'
+              dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-8'
+
+  - name: telemetry export failing fires
+    interval: 1m
+    input_series:
+      - series: 'otelcol_exporter_send_failed_spans_total{exporter="otlp_http/tempo"}'
+        values: '0+10x20'
+      - series: 'otelcol_exporter_send_failed_log_records_total{exporter="otlp_http/victorialogs"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: TelemetryExportFailing
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: TelemetryExportFailing
+        exp_alerts:
+          - exp_labels: { severity: page, exporter: otlp_http/tempo }
+            exp_annotations:
+              summary: 'Collector exporter otlp_http/tempo is failing to deliver telemetry'
+              dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-8'

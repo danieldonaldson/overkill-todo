@@ -1,6 +1,7 @@
 # Provisioned datasources (design Decision 7). Nothing is set up by hand.
 #   log line → trace : VictoriaLogs derived field on trace_id → Tempo
 #   trace → log lines: Tempo tracesToLogsV2 custom query → VictoriaLogs
+#   route → traces   : dashboard data links (grafana/dashboards/*.json)
 apiVersion: 1
 
 datasources:
@@ -37,3 +38,13 @@ datasources:
           datasourceUid: tempo
           url: '$${__value.raw}'
           urlDisplayLabel: View trace
+
+  # VictoriaMetrics speaks the Prometheus query API (PromQL/MetricsQL).
+  - name: VictoriaMetrics
+    uid: victoriametrics
+    type: prometheus
+    access: proxy
+    url: http://victoriametrics:8428
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s

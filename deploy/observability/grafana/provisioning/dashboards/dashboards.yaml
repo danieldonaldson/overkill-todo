@@ -1,0 +1,12 @@
+# Dashboards are files in deploy/observability/grafana/dashboards/, mounted at
+# /etc/grafana/dashboards. Edits made in the UI are not saved: change the JSON.
+apiVersion: 1
+
+providers:
+  - name: overkill-todo
+    folder: overkill-todo
+    type: file
+    allowUiUpdates: false
+    disableDeletion: true
+    options:
+      path: /etc/grafana/dashboards

@@ -9,7 +9,8 @@
 #   - the edge serves $DOMAIN on 80/443 with automatic TLS
 #   - a nightly pg_dump runs (copy it off the host; see README)
 #   - with `--profile observability`: telemetry stack, Grafana on the host's
-#     loopback only (reach it through an SSH tunnel; see README)
+#     loopback only (reach it through an SSH tunnel; see README), Alertmanager
+#     emailing the operator (alertmanager.prod.yml) and not published at all
 services:
   db:
     environment:
@@ -92,6 +93,27 @@ services:
   victorialogs:
     restart: unless-stopped
 
+  victoriametrics:
+    restart: unless-stopped
+
+  postgres-exporter:
+    environment:
+      DATA_SOURCE_PASS: !reset null
+      DATA_SOURCE_PASS_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    restart: unless-stopped
+
+  vmalert:
+    restart: unless-stopped
+
+  alertmanager:
+    volumes: !override
+      - ./deploy/observability/alertmanager/alertmanager.prod.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    secrets: [alertmanager_smtp_password]
+    ports: !reset []
+    restart: unless-stopped
+
   grafana:
     environment:
       GF_SECURITY_ADMIN_PASSWORD: !reset null
@@ -109,6 +131,8 @@ secrets:
     file: ./deploy/compose/.secrets/db_password
   grafana_admin_password:
     file: ./deploy/compose/.secrets/grafana_admin_password
+  alertmanager_smtp_password:
+    file: ./deploy/compose/.secrets/alertmanager_smtp_password
 
 volumes:
   caddy-data:

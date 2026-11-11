@@ -1,0 +1,12 @@
+# Alertmanager, local (design Decision 10). Alerts are grouped and visible at
+# http://localhost:9093, but the receiver is a null route: local development
+# never sends alert email. Production uses alertmanager.prod.yml.
+route:
+  receiver: 'null'
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: 'null'

@@ -1,0 +1,39 @@
+# Alertmanager, production (design Decision 10). Mounted over
+# alertmanager.yml by deploy/compose/compose.prod.yaml.
+#
+# One email per alert group, a reminder at most every 4h while it keeps
+# firing, and a resolved notice when it clears.
+#
+# Before the first deploy, set the SMTP host, username and both addresses
+# below (Alertmanager can't read them from the environment). The password is
+# the SOPS secret deploy/secrets/prod/alertmanager_smtp_password.sops,
+# decrypted by `just secrets-decrypt prod` and mounted as a compose secret.
+global:
+  smtp_smarthost: 'smtp.example.com:587'
+  smtp_from: 'overkill-todo alerts <alerts@example.com>'
+  smtp_auth_username: 'alerts@example.com'
+  smtp_auth_password_file: /run/secrets/alertmanager_smtp_password
+  smtp_require_tls: true
+
+route:
+  receiver: operator-email
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: operator-email
+    email_configs:
+      - to: 'operator@example.com'
+        send_resolved: true
+        headers:
+          Subject: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+        # Name, current value (in the summary) and the dashboard link.
+        text: |-
+          {{ range .Alerts }}{{ .Labels.alertname }} ({{ .Status }})
+          {{ .Annotations.summary }}
+          Dashboard: {{ .Annotations.dashboard }}
+          Since: {{ .StartsAt }}
+
+          {{ end }}
