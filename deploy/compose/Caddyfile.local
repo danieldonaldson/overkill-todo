@@ -1,10 +1,24 @@
 # Local prod-like edge: one origin, /api → backend, everything else → web.
 :8080 {
-	handle /api/* {
-		reverse_proxy backend:4322
-	}
-	handle {
-		reverse_proxy web:8080
+	# `route` keeps this order. Caddy's default order runs `tracing` before
+	# `request_header`, which would adopt a client's trace context before it is
+	# stripped. The edge starts every trace (design Decision 3); the backend
+	# trusts the `traceparent` the edge sets because only the edge reaches it.
+	route {
+		request_header -traceparent
+		request_header -tracestate
+		# Exports to the collector over OTLP/gRPC (OTEL_* env in compose.yaml)
+		# and puts `traceID`/`spanID` on the access log line.
+		tracing {
+			span "{http.request.method} edge"
+		}
+
+		handle /api/* {
+			reverse_proxy backend:4322
+		}
+		handle {
+			reverse_proxy web:8080
+		}
 	}
 
 	# Same JSON access log as production, so the local stack mirrors it.

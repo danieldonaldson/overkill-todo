@@ -10,12 +10,52 @@
 //! task is raced against a heartbeat on that same connection. If the connection
 //! (and thus the lock) is lost, the task is cancelled and the replica steps down,
 //! so we never end up with two leaders after a transient DB blip.
+//!
+//! Every replica reports `leader.is_leader` (1 while it holds the lock, else 0),
+//! labelled by `lock`. The resource's `service.instance.id` tells replicas
+//! apart, so summing the last minute's samples counts leaders (design
+//! Decision 10).
 
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
+use opentelemetry::{
+    KeyValue,
+    metrics::{Gauge, Meter},
+};
+
 use crate::infrastructure::persistence::postgres::connection::Database;
+use crate::infrastructure::telemetry::metrics::global_meter;
+
+/// The `leader.is_leader` gauge. Cheap to clone.
+#[derive(Clone)]
+pub struct LeaderMetrics {
+    is_leader: Gauge<u64>,
+}
+
+impl LeaderMetrics {
+    #[must_use]
+    pub fn new(meter: &Meter) -> Self {
+        Self {
+            is_leader: meter
+                .u64_gauge("leader.is_leader")
+                .with_description("1 while this replica holds the leader lock, else 0")
+                .build(),
+        }
+    }
+
+    /// Instruments on the global meter.
+    #[must_use]
+    pub fn from_global() -> Self {
+        Self::new(&global_meter())
+    }
+
+    fn set(&self, label: &'static str, leading: bool) {
+        self.is_leader
+            .record(u64::from(leading), &[KeyValue::new("lock", label)]);
+    }
+}
 
 /// How long a stood-down/standby replica waits before re-attempting the lock.
 const STANDBY_INTERVAL: Duration = Duration::from_secs(15);
@@ -33,11 +73,13 @@ pub async fn run_as_leader<F, Fut>(
     lock_key: i64,
     label: &'static str,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
+    metrics: LeaderMetrics,
     task_factory: F,
 ) where
     F: Fn() -> Fut,
     Fut: Future<Output = ()>,
 {
+    metrics.set(label, false);
     loop {
         if *shutdown.borrow() {
             break;
@@ -72,6 +114,7 @@ pub async fn run_as_leader<F, Fut>(
         }
 
         tracing::info!(label, "Acquired leader lock; running background workers");
+        metrics.set(label, true);
         // Race the workers against a heartbeat on the lock connection and the
         // shutdown signal. If the connection dies (lock lost) the heartbeat
         // returns; on shutdown we cancel the workers and step down. Either way
@@ -97,6 +140,7 @@ pub async fn run_as_leader<F, Fut>(
             .fetch_one(&mut *conn)
             .await;
         drop(conn);
+        metrics.set(label, false);
 
         if stopping || *shutdown.borrow() {
             break;

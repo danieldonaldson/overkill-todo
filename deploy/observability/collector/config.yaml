@@ -1,6 +1,6 @@
 # OpenTelemetry Collector: the single intake for telemetry (design Decision 1).
 #
-#   traces:  backend (OTLP/HTTP) ─────────────────────────────► Tempo
+#   traces:  edge (OTLP/gRPC), backend (OTLP/HTTP) ───────────► Tempo
 #   logs:    docker container stdout (json-file) ──► parse ─────► VictoriaLogs
 #   metrics: backend (OTLP/HTTP), postgres_exporter, the stack's
 #            own /metrics, readiness probe, volume usage ───────► VictoriaMetrics
@@ -76,7 +76,8 @@ receivers:
         from: attributes["deployment.environment.name"]
         to: resource["deployment.environment.name"]
       # Backend lines: `message` is the log message, `trace_id`/`span_id` link
-      # to the trace. Caddy lines: `msg`, and `traceID` once edge tracing is on.
+      # to the trace. Caddy lines: `msg`, plus `traceID`/`spanID` from the
+      # edge's own span (its `tracing` directive).
       - type: move
         if: 'attributes.message != nil'
         from: attributes.message
@@ -89,6 +90,10 @@ receivers:
         if: 'attributes.traceID != nil'
         from: attributes.traceID
         to: attributes.trace_id
+      - type: move
+        if: 'attributes.spanID != nil'
+        from: attributes.spanID
+        to: attributes.span_id
       - type: trace_parser
         if: 'attributes.trace_id != nil'
         trace_id:
@@ -158,9 +163,6 @@ processors:
     error_mode: ignore
     log_statements:
       - flatten(log.attributes)
-      # Edge access lines: the backend's X-Trace-Id response header links the
-      # line to the request's trace (until the edge traces itself, slice 3).
-      - set(log.attributes["trace_id"], log.attributes["resp_headers.X-Trace-Id.0"]) where log.attributes["trace_id"] == nil and log.attributes["resp_headers.X-Trace-Id.0"] != nil
       - replace_all_patterns(log.attributes, "value", "([?&](?i:token|code|password|secret|key|state)=)[^&\\s\"]*", "$${1}[REDACTED]")
       - replace_pattern(log.body, "([?&](?i:token|code|password|secret|key|state)=)[^&\\s\"]*", "$${1}[REDACTED]")
 

@@ -164,3 +164,115 @@ tests:
             exp_annotations:
               summary: 'Collector exporter otlp_http/tempo is failing to deliver telemetry'
               dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-8'
+
+  # Timestamps are Unix seconds: vmalert-tool's clock starts at 2000-01-01
+  # (946684800), so "succeeded at the test's 1h mark" is 946688400.
+
+  # Spec scenario "Stuck background job alert": the hourly purge last
+  # succeeded at the start, so 2 × 1h + 15m later it alerts, and not a moment
+  # before.
+  - name: hourly purge stuck fires at 2h15m
+    interval: 1m
+    input_series:
+      - series: 'job_last_success_timestamp_seconds{job="account_purger",service_instance_id="a"}'
+        values: '946684800x150'
+      - series: 'job_interval_seconds{job="account_purger",service_instance_id="a"}'
+        values: '3600x150'
+    alert_rule_test:
+      - eval_time: 2h15m
+        alertname: JobNotSucceeding
+        exp_alerts: []
+      - eval_time: 2h15m30s
+        alertname: JobNotSucceeding
+        exp_alerts:
+          - exp_labels: { severity: page, job: account_purger }
+            exp_annotations:
+              summary: 'Background job account_purger has not succeeded for 2h 15m 30s'
+              dashboard: 'http://localhost:3000/d/jobs/jobs?viewPanel=panel-1'
+
+  # Succeeding every hour: never alerts.
+  - name: hourly purge succeeding does not fire
+    interval: 1m
+    input_series:
+      - series: 'job_last_success_timestamp_seconds{job="account_purger",service_instance_id="a"}'
+        values: '946684800x59 946688400x59 946692000x59 946695600x59 946699200x59'
+      - series: 'job_interval_seconds{job="account_purger",service_instance_id="a"}'
+        values: '3600x299'
+    alert_rule_test:
+      - eval_time: 4h30m
+        alertname: JobNotSucceeding
+        exp_alerts: []
+
+  # Leadership moved from a to b at 1h. a stood down but is still running, so
+  # it keeps reporting its old timestamp; b's newer one wins.
+  - name: stood-down replica's old timestamp does not fire
+    interval: 1m
+    input_series:
+      - series: 'job_last_success_timestamp_seconds{job="account_purger",service_instance_id="a"}'
+        values: '946684800x200'
+      - series: 'job_interval_seconds{job="account_purger",service_instance_id="a"}'
+        values: '3600x200'
+      - series: 'job_last_success_timestamp_seconds{job="account_purger",service_instance_id="b"}'
+        values: '_x59 946688400x59 946692000x80'
+      - series: 'job_interval_seconds{job="account_purger",service_instance_id="b"}'
+        values: '_x59 3600x140'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: JobNotSucceeding
+        exp_alerts: []
+
+  # Every replica running but none holding the lock.
+  - name: no leader fires
+    interval: 15s
+    input_series:
+      - series: 'leader_is_leader{lock="background-workers",service_instance_id="a"}'
+        values: '0x40'
+      - series: 'leader_is_leader{lock="background-workers",service_instance_id="b"}'
+        values: '0x40'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: LeaderCountWrong
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: LeaderCountWrong
+        exp_alerts:
+          - exp_labels: { severity: page }
+            exp_annotations:
+              summary: '0 replicas hold the background-work leader lock (expected exactly 1)'
+              dashboard: 'http://localhost:3000/d/jobs/jobs?viewPanel=panel-5'
+
+  - name: two leaders fire
+    interval: 15s
+    input_series:
+      - series: 'leader_is_leader{lock="background-workers",service_instance_id="a"}'
+        values: '1x40'
+      - series: 'leader_is_leader{lock="background-workers",service_instance_id="b"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: LeaderCountWrong
+        exp_alerts:
+          - exp_labels: { severity: page }
+            exp_annotations:
+              summary: '2 replicas hold the background-work leader lock (expected exactly 1)'
+              dashboard: 'http://localhost:3000/d/jobs/jobs?viewPanel=panel-5'
+
+  # Normal failover: leader a stops at 2m (its series just ends), b takes the
+  # lock at 2m30s. No alert. vmalert-tool ends a's series quickly on its own,
+  # so this passes even without last_over_time; the ~5-minute linger that
+  # last_over_time guards against only shows in real VictoriaMetrics, and is
+  # checked on the full stack (tasks 3.8).
+  - name: failover does not fire
+    interval: 15s
+    input_series:
+      - series: 'leader_is_leader{lock="background-workers",service_instance_id="a"}'
+        values: '1x8 _x40'
+      - series: 'leader_is_leader{lock="background-workers",service_instance_id="b"}'
+        values: '0x9 1x40'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: LeaderCountWrong
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: LeaderCountWrong
+        exp_alerts: []

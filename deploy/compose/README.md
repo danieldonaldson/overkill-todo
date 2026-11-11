@@ -106,6 +106,12 @@ dc up -d                                            # 2. then the new backend di
 just smoke https://app.example.com
 ```
 
+**Config changes need a restart.** The configs are bind-mounted files, and
+`dc up -d` doesn't recreate a container when only a mounted file changed. vmalert
+reads its rules only at startup. After changing `deploy/observability/**` or a
+`Caddyfile`, restart the affected services, for example
+`dc restart vmalert otel-collector edge`.
+
 **Access.** Nothing observability-related is routed by Caddy or published on a
 public port. Grafana listens on the host's loopback only:
 

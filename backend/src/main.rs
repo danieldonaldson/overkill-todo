@@ -383,6 +383,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         let purge = purge_accounts_uc;
         let maintenance_pool = db.pool().clone();
         let leader_shutdown = shutdown_rx.clone();
+        let job_metrics = tasks::job::JobMetrics::from_global();
 
         tokio::spawn(async move {
             tasks::leader::run_as_leader(
@@ -390,15 +391,22 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
                 BACKGROUND_WORKERS_LOCK,
                 "background-workers",
                 leader_shutdown,
+                tasks::leader::LeaderMetrics::from_global(),
                 move || {
                     let purge = purge.clone();
                     let maintenance_pool = maintenance_pool.clone();
+                    let job_metrics = job_metrics.clone();
                     Box::pin(async move {
                         tokio::join!(
-                            tasks::account_purger::run(purge, Duration::from_hours(1)),
+                            tasks::account_purger::run(
+                                purge,
+                                Duration::from_hours(1),
+                                job_metrics.clone(),
+                            ),
                             tasks::database_maintenance::run(
                                 maintenance_pool,
                                 Duration::from_hours(1),
+                                job_metrics,
                             ),
                         );
                     })

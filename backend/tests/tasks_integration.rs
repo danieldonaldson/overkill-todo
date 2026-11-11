@@ -1,7 +1,8 @@
 //! Integration tests for DB-backed background-task machinery:
 //!
 //! - `leader::run_as_leader` — Postgres advisory-lock leader election
-//!   (acquire, contention between two replicas, shutdown + lock release).
+//!   (acquire, contention between two replicas, shutdown + lock release, and
+//!   the `leader.is_leader` gauge each replica reports).
 //! - `PurgeScheduledAccountsUseCase::run_once` driven against the real Postgres
 //!   repositories (the run-loops themselves are infinite `tokio` loops, so we exercise the single-iteration use cases they
 //!   call, which is where all the DB logic lives).
@@ -18,9 +19,14 @@ use std::time::Duration;
 use sqlx::PgPool;
 use tokio::sync::{Notify, watch};
 
+use opentelemetry::metrics::MeterProvider as _;
+use opentelemetry_sdk::metrics::{
+    InMemoryMetricExporter, PeriodicReader, SdkMeterProvider,
+    data::{AggregatedMetrics, MetricData, ScopeMetrics},
+};
 use overkill_todo::application::use_cases::PurgeScheduledAccountsUseCase;
 use overkill_todo::infrastructure::persistence::{Database, PostgresUserRepository};
-use overkill_todo::infrastructure::tasks::leader::run_as_leader;
+use overkill_todo::infrastructure::tasks::leader::{LeaderMetrics, run_as_leader};
 
 async fn try_lock(pool: &PgPool, key: i64) -> bool {
     let mut conn = pool.acquire().await.unwrap();
@@ -48,14 +54,21 @@ async fn leader_acquires_runs_and_releases_on_shutdown(pool: PgPool) {
 
     let db_for_leader = db.clone();
     let handle = tokio::spawn(async move {
-        run_as_leader(db_for_leader, lock_key, "test-leader", rx, move || {
-            let ran_signal = ran_signal.clone();
-            async move {
-                // Mark that we became leader, then idle until cancelled.
-                ran_signal.notify_one();
-                std::future::pending::<()>().await;
-            }
-        })
+        run_as_leader(
+            db_for_leader,
+            lock_key,
+            "test-leader",
+            rx,
+            LeaderMetrics::from_global(),
+            move || {
+                let ran_signal = ran_signal.clone();
+                async move {
+                    // Mark that we became leader, then idle until cancelled.
+                    ran_signal.notify_one();
+                    std::future::pending::<()>().await;
+                }
+            },
+        )
         .await;
     });
 
@@ -119,13 +132,20 @@ async fn leader_stands_by_when_lock_held_elsewhere(pool: PgPool) {
     let (tx, rx) = watch::channel(false);
 
     let handle = tokio::spawn(async move {
-        run_as_leader(db, lock_key, "standby-leader", rx, move || {
-            let ran_flag = ran_flag.clone();
-            async move {
-                ran_flag.store(true, Ordering::SeqCst);
-                std::future::pending::<()>().await;
-            }
-        })
+        run_as_leader(
+            db,
+            lock_key,
+            "standby-leader",
+            rx,
+            LeaderMetrics::from_global(),
+            move || {
+                let ran_flag = ran_flag.clone();
+                async move {
+                    ran_flag.store(true, Ordering::SeqCst);
+                    std::future::pending::<()>().await;
+                }
+            },
+        )
         .await;
     });
 
@@ -148,6 +168,86 @@ async fn leader_stands_by_when_lock_held_elsewhere(pool: PgPool) {
         .fetch_one(&mut *holder)
         .await
         .unwrap();
+}
+
+/// Latest `leader.is_leader` value exported by `exporter`.
+fn is_leader_value(exporter: &InMemoryMetricExporter) -> u64 {
+    let batches = exporter.get_finished_metrics().unwrap();
+    let metric = batches
+        .iter()
+        .rev()
+        .flat_map(|rm| rm.scope_metrics().flat_map(ScopeMetrics::metrics))
+        .find(|m| m.name() == "leader.is_leader")
+        .expect("leader.is_leader not exported");
+    let AggregatedMetrics::U64(MetricData::Gauge(gauge)) = metric.data() else {
+        panic!("leader.is_leader is not a u64 gauge");
+    };
+    let points: Vec<u64> = gauge
+        .data_points()
+        .map(opentelemetry_sdk::metrics::data::GaugeDataPoint::value)
+        .collect();
+    assert_eq!(points.len(), 1, "one series per replica: {points:?}");
+    points[0]
+}
+
+/// Two replicas contend for one lock. Each reports `leader.is_leader` through
+/// its own meter provider (in production, its own process and
+/// `service.instance.id`). Exactly one of them reports 1.
+#[sqlx::test(migrations = "./migrations")]
+async fn exactly_one_of_two_replicas_reports_leader(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool));
+    let lock_key: i64 = 9_000_003;
+    let became_leader = Arc::new(Notify::new());
+    let (tx, rx) = watch::channel(false);
+
+    let mut replicas = Vec::new();
+    for name in ["replica-a", "replica-b"] {
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_reader(PeriodicReader::builder(exporter.clone()).build())
+            .build();
+        let metrics = LeaderMetrics::new(&provider.meter("t"));
+        let (db, rx, became_leader) = (db.clone(), rx.clone(), became_leader.clone());
+        let handle = tokio::spawn(async move {
+            run_as_leader(db, lock_key, name, rx, metrics, move || {
+                let became_leader = became_leader.clone();
+                async move {
+                    became_leader.notify_one();
+                    std::future::pending::<()>().await;
+                }
+            })
+            .await;
+        });
+        replicas.push((provider, exporter, handle));
+    }
+
+    tokio::time::timeout(Duration::from_secs(5), became_leader.notified())
+        .await
+        .expect("one replica should become leader");
+    // Let the other replica try the lock and stand by.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let values: Vec<u64> = replicas
+        .iter()
+        .map(|(provider, exporter, _)| {
+            provider.force_flush().unwrap();
+            is_leader_value(exporter)
+        })
+        .collect();
+    let mut sorted = values.clone();
+    sorted.sort_unstable();
+    assert_eq!(sorted, vec![0, 1], "is_leader per replica: {values:?}");
+
+    tx.send(true).unwrap();
+    for (provider, exporter, handle) in replicas {
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("leader loop should stop on shutdown")
+            .unwrap();
+        // A replica that stops leading reports 0.
+        provider.force_flush().unwrap();
+        assert_eq!(is_leader_value(&exporter), 0);
+    }
 }
 
 // ===========================================================================

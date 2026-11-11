@@ -9,6 +9,8 @@
 use sqlx::PgPool;
 use std::time::Duration;
 
+use super::job::{Job, JobMetrics};
+
 // Expired code rows that were ever locked are kept this long after their last
 // send so the escalating lockout count isn't reset by cleanup.
 use crate::domain::entities::attempt_lockout::LOCKOUT_MEMORY_DAYS;
@@ -95,27 +97,34 @@ pub async fn run_once(pool: &PgPool) -> Result<MaintenanceReport, sqlx::Error> {
     })
 }
 
+/// The job's name in spans (`job.database_maintenance`) and metric labels.
+pub const JOB_NAME: &str = "database_maintenance";
+
 /// Run database maintenance until the process exits.
-pub async fn run(pool: PgPool, interval: Duration) {
+pub async fn run(pool: PgPool, interval: Duration, metrics: JobMetrics) {
     tracing::info!(
         interval_secs = interval.as_secs(),
         batch_size = BATCH_SIZE,
         "Database maintenance worker started"
     );
+    let job = Job::new(JOB_NAME, interval, metrics);
 
     loop {
-        match run_once(&pool).await {
-            Ok(report) if report.total() > 0 => tracing::info!(
-                refresh_tokens = report.refresh_tokens,
-                email_verification_codes = report.email_verification_codes,
-                password_reset_codes = report.password_reset_codes,
-                "Database maintenance pass changed rows"
-            ),
-            Ok(_) => {}
-            Err(error) => tracing::error!(%error, "Database maintenance pass failed"),
-        }
+        job.run_once(|| async {
+            let report = run_once(&pool).await?;
+            if report.total() > 0 {
+                tracing::info!(
+                    refresh_tokens = report.refresh_tokens,
+                    email_verification_codes = report.email_verification_codes,
+                    password_reset_codes = report.password_reset_codes,
+                    "Database maintenance pass changed rows"
+                );
+            }
+            Ok::<_, sqlx::Error>(())
+        })
+        .await;
 
-        tokio::time::sleep(interval).await;
+        tokio::time::sleep(job.interval()).await;
     }
 }
 

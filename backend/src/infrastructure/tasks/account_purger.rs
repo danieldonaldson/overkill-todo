@@ -7,17 +7,29 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::job::{Job, JobMetrics};
 use crate::application::use_cases::PurgeScheduledAccountsUseCase;
 
+/// The job's name in spans (`job.account_purger`) and metric labels.
+pub const JOB_NAME: &str = "account_purger";
+
 /// Run the account purger until the process exits.
-pub async fn run(purge: Arc<PurgeScheduledAccountsUseCase>, interval: Duration) {
+pub async fn run(
+    purge: Arc<PurgeScheduledAccountsUseCase>,
+    interval: Duration,
+    metrics: JobMetrics,
+) {
     tracing::info!(interval_secs = interval.as_secs(), "Account purger started");
+    let job = Job::new(JOB_NAME, interval, metrics);
     loop {
-        match purge.run_once().await {
-            Ok(0) => {}
-            Ok(n) => tracing::info!(purged = n, "Account purge pass finalized accounts"),
-            Err(e) => tracing::error!(error = %e, "Account purge pass failed"),
-        }
-        tokio::time::sleep(interval).await;
+        job.run_once(|| async {
+            let purged = purge.run_once().await?;
+            if purged > 0 {
+                tracing::info!(purged, "Account purge pass finalized accounts");
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await;
+        tokio::time::sleep(job.interval()).await;
     }
 }

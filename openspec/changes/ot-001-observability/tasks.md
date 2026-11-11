@@ -8,6 +8,11 @@ with `just ci` green and checked on the full local stack
 (`--profile full --profile observability`). The production steps are collected
 in group 5 and run at the first production deploy.
 
+**Future (2026-11-11):** groups 4 (Kubernetes) and 5 (first production deploy)
+are not part of finishing this change. We're not on Kubernetes yet, and there's
+no production host. They stay here as the plan for when those exist; group 6
+needs only slices 1–3.
+
 ## 1. Slice 1 (first slice): backend traces and logs end to end on compose, with redaction
 
 This slice delivers these scenarios:
@@ -116,26 +121,26 @@ This slice delivers these scenarios:
 
 ### Edge
 
-- [ ] 3.1 Turn on Caddy's `tracing` directive in `Caddyfile` and `Caddyfile.local`, exporting to the collector over OTLP (gRPC 4317 on the compose network). Before it, strip client-supplied `traceparent`/`tracestate` (`request_header -traceparent`, `-tracestate`). Point Caddy's OTLP env at the collector in `compose.yaml` and `compose.prod.yaml`. Remove the collector's `resp_headers.X-Trace-Id` fallback once `traceID` is in the access log. Verify: a request through the edge produces one trace whose root span is the edge's, with the backend request span as its child, and its access log line's `trace_id` matches.
+- [x] 3.1 Turn on Caddy's `tracing` directive in `Caddyfile` and `Caddyfile.local`, exporting to the collector over OTLP (gRPC 4317 on the compose network). Before it, strip client-supplied `traceparent`/`tracestate` (`request_header -traceparent`, `-tracestate`). Point Caddy's OTLP env at the collector in `compose.yaml` and `compose.prod.yaml`. Remove the collector's `resp_headers.X-Trace-Id` fallback once `traceID` is in the access log. Verify: a request through the edge produces one trace whose root span is the edge's, with the backend request span as its child, and its access log line's `trace_id` matches.
 
 ### Backend
 
-- [ ] 3.2 Extract W3C context from incoming headers in `MakeHttpSpan` (`TraceContextPropagator`, already installed globally) and use it as the span's parent. Verify: a lib test asserts that a supplied `traceparent` is adopted by the backend span. Replace `client_supplied_traceparent_is_ignored` with an edge-level check (a `traceparent` sent to the edge does not appear as the trace ID in `X-Trace-Id`), run on the full local stack and recorded in 3.8.
-- [ ] 3.3 Run each job iteration (`account_purger`, `database_maintenance`) inside a root span `job.<name>` with an `outcome` attribute (`success`/`failure`), and log failures at error level inside that span. Record `job.run.duration` (histogram, seconds), `job.last_success_timestamp` and `job.interval_seconds` (gauges), labelled by `job`, in `infrastructure/tasks`. Verify: tests with the in-memory span and metric exporters see a `job.account_purger` span with `outcome=success`, the duration and both gauges; and, for a failing run, `outcome=failure` plus an error log line carrying that span's trace ID.
-- [ ] 3.4 Add the `leader.is_leader` gauge (0/1) to `tasks::leader`, so every replica reports, labelled by `service.instance.id` (already on the resource). Verify: a `#[sqlx::test]` with two leader loops on one database sees exactly one reporting 1.
+- [x] 3.2 Extract W3C context from incoming headers in `MakeHttpSpan` (`TraceContextPropagator`, already installed globally) and use it as the span's parent. Verify: a lib test asserts that a supplied `traceparent` is adopted by the backend span. Replace `client_supplied_traceparent_is_ignored` with an edge-level check (a `traceparent` sent to the edge does not appear as the trace ID in `X-Trace-Id`), run on the full local stack and recorded in 3.8.
+- [x] 3.3 Run each job iteration (`account_purger`, `database_maintenance`) inside a root span `job.<name>` with an `outcome` attribute (`success`/`failure`), and log failures at error level inside that span. Record `job.run.duration` (histogram, seconds), `job.last_success_timestamp` and `job.interval_seconds` (gauges), labelled by `job`, in `infrastructure/tasks`. Verify: tests with the in-memory span and metric exporters see a `job.account_purger` span with `outcome=success`, the duration and both gauges; and, for a failing run, `outcome=failure` plus an error log line carrying that span's trace ID.
+- [x] 3.4 Add the `leader.is_leader` gauge (0/1) to `tasks::leader`, so every replica reports, labelled by `service.instance.id` (already on the resource). Verify: a `#[sqlx::test]` with two leader loops on one database sees exactly one reporting 1.
 
 ### Alerts and dashboard
 
-- [ ] 3.5 Add rules: job not run successfully for `2 × job_interval_seconds + 900` (design Decision 10), and `sum(leader_is_leader) != 1` for 5m (covers none and more than one). Verify: `vmalert-tool` tests cover the hourly purge alerting at 2h15m and not before, no leader, and two leaders.
-- [ ] 3.6 Add a "Jobs" dashboard: last run time, outcome and duration per job, a link from a job to its recent `job.<name>` traces, and the current leader instance. Verify: Playwright opens it and follows a job's link to its traces.
+- [x] 3.5 Add rules: job not run successfully for `2 × job_interval_seconds + 900` (design Decision 10), and `sum(leader_is_leader) != 1` for 5m (covers none and more than one). Verify: `vmalert-tool` tests cover the hourly purge alerting at 2h15m and not before, no leader, and two leaders.
+- [x] 3.6 Add a "Jobs" dashboard: last run time, outcome and duration per job, a link from a job to its recent `job.<name>` traces, and the current leader instance. Verify: Playwright opens it and follows a job's link to its traces.
 
 ### Done
 
-- [ ] 3.7 `just ci` is green.
-- [ ] 3.8 On the full local stack: a sign-in's trace starts at the edge, a client `traceparent` is not adopted, the purge job's run appears as a trace and on the Jobs dashboard, and with two backend replicas exactly one shows as leader; stopping the leader moves it to the other. Record the results in `design.md`.
-- [ ] 3.9 Update `design.md` with what slice 3 showed.
+- [x] 3.7 `just ci` is green.
+- [x] 3.8 On the full local stack: a sign-in's trace starts at the edge, a client `traceparent` is not adopted, the purge job's run appears as a trace and on the Jobs dashboard, and with two backend replicas exactly one shows as leader; stopping the leader moves it to the other. Record the results in `design.md`.
+- [x] 3.9 Update `design.md` with what slice 3 showed.
 
-## 4. Slice 4: Kubernetes
+## 4. Slice 4: Kubernetes (future: not on Kubernetes yet)
 
 This slice delivers the same scenarios as slices 1–3 on the Kubernetes
 manifests. They render but aren't applied anywhere, so "delivered" here means
@@ -146,13 +151,13 @@ they render and pass the checks below, not that they are deployed.
 - [ ] 4.3 Secrets for Grafana admin and the Alertmanager SMTP password come from the same SOPS files as compose. Verify: the rendered manifests reference Secrets, never literal values.
 - [ ] 4.4 `just ci` is green, and `design.md` is updated with what slice 4 showed.
 
-## 5. First production deploy (deferred: no production host yet)
+## 5. First production deploy (future: no production host yet)
 
 - [ ] 5.1 Check host memory and disk headroom against the measured limits (`design.md` Open Questions) before deploying. Add the host's age key under `machines:` in `deploy/secrets/access.yaml` with `env: prod`, then run `just secrets-sync`. Create the Alertmanager SMTP password secret (`printf %s "$PASSWORD" | just secrets-new deploy/secrets/prod/alertmanager_smtp_password.sops`), and set the SMTP host, username, sender and operator address in `deploy/observability/alertmanager/alertmanager.prod.yml`. Verify: `just secrets-decrypt prod` works on the host and writes `alertmanager_smtp_password`.
 - [ ] 5.2 Deploy to compose prod: the observability services first, then the backend digest (`deploy/compose/README.md`). Verify with `just smoke <url>`, then repeat the 1.20 checks there: a sign-in's `X-Trace-Id` opens in Grafana through the SSH tunnel, the log ↔ trace links work, a search for the test account's email and password returns nothing, and `https://<domain>` gives 404 for `/grafana` while `:3000`, `:4317`, `:4318` and `:9093` are unreachable. Also fire a test alert (`amtool alert add`) and confirm the operator receives the email and then the resolved notice. Record the results in `design.md` Hypothesis.
 
 ## 6. Feature done
 
-- [ ] 6.1 All slices shipped, and telemetry is on in every deployed environment (the endpoint is set, so there's no flag to remove). Verify: the backend in production refuses to start without the endpoint (spec scenario), and the dashboards show live data.
+- [ ] 6.1 Slices 1–3 shipped (4 and 5 are future, see the top of this file). Telemetry is on wherever the app runs with `DEV_MODE=false` (the endpoint is set, so there's no flag to remove). Verify: the backend refuses to start without the endpoint when `DEV_MODE=false` (spec scenario), and the dashboards show live data on the full local stack.
 - [ ] 6.2 Update `README.md` (new env vars including `BACKEND_READY_URL`, `just obs-up`/`just obs-down`, how to open Grafana and Alertmanager locally), `backend/.env.example`, `backend/ARCHITECTURE.md` (the `infrastructure/telemetry` module, the `skip_all` instrumentation convention, the redaction rule, metric instruments built from an explicit `Meter`) and `CLAUDE.md` (a one-line rule: never record secrets or emails in spans and logs). Verify: docs reviewed against the final env and recipes.
 - [ ] 6.3 Archive the change with `/opsx:archive`. Verify: `openspec/specs/observability/spec.md` exists and `openspec validate --strict` passes.

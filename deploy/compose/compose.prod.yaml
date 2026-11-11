@@ -47,6 +47,8 @@ services:
       - '443:443/udp'
     environment:
       DOMAIN: ${DOMAIN}
+      # OTLP endpoint and service name come from compose.yaml.
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment.name=production
     volumes: !override
       - ./deploy/compose/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

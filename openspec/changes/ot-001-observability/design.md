@@ -136,6 +136,53 @@ profile):**
     the limit) and Alertmanager 55 of 64 MiB, so their limits are now 512m and
     128m. See Open Questions.
 
+**Slice 3, local result (2026-11-11, full compose stack + `observability`
+profile):**
+- **Traces start at the edge.** A sign-in through Caddy (`POST
+  /api/v1/auth/login`, wrong password) sent with a client `traceparent` of all
+  1s came back with a fresh `X-Trace-Id`. In Tempo that trace is `POST edge`
+  (service `edge`) → `POST /api/v1/auth/login` → `middleware.csrf` →
+  `handler.login` → `usecase.login_user` → `repo.user.find_by_email`, with the
+  edge and backend log lines both carrying its trace ID. The edge line's
+  `trace_id`/`span_id` now come from Caddy's own span; the collector's
+  `X-Trace-Id` response-header fallback is gone.
+- **Client context is dropped before Caddy can adopt it.** Caddy's default
+  directive order runs `tracing` before `request_header`, so a plain
+  `request_header -traceparent` would strip the header only after the client's
+  context was adopted. Both Caddyfiles wrap the site in `route`, which keeps the
+  written order: strip, then trace, then proxy.
+- **Jobs.** After a restart, the purge and maintenance runs show in Tempo as
+  root `job.account_purger` / `job.database_maintenance` spans with
+  `outcome=success`. They also show on the new "Jobs" dashboard (last success,
+  alert threshold, runs, failures and average duration over 24h, a "Recent
+  runs" table from Tempo, the leader table). Playwright clicked
+  `account_purger` in the jobs table and landed on a Tempo search for
+  `{ name = "job.account_purger" }` listing its run.
+- **Leader.** With two backend replicas, the leader table showed one `leader`
+  and one `standby`. Stopping the leader (`docker stop`) moved leadership to
+  the other replica in about 50s: the 15s standby retry, plus the 15s metric
+  push. The graceful stop reports 0 and flushes before exiting, so the count
+  never read 2. Killing the leader (`docker kill`, SIGKILL) is the case the
+  leader rule is built for. The dead replica's last 1 has no staleness marker,
+  so plain `sum(leader_is_leader)` read 2 for about 4 minutes (close enough to
+  `for: 5m` to page on a routine crash-and-failover). `sum(last_over_time(
+  leader_is_leader[1m]))`, which the rule uses, read 2 for about 30s. No leader
+  alert fired. vmalert-tool doesn't reproduce this linger (it ends the series
+  by itself), so the rule tests can't tell the two expressions apart. This run
+  is the check.
+- **Rules.** `JobNotSucceeding` and `LeaderCountWrong` loaded healthy and
+  inactive. vmalert reads rule files only at startup, so it needs a restart
+  after a rule change (as does the first deploy of this slice). Rule tests
+  cover the hourly purge alerting at 2h15m30s and not at 2h15m, an hourly
+  success never alerting, a stood-down replica's old timestamp not alerting,
+  no leader, two leaders, and a failover.
+- Found along the way:
+  - **Grafana was OOM-killed again at 512 MiB**, after about an hour up and
+    several dashboard loads. A fresh Grafana peaked at 357 MiB loading the Jobs
+    dashboard, so the dashboard alone doesn't explain it. See Open Questions.
+  - **`TelemetryVolumeFilling` fired locally**, correctly: the dev machine's
+    disk is 81% full, and every named volume reports that disk.
+
 There is no production host yet (2026-11-07). The same checks run at the first
 production deploy (tasks group 5). Until then, the full local stack is where
 each slice is checked.
@@ -216,7 +263,10 @@ ceremony.
   because it's only reachable through the edge: the backend port isn't published
   in prod, and in k8s a NetworkPolicy allows ingress only from the edge.
 - **Order.** Until the edge part ships (slice 3), the backend ignores incoming
-  context and always starts a root span.
+  context and always starts a root span. *Shipped in slice 3:* both halves went
+  in together. The edge strips client context inside a `route` block (Caddy's
+  default order would trace first), and `MakeHttpSpan` continues a valid
+  incoming `traceparent`.
 - **`X-Trace-Id`.** `trace_id_middleware` changes to read the trace ID from the
   current span's OpenTelemetry context, instead of generating a random one. When
   telemetry is disabled, a local `SdkTracerProvider` with no exporter still
@@ -241,7 +291,9 @@ ceremony.
   noisier and harder to read. Adding the macro to repository methods is
   mechanical.
 - **Jobs.** Each job iteration runs inside a root span `job.<name>` with an
-  `outcome` attribute.
+  `outcome` attribute. *Decided in slice 3:* `infrastructure/tasks/job.rs`
+  wraps every run (span, metrics, error log inside the span). Each job's own
+  result log lines are written inside the run too, so they carry its trace ID.
 
 ### 5. Metrics
 
@@ -255,6 +307,18 @@ collector, which remote-writes to VictoriaMetrics.
 - `job.run.duration` (histogram) and `job.last_success_timestamp` (gauge),
   labelled by `job`.
 - `leader.is_leader`: gauge, 0 or 1, labelled by `instance`.
+
+*Decided in slice 3:*
+- `job.run.duration` is also labelled by `outcome`, so the dashboard counts
+  failed runs without a separate counter.
+- `job.last_success_timestamp` starts at the time the job starts on the leader.
+  Without that, a job that never succeeds after a restart would have no series
+  and could never alert.
+- `leader.is_leader` is labelled by `lock`. Replicas are told apart by the
+  resource's `service.instance.id`, not by a metric label.
+- In VictoriaMetrics they are `job_run_duration_seconds_*`,
+  `job_last_success_timestamp_seconds`, `job_interval_seconds` and
+  `leader_is_leader`.
 - `db.client.connection.count`: gauge, labelled by `state` (idle/used), plus
   `db.client.connection.max`. *Renamed in slice 2* from `db.pool.*` to the
   OpenTelemetry database semantic-convention names.
@@ -421,7 +485,12 @@ thresholds are the ones in the spec.
   `time() - job_last_success_timestamp > 2*interval + 900`. The interval comes
   from a `job_interval_seconds` gauge the job sets, so the rule doesn't hardcode
   1h.
-- Leader: `sum(leader_is_leader) != 1` for 5m.
+- Leader: `sum(leader_is_leader) != 1` for 5m. *Changed in slice 3* to
+  `sum(last_over_time(leader_is_leader[1m])) != 1`. A crashed replica's last
+  1 would otherwise count for ~5 minutes (see the slice 3 result). The job
+  rule takes `max by (job)` across replicas, because a replica that stood down
+  keeps reporting its old timestamp. When no replica reports at all, both
+  rules see nothing and BackendDown covers it.
 - *Decided in slice 2:* the readiness rule reads
   `max(last_over_time(httpcheck_status_ratio{http_status_class="2xx"}[30s])) < 1`,
   not a plain `max()`. See the slice 2 result under Hypothesis for why.
@@ -477,7 +546,7 @@ deploy/observability/          shared config, mounted by compose and k8s
   alertmanager/alertmanager.yml
 compose.yaml                   new services under profile `observability`
 deploy/compose/compose.prod.yaml  enables them, secrets, loopback Grafana
-deploy/k8s/observability/      kustomize component (slice 4)
+deploy/k8s/observability/      kustomize component (slice 4, future)
 backend/src/infrastructure/telemetry/{mod,redact,metrics,log_format}.rs
 ```
 
@@ -499,7 +568,8 @@ New just recipes: `just obs-up` and `just obs-down`. They wrap
 3. **Edge and jobs.** Caddy tracing and stripping of client `traceparent`,
    trusting incoming context in the backend, job spans and metrics, leader gauge,
    jobs dashboard.
-4. **Kubernetes.** A kustomize component with the collector DaemonSet, stores as
+4. **Kubernetes (future, 2026-11-11: not on Kubernetes yet, so this is out
+   of this change's done criteria).** A kustomize component with the collector DaemonSet, stores as
    StatefulSets with PVCs, Grafana, and NetworkPolicies. It must render with
    `kubectl kustomize overlays/example`.
 
@@ -563,7 +633,10 @@ There's no schema change. Each slice deploys independently:
   61 MiB, VictoriaMetrics 233 MiB, vmalert 22 MiB, Alertmanager 55 MiB,
   postgres_exporter 17 MiB, Grafana 233 MiB, about 1.06 GiB in total. Limits:
   collector 256, Tempo 512, VictoriaLogs 256, VictoriaMetrics 512, vmalert 128,
-  Alertmanager 128, postgres_exporter 64, Grafana 512 (MiB). Confirm them
+  Alertmanager 128, postgres_exporter 64, Grafana 512 (MiB). After slice 3,
+  Grafana was OOM-killed once at 512 MiB after about an hour up (a fresh one
+  peaked at 357 MiB on the Jobs dashboard). Watch it, and raise to 768 MiB if
+  it recurs. Confirm them
   against production host headroom before the first deploy (task 5.1). This
   doesn't change the approach.
 - Whether the alert email should use a different sender address from app email.

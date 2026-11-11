@@ -99,3 +99,34 @@ groups:
         annotations:
           summary: 'Collector exporter {{ $labels.exporter }} is failing to deliver telemetry'
           dashboard: 'http://localhost:3000/d/service-overview/service-overview?viewPanel=panel-8'
+
+  - name: background
+    rules:
+      # job_last_success_timestamp starts when the job starts on the leader, so
+      # a job that has never succeeded since then still alerts. max by (job)
+      # takes the newest value across replicas: a replica that stood down keeps
+      # reporting its old timestamp. If no replica reports at all, the backend
+      # is down and BackendDown fires instead.
+      - alert: JobNotSucceeding
+        expr: |
+          time() - max by (job) (job_last_success_timestamp_seconds)
+            > 2 * max by (job) (job_interval_seconds) + 900
+        labels:
+          severity: page
+        annotations:
+          summary: 'Background job {{ $labels.job }} has not succeeded for {{ $value | humanizeDuration }}'
+          dashboard: 'http://localhost:3000/d/jobs/jobs?viewPanel=panel-1'
+
+      # Each replica reports 1 or 0. Only samples from the last minute count
+      # (pushes are every 15s): a stopped replica's series has no staleness
+      # marker, and without this its last 1 would linger for ~5 minutes and a
+      # normal failover would look like two leaders. When no replica reports,
+      # the sum is empty and BackendDown covers it.
+      - alert: LeaderCountWrong
+        expr: sum(last_over_time(leader_is_leader[1m])) != 1
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: '{{ $value }} replicas hold the background-work leader lock (expected exactly 1)'
+          dashboard: 'http://localhost:3000/d/jobs/jobs?viewPanel=panel-5'

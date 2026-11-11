@@ -7,13 +7,20 @@
 //! redacted. Health probes get no span and no metric. Both layers must be added
 //! with `Router::layer` so axum has already routed the request and
 //! [`MatchedPath`] is available.
+//!
+//! The request span continues the W3C trace context in the incoming
+//! `traceparent` (design Decision 3). That's safe only because the backend is
+//! reachable solely through the edge, which strips any client-supplied context
+//! and starts the trace itself.
 
 use std::time::{Duration, Instant};
 
 use axum::extract::{MatchedPath, State};
-use axum::http::{Request, Response, header::USER_AGENT};
+use axum::http::{HeaderMap, Request, Response, header::USER_AGENT};
 use axum::{body::Body, middleware::Next};
+use opentelemetry::propagation::{Extractor, TextMapPropagator};
 use opentelemetry::trace::TraceContextExt;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use tower_http::{
     classify::{ServerErrorsAsFailures, SharedClassifier},
     trace::{DefaultOnRequest, MakeSpan, OnResponse, TraceLayer},
@@ -76,7 +83,26 @@ impl<B> MakeSpan<B> for MakeHttpSpan {
         if let Some(query) = request.uri().query() {
             span.record("url.query", redact_query(query));
         }
+        let parent = TraceContextPropagator::new().extract(&HeaderExtractor(request.headers()));
+        if parent.span().span_context().is_valid() {
+            // Only fails when no OpenTelemetry layer is installed, in which case
+            // there is no trace to join.
+            let _ = span.set_parent(parent);
+        }
         span
+    }
+}
+
+/// Reads W3C trace-context headers from an HTTP request.
+struct HeaderExtractor<'a>(&'a HeaderMap);
+
+impl Extractor for HeaderExtractor<'_> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|v| v.to_str().ok())
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(axum::http::HeaderName::as_str).collect()
     }
 }
 
@@ -174,6 +200,11 @@ mod tests {
     /// Send one request through [`app`] with the production subscriber stack
     /// and return the exported spans.
     async fn spans_for(uri: &str) -> Vec<SpanData> {
+        spans_for_request(Request::builder().uri(uri).body(Body::empty()).unwrap()).await
+    }
+
+    /// Like [`spans_for`], for a fully built request.
+    async fn spans_for_request(request: Request<Body>) -> Vec<SpanData> {
         let service = ServiceInfo {
             name: "t".into(),
             version: "t".into(),
@@ -189,10 +220,7 @@ mod tests {
             service,
         );
         let _guard = tracing::subscriber::set_default(sub);
-        let response = app()
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        let response = app().oneshot(request).await.unwrap();
         drop(response);
         provider.force_flush().unwrap();
         exporter.get_finished_spans().unwrap()
@@ -250,6 +278,36 @@ mod tests {
             Some("500")
         );
         assert!(matches!(spans[0].status, Status::Error { .. }));
+    }
+
+    #[tokio::test]
+    async fn incoming_traceparent_becomes_the_parent() {
+        let trace_id = "4bf92f3577b34da6a3ce929d0e0e4736";
+        let parent_span_id = "00f067aa0ba902b7";
+        let request = Request::builder()
+            .uri("/items/1")
+            .header("traceparent", format!("00-{trace_id}-{parent_span_id}-01"))
+            .body(Body::empty())
+            .unwrap();
+        let spans = spans_for_request(request).await;
+        assert_eq!(spans.len(), 1);
+        let span = &spans[0];
+        assert_eq!(span.span_context.trace_id().to_string(), trace_id);
+        assert_eq!(span.parent_span_id.to_string(), parent_span_id);
+        assert!(span.parent_span_is_remote);
+    }
+
+    #[tokio::test]
+    async fn malformed_traceparent_starts_a_new_trace() {
+        let request = Request::builder()
+            .uri("/items/1")
+            .header("traceparent", "not-a-traceparent")
+            .body(Body::empty())
+            .unwrap();
+        let spans = spans_for_request(request).await;
+        assert_eq!(spans.len(), 1);
+        assert!(spans[0].span_context.is_valid());
+        assert!(!spans[0].parent_span_is_remote);
     }
 
     #[tokio::test]

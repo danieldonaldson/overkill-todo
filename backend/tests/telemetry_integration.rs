@@ -243,30 +243,32 @@ async fn x_trace_id_matches_exported_trace_and_logs(pool: PgPool) {
     );
 }
 
-/// A client-supplied `traceparent` is not adopted: the request gets a fresh trace.
+/// The backend continues the trace the edge started: `X-Trace-Id` and every
+/// span carry the `traceparent`'s trace ID. Clients can't use this to pick a
+/// trace ID, because the edge strips their `traceparent` before starting its own
+/// span. That half is checked on the full stack (tasks 3.2, 3.8).
 #[sqlx::test(migrations = "./migrations")]
-async fn client_supplied_traceparent_is_ignored(pool: PgPool) {
+async fn edge_traceparent_is_continued(pool: PgPool) {
     let telemetry = Captured::install();
     let app = common::create_test_app(pool);
-    let supplied = "4bf92f3577b34da6a3ce929d0e0e4736";
+    let edge_trace = "4bf92f3577b34da6a3ce929d0e0e4736";
+    let edge_span = "00f067aa0ba902b7";
 
     let req = Request::builder()
         .uri("/api/v1/auth/me")
-        .header("traceparent", format!("00-{supplied}-00f067aa0ba902b7-01"))
+        .header("traceparent", format!("00-{edge_trace}-{edge_span}-01"))
         .body(Body::empty())
         .unwrap();
     let (resp, _) = send(&app, req).await;
 
-    let trace_id = trace_id_header(&resp);
-    assert_ne!(trace_id, supplied);
-    for span in telemetry.spans() {
-        assert_ne!(span.span_context.trace_id().to_string(), supplied);
-        assert!(
-            !span.parent_span_is_remote,
-            "span {} has a remote parent",
-            span.name
-        );
+    assert_eq!(trace_id_header(&resp), edge_trace);
+    let spans = telemetry.spans();
+    for span in &spans {
+        assert_eq!(span.span_context.trace_id().to_string(), edge_trace);
     }
+    let server = server_span(&spans, "GET /api/v1/auth/me");
+    assert_eq!(server.parent_span_id.to_string(), edge_span);
+    assert!(server.parent_span_is_remote);
 }
 
 // ---------------------------------------------------------------------------
