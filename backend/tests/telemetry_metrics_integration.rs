@@ -8,7 +8,7 @@ use opentelemetry_sdk::metrics::{
 };
 use std::sync::Arc;
 
-use overkill_todo::infrastructure::persistence::{DatabaseHealth, postgres::Database};
+use overkill_todo::infrastructure::persistence::postgres::Database;
 use overkill_todo::infrastructure::telemetry::metrics::{METER_NAME, register_db_pool_gauges};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
@@ -57,7 +57,7 @@ async fn pool_gauges_report_connection_use_and_max(test_pool: PgPool) {
         .build();
     register_db_pool_gauges(
         &provider.meter(METER_NAME),
-        &(Arc::new(Database::from_pool(pool.clone())) as Arc<dyn DatabaseHealth>),
+        &Arc::new(Database::from_pool(pool.clone())),
     );
     provider.force_flush().unwrap();
 

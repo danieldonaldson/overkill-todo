@@ -5,8 +5,6 @@
 //! retention limit (sessions, one-time codes, processed webhook ids, ...), and
 //! a matching field on [`MaintenanceReport`].
 
-use async_trait::async_trait;
-
 use super::Database;
 use crate::infrastructure::persistence::{
     DatabaseError, DatabaseMaintenance, MAINTENANCE_BATCH_SIZE, MaintenanceReport,
@@ -16,7 +14,6 @@ use crate::infrastructure::persistence::{
 // send so the escalating lockout count isn't reset by cleanup.
 use crate::domain::entities::attempt_lockout::LOCKOUT_MEMORY_DAYS;
 
-#[async_trait]
 impl DatabaseMaintenance for Database {
     async fn purge_expired(&self) -> Result<MaintenanceReport, DatabaseError> {
         let pool = self.pool();

@@ -17,7 +17,7 @@ use crate::infrastructure::persistence::{
 pub const JOB_NAME: &str = "database_maintenance";
 
 /// Run database maintenance until the process exits.
-pub async fn run(db: Arc<dyn DatabaseMaintenance>, interval: Duration, metrics: JobMetrics) {
+pub async fn run(db: Arc<impl DatabaseMaintenance>, interval: Duration, metrics: JobMetrics) {
     tracing::info!(
         interval_secs = interval.as_secs(),
         batch_size = MAINTENANCE_BATCH_SIZE,

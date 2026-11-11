@@ -103,7 +103,7 @@ pub const fn status_class(status: u16) -> &'static str {
 /// Register `db.client.connection.count` (`state` = `idle`/`used`) and
 /// `db.client.connection.max` as observable gauges read from `pool` at each
 /// collection. The callbacks live as long as the meter provider.
-pub fn register_db_pool_gauges(meter: &Meter, db: &Arc<dyn DatabaseHealth>) {
+pub fn register_db_pool_gauges(meter: &Meter, db: &Arc<impl DatabaseHealth + 'static>) {
     let counts = Arc::clone(db);
     meter
         .u64_observable_gauge("db.client.connection.count")

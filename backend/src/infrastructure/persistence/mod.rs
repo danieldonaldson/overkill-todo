@@ -1,18 +1,20 @@
 //! Persistence layer.
 //!
-//! This module root is driver-neutral: the traits other infrastructure modules
-//! use for database plumbing (readiness, pool gauges, leader election,
+//! This module root is driver-neutral: the traits every driver adapter
+//! implements for database plumbing (readiness, pool gauges, leader election,
 //! maintenance), the opaque [`DatabaseError`] they fail with, and the plain
 //! data they return. Repositories are reached through the application's
 //! outgoing ports instead.
 //!
-//! Driver adapters live in submodules (`postgres` is the sqlx one). Each
-//! hands back a [`Persistence`] bundle; `main.rs` picks the adapter, and
-//! nothing else imports `persistence::postgres` (tests aside).
+//! The driver is chosen at compile time. Adapters live in submodules
+//! (`postgres` is the sqlx one); [`Database`] names the selected adapter's
+//! handle, and each adapter hands back a [`Persistence`] bundle. Plumbing
+//! consumers are generic over these traits (or use [`Database`] and call only
+//! trait methods), so dispatch is static. Nothing outside this module imports
+//! `persistence::postgres` except `main.rs` wiring and tests.
 
+use std::future::Future;
 use std::sync::Arc;
-
-use async_trait::async_trait;
 
 use crate::application::ports::outgoing::{
     AccountLifecycleRepository, EmailVerificationRepository, OAuthAccountRepository,
@@ -23,10 +25,15 @@ pub mod postgres;
 
 pub use postgres::STATEMENT_LOG_DIRECTIVE;
 
-/// Every persistence handle the app needs, as driver-neutral trait objects.
+/// The selected driver's database handle. It implements [`DatabaseHealth`],
+/// [`LeaderLocks`] and [`DatabaseMaintenance`]; callers outside the adapter
+/// use only those trait methods.
+pub type Database = postgres::Database;
+
+/// Every persistence handle the app needs.
 ///
-/// An adapter builds one of these from a single connection pool; swapping the
-/// driver means swapping which adapter builds it.
+/// Repositories are `Arc<dyn Port>` because that is what the use cases take
+/// (and mock). The plumbing handle is the concrete selected [`Database`].
 #[derive(Clone)]
 pub struct Persistence {
     pub users: Arc<dyn UserRepository>,
@@ -35,9 +42,7 @@ pub struct Persistence {
     pub refresh_tokens: Arc<dyn RefreshTokenRepository>,
     pub email_verifications: Arc<dyn EmailVerificationRepository>,
     pub password_resets: Arc<dyn PasswordResetRepository>,
-    pub health: Arc<dyn DatabaseHealth>,
-    pub leader_locks: Arc<dyn LeaderLocks>,
-    pub maintenance: Arc<dyn DatabaseMaintenance>,
+    pub db: Arc<Database>,
 }
 
 /// A database failure from an infrastructure-internal operation (leader lock,
@@ -66,13 +71,12 @@ pub struct PoolStats {
 }
 
 /// Readiness probe and pool introspection.
-#[async_trait]
 pub trait DatabaseHealth: Send + Sync {
     /// Runs a trivial query to confirm the database is reachable.
     ///
     /// # Errors
     /// Returns the driver error if no connection is available or the query fails.
-    async fn ping(&self) -> Result<(), DatabaseError>;
+    fn ping(&self) -> impl Future<Output = Result<(), DatabaseError>> + Send;
 
     /// Current open and idle connection counts.
     fn pool_stats(&self) -> PoolStats;
@@ -82,8 +86,10 @@ pub trait DatabaseHealth: Send + Sync {
 }
 
 /// Session-level locks for leader election.
-#[async_trait]
 pub trait LeaderLocks: Send + Sync {
+    /// A held lock and the connection holding it.
+    type Lock: LeaderLock;
+
     /// Tries to take the lock for `key` on a dedicated connection, without
     /// waiting.
     ///
@@ -92,25 +98,27 @@ pub trait LeaderLocks: Send + Sync {
     ///
     /// # Errors
     /// Returns an error only if no connection can be acquired.
-    async fn try_lock(&self, key: i64) -> Result<Option<Box<dyn LeaderLock>>, DatabaseError>;
+    fn try_lock(
+        &self,
+        key: i64,
+    ) -> impl Future<Output = Result<Option<Self::Lock>, DatabaseError>> + Send;
 }
 
 /// A held leader lock and the connection holding it.
 ///
 /// Always [`release`](Self::release) it: dropping may return the connection to
 /// the pool with the lock still held.
-#[async_trait]
 pub trait LeaderLock: Send {
     /// Pings the lock's connection. An error means the connection, and with
     /// it the lock, is gone.
     ///
     /// # Errors
     /// Returns the driver error if the ping fails.
-    async fn ping(&mut self) -> Result<(), DatabaseError>;
+    fn ping(&mut self) -> impl Future<Output = Result<(), DatabaseError>> + Send;
 
     /// Unlocks and returns the connection. Best-effort: on a dead connection
     /// the lock is freed when the socket closes.
-    async fn release(self: Box<Self>);
+    fn release(self) -> impl Future<Output = ()> + Send;
 }
 
 /// Most rows each statement of a maintenance pass deletes.
@@ -137,13 +145,14 @@ impl MaintenanceReport {
 ///
 /// Each statement touches at most [`MAINTENANCE_BATCH_SIZE`] rows, keeping
 /// transactions short so a backlog can't monopolise the database.
-#[async_trait]
 pub trait DatabaseMaintenance: Send + Sync {
     /// Runs one bounded pass.
     ///
     /// # Errors
     /// Returns the first database error; later tables wait for the next pass.
-    async fn purge_expired(&self) -> Result<MaintenanceReport, DatabaseError>;
+    fn purge_expired(
+        &self,
+    ) -> impl Future<Output = Result<MaintenanceReport, DatabaseError>> + Send;
 }
 
 #[cfg(test)]

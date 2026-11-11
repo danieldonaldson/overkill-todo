@@ -118,12 +118,10 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         refresh_tokens: refresh_token_repo,
         email_verifications: email_verification_repo,
         password_resets: password_reset_repo,
-        health: db_health,
-        leader_locks,
-        maintenance,
+        db,
     } = persistence::postgres::open(&settings.database.url, settings.database.max_connections)
         .await?;
-    telemetry::metrics::register_db_pool_gauges(&telemetry::metrics::global_meter(), &db_health);
+    telemetry::metrics::register_db_pool_gauges(&telemetry::metrics::global_meter(), &db);
 
     // Services
     let code_generator = Arc::new(if settings.server.dev_mode {
@@ -380,9 +378,9 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         // Pick a different value per app if several share one database.
         const BACKGROUND_WORKERS_LOCK: i64 = 0x746f_646f_5f77_726b; // "todo_wrk"
 
-        let leader_db = leader_locks;
+        let leader_db = db.clone();
         let purge = purge_accounts_uc;
-        let maintenance_db = maintenance;
+        let maintenance_db = db.clone();
         let leader_shutdown = shutdown_rx.clone();
         let job_metrics = tasks::job::JobMetrics::from_global();
 
@@ -424,7 +422,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             oauth: oauth_deps,
             profile: profile_deps,
             admin: admin_deps,
-            db: db_health,
+            db,
             crypto: crypto.clone(),
             users: user_repo.clone(),
         },

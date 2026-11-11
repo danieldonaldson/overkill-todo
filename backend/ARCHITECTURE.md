@@ -29,16 +29,20 @@ The domain imports no `sqlx` or `serde`: Postgres enum mappings live in
 
 **`sqlx` is confined to `infrastructure/persistence/postgres/`**, and only
 `main.rs` wiring and tests name that module. The `persistence` root is
-driver-neutral: other infrastructure modules that need the database depend on its
-traits as `Arc<dyn …>`, never on the adapter's `Database`: `LeaderLocks` /
+driver-neutral. The driver is chosen at compile time, so dispatch is static:
+`persistence::Database` aliases the selected adapter's handle, and other
+infrastructure modules use it only through the root's traits, either as generic
+bounds or as trait methods on that alias. The traits are `LeaderLocks` /
 `LeaderLock` (leader election in `tasks/leader.rs`), `DatabaseMaintenance`
-(`tasks/database_maintenance.rs`), `DatabaseHealth` (`/health/ready` and the pool
-gauges), plus `STATEMENT_LOG_DIRECTIVE` (trace export filter). Their failures
+(`tasks/database_maintenance.rs`) and `DatabaseHealth` (`/health/ready` and the
+pool gauges); the root also exports `STATEMENT_LOG_DIRECTIVE` (trace export
+filter). Repositories stay `Arc<dyn Port>`, because that is what use cases take and
+mock. Each adapter returns a `Persistence` bundle of both. Plumbing failures
 surface as the opaque, driver-agnostic `DatabaseError`; repository failures go
 through `persist_err` to `DomainError`. There is no `From<sqlx::Error> for
 AppError`, so a handler can't `?` a raw driver error. A second driver is a sibling
-of `postgres/` implementing the outgoing ports and these traits, chosen in
-`main.rs`.
+of `postgres/` implementing the outgoing ports and these traits; selecting it
+means pointing the `Database` alias and the `open` call in `main.rs` at it.
 
 `shared/` is a true leaf: it imports nothing from any layer and holds only
 `fingerprint`. `Crypto` lives in `infrastructure/crypto.rs` because it is built from

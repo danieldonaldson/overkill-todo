@@ -68,14 +68,15 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
 /// workers are cancelled, the advisory lock is released, and the loop returns so
 /// the process can exit cleanly. `task_factory` is called fresh each time
 /// leadership is (re)acquired and is expected to run until cancelled.
-pub async fn run_as_leader<F, Fut>(
-    locks: Arc<dyn LeaderLocks>,
+pub async fn run_as_leader<L, F, Fut>(
+    locks: Arc<L>,
     lock_key: i64,
     label: &'static str,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
     metrics: LeaderMetrics,
     task_factory: F,
 ) where
+    L: LeaderLocks,
     F: Fn() -> Fut,
     Fut: Future<Output = ()>,
 {
@@ -115,7 +116,7 @@ pub async fn run_as_leader<F, Fut>(
             () = task_factory() => {
                 tracing::warn!(label, "Leader workers exited unexpectedly; will re-elect");
             }
-            () = heartbeat(lock.as_mut(), label) => {
+            () = heartbeat(&mut lock, label) => {
                 tracing::warn!(label, "Lost leader lock connection; stepping down");
             }
             () = wait_for_shutdown(&mut shutdown) => {
@@ -165,7 +166,7 @@ async fn wait_for_shutdown(shutdown: &mut tokio::sync::watch::Receiver<bool>) {
 
 /// Pings the lock connection until a ping fails (the connection — and the lock —
 /// is gone), then returns so the caller steps down.
-async fn heartbeat(lock: &mut dyn LeaderLock, label: &str) {
+async fn heartbeat(lock: &mut impl LeaderLock, label: &str) {
     loop {
         tokio::time::sleep(HEARTBEAT_INTERVAL).await;
         if let Err(e) = lock.ping().await {

@@ -50,8 +50,6 @@ pub fn wire(db: Arc<Database>) -> Persistence {
         refresh_tokens: Arc::new(PostgresRefreshTokenRepository::new(db.clone())),
         email_verifications: Arc::new(PostgresEmailVerificationRepository::new(db.clone())),
         password_resets: Arc::new(PostgresPasswordResetRepository::new(db.clone())),
-        health: db.clone(),
-        leader_locks: db.clone(),
-        maintenance: db,
+        db,
     }
 }

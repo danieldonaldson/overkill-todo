@@ -1,6 +1,5 @@
 //! `PostgreSQL` connection pool management.
 
-use async_trait::async_trait;
 use sqlx::{ConnectOptions, PgPool, postgres::PgConnectOptions, postgres::PgPoolOptions};
 use std::{str::FromStr, time::Duration};
 use tracing::log::LevelFilter;
@@ -51,7 +50,6 @@ impl Database {
     }
 }
 
-#[async_trait]
 impl DatabaseHealth for Database {
     async fn ping(&self) -> Result<(), DatabaseError> {
         sqlx::query!("SELECT 1 as ping")

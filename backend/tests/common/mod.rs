@@ -273,9 +273,7 @@ fn create_test_app_full(
         refresh_tokens: refresh_token_repo,
         email_verifications: email_verification_repo,
         password_resets: password_reset_repo,
-        health: db,
-        leader_locks: _,
-        maintenance: _,
+        db,
     } = postgres::wire(Arc::new(Database::from_pool(pool)));
 
     let register_uc = Arc::new(RegisterUserUseCase::new(
