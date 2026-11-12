@@ -68,4 +68,4 @@ This slice delivers these scenarios from `specs/performance/spec.md`:
 
 - [x] 2.1 Every scenario in `specs/performance/spec.md` has been checked locally. Slice 2 was descoped at close and the spec trimmed to slice 1 (design Outcome).
 - [x] 2.2 README and `backend/ARCHITECTURE.md` (if it lists dev tooling) reflect the final recipes and scenarios. README's "Load tests" section is from 1.17; `ARCHITECTURE.md` lists no dev tooling.
-- [ ] 2.3 Archive the change with `openspec archive ot-004-load-tests`, which creates `openspec/specs/performance/spec.md`.
+- [x] 2.3 Archive the change with `openspec archive ot-004-load-tests`, which creates `openspec/specs/performance/spec.md`.
