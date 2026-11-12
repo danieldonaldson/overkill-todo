@@ -117,40 +117,88 @@ function sawLoading(page: Page): Promise<boolean | undefined> {
 }
 
 // OT-003 hypothesis: the dashboard is optimistic. With a session hint it shows
-// at once, confirms the account in the background (one /auth/me per document),
+// at once, confirms the account in the background (at most one /auth/me per
+// document, none while the cache was confirmed under a still-valid token),
 // and keeps its header in place across client-side moves.
 test.describe('instant dashboard', () => {
   test('reloading Settings with a cached user shows the email before /auth/me answers, with no spinner', async ({
     page,
   }) => {
+    // A cached user /auth/me never confirmed in this tab, as after a cache
+    // written by an older build: the reload must still check, in the background.
     const user = { ...TEST_USER, role: 'user' }
     await seedSession(page, { cachedUser: user })
     await watchForLoadingText(page)
 
-    // /auth/me answers only once the test releases it.
     let release!: () => void
     const released = new Promise<void>((resolve) => (release = resolve))
-    let holdMe = false
     let meAnswered = 0
     await page.route('**/api/v1/auth/me', async (route) => {
-      if (holdMe) await released
+      await released
       await route.fulfill({ json: user })
       meAnswered += 1
     })
 
     await page.goto('/dashboard/settings')
-    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
-    await page.waitForLoadState('networkidle')
-
-    holdMe = true
-    const answeredBeforeReload = meAnswered
-    await page.reload()
 
     await expect(page.getByRole('main').getByText(user.email)).toBeVisible()
-    expect(meAnswered, '/auth/me has not answered yet').toBe(answeredBeforeReload)
+    expect(meAnswered, '/auth/me has not answered yet').toBe(0)
     expect(await sawLoading(page), 'no "Loading..." was ever rendered').toBe(false)
 
     release()
+    await expect.poll(() => meAnswered).toBe(1)
+  })
+
+  test('reloading the dashboard makes no /auth/me call while the confirming token is valid', async ({
+    page,
+  }) => {
+    await seedSession(page)
+    let meCount = 0
+    await page.route('**/api/v1/auth/me', async (route) => {
+      meCount += 1
+      await route.fulfill({ json: { ...TEST_USER, role: 'user' } })
+    })
+
+    await page.goto('/dashboard/settings')
+    await expect(page.getByRole('main').getByText(TEST_USER.email)).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    expect(meCount).toBe(1)
+
+    await page.reload()
+    await expect(page.getByRole('main').getByText(TEST_USER.email)).toBeVisible()
+    await page.goto('/dashboard')
+    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    expect(meCount, 'reloads trust the confirmed cache').toBe(1)
+  })
+
+  test('reloading after the confirming token expired checks the account again', async ({
+    page,
+  }) => {
+    await seedSession(page)
+    let meCount = 0
+    await page.route('**/api/v1/auth/me', async (route) => {
+      meCount += 1
+      await route.fulfill({ json: { ...TEST_USER, role: 'user' } })
+    })
+
+    await page.goto('/dashboard')
+    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    expect(meCount).toBe(1)
+
+    // Age the confirmation past the token it was made under (the hint itself
+    // stays valid, as after a refresh in another tab).
+    await page.evaluate(() =>
+      sessionStorage.setItem(
+        'overkill-todo-auth-user-confirmed-until',
+        String(Math.floor(Date.now() / 1000) - 1)
+      )
+    )
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    expect(meCount).toBe(2)
   })
 
   test('moving Home → Settings → Home keeps the header, updates aria-current, and checks the account once', async ({

@@ -150,6 +150,60 @@ describe('session.revalidate', () => {
   })
 })
 
+describe('session.revalidate with a confirmed cache', () => {
+  const NOW = 1_800_000_000
+
+  beforeEach(() => {
+    vi.useFakeTimers({ now: NOW * 1000 })
+    setTokenExpiry(NOW + 900)
+  })
+
+  it('confirms the account on the first load and trusts it on the next', async () => {
+    me.mockResolvedValue(user)
+    await session.revalidate()
+    expect(me).toHaveBeenCalledTimes(1)
+
+    resetSession() // a reload: new document, same tab
+    await session.revalidate()
+
+    expect(me).toHaveBeenCalledTimes(1)
+    expect(session.user).toEqual(user)
+    expect(session.status).toBe('confirmed')
+  })
+
+  it('checks again once the access token the account was confirmed under has expired', async () => {
+    me.mockResolvedValue(user)
+    await session.revalidate()
+
+    vi.setSystemTime((NOW + 901) * 1000)
+    resetSession()
+    await session.revalidate()
+
+    expect(me).toHaveBeenCalledTimes(2)
+  })
+
+  it('always checks an unverified account', async () => {
+    me.mockResolvedValue({ ...user, email_verified: false })
+    await session.revalidate()
+
+    resetSession()
+    await session.revalidate()
+
+    expect(me).toHaveBeenCalledTimes(2)
+  })
+
+  it('retry asks the server even when the cache is trusted', async () => {
+    me.mockResolvedValue(user)
+    await session.revalidate()
+    resetSession()
+    await session.revalidate()
+
+    await session.retry()
+
+    expect(me).toHaveBeenCalledTimes(2)
+  })
+})
+
 describe('session.retry', () => {
   it('checks again after a failure and confirms on success', async () => {
     me.mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce(user)

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api } from '../../lib/api'
-  import { clearSessionUser, getSessionUser, setSessionUser } from '../../lib/auth/session'
+  import { clearSessionUser, confirmSessionUser, getSessionUser } from '../../lib/auth/session'
   import { getTokenExpiry } from '../../lib/auth/token'
   import { navigateReplace } from '../../lib/navigation'
   import { Spinner } from '$lib/components/ui/spinner'
@@ -40,7 +40,7 @@
 
     try {
       const user = await api.auth.me()
-      setSessionUser(user)
+      confirmSessionUser(user)
       // Deliberately no `checking = false` on this path: keep the spinner up
       // through the navigation so the auth form never flashes into view.
       navigateReplace(

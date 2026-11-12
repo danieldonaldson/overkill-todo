@@ -10,10 +10,13 @@ dashboard learns and keeps up to date who is signed in.
 ### Requirement: The dashboard appears without waiting for the account check
 When a browser that holds a session opens a dashboard page, the dashboard SHALL
 show the page at once, without a full-screen loading indicator, and SHALL
-confirm the signed-in account with the server in the background. Parts of the
-page that show account details SHALL use the account details remembered in the
-browser tab, or a placeholder when none are remembered, until the check
-answers. Every request a page makes SHALL still be authorised by the server.
+confirm the signed-in account with the server in the background unless the
+account details remembered in the browser tab were confirmed by the server
+under an access token that has not yet expired. Unverified accounts SHALL
+always be confirmed. Parts of the page that show account details SHALL use the
+account details remembered in the browser tab, or a placeholder when none are
+remembered, until the check answers. Every request a page makes SHALL still be
+authorised by the server.
 
 #### Scenario: Returning Member sees the page at once
 - **WHEN** a Member who used the dashboard earlier in this tab reloads the Settings page
@@ -25,8 +28,16 @@ answers. Every request a page makes SHALL still be authorised by the server.
 - **THEN** the header and page layout are shown at once, account-specific details show placeholders
 - **AND** the placeholders are replaced with the Member's details when the account check answers
 
+#### Scenario: Reloading soon after a check asks the server nothing
+- **WHEN** a Member whose account was confirmed in this tab reloads a dashboard page before the access token used for that check expires
+- **THEN** the page shows the remembered details and the server is not asked who is signed in
+
+#### Scenario: Reloading after the token expires checks again
+- **WHEN** a Member reloads a dashboard page after the access token used for the last check has expired
+- **THEN** the account is confirmed with the server in the background
+
 #### Scenario: Remembered details are corrected by the check
-- **WHEN** the account details remembered in the tab differ from what the server returns (for example a password was set from another tab)
+- **WHEN** the account check runs and the account details remembered in the tab differ from what the server returns (for example a password was set from another tab)
 - **THEN** the dashboard updates to show the server's details without a reload
 
 #### Scenario: The site root opens the dashboard

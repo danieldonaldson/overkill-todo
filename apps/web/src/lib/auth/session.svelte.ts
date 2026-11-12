@@ -3,9 +3,13 @@
  *
  * Module-level runes state, so every island on the page shares one instance.
  * It starts from the sessionStorage cache in `session.ts` (stale is fine) and
- * is confirmed in the background by one `/auth/me` per document
- * (`revalidate()`). Writes go through to the cache so a full reload starts
- * from the latest known account.
+ * is confirmed in the background by at most one `/auth/me` per document
+ * (`revalidate()`). A cached user that `/auth/me` confirmed under a still-valid
+ * access token is trusted without asking again, so reloading the dashboard
+ * makes no `/auth/me` call until that token expires. Unverified users are
+ * always checked, so the verify-email redirect clears once they verify.
+ * Writes go through to the cache so a full reload starts from the latest
+ * known account.
  *
  * Failure handling stays where it is: for a 401 or a 403 `email_not_verified`
  * the HttpClient has already cleared the cache and redirected, so the store
@@ -17,7 +21,13 @@ import { api } from '../api'
 import { ApiErrorException } from '../api/errors'
 import { navigateReplace } from '../navigation'
 import type { User } from '../types'
-import { clearSessionUser, getSessionUser, setSessionUser } from './session'
+import {
+  clearSessionUser,
+  confirmSessionUser,
+  getSessionUser,
+  isSessionUserConfirmed,
+  setSessionUser,
+} from './session'
 import { clearTokenExpiry, getTokenExpiry } from './token'
 
 export type SessionStatus = 'unconfirmed' | 'confirmed' | 'unreachable'
@@ -45,7 +55,7 @@ async function runCheck(): Promise<void> {
     const user = await api.auth.me()
     if (signedOut) return
     state.user = user
-    setSessionUser(user)
+    confirmSessionUser(user)
     state.status = 'confirmed'
     if (!user.email_verified) {
       navigateReplace(`/verify-email?email=${encodeURIComponent(user.email)}`)
@@ -84,16 +94,26 @@ export const session = {
     return true
   },
 
-  /** Confirm the account with the server, at most once per document. */
+  /**
+   * Confirm the account with the server, at most once per document, unless
+   * the cached verified user is still within its confirmed window.
+   */
   revalidate(): Promise<void> {
-    check ??= runCheck()
+    if (!check) {
+      if (state.user?.email_verified && isSessionUserConfirmed()) {
+        state.status = 'confirmed'
+        check = Promise.resolve()
+      } else {
+        check = runCheck()
+      }
+    }
     return check
   },
 
   /** Repeat the check (the "unreachable" notice's Retry button). */
   retry(): Promise<void> {
-    check = null
-    return session.revalidate()
+    check = runCheck()
+    return check
   },
 
   /** Replace the account, e.g. with a server response after an action. */
