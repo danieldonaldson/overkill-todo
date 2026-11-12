@@ -187,6 +187,16 @@ There is no production host yet (2026-11-07). The same checks run at the first
 production deploy (tasks group 5). Until then, the full local stack is where
 each slice is checked.
 
+## Outcome
+
+Closed on 2026-11-12 after slices 1–3, which deliver the whole spec on compose
+and are checked on the full local stack. Not done, kept in `tasks.md` as the
+plan for follow-up work: slice 4 (Kubernetes manifests, NetworkPolicies, SOPS
+secrets) and group 5 (first production deploy, including the alert-email test
+and the exposure checks on the real host). There is no production host and no
+Kubernetes yet. Tempo's memory needs a look before production (Open
+Questions).
+
 ## Decisions
 
 ### 1. Components
@@ -636,7 +646,11 @@ There's no schema change. Each slice deploys independently:
   Alertmanager 128, postgres_exporter 64, Grafana 512 (MiB). After slice 3,
   Grafana was OOM-killed once at 512 MiB after about an hour up (a fresh one
   peaked at 357 MiB on the Jobs dashboard). Watch it, and raise to 768 MiB if
-  it recurs. Confirm them
+  it recurs. On 2026-11-12, Tempo was OOM-killed on start at 512 MiB while
+  replaying 1.4 GB of local trace blocks, mostly from OT-004 load-test runs
+  (it held about 1 GiB once raised). The local trace history was deleted
+  rather than raising the limit; a fresh Tempo sits at about 65 MiB. Heavy
+  traffic, or 30 days of it in production, can grow it the same way. Confirm them
   against production host headroom before the first deploy (task 5.1). This
   doesn't change the approach.
 - Whether the alert email should use a different sender address from app email.

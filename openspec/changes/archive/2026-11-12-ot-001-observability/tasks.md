@@ -13,6 +13,9 @@ are not part of finishing this change. We're not on Kubernetes yet, and there's
 no production host. They stay here as the plan for when those exist; group 6
 needs only slices 1–3.
 
+**Closed (2026-11-12)** after slices 1–3. Groups 4 and 5 were not done and are
+left unticked as the plan for follow-up work (`design.md` Outcome).
+
 ## 1. Slice 1 (first slice): backend traces and logs end to end on compose, with redaction
 
 This slice delivers these scenarios:
@@ -158,6 +161,6 @@ they render and pass the checks below, not that they are deployed.
 
 ## 6. Feature done
 
-- [ ] 6.1 Slices 1–3 shipped (4 and 5 are future, see the top of this file). Telemetry is on wherever the app runs with `DEV_MODE=false` (the endpoint is set, so there's no flag to remove). Verify: the backend refuses to start without the endpoint when `DEV_MODE=false` (spec scenario), and the dashboards show live data on the full local stack.
-- [ ] 6.2 Update `README.md` (new env vars including `BACKEND_READY_URL`, `just obs-up`/`just obs-down`, how to open Grafana and Alertmanager locally), `backend/.env.example`, `backend/ARCHITECTURE.md` (the `infrastructure/telemetry` module, the `skip_all` instrumentation convention, the redaction rule, metric instruments built from an explicit `Meter`) and `CLAUDE.md` (a one-line rule: never record secrets or emails in spans and logs). Verify: docs reviewed against the final env and recipes.
-- [ ] 6.3 Archive the change with `/opsx:archive`. Verify: `openspec/specs/observability/spec.md` exists and `openspec validate --strict` passes.
+- [x] 6.1 Slices 1–3 shipped (4 and 5 are future, see the top of this file). Telemetry is on wherever the app runs with `DEV_MODE=false` (the endpoint is set, so there's no flag to remove). Verify: the backend refuses to start without the endpoint when `DEV_MODE=false` (spec scenario), and the dashboards show live data on the full local stack. Checked 2026-11-12: with `DEV_MODE=false` and no endpoint, the backend exits 1 naming `OTEL_EXPORTER_OTLP_ENDPOINT`. On `--profile full --profile observability`, request metrics, container logs and a trace (edge → backend, opened from `X-Trace-Id`) all arrive.
+- [x] 6.2 Update `README.md` (new env vars including `BACKEND_READY_URL`, `just obs-up`/`just obs-down`, how to open Grafana and Alertmanager locally), `backend/.env.example`, `backend/ARCHITECTURE.md` (the `infrastructure/telemetry` module, the `skip_all` instrumentation convention, the redaction rule, metric instruments built from an explicit `Meter`) and `CLAUDE.md` (a one-line rule: never record secrets or emails in spans and logs). Verify: docs reviewed against the final env and recipes. README has an Observability section and recipe row; `ARCHITECTURE.md` a Telemetry section; `CLAUDE.md` a Telemetry rule. `backend/.env.example` already listed the telemetry vars; `BACKEND_READY_URL` is a compose variable, so it's documented in the README.
+- [x] 6.3 Archive the change with `/opsx:archive`. Verify: `openspec/specs/observability/spec.md` exists and `openspec validate --strict` passes.
