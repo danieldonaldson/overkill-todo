@@ -39,17 +39,27 @@ people_tsv() { q '.people // {} | to_entries[] | [.key, .value.key, .value.level
 machines_tsv() { q '.machines // {} | to_entries[] | [.key, .value.key, .value.env] | @tsv'; }
 names() { P=$1 L=$2 q '.secrets[strenv(P)][strenv(L)] // [] | .[]'; }
 
-# Bech32 data charset: lowercase alphanumerics minus 1, b, i, o.
-is_age_key() { [[ $1 =~ ^age1[02-9ac-hj-np-z]{58}$ ]]; }
+# Bech32 data charset: lowercase alphanumerics minus 1, b, i, o. Only hybrid
+# post-quantum keys (ML-KEM-768 + X25519, age1pq1…) are accepted: secrets live
+# in git forever, so a classical X25519 key (age1…) could be broken later by a
+# quantum computer and every secret ever encrypted to it read from history.
+is_age_key() { [[ $1 =~ ^age1pq1[02-9ac-hj-np-z]{1952}$ ]]; }
+is_classical_age_key() { [[ $1 =~ ^age1[02-9ac-hj-np-z]{58}$ ]]; }
+PQ_HINT="use a post-quantum key: \`age-keygen -pq\`, then its age1pq1… public key"
+
+check_key() { # label, key
+  is_classical_age_key "$2" && die "$1 is a classical age key (X25519), which isn't allowed; $PQ_HINT"
+  is_age_key "$2" || die "$1 is not a post-quantum age public key; $PQ_HINT"
+}
 
 validate() {
   local name key level path env e list n
   while IFS=$'\t' read -r name key level; do
-    is_age_key "$key" || die "people.$name.key is not an age public key"
+    check_key "people.$name.key" "$key"
     level_index "$level" >/dev/null || die "people.$name.level '$level' is not one of: ${levels[*]}"
   done < <(people_tsv)
   while IFS=$'\t' read -r name key env; do
-    is_age_key "$key" || die "machines.$name.key is not an age public key"
+    check_key "machines.$name.key" "$key"
     level_index "$env" >/dev/null || die "machines.$name.env '$env' is not one of: ${levels[*]}"
   done < <(machines_tsv)
   while read -r path; do
@@ -129,7 +139,7 @@ policy_path() { echo "${1#"$dir"/}"; }
 cmd_check() {
   load
   validate
-  local errors=0 f p have want
+  local errors=0 f p have want classical
   if ! diff -u "$config" <(render) >&2; then
     echo "secrets: $config is out of date with $access: run \`just secrets-sync\`" >&2
     errors=1
@@ -147,6 +157,12 @@ cmd_check() {
     have=$(file_recipients "$f")
     if [[ -z $have ]]; then
       echo "secrets: $f: not SOPS-encrypted" >&2; errors=1; continue
+    fi
+    classical=$(grep -v '^age1pq1' <<<"$have" || true)
+    if [[ -n $classical ]]; then
+      echo "secrets: $f: encrypted to a classical (non-post-quantum) recipient: $(while read -r k; do who "$k"; done <<<"$classical" | paste -sd, -)" >&2
+      echo "  Re-key with \`just secrets-sync\` and rotate the value: the old one stays readable in git history." >&2
+      errors=1
     fi
     want=$(recipients "$p")
     if [[ $have != "$want" ]]; then

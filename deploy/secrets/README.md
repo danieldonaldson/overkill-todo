@@ -53,15 +53,22 @@ the three together. Re-keying a file requires you to be able to decrypt it,
 so prod changes are synced by someone cleared for prod. `sync` lists any files
 it couldn't re-key.
 
-**Adding a person.** They run `age-keygen -o ~/.config/sops/age/keys.txt` and
-send you the public key (the `age1...` line it prints). You add it under
+**Keys are post-quantum only.** Every key in `access.yaml` must be a hybrid
+ML-KEM-768 + X25519 key (`age1pq1…`, made with `age-keygen -pq`; needs age ≥
+1.3 and SOPS ≥ 3.13). Ciphertexts stay in git forever, so a classical X25519
+key (`age1…`) could be broken by a future quantum computer and every secret
+ever encrypted to it read from history. `sync` refuses classical keys and
+`check` fails on any file encrypted to one.
+
+**Adding a person.** They run `age-keygen -pq -o ~/.config/sops/age/keys.txt`
+and send you the public key (the `age1pq1...` line it prints). You add it under
 `people:` with their level, then sync and commit.
 
 **Adding a host.** Generate the key on the host and keep the private half
 there:
 
 ```bash
-mkdir -p ~/.config/sops/age && age-keygen -o ~/.config/sops/age/keys.txt   # on the host
+mkdir -p ~/.config/sops/age && age-keygen -pq -o ~/.config/sops/age/keys.txt   # on the host
 ```
 
 Add the public key under `machines:` with its `env`, then sync, commit, and
@@ -77,7 +84,7 @@ every file that sync lists as "removed".
 
 If the only prod-cleared key is lost, prod secrets are unrecoverable. Keep at
 least two prod readers: a second person, or an offline break-glass key
-(`age-keygen` output stored in the team password manager, listed under
+(`age-keygen -pq` output stored in the team password manager, listed under
 `people:` as e.g. `break-glass`, level `prod`).
 
 ## Deploying
