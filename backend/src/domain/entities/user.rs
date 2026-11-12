@@ -519,7 +519,10 @@ pub struct UserBuilder {
 impl UserBuilder {
     /// Starts a builder for a verified email/password user with default fields.
     #[must_use]
-    #[allow(clippy::missing_panics_doc)] // test-only; the default literal is valid
+    #[allow(
+        clippy::missing_panics_doc,
+        reason = "test-only; the default literal is valid"
+    )]
     pub fn new() -> Self {
         let now = Utc::now();
         Self {
@@ -549,7 +552,10 @@ impl UserBuilder {
 
     /// Overrides the email address (must be a valid email).
     #[must_use]
-    #[allow(clippy::missing_panics_doc)] // test-only; callers pass valid literals
+    #[allow(
+        clippy::missing_panics_doc,
+        reason = "test-only; callers pass valid literals"
+    )]
     pub fn email(mut self, email: &str) -> Self {
         self.parts.email = Email::new(email).unwrap();
         self

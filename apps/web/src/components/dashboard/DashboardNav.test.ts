@@ -4,7 +4,7 @@ import DashboardNav from './DashboardNav.svelte'
 import { resetSession, session } from '../../lib/auth/session.svelte'
 import type { User, UserRole } from '../../lib/types'
 
-function account(role?: UserRole): User {
+function account(role: UserRole): User {
   return {
     id: 'viewer',
     email: 'viewer@example.com',
@@ -13,7 +13,8 @@ function account(role?: UserRole): User {
     email_verified: true,
     has_password: true,
     oauth_providers: [],
-    ...(role ? { role } : {}),
+    created_at: '2026-01-01T00:00:00Z',
+    role,
   }
 }
 
@@ -66,8 +67,9 @@ describe('DashboardNav', () => {
     await expect.element(screen.getByRole('link', { name: /home/i })).toBeInTheDocument()
     expect(screen.container.querySelector('a[href="/dashboard/admin"]')).toBeNull()
 
-    // A cached account without a role is no better than none.
-    session.set(account())
+    // A cached account without a role (e.g. stored by an older build) is no
+    // better than none. The API always sends `role`, hence the cast.
+    session.set({ ...account('user'), role: undefined } as unknown as User)
     await expect.element(screen.getByRole('link', { name: /settings/i })).toBeInTheDocument()
     expect(screen.container.querySelector('a[href="/dashboard/admin"]')).toBeNull()
 

@@ -1,8 +1,7 @@
 //! OAuth authentication handlers.
 
 use axum::{
-    Json,
-    extract::{Path, Query, State},
+    extract::State,
     http::{HeaderMap, StatusCode, header},
     response::Redirect,
 };
@@ -28,6 +27,7 @@ use crate::infrastructure::api::cookies::{
     create_oauth_device_fingerprint_cookie, create_oauth_state_cookie, extract_cookie,
 };
 use crate::infrastructure::api::error::AppError;
+use crate::infrastructure::api::extractors::{ApiJson, ApiPath, ApiQuery};
 use crate::infrastructure::api::handlers::session::build_session;
 use crate::infrastructure::api::middleware::{AuthUser, OptionalAuthUser};
 use crate::infrastructure::api::{create_oauth_state, verify_oauth_state};
@@ -125,7 +125,7 @@ async fn run_real_oauth_flow(
 /// Store the browser-generated OAuth device binding in an `HttpOnly` scoped cookie.
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/oauth/device-fingerprint",
+    path = "/oauth/device-fingerprint",
     tag = "OAuth",
     request_body = OAuthDeviceFingerprintRequest,
     responses(
@@ -137,7 +137,7 @@ async fn run_real_oauth_flow(
 ///
 /// Returns an error if the fingerprint contains invalid cookie characters.
 pub async fn oauth_store_device_fingerprint(
-    Json(request): Json<OAuthDeviceFingerprintRequest>,
+    ApiJson(request): ApiJson<OAuthDeviceFingerprintRequest>,
 ) -> Result<(HeaderMap, StatusCode), AppError> {
     let fingerprint = request.device_fingerprint.trim();
     if fingerprint.is_empty() {
@@ -166,7 +166,7 @@ fn parse_provider(provider: &str) -> Result<OAuthProvider, AppError> {
 /// Start OAuth flow - redirect to provider.
 #[utoipa::path(
     get,
-    path = "/api/v1/auth/oauth/{provider}",
+    path = "/oauth/{provider}",
     tag = "OAuth",
     params(
         ("provider" = String, Path, description = "OAuth provider (google, apple)"),
@@ -184,8 +184,8 @@ fn parse_provider(provider: &str) -> Result<OAuthProvider, AppError> {
 #[axum::debug_handler]
 pub async fn oauth_start(
     State(deps): State<Arc<OAuthHandlerDeps>>,
-    Path(provider): Path<String>,
-    Query(query): Query<OAuthStartQuery>,
+    ApiPath(provider): ApiPath<String>,
+    ApiQuery(query): ApiQuery<OAuthStartQuery>,
     OptionalAuthUser(auth_user): OptionalAuthUser,
 ) -> Result<(HeaderMap, Redirect), AppError> {
     let provider_enum = parse_provider(&provider)?;
@@ -236,7 +236,7 @@ pub async fn oauth_start(
 /// never put in the URL.
 #[utoipa::path(
     get,
-    path = "/api/v1/auth/oauth/{provider}/callback",
+    path = "/oauth/{provider}/callback",
     tag = "OAuth",
     params(
         ("provider" = String, Path, description = "OAuth provider"),
@@ -251,8 +251,8 @@ pub async fn oauth_start(
 pub async fn oauth_callback(
     State(deps): State<Arc<OAuthHandlerDeps>>,
     headers: HeaderMap,
-    Path(provider): Path<String>,
-    Query(query): Query<CallbackQuery>,
+    ApiPath(provider): ApiPath<String>,
+    ApiQuery(query): ApiQuery<CallbackQuery>,
 ) -> (HeaderMap, Redirect) {
     if let Some(error) = query.error.as_deref() {
         tracing::info!(provider = %provider, error, "OAuth provider reported an error");
@@ -282,7 +282,10 @@ fn login_error_redirect(code: &'static str) -> (HeaderMap, Redirect) {
     )
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one linear OAuth callback flow; each step depends on the previous one"
+)]
 async fn oauth_callback_inner(
     deps: &OAuthHandlerDeps,
     headers: &HeaderMap,
@@ -431,7 +434,7 @@ fn default_test_claims(provider: &str) -> OAuthStateClaims {
 /// Unlink OAuth provider from account.
 #[utoipa::path(
     delete,
-    path = "/api/v1/auth/oauth/{provider}/unlink",
+    path = "/oauth/{provider}/unlink",
     tag = "OAuth",
     params(
         ("provider" = String, Path, description = "OAuth provider to unlink (google, apple)")
@@ -448,7 +451,7 @@ fn default_test_claims(provider: &str) -> OAuthStateClaims {
 /// Returns an error if the provider is invalid, not linked, or unlinking fails.
 pub async fn oauth_unlink(
     State(deps): State<Arc<OAuthHandlerDeps>>,
-    Path(provider): Path<String>,
+    ApiPath(provider): ApiPath<String>,
     auth_user: AuthUser,
 ) -> Result<StatusCode, AppError> {
     let provider_enum = parse_provider(&provider)?;
@@ -515,7 +518,7 @@ mod tests {
     #[tokio::test]
     async fn oauth_store_device_fingerprint_sets_scoped_cookie() {
         let (headers, status) =
-            oauth_store_device_fingerprint(Json(OAuthDeviceFingerprintRequest {
+            oauth_store_device_fingerprint(ApiJson(OAuthDeviceFingerprintRequest {
                 device_fingerprint: "fingerprint123".to_string(),
             }))
             .await

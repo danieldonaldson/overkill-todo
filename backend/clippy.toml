@@ -1,0 +1,10 @@
+# Routes must be mounted with `utoipa_axum::routes!` in `api_routes()` so the
+# OpenAPI description is built from the same declarations as the router (OT-002).
+# A route that is deliberately undocumented needs
+# `#[expect(clippy::disallowed_methods, reason = "...")]` saying why.
+disallowed-methods = [
+    { path = "axum::routing::Router::route", reason = "mount with `routes!` in `api_routes()` so the route is in the OpenAPI description" },
+    { path = "axum::routing::Router::route_service", reason = "mount with `routes!` in `api_routes()` so the route is in the OpenAPI description" },
+    { path = "utoipa_axum::router::OpenApiRouter::route", reason = "skips the OpenAPI description; use `.routes(routes!(handler))`" },
+    { path = "utoipa_axum::router::OpenApiRouter::route_service", reason = "skips the OpenAPI description; use `.routes(routes!(handler))`" },
+]

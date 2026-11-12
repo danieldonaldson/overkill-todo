@@ -58,6 +58,8 @@ jobs:
               - eslint.config.js
               - .prettierrc
               - tsconfig.base.json
+              # The web API types are generated from it (`just api-types`).
+              - backend/openapi.json
 
   backend:
     name: Backend
@@ -124,14 +126,23 @@ jobs:
         run: cargo machete
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery
+        run: cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -D clippy::allow_attributes_without_reason
         env:
           SQLX_OFFLINE: 'true'
 
       # The release image builds with --no-default-features (no Swagger UI). Check that
       # combination here too, or a break would first surface in the image job on main.
       - name: Clippy (release features)
-        run: cargo clippy --lib --bins --no-default-features -- -D warnings -W clippy::pedantic -W clippy::nursery
+        run: cargo clippy --lib --bins --no-default-features -- -D warnings -W clippy::pedantic -W clippy::nursery -D clippy::allow_attributes_without_reason
+        env:
+          SQLX_OFFLINE: 'true'
+
+      # Fails when a DTO, handler annotation or route changed without
+      # `just api-types` (backend/openapi.json is generated from the route tree).
+      - name: API spec current
+        run: |
+          cargo run --quiet --example export_openapi > openapi.json
+          git diff --exit-code -- openapi.json || { echo "::error file=backend/openapi.json::Stale. Run: just api-types"; exit 1; }
         env:
           SQLX_OFFLINE: 'true'
 
@@ -177,6 +188,11 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @overkill-todo/web exec playwright install --with-deps chromium
       - run: pnpm lint
+      # Fails when backend/openapi.json changed without `just api-types`.
+      - name: API types current
+        run: |
+          pnpm --filter @overkill-todo/web exec openapi-typescript ../../backend/openapi.json -o src/lib/api/schema.d.ts
+          git diff --exit-code -- apps/web/src/lib/api/schema.d.ts || { echo "::error file=apps/web/src/lib/api/schema.d.ts::Stale. Run: just api-types"; exit 1; }
       - run: pnpm --filter @overkill-todo/web check
       - run: pnpm --filter @overkill-todo/web build
       - run: pnpm --filter @overkill-todo/web test:coverage

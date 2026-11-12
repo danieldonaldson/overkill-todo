@@ -186,6 +186,10 @@ mod tests {
     use super::*;
     use crate::infrastructure::telemetry::{LogFormat, ServiceInfo, subscriber, tracer_provider};
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "unit-test router for this layer alone; never served"
+    )]
     fn app() -> Router {
         Router::new()
             .route("/items/{id}", get(|| async { "ok" }))
@@ -338,6 +342,10 @@ mod metrics_tests {
 
     /// Send each URI through a router with the metrics layer, then return the
     /// exported histogram points.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "unit-test router for this layer alone; never served"
+    )]
     async fn points_for(uris: &[&str]) -> Vec<(Attrs, u64)> {
         let (provider, exporter) = in_memory();
         let metrics = HttpMetrics::new(&provider.meter(METER_NAME));

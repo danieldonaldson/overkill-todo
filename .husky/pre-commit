@@ -19,3 +19,13 @@ if git diff --cached --name-only | grep -Eq '^(\.husky/pre-commit|justfile|eslin
 else
     echo "Skipping eslint; no relevant staged frontend files changed."
 fi
+
+# Non-blocking reminder: API-shaping backend changes usually need `just api-types`.
+# CI's "API spec current" step is the real gate; this only saves a round trip.
+staged=$(git diff --cached --name-only)
+if echo "$staged" | grep -Eq '^backend/src/(application/dto|infrastructure/api)/' \
+    && ! echo "$staged" | grep -qx 'backend/openapi.json'; then
+    echo "Note: API code changed but backend/openapi.json isn't staged."
+    echo "  If a DTO, handler annotation or route changed: just api-types, then stage"
+    echo "  backend/openapi.json and apps/web/src/lib/api/schema.d.ts."
+fi

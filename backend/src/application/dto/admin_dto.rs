@@ -1,5 +1,6 @@
 //! DTOs for the admin panel (`/api/v1/admin`).
 
+use super::schema_enums::RoleName;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -17,10 +18,12 @@ pub const MAX_USER_LIMIT: i64 = 200;
 pub struct AdminUserResponse {
     pub id: Uuid,
     pub email: String,
+    #[schema(value_type = RoleName)]
     pub role: String,
     pub email_verified: bool,
     pub created_at: DateTime<Utc>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub deletion_scheduled_at: Option<DateTime<Utc>>,
 }
 
@@ -49,8 +52,10 @@ pub struct AdminUserListResponse {
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ListUsersQuery {
     /// Max users to return (defaults applied via [`Self::paginated`]).
+    #[serde(default)]
     pub limit: Option<i64>,
     /// Offset for pagination.
+    #[serde(default)]
     pub offset: Option<i64>,
 }
 
@@ -72,5 +77,6 @@ impl ListUsersQuery {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct SetUserRoleRequest {
     /// New role: `user`, `admin`, or `super_admin`.
+    #[schema(value_type = RoleName)]
     pub role: String,
 }

@@ -2,7 +2,7 @@
 
 use axum::{
     Json,
-    extract::{Query, State},
+    extract::State,
     http::{StatusCode, header::HeaderMap},
     response::{IntoResponse, Redirect, Response},
 };
@@ -12,9 +12,9 @@ use crate::{
     application::{
         dto::{
             AuthResponse, CompleteRegistrationRequest, ForgotPasswordRequest,
-            ResendVerificationRequest, ResendVerificationResponse, ResetPasswordRequest,
-            UserResponse, VerificationErrorCode, VerificationErrorResponse, VerifyEmailRequest,
-            VerifyEmailResponse, VerifyMagicLinkQuery, VerifyMagicLinkRequest,
+            ForgotPasswordResponse, ResendVerificationRequest, ResendVerificationResponse,
+            ResetPasswordRequest, UserResponse, VerificationErrorCode, VerificationErrorResponse,
+            VerifyEmailRequest, VerifyEmailResponse, VerifyMagicLinkQuery, VerifyMagicLinkRequest,
             VerifyResetCodeRequest, VerifyResetCodeResponse,
             validation::sanitize_verification_code,
         },
@@ -28,8 +28,8 @@ use crate::{
     },
     domain::entities::attempt_lockout::RESEND_COOLDOWN_MINUTES,
     infrastructure::api::{
-        error::AppError,
-        extractors::ValidatedJson,
+        error::{AppError, VerificationOrStandardError},
+        extractors::{ApiQuery, ValidatedJson},
         handlers::{
             session::{
                 build_session, extract_device_fingerprint, require_device_fingerprint,
@@ -63,12 +63,12 @@ pub struct VerificationHandlerDeps {
 /// For existing users with password: Returns auth tokens for auto-login.
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/verify-email",
+    path = "/verify-email",
     tag = "Authentication",
     request_body = VerifyEmailRequest,
     responses(
         (status = 200, description = "Email verified successfully", body = VerifyEmailResponse),
-        (status = 400, description = "Invalid or expired code, or email already verified", body = VerificationErrorResponse),
+        (status = 400, description = "Invalid, expired or locked code, email already verified, or a malformed request", body = VerificationOrStandardError),
         (status = 404, description = "User not found")
     )
 )]
@@ -225,7 +225,7 @@ async fn issue_auth_tokens(
 /// Resend verification code
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/resend-verification",
+    path = "/resend-verification",
     tag = "Authentication",
     request_body = ResendVerificationRequest,
     responses(
@@ -281,11 +281,11 @@ pub async fn resend_verification(
 /// Request password reset (forgot password)
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/forgot-password",
+    path = "/forgot-password",
     tag = "Authentication",
     request_body = ForgotPasswordRequest,
     responses(
-        (status = 200, description = "Reset code sent if email exists"),
+        (status = 200, description = "Reset code sent if email exists", body = ForgotPasswordResponse),
         (status = 400, description = "Invalid email format")
     )
 )]
@@ -296,7 +296,7 @@ pub async fn resend_verification(
 pub async fn forgot_password(
     State(deps): State<Arc<VerificationHandlerDeps>>,
     ValidatedJson(request): ValidatedJson<ForgotPasswordRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<ForgotPasswordResponse>, AppError> {
     // Verify Turnstile token (required when bot protection is enabled)
     verify_turnstile(
         deps.turnstile_service.as_ref(),
@@ -310,16 +310,16 @@ pub async fn forgot_password(
         .execute(&request.email)
         .await?;
 
-    Ok(Json(serde_json::json!({
-        "success": true,
-        "message": "If an account exists with that email, a reset code has been sent"
-    })))
+    Ok(Json(ForgotPasswordResponse {
+        success: true,
+        message: "If an account exists with that email, a reset code has been sent".to_string(),
+    }))
 }
 
 /// Verify reset code and get reset token
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/verify-reset-code",
+    path = "/verify-reset-code",
     tag = "Authentication",
     request_body = VerifyResetCodeRequest,
     responses(
@@ -351,7 +351,7 @@ pub async fn verify_reset_code(
 /// Returns auth tokens for auto-login if device fingerprint is provided.
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/reset-password",
+    path = "/reset-password",
     tag = "Authentication",
     request_body = ResetPasswordRequest,
     responses(
@@ -416,7 +416,7 @@ pub async fn reset_password(
 /// - Password hashing fails
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/complete-signup",
+    path = "/complete-signup",
     tag = "Authentication",
     request_body = CompleteRegistrationRequest,
     responses(
@@ -469,7 +469,7 @@ pub async fn complete_signup(
 /// change still work; new emails link to the frontend page directly.
 #[utoipa::path(
     get,
-    path = "/api/v1/auth/verify-magic",
+    path = "/verify-magic",
     tag = "Authentication",
     params(
         ("token" = String, Query, description = "The magic link token from the email")
@@ -481,7 +481,7 @@ pub async fn complete_signup(
 #[tracing::instrument(name = "handler.verify_magic_redirect", skip_all)]
 pub async fn verify_magic_redirect(
     State(deps): State<Arc<VerificationHandlerDeps>>,
-    Query(query): Query<VerifyMagicLinkQuery>,
+    ApiQuery(query): ApiQuery<VerifyMagicLinkQuery>,
 ) -> Redirect {
     Redirect::to(&format!(
         "{}/verify-magic#token={}",
@@ -498,12 +498,12 @@ pub async fn verify_magic_redirect(
 /// history or access logs.
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/verify-magic",
+    path = "/verify-magic",
     tag = "Authentication",
     request_body = VerifyMagicLinkRequest,
     responses(
         (status = 200, description = "Email verified", body = VerifyEmailResponse),
-        (status = 400, description = "Invalid, expired or locked link, or the account is already verified and has a password", body = VerificationErrorResponse)
+        (status = 400, description = "Invalid, expired or locked link, the account is already verified and has a password, or a malformed request", body = VerificationOrStandardError)
     )
 )]
 #[tracing::instrument(name = "handler.verify_magic", skip_all)]

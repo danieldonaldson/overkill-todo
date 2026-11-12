@@ -1,5 +1,6 @@
 //! Profile-related DTOs for user account management.
 
+use super::schema_enums::{OAuthProviderName, RoleName};
 use super::validation::validate_verification_code;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -12,10 +13,12 @@ use validator::Validate;
 pub struct UpdateProfileRequest {
     /// New first name (if provided). Must be 1-100 characters if set.
     #[validate(length(min = 1, max = 100, message = "First name must be 1-100 characters"))]
+    #[serde(default)]
     pub first_name: Option<String>,
 
     /// New last name (if provided). Must be 1-100 characters if set.
     #[validate(length(min = 1, max = 100, message = "Last name must be 1-100 characters"))]
+    #[serde(default)]
     pub last_name: Option<String>,
 }
 
@@ -71,9 +74,11 @@ pub struct ConfirmEmailChangeRequest {
 pub struct RequestDeletionRequest {
     /// Password for re-authentication (required for password users).
     #[validate(length(max = 256, message = "Password too long"))]
+    #[serde(default)]
     pub password: Option<String>,
 
     /// Confirmation text - must be "DELETE" to proceed.
+    #[serde(default)]
     pub confirmation: Option<String>,
 }
 
@@ -81,9 +86,11 @@ pub struct RequestDeletionRequest {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct LinkedOAuthAccountExport {
     /// Provider name (e.g. `"google"`).
+    #[schema(value_type = OAuthProviderName)]
     pub provider: String,
     /// Email the provider reported at link time, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub provider_email: Option<String>,
     /// When the provider account was linked.
     pub linked_at: DateTime<Utc>,
@@ -102,9 +109,12 @@ pub struct AccountExportResponse {
     /// Whether a password is set (the hash itself is never exported).
     pub has_password: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub pending_email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub deletion_scheduled_at: Option<DateTime<Utc>>,
+    #[schema(value_type = RoleName)]
     pub role: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -120,5 +130,6 @@ pub struct AccountDeletionResponse {
     /// When the account will be permanently anonymized. `null` after a
     /// cancellation; set ~14 days out after a deletion request.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub deletion_scheduled_at: Option<DateTime<Utc>>,
 }

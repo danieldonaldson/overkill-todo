@@ -18,7 +18,10 @@ use crate::domain::errors::DomainError;
 #[derive(Debug, Deserialize)]
 struct GoogleTokenResponse {
     id_token: String,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "required in Google's token response; identity comes from the ID token instead"
+    )]
     access_token: String,
 }
 
@@ -30,11 +33,20 @@ struct GoogleIdTokenClaims {
     name: Option<String>,
     given_name: Option<String>,
     family_name: Option<String>,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "required claim: deserializing rejects a token without it"
+    )]
     iss: String,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "required claim: deserializing rejects a token without it"
+    )]
     aud: String,
-    #[allow(dead_code)]
+    #[allow(
+        dead_code,
+        reason = "required claim: deserializing rejects a token without it"
+    )]
     exp: u64,
 }
 

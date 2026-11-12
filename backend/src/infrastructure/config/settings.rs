@@ -306,7 +306,10 @@ impl Settings {
     /// the aggregated error above. The internal `.expect("validated")` calls are
     /// unreachable because they run only after the presence check has confirmed
     /// every required variable is set.
-    #[allow(clippy::too_many_lines)]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one flat read of every environment variable"
+    )]
     pub fn from_env() -> Result<Self, config::ConfigError> {
         dotenvy::dotenv().ok();
 

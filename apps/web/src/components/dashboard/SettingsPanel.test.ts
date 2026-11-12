@@ -42,6 +42,8 @@ const passwordUser: User = {
   email_verified: true,
   has_password: true,
   oauth_providers: ['google'],
+  created_at: '2026-01-01T00:00:00Z',
+  role: 'user',
 }
 
 /** Seed the tab's session store (and its sessionStorage cache). */

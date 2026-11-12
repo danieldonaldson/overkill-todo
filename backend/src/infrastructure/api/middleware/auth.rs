@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{FromRequestParts, Request, State},
+    Extension,
+    extract::{FromRequestParts, Request},
     http::{HeaderMap, header::AUTHORIZATION, request::Parts},
     middleware::Next,
     response::Response,
@@ -174,11 +175,15 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Result<Response, A
 /// previously issued token, so stale privileges are rejected on the next admin
 /// request instead of lingering until access-token expiry.
 ///
+/// The user repository comes from a request extension (installed by
+/// `create_router`), not router state, so the route tree can be declared without
+/// any dependency values and its `OpenAPI` description built from it alone.
+///
 /// # Errors
 /// Returns `token_missing` if no principal was resolved upstream, `token_invalid`
 /// when the token's role is stale, or a persistence error from the repository.
 pub async fn require_fresh_session(
-    State(users): State<Arc<dyn UserRepository>>,
+    Extension(users): Extension<Arc<dyn UserRepository>>,
     req: Request,
     next: Next,
 ) -> Result<Response, AppError> {

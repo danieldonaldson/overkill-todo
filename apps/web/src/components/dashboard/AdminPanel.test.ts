@@ -30,6 +30,7 @@ function viewer(role: UserRole): User {
     has_password: true,
     oauth_providers: [],
     role,
+    created_at: '2026-01-01T00:00:00Z',
   }
 }
 

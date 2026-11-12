@@ -9,8 +9,11 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
   narrowest check that covers a change (`just test`, `just lint`, `just test-web`)
   and `just ci` before saying a larger change is done.
 - After editing any SQL query: `just db-prepare` and commit `backend/.sqlx/`.
-- Clippy runs with pedantic + nursery and `-D warnings`. Fix lints; don't add
-  `allow`s without a comment saying why.
+- After changing a DTO, handler annotation or route: `just api-types` and commit
+  `backend/openapi.json` and `apps/web/src/lib/api/schema.d.ts`. Never edit
+  either by hand.
+- Clippy runs with pedantic + nursery and `-D warnings`. Fix lints; an `allow` or
+  `expect` must give `reason = "…"` (enforced).
 - Parallel checkouts: `just wt-new <branch>` (own DB/ports), never bare
   `git worktree add`. `just wt-list` / `just wt-rm <branch>`.
 
@@ -22,8 +25,13 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
   `main.rs`, with production refusing the no-op.
 - `sqlx::query!` / `query_as!` only. Migrations are forward-only and must stay
   compatible with the previous release (expand, deploy, then contract).
-- New authenticated route groups go above the CSRF `route_layer` in
-  `routes.rs`; public signature-verified webhooks go below it.
+- Mount routes with `.routes(routes!(handler))` in `api_routes()` (`routes.rs`),
+  so they're in the OpenAPI description; plain `.route(...)` fails lint. Protect
+  groups with the `Guarded` methods (`require_auth()` etc.), not bare
+  `route_layer`s. New authenticated groups go above `.require_csrf()`; public
+  signature-verified webhooks go below it.
+- Extract input with `ValidatedJson` / `ApiJson` / `ApiQuery` / `ApiPath`, not
+  bare axum `Json` / `Query` / `Path`, so malformed input gets the JSON 400.
 - Background jobs that must run once go under the leader lock in `main.rs`.
 - Errors: domain errors map to `AppError` in `infrastructure/api`; never leak
   internal error text to clients outside `DEV_MODE`.
@@ -31,6 +39,9 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
 ## Frontend rules
 
 - Pages are static Astro; interactivity is Svelte 5 islands (runes).
+- API payload types in `src/lib/types.ts` are aliases of the generated
+  `src/lib/api/schema.d.ts`. Don't hand-write payload shapes; change the backend
+  DTO and run `just api-types`.
 - Runtime config comes from `window.__PUBLIC_CONFIG` via `public/config.js`,
   rendered from `PUBLIC_*` env at container start. No secrets in the frontend.
 - Inline scripts are CSP-pinned by sha256 in `apps/web/Caddyfile`; changing one means

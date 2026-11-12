@@ -1,0 +1,2331 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Overkill Todo API",
+    "description": "Backend API",
+    "license": {
+      "name": ""
+    },
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/admin/users": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List users (paginated).\n# Errors\nReturns an error if the user store is unreachable.",
+        "operationId": "list_users",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max users (default 50, max 200)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Pagination offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of users",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed or invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session superseded by a password reset, account purge or role change; sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/admin/users/{id}/role": {
+      "put": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "Change a user's role (super-admin only).\n# Errors\nReturns an error on an invalid role, insufficient authority, or a missing user.",
+        "operationId": "set_user_role",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "User id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetUserRoleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Updated user",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid role",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session superseded by a password reset, account purge or role change; sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a super-admin / insufficient authority",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/complete-signup": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Complete signup by setting password",
+        "description": "Validates the signup token (from email verification) and sets the user's password.\nReturns auth tokens for auto-login.\n\n# Errors\n\nReturns an error if:\n- The signup token is invalid or expired\n- The email doesn't match the token\n- The user already has a password\n- Password hashing fails",
+        "operationId": "complete_signup",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Signup completed, user logged in",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or password already set",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired signup token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/forgot-password": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Request password reset (forgot password)\n# Errors",
+        "description": "Returns an error if service errors occur. Always returns success to prevent email enumeration.",
+        "operationId": "forgot_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgotPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Reset code sent if email exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgotPasswordResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid email format",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Login with email and password\n# Errors",
+        "description": "Returns an error if login fails due to invalid credentials, validation errors, or service errors.",
+        "operationId": "login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed or invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Logout and clear auth cookies",
+        "operationId": "logout",
+        "responses": {
+          "200": {
+            "description": "Logout successful",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogoutResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/me": {
+      "get": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Get current authenticated user\n# Errors",
+        "description": "Returns an error if the user is not found or service errors occur.",
+        "operationId": "me",
+        "responses": {
+          "200": {
+            "description": "Current user info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/oauth/device-fingerprint": {
+      "post": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "Store the browser-generated OAuth device binding in an `HttpOnly` scoped cookie.\n# Errors",
+        "description": "Returns an error if the fingerprint contains invalid cookie characters.",
+        "operationId": "oauth_store_device_fingerprint",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthDeviceFingerprintRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "OAuth device fingerprint cookie stored"
+          },
+          "400": {
+            "description": "Invalid fingerprint",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/oauth/{provider}": {
+      "get": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "Start OAuth flow - redirect to provider.\n# Errors",
+        "description": "Returns an error if the provider is invalid, authentication is required but not provided, or service errors occur.",
+        "operationId": "oauth_start",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "description": "OAuth provider (google, apple)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "Flow mode (login or link)",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/OAuthMode"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to OAuth provider"
+          },
+          "400": {
+            "description": "Invalid provider",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Auth required for link mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/oauth/{provider}/callback": {
+      "get": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "OAuth callback from provider.",
+        "description": "Handles both real OAuth flow and test bypass mode. Always answers with a\nredirect: the browser arrives here by top-level navigation from the\nprovider, so a JSON error body would strand the user on a raw error page.\nProvider-reported errors (e.g. a cancelled consent) and every internal\nfailure go back to `/login` with a fixed error code; the cause is logged,\nnever put in the URL.",
+        "operationId": "oauth_callback",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "description": "OAuth provider",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "code",
+            "in": "query",
+            "description": "Authorization code",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "description": "State parameter",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "description": "Error reported by the provider, e.g. access_denied",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "307": {
+            "description": "Redirect to the app with the result, or to /login?error=oauth_cancelled|oauth_failed"
+          },
+          "400": {
+            "description": "Malformed or invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/oauth/{provider}/unlink": {
+      "delete": {
+        "tags": [
+          "OAuth"
+        ],
+        "summary": "Unlink OAuth provider from account.\n# Errors",
+        "description": "Returns an error if the provider is invalid, not linked, or unlinking fails.",
+        "operationId": "oauth_unlink",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "description": "OAuth provider to unlink (google, apple)",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Provider unlinked"
+          },
+          "400": {
+            "description": "Cannot unlink last auth method",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not signed in, or the session has expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing or invalid CSRF token (`csrf_invalid`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Provider not linked",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/auth/refresh": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Refresh the JWT access token using a refresh token\n# Errors",
+        "description": "Returns an error if the refresh token is missing, invalid, expired, or service errors occur.",
+        "operationId": "refresh",
+        "responses": {
+          "200": {
+            "description": "Token refreshed successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired refresh token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Initiate user registration (email-only step)",
+        "description": "This is step 1 of the email-first signup flow:\n1. User provides email → verification code sent (this endpoint)\n2. User verifies email → signup token issued\n3. User sets password using signup token → account complete\n# Errors\n\nReturns an error if registration fails due to validation, duplicate email, or service errors.",
+        "operationId": "register",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InitiateRegistrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Verification code sent; for an email that already has an account, its owner is notified instead (same response, so registration can't be used to check for accounts)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InitiateRegistrationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The verification email could not be delivered; the code was not sent, and resending is available immediately",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/resend-verification": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Resend verification code",
+        "operationId": "resend_verification",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Same response whether or not a code was sent (unknown email, already verified, cooldown, and lock are not distinguished)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResendVerificationResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed or invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/reset-password": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Reset password with token",
+        "description": "Returns auth tokens for auto-login if device fingerprint is provided.\n# Errors\n\nReturns an error if the reset token is invalid, expired, missing device fingerprint, or service errors occur.",
+        "operationId": "reset_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Password reset successfully with auto-login",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or expired token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized - invalid token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/verify-email": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Verify email with code",
+        "description": "For new signups (no password yet): Returns a `signup_token` (30 min expiry) to complete signup.\nFor existing users with password: Returns auth tokens for auto-login.",
+        "operationId": "verify_email",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyEmailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Email verified successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyEmailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid, expired or locked code, email already verified, or a malformed request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationOrStandardError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/verify-magic": {
+      "get": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Legacy magic-link entry point: redirect to the frontend confirmation page.",
+        "description": "Emails used to link here directly, and this GET verified the email on the\nspot. Mail scanners that prefetch links used the token up before the user\nclicked, so it no longer has side effects: it only forwards the token, in the\nURL fragment, to `/verify-magic`, where the user confirms with a button\n(`POST /api/v1/auth/verify-magic`). Kept so links in emails sent before the\nchange still work; new emails link to the frontend page directly.",
+        "operationId": "verify_magic_redirect",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "description": "The magic link token from the email",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "303": {
+            "description": "Redirects to the /verify-magic confirmation page with the token in the fragment"
+          },
+          "400": {
+            "description": "Malformed or invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Confirm a magic link (backup to the 6-digit code).",
+        "description": "Answers exactly like `verify-email`: a `signup_token` in the body when the\naccount has no password yet, otherwise a session (cookies) for auto-login.\nNothing here goes into a URL, so the signup token never reaches browser\nhistory or access logs.",
+        "operationId": "verify_magic",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyMagicLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Email verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyEmailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid, expired or locked link, the account is already verified and has a password, or a malformed request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationOrStandardError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/verify-reset-code": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Verify reset code and get reset token\n# Errors",
+        "description": "Returns an error if the code is invalid, expired, or service errors occur.",
+        "operationId": "verify_reset_code",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyResetCodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Code verified, reset token returned",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerifyResetCodeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or expired code",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Liveness probe — always returns 200 if the process is running.",
+        "operationId": "health_check",
+        "responses": {
+          "200": {
+            "description": "Service is running",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health/ready": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Readiness probe — checks DB connectivity before returning 200.",
+        "operationId": "health_ready",
+        "responses": {
+          "200": {
+            "description": "Service is ready",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service is not ready",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/users/me": {
+      "delete": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "Request account deletion (soft, 14-day grace period).\n# Errors",
+        "description": "Returns an error if confirmation is missing, the password is wrong, or the\nuser is not found.",
+        "operationId": "request_deletion",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RequestDeletionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Deletion scheduled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing confirmation or password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated or wrong password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified (`email_not_verified`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/me/cancel-deletion": {
+      "post": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "Cancel a pending account deletion (during the grace period).\n# Errors",
+        "description": "Returns an error if the account is already deleted or the user is not found.",
+        "operationId": "cancel_deletion",
+        "responses": {
+          "200": {
+            "description": "Deletion cancelled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeletionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Account already deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified (`email_not_verified`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/me/export": {
+      "get": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "Export all personal data held about the authenticated user (GDPR).\n# Errors",
+        "description": "Returns an error if the user is not found or a repository call fails.",
+        "operationId": "export_data",
+        "responses": {
+          "200": {
+            "description": "Machine-readable export of the user's data",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountExportResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified (`email_not_verified`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/password/change": {
+      "post": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "Change password (for users who already have a password)\n# Errors",
+        "description": "Returns an error if the user is not found, current password is wrong, or validation fails.",
+        "operationId": "change_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Password changed successfully"
+          },
+          "400": {
+            "description": "Malformed or invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated or wrong current password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified (`email_not_verified`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/users/password/set": {
+      "post": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "Set password (for OAuth-only users without a password)\n# Errors",
+        "description": "Returns an error if the user is not found, already has a password, or validation fails.",
+        "operationId": "set_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Password set successfully"
+          },
+          "400": {
+            "description": "User already has password",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified (`email_not_verified`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "User not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer_auth": []
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccountDeletionResponse": {
+        "type": "object",
+        "description": "Response to an account-deletion request or its cancellation.",
+        "properties": {
+          "deletion_scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the account will be permanently anonymized. `null` after a\ncancellation; set ~14 days out after a deletion request."
+          }
+        }
+      },
+      "AccountExportResponse": {
+        "type": "object",
+        "description": "Machine-readable export of the personal data held about the authenticated\nuser (GDPR data-portability). Returned by\n`GET /api/v1/users/me/export`.",
+        "required": [
+          "id",
+          "email",
+          "first_name",
+          "last_name",
+          "email_verified",
+          "has_password",
+          "role",
+          "created_at",
+          "updated_at",
+          "linked_oauth_accounts",
+          "exported_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deletion_scheduled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": "string"
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "exported_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this export was generated."
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "has_password": {
+            "type": "boolean",
+            "description": "Whether a password is set (the hash itself is never exported)."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "linked_oauth_accounts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LinkedOAuthAccountExport"
+            },
+            "description": "All OAuth providers linked to this account."
+          },
+          "pending_email": {
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/RoleName"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AdminUserListResponse": {
+        "type": "object",
+        "description": "A page of users for the admin listing.",
+        "required": [
+          "users",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "users": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminUserResponse"
+            }
+          }
+        }
+      },
+      "AdminUserResponse": {
+        "type": "object",
+        "description": "A user row in the admin user-management table.",
+        "required": [
+          "id",
+          "email",
+          "role",
+          "email_verified",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deletion_scheduled_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "email": {
+            "type": "string"
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "$ref": "#/components/schemas/RoleName"
+          }
+        }
+      },
+      "AuthResponse": {
+        "type": "object",
+        "description": "Response body for successful authentication and for token refresh.\n\nThe JWT access token and refresh token are delivered exclusively as\n`HttpOnly` cookies (the native-client body-token path was removed), so only\nthe non-secret session metadata is returned in the body. Login and refresh\nreturn the identical shape, so they share this one DTO rather than a\nduplicate `RefreshResponse`.",
+        "required": [
+          "user",
+          "expires_at",
+          "csrf_token"
+        ],
+        "properties": {
+          "csrf_token": {
+            "type": "string",
+            "description": "CSRF token for state-changing requests (also set as a readable cookie)."
+          },
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix timestamp when the access token expires."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse",
+            "description": "The authenticated user's information."
+          }
+        }
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "description": "Request to change password (for users who already have a password).",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "description": "Current password for verification."
+          },
+          "new_password": {
+            "type": "string",
+            "description": "New password (8-256 characters)."
+          }
+        }
+      },
+      "CompleteRegistrationRequest": {
+        "type": "object",
+        "description": "Request body for completing registration (set password after email verification).\n\nThis is step 3 of signup: user sets password after verifying email.",
+        "required": [
+          "signup_token",
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "description": "Email address (for password manager autofill, verified against token)."
+          },
+          "password": {
+            "type": "string"
+          },
+          "signup_token": {
+            "type": "string",
+            "description": "The signup completion token from verify-email endpoint (30 min expiry)."
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "Structured error response returned to clients.",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Machine-readable error code (e.g. `validation_error`, `csrf_invalid`)."
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable message. Internal details are never included outside\nlocal development."
+          }
+        }
+      },
+      "ForgotPasswordRequest": {
+        "type": "object",
+        "description": "Request body for forgot password.",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "turnstile_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cloudflare Turnstile token for bot protection."
+          }
+        }
+      },
+      "ForgotPasswordResponse": {
+        "type": "object",
+        "description": "Response body for requesting a password reset. Identical whether or not the\nemail has an account, so it can't be used to check for accounts.",
+        "required": [
+          "success",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "InitiateRegistrationRequest": {
+        "type": "object",
+        "description": "Request body for initiating user registration (email-only step).\n\nThis is step 1 of signup: user provides email, we send verification code.\nPassword is set later after email verification.\nEmail validation: frontend does regex check, backend does MX record check.",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "turnstile_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cloudflare Turnstile token for bot protection."
+          }
+        }
+      },
+      "InitiateRegistrationResponse": {
+        "type": "object",
+        "description": "Response body for initiating registration.",
+        "required": [
+          "success",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "LinkedOAuthAccountExport": {
+        "type": "object",
+        "description": "A linked OAuth provider account, included in the data export.",
+        "required": [
+          "provider",
+          "linked_at"
+        ],
+        "properties": {
+          "linked_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the provider account was linked."
+          },
+          "provider": {
+            "$ref": "#/components/schemas/OAuthProviderName",
+            "description": "Provider name (e.g. `\"google\"`)."
+          },
+          "provider_email": {
+            "type": "string",
+            "description": "Email the provider reported at link time, if any."
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "description": "Request body for user login.",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "turnstile_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cloudflare Turnstile token for bot protection."
+          }
+        }
+      },
+      "LogoutResponse": {
+        "type": "object",
+        "description": "Response body for logout.",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "OAuthDeviceFingerprintRequest": {
+        "type": "object",
+        "description": "Request body for storing the OAuth device binding cookie before redirecting.",
+        "required": [
+          "device_fingerprint"
+        ],
+        "properties": {
+          "device_fingerprint": {
+            "type": "string"
+          }
+        }
+      },
+      "OAuthMode": {
+        "type": "string",
+        "description": "OAuth flow mode.",
+        "enum": [
+          "login",
+          "link"
+        ]
+      },
+      "OAuthProviderName": {
+        "type": "string",
+        "description": "A supported OAuth provider (domain `OAuthProvider`).",
+        "enum": [
+          "google",
+          "apple"
+        ]
+      },
+      "RequestDeletionRequest": {
+        "type": "object",
+        "description": "Request to delete account.",
+        "properties": {
+          "confirmation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Confirmation text - must be \"DELETE\" to proceed."
+          },
+          "password": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Password for re-authentication (required for password users)."
+          }
+        }
+      },
+      "ResendVerificationRequest": {
+        "type": "object",
+        "description": "Request body for resending verification code.",
+        "required": [
+          "email"
+        ],
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "turnstile_token": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cloudflare Turnstile token for bot protection."
+          }
+        }
+      },
+      "ResendVerificationResponse": {
+        "type": "object",
+        "description": "Response body for resend verification.",
+        "required": [
+          "success",
+          "message",
+          "cooldown_seconds"
+        ],
+        "properties": {
+          "cooldown_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds until next resend is allowed (for countdown timer)."
+          },
+          "message": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ResetPasswordRequest": {
+        "type": "object",
+        "description": "Request body for resetting password.",
+        "required": [
+          "reset_token",
+          "new_password"
+        ],
+        "properties": {
+          "new_password": {
+            "type": "string"
+          },
+          "reset_token": {
+            "type": "string",
+            "description": "The reset token from verify-reset-code endpoint."
+          }
+        }
+      },
+      "RoleName": {
+        "type": "string",
+        "description": "A user's role (domain `UserRole`).",
+        "enum": [
+          "user",
+          "admin",
+          "super_admin"
+        ]
+      },
+      "SetPasswordRequest": {
+        "type": "object",
+        "description": "Request to set password (for OAuth-only users without a password).",
+        "required": [
+          "new_password"
+        ],
+        "properties": {
+          "new_password": {
+            "type": "string",
+            "description": "New password (8-256 characters)."
+          }
+        }
+      },
+      "SetUserRoleRequest": {
+        "type": "object",
+        "description": "Request to change a user's role (super-admin only).",
+        "required": [
+          "role"
+        ],
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/RoleName",
+            "description": "New role: `user`, `admin`, or `super_admin`."
+          }
+        }
+      },
+      "UserResponse": {
+        "type": "object",
+        "description": "User information in API responses.",
+        "required": [
+          "id",
+          "email",
+          "first_name",
+          "last_name",
+          "email_verified",
+          "has_password",
+          "oauth_providers",
+          "role",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deletion_scheduled_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the account is scheduled for deletion (during 14-day grace period)."
+          },
+          "email": {
+            "type": "string"
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "has_password": {
+            "type": "boolean",
+            "description": "Whether the user has a password set (false for OAuth-only users)."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "oauth_providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OAuthProviderName"
+            },
+            "description": "List of linked OAuth providers (e.g., `[\"google\", \"apple\"]`)."
+          },
+          "pending_email": {
+            "type": "string",
+            "description": "Pending email address awaiting verification (for email change flow)."
+          },
+          "pending_email_requested_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the pending email change was requested."
+          },
+          "role": {
+            "$ref": "#/components/schemas/RoleName",
+            "description": "User's role (\"user\", \"admin\", or \"`super_admin`\")."
+          }
+        }
+      },
+      "VerificationErrorCode": {
+        "type": "string",
+        "description": "Error codes for verification-related errors.\nThese allow the frontend to show appropriate UI for each error type.",
+        "enum": [
+          "CODE_INVALID",
+          "CODE_EXPIRED",
+          "CODE_LOCKED",
+          "COOLDOWN_ACTIVE",
+          "TOKEN_EXPIRED",
+          "ALREADY_VERIFIED",
+          "SIGNUP_INCOMPLETE"
+        ]
+      },
+      "VerificationErrorResponse": {
+        "type": "object",
+        "description": "Structured error response for verification endpoints.",
+        "required": [
+          "error",
+          "error_code"
+        ],
+        "properties": {
+          "attempts_remaining": {
+            "type": "integer",
+            "format": "int32",
+            "description": "For `CODE_INVALID`: attempts remaining before lockout."
+          },
+          "cooldown_seconds": {
+            "type": "integer",
+            "format": "int64",
+            "description": "For `COOLDOWN_ACTIVE`: seconds until resend is allowed."
+          },
+          "email": {
+            "type": "string",
+            "description": "For `SIGNUP_INCOMPLETE`: the email address to continue signup."
+          },
+          "error": {
+            "type": "string"
+          },
+          "error_code": {
+            "$ref": "#/components/schemas/VerificationErrorCode"
+          }
+        }
+      },
+      "VerificationOrStandardError": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/VerificationErrorResponse"
+          },
+          {
+            "$ref": "#/components/schemas/ErrorResponse"
+          }
+        ],
+        "description": "A `400` from a verification route: either the structured verification error\n(wrong, expired or locked code) or, for a malformed request, the standard\n[`ErrorResponse`]."
+      },
+      "VerifyEmailRequest": {
+        "type": "object",
+        "description": "Request body for email verification.",
+        "required": [
+          "email",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          }
+        }
+      },
+      "VerifyEmailResponse": {
+        "type": "object",
+        "description": "Response body for email verification during signup.\n\nNew users (no password yet) receive a `signup_token` to complete signup.\nExisting users with a password are logged in via `HttpOnly` cookies (the\nbody-token path was removed), so no token fields are returned.",
+        "required": [
+          "user"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unix-seconds access-token expiry, present only on the auto-login path\n(existing user with a password). Lets the client schedule a proactive\nrefresh instead of waiting for the first 401; the signup path omits it."
+          },
+          "signup_token": {
+            "type": "string",
+            "description": "Short-lived JWT token for completing signup (30 min expiry).\nOnly present for users who haven't set a password yet."
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserResponse",
+            "description": "The verified user's information."
+          }
+        }
+      },
+      "VerifyMagicLinkRequest": {
+        "type": "object",
+        "description": "Request body for confirming a magic link.",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "The magic link token from the email."
+          }
+        }
+      },
+      "VerifyResetCodeRequest": {
+        "type": "object",
+        "description": "Request body for verifying reset code.",
+        "required": [
+          "email",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string"
+          }
+        }
+      },
+      "VerifyResetCodeResponse": {
+        "type": "object",
+        "description": "Response body for verify reset code.",
+        "required": [
+          "reset_token"
+        ],
+        "properties": {
+          "reset_token": {
+            "type": "string",
+            "description": "Short-lived JWT token for password reset (5 min expiry)."
+          }
+        }
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "Authentication",
+      "description": "Auth endpoints"
+    },
+    {
+      "name": "Verification",
+      "description": "Email verification"
+    },
+    {
+      "name": "OAuth",
+      "description": "OAuth providers"
+    },
+    {
+      "name": "Profile",
+      "description": "Profile management"
+    },
+    {
+      "name": "Admin",
+      "description": "Admin panel"
+    },
+    {
+      "name": "Health",
+      "description": "Liveness and readiness probes"
+    }
+  ]
+}

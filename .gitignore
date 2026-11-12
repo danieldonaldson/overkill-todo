@@ -37,3 +37,4 @@ deploy/compose/backups/
 
 # Vitest bench baselines (`just bench-web --outputJson .bench/main.json`)
 .bench/
+backend/openapi.json.tmp

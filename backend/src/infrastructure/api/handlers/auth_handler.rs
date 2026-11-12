@@ -10,7 +10,7 @@ use crate::{
     application::{
         dto::{
             AuthResponse, InitiateRegistrationRequest, InitiateRegistrationResponse, LoginRequest,
-            UserResponse,
+            LogoutResponse, UserResponse,
         },
         ports::TurnstileService,
         use_cases::{
@@ -62,7 +62,7 @@ pub struct AuthHandlerDeps {
 /// 3. User sets password using signup token → account complete
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/register",
+    path = "/register",
     tag = "Authentication",
     request_body = InitiateRegistrationRequest,
     responses(
@@ -137,7 +137,7 @@ pub async fn register(
 /// Login with email and password
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/login",
+    path = "/login",
     tag = "Authentication",
     request_body = LoginRequest,
     responses(
@@ -190,7 +190,7 @@ pub async fn login(
 /// Refresh the JWT access token using a refresh token
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/refresh",
+    path = "/refresh",
     tag = "Authentication",
     responses(
         (status = 200, description = "Token refreshed successfully", body = AuthResponse),
@@ -234,17 +234,17 @@ pub async fn refresh(
 /// Logout and clear auth cookies
 #[utoipa::path(
     post,
-    path = "/api/v1/auth/logout",
+    path = "/logout",
     tag = "Authentication",
     responses(
-        (status = 200, description = "Logout successful")
+        (status = 200, description = "Logout successful", body = LogoutResponse)
     )
 )]
 #[tracing::instrument(name = "handler.logout", skip_all)]
 pub async fn logout(
     State(deps): State<Arc<AuthHandlerDeps>>,
     headers: HeaderMap,
-) -> (HeaderMap, Json<serde_json::Value>) {
+) -> (HeaderMap, Json<LogoutResponse>) {
     // Try to revoke the refresh token if present
     if let Some(refresh_token) = extract_refresh_token_cookie(&headers) {
         // Ignore errors during revocation - we're logging out anyway
@@ -257,16 +257,13 @@ pub async fn logout(
     response_headers.append(header::SET_COOKIE, clear_refresh_cookie());
     response_headers.append(header::SET_COOKIE, clear_csrf_cookie());
 
-    (
-        response_headers,
-        Json(serde_json::json!({ "success": true })),
-    )
+    (response_headers, Json(LogoutResponse { success: true }))
 }
 
 /// Get current authenticated user
 #[utoipa::path(
     get,
-    path = "/api/v1/auth/me",
+    path = "/me",
     tag = "Authentication",
     responses(
         (status = 200, description = "Current user info", body = UserResponse),

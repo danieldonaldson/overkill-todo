@@ -55,6 +55,10 @@ mod tests {
     use tower::ServiceExt;
 
     #[tokio::test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "unit-test router for this middleware alone; never served"
+    )]
     async fn sets_baseline_security_headers() {
         let app = Router::new()
             .route("/", get(|| async { "ok" }))

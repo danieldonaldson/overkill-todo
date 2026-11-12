@@ -10,12 +10,28 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use utoipa::ToSchema;
+
+use crate::application::dto::VerificationErrorResponse;
 
 /// Structured error response returned to clients.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorResponse {
+    /// Machine-readable error code (e.g. `validation_error`, `csrf_invalid`).
     pub code: String,
+    /// Human-readable message. Internal details are never included outside
+    /// local development.
     pub message: String,
+}
+
+/// A `400` from a verification route: either the structured verification error
+/// (wrong, expired or locked code) or, for a malformed request, the standard
+/// [`ErrorResponse`].
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum VerificationOrStandardError {
+    Verification(VerificationErrorResponse),
+    Standard(ErrorResponse),
 }
 
 /// Application-level errors that map to HTTP responses.

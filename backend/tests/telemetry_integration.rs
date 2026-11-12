@@ -347,7 +347,10 @@ async fn login_trace_contains_repository_spans(pool: PgPool) {
 /// reset password → magic link: no telemetry contains the email address, the
 /// passwords, the codes, the tokens, the CSRF token or any cookie value.
 #[sqlx::test(migrations = "./migrations")]
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one end-to-end flow; splitting it would hide which step leaked"
+)]
 async fn auth_flows_leave_no_secrets_in_telemetry(pool: PgPool) {
     let telemetry = Captured::install();
     let email_service = Arc::new(CapturingEmail::default());

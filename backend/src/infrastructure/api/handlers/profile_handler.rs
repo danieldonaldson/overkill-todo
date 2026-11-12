@@ -37,7 +37,7 @@ pub struct ProfileHandlerDeps {
 /// Change password (for users who already have a password)
 #[utoipa::path(
     post,
-    path = "/api/v1/users/password/change",
+    path = "/password/change",
     tag = "Profile",
     request_body = ChangePasswordRequest,
     responses(
@@ -76,7 +76,7 @@ pub async fn change_password(
 /// Set password (for OAuth-only users without a password)
 #[utoipa::path(
     post,
-    path = "/api/v1/users/password/set",
+    path = "/password/set",
     tag = "Profile",
     request_body = SetPasswordRequest,
     responses(
@@ -141,7 +141,7 @@ fn build_export(
 /// Export all personal data held about the authenticated user (GDPR).
 #[utoipa::path(
     get,
-    path = "/api/v1/users/me/export",
+    path = "/me/export",
     tag = "Profile",
     responses(
         (status = 200, description = "Machine-readable export of the user's data", body = AccountExportResponse),
@@ -168,7 +168,7 @@ pub async fn export_data(
 /// Request account deletion (soft, 14-day grace period).
 #[utoipa::path(
     delete,
-    path = "/api/v1/users/me",
+    path = "/me",
     tag = "Profile",
     request_body = RequestDeletionRequest,
     responses(
@@ -210,7 +210,7 @@ pub async fn request_deletion(
 /// Cancel a pending account deletion (during the grace period).
 #[utoipa::path(
     post,
-    path = "/api/v1/users/me/cancel-deletion",
+    path = "/me/cancel-deletion",
     tag = "Profile",
     responses(
         (status = 200, description = "Deletion cancelled", body = AccountDeletionResponse),

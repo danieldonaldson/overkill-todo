@@ -55,6 +55,10 @@ mod tests {
         "OK"
     }
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "unit-test router for this middleware alone; never served"
+    )]
     fn create_test_router() -> Router {
         Router::new()
             .route("/test", get(dummy_handler))

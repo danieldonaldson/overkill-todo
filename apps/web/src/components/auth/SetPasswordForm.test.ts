@@ -57,6 +57,7 @@ describe('SetPasswordForm', () => {
   it('completes signup and navigates to dashboard', async () => {
     vi.mocked(api.auth.completeSignup).mockResolvedValue({
       expires_at: Math.floor(Date.now() / 1000) + 3600,
+      csrf_token: 'csrf-token',
       user: {
         id: '1',
         email: 'test@example.com',
@@ -65,6 +66,8 @@ describe('SetPasswordForm', () => {
         email_verified: true,
         has_password: true,
         oauth_providers: [],
+        created_at: '2026-01-01T00:00:00Z',
+        role: 'user',
       },
     })
     const screen = await render(SetPasswordForm, {
@@ -100,7 +103,9 @@ describe('SetPasswordForm', () => {
   })
 
   it('blocks submission when the signup token is missing', async () => {
-    const screen = await render(SetPasswordForm, { props: { token: '', email: 'test@example.com' } })
+    const screen = await render(SetPasswordForm, {
+      props: { token: '', email: 'test@example.com' },
+    })
 
     await screen.getByRole('textbox', { name: /^password/i }).fill('password123')
     await screen.getByRole('textbox', { name: /^confirm password/i }).fill('password123')

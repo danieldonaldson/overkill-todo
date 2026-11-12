@@ -34,11 +34,11 @@ describe('isApiError', () => {
 
 describe('getErrorCode', () => {
   it('prefers the canonical code over the structured error_code', () => {
-    expect(getErrorCode({ code: 'CANON', error_code: 'STRUCT' })).toBe('CANON')
+    expect(getErrorCode({ code: 'CANON', error_code: 'CODE_INVALID' })).toBe('CANON')
   })
 
   it('falls back to error_code when code is absent', () => {
-    expect(getErrorCode({ error_code: 'STRUCT' })).toBe('STRUCT')
+    expect(getErrorCode({ error_code: 'CODE_INVALID' })).toBe('CODE_INVALID')
   })
 
   it('returns undefined for null/undefined or a code-less body', () => {
@@ -67,7 +67,7 @@ describe('ApiErrorException', () => {
   it('is a real Error with the resolved message and copied structured fields', () => {
     const err = new ApiErrorException({
       error: 'Too many attempts',
-      error_code: 'LOCKED',
+      error_code: 'CODE_LOCKED',
       attempts_remaining: 0,
       email: 'a@b.com',
     })
@@ -75,7 +75,7 @@ describe('ApiErrorException', () => {
     expect(err).toBeInstanceOf(Error)
     expect(err.name).toBe('ApiErrorException')
     expect(err.message).toBe('Too many attempts')
-    expect(err.error_code).toBe('LOCKED')
+    expect(err.error_code).toBe('CODE_LOCKED')
     expect(err.attempts_remaining).toBe(0)
     expect(err.email).toBe('a@b.com')
     expect('error_code' in err).toBe(true)

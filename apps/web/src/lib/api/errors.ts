@@ -1,28 +1,19 @@
 // Typed shape for backend error response bodies.
 //
-// The canonical DTO is `ErrorResponse { code, message }` (backend
-// `shared::error.rs`). Some auth endpoints return a richer structured payload
-// (`error` / `error_code` plus context fields like `attempts_remaining`),
-// which is why both naming styles appear here. Callers narrow with the
+// The API has two error bodies, both generated from its OpenAPI description:
+// the standard `ErrorResponse { code, message }` (every `AppError`), and the
+// richer `VerificationErrorResponse` (`error` / `error_code` plus context fields
+// like `attempts_remaining`) that some verification endpoints return. A caught
+// error may be either, so every field is optional here. Callers narrow with the
 // `isApiError` / `getErrorCode` helpers rather than probing `Record<string,
 // unknown>` ad hoc.
 
-export interface ApiError {
-  /** Canonical error code (`ErrorResponse.code`). */
-  code?: string
-  /** Canonical human-readable message (`ErrorResponse.message`). */
-  message?: string
-  /** Structured auth-flow code (e.g. `CODE_INVALID`, `CODE_LOCKED`). */
-  error_code?: string
-  /** Alternate message field used by some auth handlers. */
-  error?: string
-  /** Remaining attempts before lockout (code/password flows). */
-  attempts_remaining?: number
-  /** Cooldown before a resend is allowed, in seconds. */
-  cooldown_seconds?: number
-  /** Email associated with the failed flow, when echoed back. */
-  email?: string
-}
+import type { components } from './schema'
+
+type Schemas = components['schemas']
+
+export type ApiError = Partial<Schemas['ErrorResponse']> &
+  Partial<Schemas['VerificationErrorResponse']>
 
 /**
  * Narrow an unknown thrown value to an {@link ApiError}-shaped object.
@@ -72,12 +63,12 @@ export function getErrorMessage(body: ApiError | null | undefined): string | und
 export class ApiErrorException extends Error implements ApiError {
   /** HTTP status of the response, when the error came from one. */
   status?: number
-  code?: string
-  error_code?: string
-  error?: string
-  attempts_remaining?: number
-  cooldown_seconds?: number
-  email?: string
+  code?: ApiError['code']
+  error_code?: ApiError['error_code']
+  error?: ApiError['error']
+  attempts_remaining?: ApiError['attempts_remaining']
+  cooldown_seconds?: ApiError['cooldown_seconds']
+  email?: ApiError['email']
 
   /**
    * @param body Parsed response body, or null when it had none (or wasn't JSON).

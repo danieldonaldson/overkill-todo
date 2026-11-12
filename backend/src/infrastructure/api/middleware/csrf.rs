@@ -54,7 +54,7 @@ const EXCLUDED_PATHS: &[&str] = &[
 ];
 
 /// Check if a path should be excluded from CSRF validation.
-fn is_excluded_path(path: &str) -> bool {
+pub(crate) fn is_excluded_path(path: &str) -> bool {
     let path = path.strip_prefix("/api/v1").unwrap_or(path);
 
     // Exact matches only. OAuth start/callback are GET (never CSRF-checked),
@@ -176,6 +176,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "unit-test router for this middleware alone; never served"
+    )]
     async fn nested_register_route_is_excluded_from_csrf() {
         let api = Router::new()
             .route("/auth/register", post(|| async { StatusCode::OK }))

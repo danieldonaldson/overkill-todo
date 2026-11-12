@@ -9,7 +9,7 @@ session in production.
 
 The backend already publishes an OpenAPI description, but nothing depends on it.
 The frontend's request and response types are written by hand and kept in step
-by memory. The description is also incomplete: 26 routes are served, but only 18
+by memory. The description is also incomplete: 25 routes are served, but only 18
 are described. The undocumented ones include the whole password-reset flow, the
 magic-link sign-in and unlinking a Google account. The description also gets some
 shapes wrong. For example, it marks optional request fields such as the Turnstile
@@ -32,16 +32,23 @@ convert later.
   with the generated types automatically.
 - The full gate fails if the generated frontend types are stale, or if frontend
   code no longer type-checks against them.
-- No API behaviour changes. Clients send and receive exactly what they do today.
+- One deliberate behaviour change: a few routes rejected _malformed_ requests
+  (bad JSON, missing or mistyped query or path parameters) with a plain-text
+  body, and sometimes with 415 or 422. They now answer 400 with the standard
+  JSON error body, like every other route. Well-formed requests are unaffected,
+  and the frontend never sends malformed ones.
+- Otherwise, no API behaviour changes.
 
 ## Capabilities
 
 ### New Capabilities
+
 - `api`: the contract the backend HTTP API offers its clients: what it publishes
   about its routes, request and response shapes and errors, and how that
   description is kept true.
 
 ### Modified Capabilities
+
 None.
 
 ## Appetite

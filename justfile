@@ -147,6 +147,33 @@ db-prepare: db-migrate
 db-prepare-check:
     cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx prepare --check -- --all-targets
 
+# ── API contract ─────────────────────────────────────────────────────────────────
+# backend/openapi.json is generated from the route tree; the web types are generated
+# from it. Run `just api-types` after changing a DTO, handler annotation or route,
+# and commit both files. Never edit either by hand.
+
+# Write the OpenAPI description to backend/openapi.json. No database needed.
+api-spec:
+    cd {{backend}} && SQLX_OFFLINE=true cargo run --quiet --example export_openapi > openapi.json.tmp && mv openapi.json.tmp openapi.json
+
+# Fail if backend/openapi.json is stale.
+api-spec-check: api-spec
+    git diff --exit-code -- {{backend}}/openapi.json || { echo "backend/openapi.json is stale. Run: just api-types" >&2; exit 1; }
+
+# Generate the web API types from backend/openapi.json.
+api-ts:
+    {{pnpm}} --filter {{web}} exec openapi-typescript ../../backend/openapi.json -o src/lib/api/schema.d.ts
+
+# Fail if the web API types are stale.
+api-ts-check: api-ts
+    git diff --exit-code -- apps/web/src/lib/api/schema.d.ts || { echo "apps/web/src/lib/api/schema.d.ts is stale. Run: just api-types" >&2; exit 1; }
+
+# Regenerate the OpenAPI description and the web API types.
+api-types: api-spec api-ts
+
+# Fail if either generated API file is stale.
+api-types-check: api-spec-check api-ts-check
+
 # Drop the local database volume and recreate it. Local only.
 db-reset:
     docker compose rm -sfv db
@@ -180,7 +207,7 @@ fmt-check:
     cd {{backend}} && cargo fmt --check
 
 lint:
-    cd {{backend}} && SQLX_OFFLINE=true cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery
+    cd {{backend}} && SQLX_OFFLINE=true cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -D clippy::allow_attributes_without_reason
 
 lint-js:
     {{pnpm}} lint
@@ -253,7 +280,7 @@ machete:
     cd {{backend}} && cargo machete
 
 # Everything CI gates on. Green here means green CI.
-ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check test test-integration db-prepare-check test-web e2e
+ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check test test-integration db-prepare-check api-types-check test-web e2e
 
 # ── Images ───────────────────────────────────────────────────────────────────────
 

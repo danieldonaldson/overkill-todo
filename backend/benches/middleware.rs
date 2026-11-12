@@ -44,7 +44,10 @@ async fn send(app: &Router, req: Request<Body>, expect: StatusCode) {
     );
 }
 
-#[allow(clippy::too_many_lines)] // One linear list of scenarios reads best here.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one linear list of scenarios reads best here"
+)]
 fn stack(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let app = app(&rt);

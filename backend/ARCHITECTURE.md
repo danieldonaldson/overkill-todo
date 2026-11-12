@@ -63,12 +63,50 @@ DTOs (`application/dto/`) are likewise not a purely inward layer: every DTO deri
 at the DTO boundary** (enforced by the `ValidatedJson` extractor), so the DTO layer
 intentionally carries serialization/OpenAPI/validation concerns.
 
+## Routes and the API description
+
+The router and the OpenAPI description are built from the same declarations, so
+they can't drift. In `infrastructure/api/routes.rs`, `api_routes()` mounts every
+documented route with `utoipa_axum::routes!(handler)`, which takes the method and
+path from the handler's `#[utoipa::path]`. The annotation's `path` is relative to
+the group it's nested in (`path = "/login"` under `/auth` under `/api/v1`). Use one
+`routes!` per path.
+
+- **Protection:** group middleware is applied through the `Guarded` methods
+  (`require_auth()`, `require_verified_email()`, `require_fresh_session()`,
+  `require_csrf()`). Each applies the `route_layer` _and_ documents the status it
+  can return (401/403), so the description can't miss a protection. Call them in the
+  order the layers should run, innermost first.
+- **State:** the whole tree is `OpenApiRouter<AppState>` (`state.rs`). Handlers keep
+  extracting their own `State<Arc<…Deps>>` through `FromRef`. `api_routes()` takes no
+  values, so `openapi::openapi()` builds the description without a database.
+  Middleware that needs a dependency reads it from a request `Extension` installed
+  in `create_router` (as `require_fresh_session` does for the user repository).
+- **Errors:** `openapi::finalize()` gives every 4xx/5xx without a body the standard
+  `ErrorResponse` body, adds 500 everywhere, and adds 400 wherever a body, query or
+  path parameter is taken. Use `ValidatedJson` / `ApiJson` / `ApiQuery` / `ApiPath`,
+  never bare `Json` / `Query` / `Path`, so malformed input gets that JSON 400 rather
+  than axum's plain-text rejection.
+- **Undocumented routes:** `backend/clippy.toml` disallows plain `.route(...)`. A
+  route that is deliberately left out needs
+  `#[expect(clippy::disallowed_methods, reason = "…")]`. Only the root-level health
+  probes (a container-HEALTHCHECK duplicate of `/api/v1/health*`) are exempt.
+- **Optional fields:** `Option` request fields need `#[serde(default)]`, or they are
+  described as required. `Option` response fields with `skip_serializing_if` need
+  `#[schema(nullable = false)]`, because they're omitted, never `null`. A `String`
+  with a fixed set of values gets `#[schema(value_type = …)]` with an enum from
+  `application/dto/schema_enums.rs`.
+- **Committed outputs:** `just api-types` writes `backend/openapi.json` (from
+  `examples/export_openapi.rs`) and the web types
+  `apps/web/src/lib/api/schema.d.ts`. Commit both; CI fails if either is stale.
+
 ## Adding a use case
 
 1. Define the input/output types in `application/dto/` if needed.
 2. Add an incoming port trait in `application/ports/incoming/` (one method per operation).
 3. Implement the trait in `application/use_cases/`.
-4. Wire it in `src/main.rs` (construction) and `infrastructure/api/routes.rs` (routing).
+4. Wire it in `src/main.rs` (construction) and `infrastructure/api/routes.rs`
+   (`.routes(routes!(handler))` in `api_routes()`), then run `just api-types`.
 5. Write mock-based unit tests in the use case file and HTTP-level integration tests under `tests/`.
 
 ## Adding a repository method

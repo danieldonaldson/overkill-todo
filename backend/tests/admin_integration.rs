@@ -150,3 +150,22 @@ async fn list_users_ok_for_admin(pool: PgPool) {
             .any(|u| { u["email"] == "listed@example.com" })
     );
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn demoted_admin_token_is_rejected(pool: PgPool) {
+    // Persisted role is `user`, but the still-unexpired token claims `admin`:
+    // the fresh-session check on admin routes must reject it, not let the old
+    // privilege linger until the access token expires.
+    let user_id = Uuid::now_v7();
+    insert_requester(&pool, user_id, "user").await;
+    let token = common::mint_session_jwt(user_id, true, "admin", 15);
+    let req = Request::builder()
+        .method("GET")
+        .uri("/api/v1/admin/users")
+        .header(header::COOKIE, format!("auth_token={token}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = common::create_test_app(pool).oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(json_body(resp).await["code"], "token_invalid");
+}

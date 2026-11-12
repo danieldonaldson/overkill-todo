@@ -1,7 +1,12 @@
 //! JWT service port for token creation and validation.
-// `automock` generates one field per method on `MockJwtService`, and every method
-// here ends in `_token`. Shortening the names would make the port less clear.
-#![cfg_attr(any(test, feature = "mocks"), allow(clippy::struct_field_names))]
+#![cfg_attr(
+    any(test, feature = "mocks"),
+    allow(
+        clippy::struct_field_names,
+        reason = "`automock` generates one field per method on `MockJwtService`, and every \
+                  method here ends in `_token`; shorter names would make the port less clear"
+    )
+)]
 
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{ResetCodeId, UserId};

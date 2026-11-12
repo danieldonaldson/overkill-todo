@@ -3,10 +3,7 @@
 //! Every route is guarded by the [`AdminUser`] extractor (admin or super-admin),
 //! except role management, which requires [`SuperAdminUser`].
 
-use axum::{
-    Json,
-    extract::{Path, Query, State},
-};
+use axum::{Json, extract::State};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -17,7 +14,9 @@ use crate::{
     },
     domain::value_objects::UserId,
     infrastructure::api::error::AppError,
-    infrastructure::api::extractors::{AdminUser, SuperAdminUser, ValidatedJson},
+    infrastructure::api::extractors::{
+        AdminUser, ApiPath, ApiQuery, SuperAdminUser, ValidatedJson,
+    },
 };
 
 /// Dependencies for admin handlers.
@@ -29,7 +28,7 @@ pub struct AdminHandlerDeps {
 /// List users (paginated).
 #[utoipa::path(
     get,
-    path = "/api/v1/admin/users",
+    path = "/users",
     tag = "Admin",
     params(
         ("limit" = Option<i64>, Query, description = "Max users (default 50, max 200)"),
@@ -47,7 +46,7 @@ pub struct AdminHandlerDeps {
 pub async fn list_users(
     State(deps): State<Arc<AdminHandlerDeps>>,
     _admin: AdminUser,
-    Query(query): Query<ListUsersQuery>,
+    ApiQuery(query): ApiQuery<ListUsersQuery>,
 ) -> Result<Json<AdminUserListResponse>, AppError> {
     let (limit, offset) = query.paginated();
 
@@ -62,7 +61,7 @@ pub async fn list_users(
 /// Change a user's role (super-admin only).
 #[utoipa::path(
     put,
-    path = "/api/v1/admin/users/{id}/role",
+    path = "/users/{id}/role",
     tag = "Admin",
     request_body = SetUserRoleRequest,
     params(("id" = Uuid, Path, description = "User id")),
@@ -80,7 +79,7 @@ pub async fn list_users(
 pub async fn set_user_role(
     State(deps): State<Arc<AdminHandlerDeps>>,
     super_admin: SuperAdminUser,
-    Path(id): Path<Uuid>,
+    ApiPath(id): ApiPath<Uuid>,
     ValidatedJson(request): ValidatedJson<SetUserRoleRequest>,
 ) -> Result<Json<AdminUserResponse>, AppError> {
     // The SuperAdminUser extractor guarantees the actor is a super-admin; pass

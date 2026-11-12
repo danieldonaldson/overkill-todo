@@ -14,7 +14,9 @@ just dev     # backend on :4322 (auto-reload) + web on :4321, proxying /api
 `backend/.env.example` is the config **contract**: every variable the server
 reads, with comments. `Settings::from_env` reports every missing or malformed
 variable at once and the process exits. With `DEV_MODE=true` you also get the
-Swagger UI at `http://localhost:4322/docs`.
+Swagger UI at `http://localhost:4322/docs`. The same description is committed as
+`backend/openapi.json` (`just api-types`; see ARCHITECTURE.md, "Routes and the API
+description").
 
 ## Tests
 

@@ -58,6 +58,8 @@ In dev, verification codes print in the backend log.
 | `just bench` / `just bench-db`        | backend criterion benches / full-router + DB    |
 | `just bench-web`                      | Vitest benches (helpers, client, AdminPanel)    |
 | `just bench-compare [base]`           | base vs working tree, per-bench change report   |
+| `just api-types`                      | regenerate `backend/openapi.json` + web types   |
+| `just api-types-check`                | fail if either generated API file is stale      |
 
 ### Benchmarks
 

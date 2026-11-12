@@ -1,21 +1,26 @@
 //! HTTP router: route table, per-group middleware, and global layers.
+//!
+//! Every documented route is mounted with `routes!(handler)` in [`api_routes`],
+//! which takes the method and path from the handler's `#[utoipa::path]`. The
+//! router and the `OpenAPI` description are therefore built from the same
+//! declarations and cannot drift. Annotation paths are relative to the group
+//! they are nested in (`path = "/login"` under `/auth` under `/api/v1`).
 
 use axum::{
     Extension, Router,
     http::{HeaderName, HeaderValue, Method},
     middleware,
-    routing::{delete, get, post, put},
+    routing::get,
 };
 use std::sync::Arc;
 use std::time::Duration;
 use tower_http::cors::CorsLayer;
 use tower_http::timeout::TimeoutLayer;
-#[cfg(feature = "swagger-ui")]
 use utoipa::OpenApi;
+use utoipa_axum::{router::OpenApiRouter, routes};
 #[cfg(feature = "swagger-ui")]
 use utoipa_swagger_ui::SwaggerUi;
 
-#[cfg(feature = "swagger-ui")]
 use super::openapi::ApiDoc;
 #[cfg(feature = "swagger-ui")]
 use crate::infrastructure::config::is_dev_mode;
@@ -35,59 +40,19 @@ use super::{
         profile_handler::{self, ProfileHandlerDeps},
         verification_handler::{self, VerificationHandlerDeps},
     },
+    middleware::csrf::is_excluded_path,
     middleware::{
         auth_middleware, csrf_middleware, require_fresh_session, require_verified_email,
         security_headers_middleware, trace_id_middleware,
     },
+    openapi::{add_response_if_missing, for_each_operation},
+    state::AppState,
 };
 use crate::application::ports::outgoing::UserRepository;
 
 /// Request timeout for every route. Keep it above any outbound call a handler
 /// makes inline, or the client sees 408 after the work already committed.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Canonical list of every route template mounted by [`create_router`], using the
-/// same `{param}` placeholder syntax as `#[utoipa::path(...)]` declarations.
-///
-/// This is the single source of truth used by the `OpenAPI` routability test
-/// (`openapi.rs`) to guarantee every documented path is actually served. When you
-/// add, remove, or rename a `.route(...)` below, update this list to match — the
-/// test will fail otherwise.
-#[cfg(test)]
-pub(crate) const MOUNTED_ROUTE_TEMPLATES: &[&str] = &[
-    // Health (mounted at the root, not under /api/v1)
-    "/health",
-    "/health/ready",
-    // Public auth
-    "/api/v1/auth/register",
-    "/api/v1/auth/login",
-    "/api/v1/auth/logout",
-    "/api/v1/auth/refresh",
-    // Private auth
-    "/api/v1/auth/me",
-    // Verification
-    "/api/v1/auth/verify-email",
-    "/api/v1/auth/verify-magic",
-    "/api/v1/auth/resend-verification",
-    "/api/v1/auth/forgot-password",
-    "/api/v1/auth/verify-reset-code",
-    "/api/v1/auth/reset-password",
-    "/api/v1/auth/complete-signup",
-    // OAuth
-    "/api/v1/auth/oauth/device-fingerprint",
-    "/api/v1/auth/oauth/{provider}",
-    "/api/v1/auth/oauth/{provider}/callback",
-    "/api/v1/auth/oauth/{provider}/unlink",
-    // Profile
-    "/api/v1/users/password/change",
-    "/api/v1/users/password/set",
-    "/api/v1/users/me/export",
-    "/api/v1/users/me",
-    "/api/v1/users/me/cancel-deletion",
-    // Admin
-    "/api/v1/admin/users",
-    "/api/v1/admin/users/{id}/role",
-];
 
 /// All handler dependencies required to build the router.
 pub struct RouterDeps {
@@ -141,135 +106,158 @@ fn build_cors(frontend_origin: &str) -> CorsLayer {
         .allow_credentials(true)
 }
 
-/// Build the application router.
-///
-/// # Panics
-///
-/// Panics if `frontend_origin` is not a valid `HeaderValue`.
-#[allow(clippy::too_many_lines)]
-pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
-    let cors = build_cors(frontend_origin);
-    let crypto = deps.crypto.clone();
-    let users = deps.users.clone();
+/// Route-group guards. Each applies a middleware `route_layer` *and* documents
+/// the status that middleware can return on every operation it covers, so the
+/// description can't miss a protection or describe one that isn't there. Call
+/// them in the same order the `route_layer`s were applied before (the last call
+/// runs first).
+trait Guarded: Sized {
+    /// `auth_middleware`: rejects a missing, invalid or expired session.
+    fn require_auth(self) -> Self;
+    /// `require_verified_email`: rejects an account whose email isn't verified.
+    fn require_verified_email(self) -> Self;
+    /// `require_fresh_session`: rejects a token issued before a password reset,
+    /// account purge or role change.
+    fn require_fresh_session(self) -> Self;
+    /// `csrf_middleware`: rejects state-changing requests without a valid
+    /// CSRF token, except on the paths it excludes.
+    fn require_csrf(self) -> Self;
+}
 
+fn document(
+    mut router: OpenApiRouter<AppState>,
+    applies: impl Fn(&str, &str) -> bool,
+    status: &str,
+    description: &str,
+) -> OpenApiRouter<AppState> {
+    for_each_operation(router.get_openapi_mut(), |method, path, op| {
+        if applies(method, path) {
+            add_response_if_missing(op, status, description);
+        }
+    });
+    router
+}
+
+impl Guarded for OpenApiRouter<AppState> {
+    fn require_auth(self) -> Self {
+        document(
+            self.route_layer(middleware::from_fn(auth_middleware)),
+            |_, _| true,
+            "401",
+            "Not signed in, or the session has expired",
+        )
+    }
+
+    fn require_verified_email(self) -> Self {
+        document(
+            self.route_layer(middleware::from_fn(require_verified_email)),
+            |_, _| true,
+            "403",
+            "Email address not verified (`email_not_verified`)",
+        )
+    }
+
+    fn require_fresh_session(self) -> Self {
+        document(
+            self.route_layer(middleware::from_fn(require_fresh_session)),
+            |_, _| true,
+            "401",
+            "Session superseded by a password reset, account purge or role change; sign in again",
+        )
+    }
+
+    fn require_csrf(self) -> Self {
+        document(
+            self.route_layer(middleware::from_fn(csrf_middleware)),
+            |method, path| {
+                matches!(method, "POST" | "PUT" | "PATCH" | "DELETE") && !is_excluded_path(path)
+            },
+            "403",
+            "Missing or invalid CSRF token (`csrf_invalid`)",
+        )
+    }
+}
+
+/// Every documented route, its group middleware and the `/api/v1` prefix.
+///
+/// Takes no dependency values: state is bound later by [`create_router`], and
+/// [`super::openapi::openapi`] builds the description from this alone. Use one
+/// `routes!` per path: the macro mounts all of its handlers on every path it sees.
+pub fn api_routes() -> OpenApiRouter<AppState> {
     // Public auth routes (no auth required)
-    let public_auth = Router::new()
-        .route("/register", post(auth_handler::register))
-        .route("/login", post(auth_handler::login))
-        .route("/logout", post(auth_handler::logout))
-        .route("/refresh", post(auth_handler::refresh))
-        .with_state(deps.auth.clone());
+    let public_auth = OpenApiRouter::new()
+        .routes(routes!(auth_handler::register))
+        .routes(routes!(auth_handler::login))
+        .routes(routes!(auth_handler::logout))
+        .routes(routes!(auth_handler::refresh));
 
     // Authenticated auth routes
-    let private_auth = Router::new()
-        .route("/me", get(auth_handler::me))
-        .route_layer(middleware::from_fn(auth_middleware))
-        .with_state(deps.auth);
+    let private_auth = OpenApiRouter::new()
+        .routes(routes!(auth_handler::me))
+        .require_auth();
 
     // Verification routes (no auth)
-    let verification = Router::new()
-        .route("/verify-email", post(verification_handler::verify_email))
-        .route(
-            "/verify-magic",
-            get(verification_handler::verify_magic_redirect)
-                .post(verification_handler::verify_magic),
-        )
-        .route(
-            "/resend-verification",
-            post(verification_handler::resend_verification),
-        )
-        .route(
-            "/forgot-password",
-            post(verification_handler::forgot_password),
-        )
-        .route(
-            "/verify-reset-code",
-            post(verification_handler::verify_reset_code),
-        )
-        .route(
-            "/reset-password",
-            post(verification_handler::reset_password),
-        )
-        .route(
-            "/complete-signup",
-            post(verification_handler::complete_signup),
-        )
-        .with_state(deps.verification);
+    let verification = OpenApiRouter::new()
+        .routes(routes!(verification_handler::verify_email))
+        .routes(routes!(
+            verification_handler::verify_magic_redirect,
+            verification_handler::verify_magic
+        ))
+        .routes(routes!(verification_handler::resend_verification))
+        .routes(routes!(verification_handler::forgot_password))
+        .routes(routes!(verification_handler::verify_reset_code))
+        .routes(routes!(verification_handler::reset_password))
+        .routes(routes!(verification_handler::complete_signup));
 
     // OAuth routes
-    let oauth = Router::new()
-        .route(
-            "/oauth/device-fingerprint",
-            post(oauth_handler::oauth_store_device_fingerprint),
-        )
-        .route("/oauth/{provider}", get(oauth_handler::oauth_start))
-        .route(
-            "/oauth/{provider}/callback",
-            get(oauth_handler::oauth_callback),
-        )
-        .with_state(deps.oauth.clone());
+    let oauth = OpenApiRouter::new()
+        .routes(routes!(oauth_handler::oauth_store_device_fingerprint))
+        .routes(routes!(oauth_handler::oauth_start))
+        .routes(routes!(oauth_handler::oauth_callback));
 
-    let oauth_protected = Router::new()
-        .route(
-            "/oauth/{provider}/unlink",
-            delete(oauth_handler::oauth_unlink),
-        )
-        .route_layer(middleware::from_fn(auth_middleware))
-        .with_state(deps.oauth);
+    let oauth_protected = OpenApiRouter::new()
+        .routes(routes!(oauth_handler::oauth_unlink))
+        .require_auth();
 
     // Profile routes (require auth + verified email)
-    let profile = Router::new()
-        .route("/password/change", post(profile_handler::change_password))
-        .route("/password/set", post(profile_handler::set_password))
-        .route("/me/export", get(profile_handler::export_data))
-        .route("/me", delete(profile_handler::request_deletion))
-        .route(
-            "/me/cancel-deletion",
-            post(profile_handler::cancel_deletion),
-        )
+    let profile = OpenApiRouter::new()
+        .routes(routes!(profile_handler::change_password))
+        .routes(routes!(profile_handler::set_password))
+        .routes(routes!(profile_handler::export_data))
+        .routes(routes!(profile_handler::request_deletion))
+        .routes(routes!(profile_handler::cancel_deletion))
         // Account-sensitive actions (password, export, deletion): reject
         // tokens issued before a password reset, account purge or role change.
         // One extra DB read on these low-traffic routes only; ordinary routes
         // trust the token until it expires (JWT_EXPIRATION_MINUTES). Innermost,
-        // so the free verified-email check below rejects first.
-        .route_layer(middleware::from_fn_with_state(
-            users.clone(),
-            require_fresh_session,
-        ))
-        .route_layer(middleware::from_fn(require_verified_email))
-        .route_layer(middleware::from_fn(auth_middleware))
-        .with_state(deps.profile);
+        // so the free verified-email check rejects first.
+        .require_fresh_session()
+        .require_verified_email()
+        .require_auth();
 
     // Admin routes (require auth + verified email; the `AdminUser` /
     // `SuperAdminUser` extractors on each handler enforce the role). The first
     // admin is bootstrapped out-of-band with `just grant-admin <email>`.
-    let admin = Router::new()
-        .route("/users", get(admin_handler::list_users))
-        .route("/users/{id}/role", put(admin_handler::set_user_role))
-        .route_layer(middleware::from_fn(require_verified_email))
+    let admin = OpenApiRouter::new()
+        .routes(routes!(admin_handler::list_users))
+        .routes(routes!(admin_handler::set_user_role))
+        .require_verified_email()
         // Runs after `auth_middleware` (AuthUser populated), before the handler:
         // reject tokens superseded by a role change so demotions take effect at
-        // once. Admin-only, so ordinary traffic pays no extra DB read.
-        .route_layer(middleware::from_fn_with_state(
-            users.clone(),
-            require_fresh_session,
-        ))
-        .route_layer(middleware::from_fn(auth_middleware))
-        .with_state(deps.admin);
+        // once. Admin-only, so ordinary traffic pays no extra DB read. The user
+        // repository comes from the `Extension` installed in `create_router`.
+        .require_fresh_session()
+        .require_auth();
 
-    // Health probes. Public (no auth/CSRF), so they sit OUTSIDE the CSRF-layered
-    // routes below. Mounted in two places: at the root, where the in-container
-    // HEALTHCHECK hits them on the loopback port (bypassing the proxy); and under
-    // `/api/v1`, so external monitoring reaches them through the single-origin
-    // `/api` route (the proxy sends the root `/` to the frontend).
-    let health = Router::new()
-        .route("/health", get(health_handler::health_check))
-        .route(
-            "/health/ready",
-            get(health_handler::health_ready).with_state(deps.db),
-        );
+    // Health probes, reachable through the single-origin `/api` route for
+    // external monitoring. Public (no auth/CSRF), so merged after
+    // `require_csrf()` below. The root-level copy for the container HEALTHCHECK is
+    // mounted in `create_router`.
+    let health = OpenApiRouter::new()
+        .routes(routes!(health_handler::health_check))
+        .routes(routes!(health_handler::health_ready));
 
-    let api = Router::new()
+    let api = OpenApiRouter::new()
         .nest("/auth", public_auth)
         .nest("/auth", private_auth)
         .nest("/auth", verification)
@@ -279,30 +267,74 @@ pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
         .nest("/admin", admin)
         // Mount new authenticated groups above this line so they get CSRF.
         // Public, signature-verified endpoints (e.g. payment webhooks) go below it.
-        .route_layer(middleware::from_fn(csrf_middleware))
-        .merge(health.clone())
+        .require_csrf()
+        .merge(health)
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             DEFAULT_REQUEST_TIMEOUT,
         ));
 
-    let router = Router::new().merge(health).nest("/api/v1", api);
+    OpenApiRouter::with_openapi(ApiDoc::openapi()).nest("/api/v1", api)
+}
+
+/// Build the application router.
+///
+/// # Panics
+///
+/// Panics if `frontend_origin` is not a valid `HeaderValue`.
+pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
+    let cors = build_cors(frontend_origin);
+    let (api, spec) = api_routes().split_for_parts();
+
+    // Root-level health probes for the in-container HEALTHCHECK, which hits the
+    // loopback port and bypasses the proxy (the proxy sends `/` to the
+    // frontend). Same handlers as the documented `/api/v1/health*`.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "undocumented duplicate of the described /api/v1/health* for the container \
+                  HEALTHCHECK; describing both would duplicate operation IDs"
+    )]
+    let root_health = Router::new()
+        .route("/health", get(health_handler::health_check))
+        .route(
+            "/health/ready",
+            get(health_handler::health_ready).with_state(deps.db.clone()),
+        );
+
+    let state = AppState {
+        auth: deps.auth,
+        verification: deps.verification,
+        oauth: deps.oauth,
+        profile: deps.profile,
+        admin: deps.admin,
+        db: deps.db,
+    };
+
+    let router = Router::new()
+        .merge(root_health)
+        .merge(api.with_state(state));
 
     // Swagger UI exposes the full API surface; only mount it in dev mode. Release images
     // build without the `swagger-ui` feature, so the bundle isn't even in the binary.
     #[cfg(feature = "swagger-ui")]
     let router = if is_dev_mode() {
-        router.merge(SwaggerUi::new("/docs").url("/api-doc/openapi.json", ApiDoc::openapi()))
+        router.merge(
+            SwaggerUi::new("/docs").url("/api-doc/openapi.json", super::openapi::finalize(spec)),
+        )
     } else {
         router
     };
+    #[cfg(not(feature = "swagger-ui"))]
+    let _ = spec;
 
     router
         .layer(middleware::from_fn(security_headers_middleware))
         .layer(cors)
-        // Make the crypto handle available as a request extension to every inner
-        // middleware/extractor (auth, CSRF, OptionalAuthUser).
-        .layer(Extension(crypto))
+        // Make the crypto handle and the user repository available as request
+        // extensions to every inner middleware/extractor (auth, CSRF,
+        // OptionalAuthUser, require_fresh_session).
+        .layer(Extension(deps.crypto))
+        .layer(Extension(deps.users))
         // Stamp every response (including ones produced by inner middleware)
         // with the request's `X-Trace-Id`, read from the span opened below.
         .layer(middleware::from_fn(trace_id_middleware))

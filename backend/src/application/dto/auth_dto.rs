@@ -1,5 +1,6 @@
 //! Authentication-related DTOs.
 
+use super::schema_enums::{OAuthProviderName, RoleName};
 use super::validation::validate_verification_code;
 use crate::domain::entities::User;
 use crate::domain::value_objects::PendingEmailChange;
@@ -20,6 +21,7 @@ pub struct InitiateRegistrationRequest {
     pub email: String,
 
     /// Cloudflare Turnstile token for bot protection.
+    #[serde(default)]
     pub turnstile_token: Option<String>,
 }
 
@@ -46,6 +48,20 @@ pub struct InitiateRegistrationResponse {
     pub message: String,
 }
 
+/// Response body for logout.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct LogoutResponse {
+    pub success: bool,
+}
+
+/// Response body for requesting a password reset. Identical whether or not the
+/// email has an account, so it can't be used to check for accounts.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ForgotPasswordResponse {
+    pub success: bool,
+    pub message: String,
+}
+
 /// Request body for user login.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct LoginRequest {
@@ -55,6 +71,7 @@ pub struct LoginRequest {
     pub password: String,
 
     /// Cloudflare Turnstile token for bot protection.
+    #[serde(default)]
     pub turnstile_token: Option<String>,
 }
 
@@ -75,6 +92,7 @@ pub struct ResendVerificationRequest {
     pub email: String,
 
     /// Cloudflare Turnstile token for bot protection.
+    #[serde(default)]
     pub turnstile_token: Option<String>,
 }
 
@@ -85,6 +103,7 @@ pub struct ForgotPasswordRequest {
     pub email: String,
 
     /// Cloudflare Turnstile token for bot protection.
+    #[serde(default)]
     pub turnstile_token: Option<String>,
 }
 
@@ -117,11 +136,13 @@ pub struct VerifyEmailResponse {
     /// Short-lived JWT token for completing signup (30 min expiry).
     /// Only present for users who haven't set a password yet.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub signup_token: Option<String>,
     /// Unix-seconds access-token expiry, present only on the auto-login path
     /// (existing user with a password). Lets the client schedule a proactive
     /// refresh instead of waiting for the first 401; the signup path omits it.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub expires_at: Option<i64>,
 }
 
@@ -162,12 +183,15 @@ pub struct VerificationErrorResponse {
     pub error_code: VerificationErrorCode,
     /// For `CODE_INVALID`: attempts remaining before lockout.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub attempts_remaining: Option<i32>,
     /// For `COOLDOWN_ACTIVE`: seconds until resend is allowed.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub cooldown_seconds: Option<i64>,
     /// For `SIGNUP_INCOMPLETE`: the email address to continue signup.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub email: Option<String>,
 }
 
@@ -221,17 +245,22 @@ pub struct UserResponse {
     /// Whether the user has a password set (false for OAuth-only users).
     pub has_password: bool,
     /// List of linked OAuth providers (e.g., `["google", "apple"]`).
+    #[schema(value_type = Vec<OAuthProviderName>)]
     pub oauth_providers: Vec<String>,
     /// Pending email address awaiting verification (for email change flow).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub pending_email: Option<String>,
     /// When the pending email change was requested.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub pending_email_requested_at: Option<DateTime<Utc>>,
     /// When the account is scheduled for deletion (during 14-day grace period).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
     pub deletion_scheduled_at: Option<DateTime<Utc>>,
     /// User's role ("user", "admin", or "`super_admin`").
+    #[schema(value_type = RoleName)]
     pub role: String,
     pub created_at: DateTime<Utc>,
 }

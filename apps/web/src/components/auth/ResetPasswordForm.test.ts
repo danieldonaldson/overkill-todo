@@ -69,6 +69,7 @@ describe('ResetPasswordForm', () => {
     vi.mocked(api.auth.verifyResetCode).mockResolvedValue({ reset_token: 'reset-token' })
     vi.mocked(api.auth.resetPassword).mockResolvedValue({
       expires_at: Math.floor(Date.now() / 1000) + 3600,
+      csrf_token: 'csrf-token',
       user: {
         id: '1',
         email: 'test@example.com',
@@ -77,6 +78,8 @@ describe('ResetPasswordForm', () => {
         email_verified: true,
         has_password: true,
         oauth_providers: [],
+        created_at: '2026-01-01T00:00:00Z',
+        role: 'user',
       },
     })
     const screen = await render(ResetPasswordForm, { props: { email: 'test@example.com' } })

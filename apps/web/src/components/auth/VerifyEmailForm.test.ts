@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-svelte'
 import { readSignupHandoff } from '../../lib/auth/signup-handoff'
 import VerifyEmailForm from './VerifyEmailForm.svelte'
+import type { User, VerifyEmailResponse } from '../../lib/types'
 
 vi.mock('../../lib/api', () => ({
   api: {
@@ -18,6 +19,18 @@ vi.mock('../../lib/navigation', () => ({
 }))
 
 import { api } from '../../lib/api'
+
+const newUser: User = {
+  id: '2',
+  email: 'new@example.com',
+  first_name: '',
+  last_name: '',
+  email_verified: true,
+  has_password: false,
+  oauth_providers: [],
+  created_at: '2026-01-01T00:00:00Z',
+  role: 'user',
+}
 import { navigate } from '../../lib/navigation'
 
 describe('VerifyEmailForm', () => {
@@ -54,6 +67,8 @@ describe('VerifyEmailForm', () => {
         email_verified: true,
         has_password: true,
         oauth_providers: [],
+        created_at: '2026-01-01T00:00:00Z',
+        role: 'user',
       },
     })
     const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
@@ -70,7 +85,7 @@ describe('VerifyEmailForm', () => {
   })
 
   it('blocks resend while a verification is in flight', async () => {
-    let finishVerify: (value: { signup_token: string }) => void = () => {}
+    let finishVerify: (value: VerifyEmailResponse) => void = () => {}
     vi.mocked(api.auth.verifyEmail).mockReturnValue(
       new Promise((resolve) => {
         finishVerify = resolve
@@ -83,13 +98,26 @@ describe('VerifyEmailForm', () => {
     await expect.element(screen.getByRole('button', { name: /verifying/i })).toBeDisabled()
     await expect.element(screen.getByRole('button', { name: /resend code/i })).toBeDisabled()
 
-    finishVerify({ signup_token: 'signup-token' })
+    finishVerify({ user: newUser, signup_token: 'signup-token' })
     await expect.element(screen.getByRole('button', { name: /resend code/i })).toBeEnabled()
     expect(api.auth.resendVerification).not.toHaveBeenCalled()
   })
 
   it('navigates new users with signup token to set-password', async () => {
-    vi.mocked(api.auth.verifyEmail).mockResolvedValue({ signup_token: 'signup-token' })
+    vi.mocked(api.auth.verifyEmail).mockResolvedValue({
+      user: {
+        id: '2',
+        email: 'new@example.com',
+        first_name: '',
+        last_name: '',
+        email_verified: true,
+        has_password: false,
+        oauth_providers: [],
+        created_at: '2026-01-01T00:00:00Z',
+        role: 'user',
+      },
+      signup_token: 'signup-token',
+    })
     const screen = await render(VerifyEmailForm, { props: { email: 'new@example.com' } })
 
     setCode(screen, '123456')
@@ -103,7 +131,11 @@ describe('VerifyEmailForm', () => {
   })
 
   it('resends verification with Turnstile token', async () => {
-    vi.mocked(api.auth.resendVerification).mockResolvedValue({ cooldown_seconds: 300 })
+    vi.mocked(api.auth.resendVerification).mockResolvedValue({
+      success: true,
+      message: 'If the email needs verifying, a code has been sent',
+      cooldown_seconds: 300,
+    })
     const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     await screen.getByRole('button', { name: /resend code/i }).click()
@@ -161,7 +193,11 @@ describe('VerifyEmailForm', () => {
   })
 
   it('starts the cooldown timer from a resend response', async () => {
-    vi.mocked(api.auth.resendVerification).mockResolvedValue({ cooldown_seconds: 300 })
+    vi.mocked(api.auth.resendVerification).mockResolvedValue({
+      success: true,
+      message: 'If the email needs verifying, a code has been sent',
+      cooldown_seconds: 300,
+    })
     const screen = await render(VerifyEmailForm, { props: { email: 'test@example.com' } })
 
     await screen.getByRole('button', { name: /resend code/i }).click()

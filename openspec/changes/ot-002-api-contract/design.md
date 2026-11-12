@@ -35,11 +35,13 @@ behaviour. This section covers only the current state that shapes the approach.
 ## Goals / Non-Goals
 
 **Goals:**
+
 - The spec cannot drift from the router: both come from the same declarations.
 - Exporting the spec needs no database, no environment and no adapters.
 - Frontend code keeps its current type names, so the switch is a small change.
 
 **Non-Goals:**
+
 - No change to any route's behaviour, status codes, payloads, middleware order
   or protection.
 - No generated HTTP client (see proposal Out of Scope).
@@ -60,6 +62,42 @@ first complete spec and counts `astro check` errors before any frontend fix. If
 there are more than about 40, or any field name is wrong, record that here and
 re-check the appetite.
 
+**What slice 1 showed** (recorded in task 1.6, before any fix):
+
+- **Router refactor:** confirmed. All 666 existing tests passed unchanged, plus a
+  new end-to-end demoted-admin test written before the refactor. The only snag
+  was a schema named only in `params(...)` (`OAuthMode`), which `routes!`
+  doesn't collect. The `every_schema_ref_resolves` test caught it.
+- **Drift:** 14 `astro check` errors. None was a wrong field name.
+  - 10 were test fixtures building a `User` without `created_at` and `role`,
+    which the backend always sends. The frontend was wrong: the hand-written
+    type had made both optional.
+  - 3 were test mocks returning partial `VerifyEmailResponse` /
+    `ResendVerificationResponse` bodies. `user`, `success` and `message` are
+    always sent. The frontend was wrong.
+  - 1 (`auth.ts`, `expires_at`) exposed a spec bug. utoipa marks every `Option`
+    nullable, even when `skip_serializing_if` means it's omitted rather than
+    sent as `null`. Fixed in the backend with `#[schema(nullable = false)]` on
+    the 13 such response fields (D5 addendum).
+- Well under the 40-error threshold, so the appetite holds.
+
+**Rebase onto main** (before 1.8): main had moved 30 commits on, so the router
+and handler changes since then were brought into the new structure.
+
+- `POST /verify-magic` (confirm a magic link) joined the GET redirect in one
+  `routes!`. Its 400 is `VerificationOrStandardError`, like verify-email.
+- The profile group gained `require_fresh_session` on main. It's now a
+  `.require_fresh_session()` guard, so its 401 is documented. The guard's text
+  now names all three causes: password reset, account purge, role change.
+- The OAuth callback kept main's always-redirect behaviour, with `ApiPath` /
+  `ApiQuery` on the outer handler.
+- 4 new `astro check` errors, all from test fixtures added on main. 3 built a
+  `User` without `created_at`/`role`, and 1 resolved `verifyEmail` without
+  `user`. The frontend was wrong in every case. The `DashboardNav` "cached
+  account without a role" case stays, as an explicit cast.
+- New code from main that the 1.3 lints caught: 2 telemetry test routers got
+  `expect(disallowed_methods)`, and 2 `allow`s got a `reason`.
+
 ## Decisions
 
 ### D1. Derive the spec from the router with `utoipa-axum` (infrastructure)
@@ -72,10 +110,10 @@ served becomes impossible by construction. `ApiDoc` keeps `info`, `tags` and the
 error schemas, and is passed in with `OpenApiRouter::with_openapi`.
 
 Annotation paths become relative to their group: `path = "/register"` under
-`/auth` under `/api/v1`. All 26 annotations change. `utoipa-axum` 0.3.0 requires
+`/auth` under `/api/v1`. All 25 annotations change. `utoipa-axum` 0.3.0 requires
 `utoipa ^6` and `axum ^0.8.4`, which matches our versions.
 
-*Alternatives:* (a) Keep the lists and add the reverse test. The third list
+_Alternatives:_ (a) Keep the lists and add the reverse test. The third list
 still drifts from the real router, and methods stay unchecked. (b) Write an
 integration test that sends a request to every documented `(method, path)` and
 expects something other than 404/405. That only catches one direction, and needs
@@ -102,7 +140,7 @@ state with `.with_state(value)` today. The fix:
   `from_fn_with_state`. It's provided at the outermost layer next to the existing
   `Extension(crypto)`. This follows the pattern already used for crypto.
 
-*Alternatives:* build the real router with lazy-pool dummy deps in the exporter.
+_Alternatives:_ build the real router with lazy-pool dummy deps in the exporter.
 That would tie the export to every adapter's constructor (`tests/common` needs
 about 250 lines to do this). Or keep per-group spec functions and duplicate the
 nest prefixes in a separate spec builder, which brings back drift on prefixes.
@@ -121,6 +159,7 @@ their comment where they have one). This turns CLAUDE.md's existing "no `allow`
 without a comment" rule into a check.
 
 Starting exemptions:
+
 - **Root `/health` and `/health/ready`.** These are the loopback container
   HEALTHCHECK, and duplicate `/api/v1/health*`. Describing both would produce
   duplicate operation IDs.
@@ -130,13 +169,14 @@ Starting exemptions:
 The OAuth callback's test-bypass query parameter is not a route, and stays
 undocumented (dev only).
 
-*Alternative:* a test that diffs the router against the spec. axum has no route
+_Alternative:_ a test that diffs the router against the spec. axum has no route
 introspection, so this would have to go back to a hand-kept list.
 
 ### D4. Error bodies: `ErrorResponse: ToSchema` plus a filling modifier (infrastructure)
 
 Derive `ToSchema` on `ErrorResponse`. Add an `ErrorResponses` `utoipa::Modify`
 in `openapi.rs` that, for every operation:
+
 1. adds a 500 response if the operation doesn't declare one, and
 2. gives every declared 4xx/5xx response that has no body the `ErrorResponse`
    body.
@@ -147,7 +187,7 @@ Routes that return the verification body keep declaring
 job of each annotation. While re-pathing in 1.2, each annotation's statuses are
 checked against its handler's return paths, including lockout and cooldown.
 
-*Alternative:* write `body = ErrorResponse` in every annotation. That's more
+_Alternative:_ write `body = ErrorResponse` in every annotation. That's more
 verbose, and easy to forget on the next route.
 
 ### D5. Field presence follows serde exactly (application DTOs)
@@ -158,6 +198,9 @@ verbose, and easy to forget on the next route.
 - **Response `Option` fields:** those with `skip_serializing_if` are already
   optional. Those without it are always sent, as `null` when empty, so they
   stay required and nullable. Both are accurate, and need no change.
+- _Addendum (slice 1):_ response `Option` fields with `skip_serializing_if` also
+  get `#[schema(nullable = false)]`. They are omitted, never sent as `null`, and
+  utoipa would otherwise describe them as nullable.
 - A unit test in `openapi.rs` pins the important cases: `LoginRequest.turnstile_token`
   is not required, `UserResponse.pending_email` is not required, and
   `UserResponse.id` is required and not nullable.
@@ -173,7 +216,7 @@ Serialization and validation stay exactly as they are, including
 each enum's values equal the domain enum's `to_db_str()` / `as_str()` values,
 so adding a domain variant without updating the schema fails `just test`.
 
-*Alternatives:* derive `ToSchema` on the domain enums. That puts an API-doc
+_Alternatives:_ derive `ToSchema` on the domain enums. That puts an API-doc
 framework in domain, against the layering rule. Or change the DTO field types to
 the enums. That changes the error for a bad role from a validation 400 to a
 deserialization error: a behaviour change.
@@ -182,7 +225,7 @@ deserialization error: a behaviour change.
 
 - **Exporter:** `backend/examples/export_openapi.rs` prints
   `overkill_todo::infrastructure::api::openapi().to_pretty_json()` and a trailing
-  newline to stdout. It's an *example*, not a `[[bin]]`, so the Dockerfile's
+  newline to stdout. It's an _example_, not a `[[bin]]`, so the Dockerfile's
   `cargo build --locked` doesn't compile or link it. The spec's maps are
   `BTreeMap`-backed, so output order is stable.
 - **Spec:** `backend/openapi.json`. The backend owns it, and the backend CI job
@@ -223,6 +266,36 @@ any mismatch that changes a decision above to this document.
 - **CLAUDE.md (Backend rules):** "Mount routes with `routes!` in `api_routes()`.
   After changing a DTO, handler annotation or route: `just api-types` and commit
   `backend/openapi.json` and `apps/web/src/lib/api/schema.d.ts`."
+
+### D10. Middleware statuses are documented by the guard that applies them (infrastructure)
+
+_Added during slice 1._ Statuses that come from middleware (401 from
+`auth_middleware` and `require_fresh_session`, 403 from `require_verified_email`
+and `csrf_middleware`) apply to whole groups. Writing them on each annotation would
+drift. A `Guarded` extension trait on `OpenApiRouter<AppState>` in `routes.rs`
+(`require_auth()`, `require_verified_email()`, `require_fresh_session()`,
+`require_csrf()`) applies the `route_layer` _and_ adds the status to every
+operation it covers, unless the handler's annotation already declares it. The
+CSRF guard reuses `csrf::is_excluded_path`, so it only claims 403 on the
+mutating, non-excluded operations. `finalize()` adds 400 to every operation with
+a body, query or path parameter.
+
+### D11. Malformed-input rejections use the standard error body (infrastructure)
+
+_Added during slice 1; user decision._ axum's `Json`, `Query` and `Path` reject
+with plain text (and 415/422 for some JSON failures). Five routes used them
+directly. New `ApiJson`, `ApiQuery` and `ApiPath` extractors
+(`extractors/rejection.rs`) map every rejection to `AppError::Validation` (400,
+`{code, message}`), as `ValidatedJson` already did. This is the change's one
+deliberate behaviour change, and it only affects malformed requests. It was
+chosen over documenting `text/plain` responses, because that would leave
+clients with two error formats.
+
+### D12. Not documented: the 408 timeout
+
+`TimeoutLayer` answers 408 with an empty body. It isn't documented: it can
+happen on any route, it carries no body for a client to read, and documenting it
+as an `ErrorResponse` would be false. Revisit if the timeout ever returns a body.
 
 ## Risks / Trade-offs
 

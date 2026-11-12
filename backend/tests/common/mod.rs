@@ -76,8 +76,10 @@ fn test_crypto() -> Arc<Crypto> {
 ///
 /// Idempotent (cached). Useful for repository-level integration tests that
 /// exercise the at-rest secret cipher without building the full HTTP app.
-// Not every test binary uses this; `common` is compiled per binary.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
 pub fn ensure_test_crypto() -> Arc<Crypto> {
     test_crypto()
 }
@@ -86,8 +88,10 @@ pub fn ensure_test_crypto() -> Arc<Crypto> {
 ///
 /// The native body-token path was removed, so tests read the session token and
 /// CSRF token from the cookies the server sets, exactly like a browser.
-// Not every test binary uses this; `common` is compiled per binary.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
 pub fn cookie_value(resp: &axum::http::Response<Body>, name: &str) -> Option<String> {
     resp.headers()
         .get_all(header::SET_COOKIE)
@@ -104,8 +108,10 @@ pub fn cookie_value(resp: &axum::http::Response<Body>, name: &str) -> Option<Str
 /// over the `verified` flag, role, and expiry. Used by security tests that need
 /// a token the normal signup flow won't produce (e.g. an unverified session, or
 /// an already-expired token).
-// Only the security integration binary uses this; `common` is compiled per binary.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
 pub fn mint_session_jwt(
     user_id: uuid::Uuid,
     email_verified: bool,
@@ -126,24 +132,30 @@ pub fn mint_session_jwt(
 /// Generate a user-bound CSRF token using the test crypto's CSRF secret, exactly
 /// as the server does at session-issue time. Used to forge a token bound to a
 /// *different* user id.
-// Only the security integration binary uses this; `common` is compiled per binary.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
 pub fn mint_csrf_token(user_id: &str) -> String {
     let crypto = test_crypto();
     overkill_todo::infrastructure::api::generate_csrf_token(crypto.csrf_secret(), user_id)
 }
 
 /// Build a fully wired test application from a sqlx-provided pool.
-// Not every test binary uses this; `common` is compiled per binary.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
 pub fn create_test_app(pool: PgPool) -> Router {
     create_test_app_full(pool, console_email(), HashMap::new(), no_op_turnstile())
 }
 
 /// Build the test app with the given OAuth provider clients registered, so the
 /// real (non-bypass) start → callback flow can run against a fake provider.
-// Only the OAuth integration binary uses this; `common` is compiled per binary.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; only the OAuth integration binary uses this"
+)]
 pub fn create_test_app_with_oauth(
     pool: PgPool,
     oauth_clients: HashMap<OAuthProvider, Arc<dyn OAuthProviderClient>>,
@@ -158,8 +170,10 @@ fn no_op_turnstile() -> Arc<dyn TurnstileService> {
 
 /// Build the test app with bot protection switched on, using the given
 /// Turnstile service in place of the default no-op (which reports disabled).
-// Only the Turnstile integration binary uses this; `common` is compiled per binary.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; only the Turnstile integration binary uses this"
+)]
 pub fn create_test_app_with_turnstile(
     pool: PgPool,
     turnstile_service: Arc<dyn TurnstileService>,
@@ -177,15 +191,20 @@ fn console_email() -> Arc<dyn EmailService> {
 /// Lets a test drive a mail outage and then its recovery in one run — the case
 /// that matters is a registration whose email fails, followed by a resend that
 /// works, which is only reachable if the failed send did not arm the cooldown.
-// Not every test binary uses this; `common` is compiled per binary.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
 pub struct FailFirstEmailService {
     sends: AtomicUsize,
     fail_count: usize,
     inner: ConsoleEmailService,
 }
 
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
 impl FailFirstEmailService {
     pub fn new(fail_count: usize) -> Self {
         Self {
@@ -242,8 +261,10 @@ impl EmailService for FailFirstEmailService {
 
 /// Like [`create_test_app`] but with an injectable email service, so tests can
 /// drive the paths where delivery fails.
-// Not every test binary uses this; `common` is compiled per binary.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
 pub fn create_test_app_with_email_service(
     pool: PgPool,
     email_service: Arc<dyn EmailService>,
@@ -251,7 +272,10 @@ pub fn create_test_app_with_email_service(
     create_test_app_full(pool, email_service, HashMap::new(), no_op_turnstile())
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "wires the whole app the way main.rs does, in the same order"
+)]
 fn create_test_app_full(
     pool: PgPool,
     email_service: Arc<dyn EmailService>,

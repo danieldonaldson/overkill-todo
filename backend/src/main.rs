@@ -82,7 +82,10 @@ fn run_healthcheck() -> std::process::ExitCode {
 }
 
 #[tokio::main]
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::too_many_lines,
+    reason = "startup wiring reads top to bottom; splitting it hides the order"
+)]
 async fn main() -> anyhow::Result<std::process::ExitCode> {
     if std::env::args().nth(1).as_deref() == Some("healthcheck") {
         return Ok(run_healthcheck());

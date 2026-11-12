@@ -15,6 +15,7 @@ pub mod middleware;
 pub mod oauth_state;
 pub mod openapi;
 pub mod routes;
+pub mod state;
 
 pub use csrf::{generate_csrf_token, verify_csrf_token};
 pub use error::AppError;

@@ -127,7 +127,10 @@ impl EmailVerificationCode {
     /// as expired), so it is dropped; saving such a code leaves the stored
     /// columns untouched, as the upsert keeps existing magic-token values.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "rehydrates one persisted row; each argument is a column"
+    )]
     pub fn from_persistence(
         id: VerificationCodeId,
         user_id: UserId,
