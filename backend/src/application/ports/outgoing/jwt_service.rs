@@ -1,6 +1,6 @@
 //! JWT service port for token creation and validation.
 #![cfg_attr(
-    any(test, feature = "mocks"),
+    test,
     allow(
         clippy::struct_field_names,
         reason = "`automock` generates one field per method on `MockJwtService`, and every \
@@ -27,7 +27,7 @@ pub struct SignupTokenClaims {
 /// Trait for JWT operations.
 ///
 /// Handles creation and validation of JWTs for auth flows.
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 pub trait JwtService: Send + Sync {
     /// Creates a signup token for completing registration.
     ///

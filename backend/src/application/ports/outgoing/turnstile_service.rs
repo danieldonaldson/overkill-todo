@@ -4,7 +4,7 @@ use crate::domain::errors::DomainError;
 use async_trait::async_trait;
 
 /// Trait for CAPTCHA verification using Cloudflare Turnstile.
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait TurnstileService: Send + Sync {
     /// Verifies a Turnstile token received from the frontend.

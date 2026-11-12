@@ -12,7 +12,7 @@ use crate::domain::errors::DomainError;
 /// operation; implementations are expected to offload the work to a blocking
 /// thread (`tokio::task::spawn_blocking`) so a hash/verify can't stall an async
 /// worker for the full configured cost.
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait PasswordHasher: Send + Sync {
     /// Hashes a password or verification code.

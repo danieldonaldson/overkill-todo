@@ -17,7 +17,7 @@ use chrono::{DateTime, Utc};
 /// - 6-digit codes are hashed with Argon2 because they are guessable
 /// - Only one code per user (UNIQUE constraint on `user_id`)
 /// - Requesting a new code replaces the old one (upsert semantics)
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait EmailVerificationRepository: Send + Sync {
     /// Persists or updates an email verification code.

@@ -26,7 +26,7 @@ use crate::domain::value_objects::UserId;
 use async_trait::async_trait;
 
 /// Cross-aggregate account-deletion / anonymization operations.
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait AccountLifecycleRepository: Send + Sync {
     /// Finds all users whose deletion grace period has expired.

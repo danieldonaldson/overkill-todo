@@ -6,7 +6,7 @@ use crate::domain::value_objects::UserId;
 use async_trait::async_trait;
 
 /// Repository for OAuth account persistence operations.
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait OAuthAccountRepository: Send + Sync {
     /// Find OAuth account by provider and provider's user ID.

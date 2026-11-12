@@ -18,7 +18,7 @@ pub struct SessionAuthorizationState {
 /// # Implementors
 ///
 /// - [`crate::infrastructure::persistence::postgres::PostgresUserRepository`]
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait UserRepository: Send + Sync {
     /// Persists a new user to the database.

@@ -95,7 +95,6 @@ harness = false
 default = ["swagger-ui"]
 # Serves /docs in DEV_MODE. Off in the release image (backend/Dockerfile).
 swagger-ui = ["dep:utoipa-swagger-ui"]
-mocks = []
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }

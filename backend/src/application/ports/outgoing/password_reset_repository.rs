@@ -17,7 +17,7 @@ use async_trait::async_trait;
 /// - Only one code per user (UNIQUE constraint on `user_id`)
 /// - Requesting a new code replaces the old one (upsert semantics)
 /// - Codes expire after 15 minutes (shorter than verification for security)
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait PasswordResetRepository: Send + Sync {
     /// Persists or updates a password reset code.

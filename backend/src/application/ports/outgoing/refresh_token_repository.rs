@@ -9,7 +9,7 @@ use async_trait::async_trait;
 ///
 /// This trait defines the contract for storing and managing refresh tokens.
 /// Tokens are stored with their hash (never plaintext) for security.
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait RefreshTokenRepository: Send + Sync {
     /// Persists a new refresh token to the database.

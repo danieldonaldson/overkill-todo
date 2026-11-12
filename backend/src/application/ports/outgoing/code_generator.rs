@@ -4,7 +4,7 @@
 ///
 /// Implementations can generate random codes (production) or
 /// fixed codes for specific test emails (E2E testing).
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 pub trait CodeGenerator: Send + Sync {
     /// Generates a 6-digit verification code.
     ///

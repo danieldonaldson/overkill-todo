@@ -3,7 +3,7 @@
 /// Trait for generating and hashing secure tokens.
 ///
 /// Used for refresh tokens, magic link tokens, etc.
-#[cfg_attr(any(test, feature = "mocks"), mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 pub trait TokenService: Send + Sync {
     /// Generates a cryptographically secure random token.
     ///
