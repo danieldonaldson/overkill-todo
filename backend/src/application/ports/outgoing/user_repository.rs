@@ -38,6 +38,9 @@ pub trait UserRepository: Send + Sync {
     /// Retrieves all users with pagination.
     async fn find_all(&self, limit: i64, offset: i64) -> Result<Vec<User>, DomainError>;
 
+    /// Counts the users [`Self::find_all`] pages through (not deleted).
+    async fn count_all(&self) -> Result<i64, DomainError>;
+
     /// Atomically persists a role change and invalidates all existing session
     /// tokens. When `removing_super_admin` is true, the implementation must
     /// serialize the last-super-admin check with other role changes and reject

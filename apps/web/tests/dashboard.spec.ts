@@ -81,7 +81,7 @@ test.describe('dashboard static shells', () => {
         })
       })
       await page.route('**/api/v1/admin/users*', async (route) => {
-        await route.fulfill({ json: { users: [], limit: 50, offset: 0 } })
+        await route.fulfill({ json: { users: [], total: 0, limit: 50, offset: 0 } })
       })
 
       await page.goto(path)

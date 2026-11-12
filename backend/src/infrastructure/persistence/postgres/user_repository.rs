@@ -178,6 +178,14 @@ impl UserRepository for PostgresUserRepository {
         rows.into_iter().map(Self::row_to_user).collect()
     }
 
+    #[tracing::instrument(name = "repo.user.count_all", skip_all, fields(db.system = "postgresql"))]
+    async fn count_all(&self) -> Result<i64, DomainError> {
+        sqlx::query_scalar!(r#"SELECT COUNT(*) as "count!" FROM users WHERE deleted_at IS NULL"#)
+            .fetch_one(self.db.pool())
+            .await
+            .map_err(persist_err)
+    }
+
     #[tracing::instrument(name = "repo.user.save_role_change", skip_all, fields(db.system = "postgresql", user_id = %user.id(), removing_super_admin))]
     async fn save_role_change(
         &self,

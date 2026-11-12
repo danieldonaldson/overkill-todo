@@ -1695,6 +1695,7 @@
         "description": "A page of users for the admin listing.",
         "required": [
           "users",
+          "total",
           "limit",
           "offset"
         ],
@@ -1706,6 +1707,11 @@
           "offset": {
             "type": "integer",
             "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Users across all pages (not deleted)."
           },
           "users": {
             "type": "array",

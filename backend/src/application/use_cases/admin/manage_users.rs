@@ -7,6 +7,13 @@ use crate::domain::entities::User;
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{UserId, UserRole};
 
+/// One page of users plus the total across all pages.
+#[derive(Debug)]
+pub struct UserPage {
+    pub users: Vec<User>,
+    pub total: i64,
+}
+
 /// Lists users (paginated) for the admin user-management table.
 pub struct ListUsersUseCase {
     users: Arc<dyn UserRepository>,
@@ -21,8 +28,11 @@ impl ListUsersUseCase {
     /// # Errors
     /// Propagates persistence failures.
     #[tracing::instrument(name = "usecase.admin.list_users", skip_all, fields(limit = limit, offset = offset))]
-    pub async fn execute(&self, limit: i64, offset: i64) -> Result<Vec<User>, DomainError> {
-        self.users.find_all(limit, offset).await
+    pub async fn execute(&self, limit: i64, offset: i64) -> Result<UserPage, DomainError> {
+        // Independent reads: fetch the page and the total concurrently.
+        let (users, total) =
+            tokio::try_join!(self.users.find_all(limit, offset), self.users.count_all(),)?;
+        Ok(UserPage { users, total })
     }
 }
 
@@ -108,6 +118,22 @@ mod tests {
     use super::*;
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
     use crate::domain::entities::UserBuilder;
+
+    #[tokio::test]
+    async fn list_users_returns_page_and_total() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_all()
+            .withf(|limit, offset| *limit == 50 && *offset == 100)
+            .returning(|_, _| Ok(Vec::new()));
+        users.expect_count_all().returning(|| Ok(500));
+        let page = ListUsersUseCase::new(Arc::new(users))
+            .execute(50, 100)
+            .await
+            .unwrap();
+        assert!(page.users.is_empty());
+        assert_eq!(page.total, 500);
+    }
 
     #[tokio::test]
     async fn set_user_role_rejects_invalid_role() {

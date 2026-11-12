@@ -593,6 +593,11 @@ export interface components {
             limit: number;
             /** Format: int64 */
             offset: number;
+            /**
+             * Format: int64
+             * @description Users across all pages (not deleted).
+             */
+            total: number;
             users: components["schemas"]["AdminUserResponse"][];
         };
         /** @description A user row in the admin user-management table. */

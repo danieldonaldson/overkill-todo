@@ -568,6 +568,7 @@ test.describe('admin-only pages', () => {
               created_at: '2026-01-01T00:00:00Z',
             },
           ],
+          total: 1,
           limit: 50,
           offset: 0,
         },

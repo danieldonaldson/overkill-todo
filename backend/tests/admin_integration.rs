@@ -152,6 +152,23 @@ async fn list_users_ok_for_admin(pool: PgPool) {
 }
 
 #[sqlx::test(migrations = "./migrations")]
+async fn list_users_pages_with_total(pool: PgPool) {
+    for i in 0..5 {
+        insert_user(&pool, &format!("paged{i}@example.com")).await;
+    }
+    let app = common::create_test_app(pool.clone());
+    let (_, req) = admin_get(&pool, "admin", "/api/v1/admin/users?limit=2&offset=4").await;
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = json_body(resp).await;
+    // 5 inserted users plus the requesting admin.
+    assert_eq!(body["total"], 6);
+    assert_eq!(body["limit"], 2);
+    assert_eq!(body["offset"], 4);
+    assert_eq!(body["users"].as_array().unwrap().len(), 2);
+}
+
+#[sqlx::test(migrations = "./migrations")]
 async fn demoted_admin_token_is_rejected(pool: PgPool) {
     // Persisted role is `user`, but the still-unexpired token claims `admin`:
     // the fresh-session check on admin routes must reject it, not let the old

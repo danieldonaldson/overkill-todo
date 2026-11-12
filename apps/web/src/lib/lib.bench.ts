@@ -73,7 +73,7 @@ test('cn', async ({ bench }) => {
 
 test('HttpClient.request', async ({ bench }) => {
   // Bench files run isolated, so these stubs don't leak into other files.
-  const body = JSON.stringify({ users: [], limit: 50, offset: 0 })
+  const body = JSON.stringify({ users: [], total: 0, limit: 50, offset: 0 })
   const client = new HttpClient()
   // A live session, so the client goes straight to fetch without refreshing.
   setTokenExpiry(Math.floor(Date.now() / 1000) + 3600)

@@ -44,6 +44,8 @@ impl From<&User> for AdminUserResponse {
 #[derive(Debug, Serialize, ToSchema)]
 pub struct AdminUserListResponse {
     pub users: Vec<AdminUserResponse>,
+    /// Users across all pages (not deleted).
+    pub total: i64,
     pub limit: i64,
     pub offset: i64,
 }

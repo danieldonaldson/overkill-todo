@@ -18,7 +18,7 @@ import { api } from '../../lib/api'
 import { ApiErrorException } from '../../lib/api/errors'
 import { resetSession, session } from '../../lib/auth/session.svelte'
 import { navigateReplace } from '../../lib/navigation'
-import type { AdminUserRow, User, UserRole } from '../../lib/types'
+import type { AdminUserList, AdminUserRow, User, UserRole } from '../../lib/types'
 
 function viewer(role: UserRole): User {
   return {
@@ -73,12 +73,17 @@ function deferred<T>() {
 describe('AdminPanel', () => {
   beforeEach(() => {
     resetSession()
-    vi.mocked(api.admin.listUsers).mockResolvedValue({ users: [alice, bob], limit: 50, offset: 0 })
+    vi.mocked(api.admin.listUsers).mockResolvedValue({
+      users: [alice, bob],
+      total: 2,
+      limit: 50,
+      offset: 0,
+    })
   })
 
   it('loads the list at once, behind a skeleton, without waiting for the role', async () => {
     // No cached user and no check yet: the server decides (D5).
-    const list = deferred<{ users: AdminUserRow[]; limit: number; offset: number }>()
+    const list = deferred<AdminUserList>()
     vi.mocked(api.admin.listUsers).mockReturnValue(list.promise)
 
     const screen = await render(AdminPanel)
@@ -87,7 +92,7 @@ describe('AdminPanel', () => {
     expect(api.admin.listUsers).toHaveBeenCalledTimes(1)
     expect(screen.container.textContent).not.toMatch(/loading/i)
 
-    list.resolve({ users: [alice], limit: 50, offset: 0 })
+    list.resolve({ users: [alice], total: 1, limit: 50, offset: 0 })
 
     await expect.element(screen.getByText('alice@example.com')).toBeInTheDocument()
     await expect.element(screen.getByTestId('admin-skeleton')).not.toBeInTheDocument()
@@ -108,7 +113,7 @@ describe('AdminPanel', () => {
   })
 
   it('sends a confirmed non-admin Home before the list answers, and never shows it', async () => {
-    const list = deferred<{ users: AdminUserRow[]; limit: number; offset: number }>()
+    const list = deferred<AdminUserList>()
     vi.mocked(api.admin.listUsers).mockReturnValue(list.promise)
     vi.mocked(api.auth.me).mockResolvedValue(viewer('user'))
 
@@ -119,7 +124,7 @@ describe('AdminPanel', () => {
     expect(navigateReplace).toHaveBeenCalledTimes(1)
 
     // Even if the list then arrives, it is not rendered.
-    list.resolve({ users: [alice], limit: 50, offset: 0 })
+    list.resolve({ users: [alice], total: 1, limit: 50, offset: 0 })
     await list.promise
     await new Promise((resolve) => setTimeout(resolve, 50))
     expect(screen.container.textContent).not.toContain('alice@example.com')
@@ -161,11 +166,73 @@ describe('AdminPanel', () => {
 
   it('shows an empty state when there are no users', async () => {
     setCurrentUser(viewer('admin'))
-    vi.mocked(api.admin.listUsers).mockResolvedValue({ users: [], limit: 50, offset: 0 })
+    vi.mocked(api.admin.listUsers).mockResolvedValue({ users: [], total: 0, limit: 50, offset: 0 })
 
     const screen = await render(AdminPanel)
 
     await expect.element(screen.getByText('No users.')).toBeInTheDocument()
+  })
+
+  it('requests the first page and hides pagination when everything fits', async () => {
+    setCurrentUser(viewer('admin'))
+
+    const screen = await render(AdminPanel)
+
+    await expect.element(screen.getByText('Showing 1–2 of 2')).toBeInTheDocument()
+    expect(api.admin.listUsers).toHaveBeenCalledWith({ limit: 50, offset: 0 })
+    expect(screen.container.querySelector('[data-slot="pagination"]')).toBeNull()
+  })
+
+  it('pages through users with the pagination controls', async () => {
+    setCurrentUser(viewer('admin'))
+    vi.mocked(api.admin.listUsers).mockImplementation(async (params) =>
+      params?.offset === 50
+        ? { users: [bob], total: 120, limit: 50, offset: 50 }
+        : { users: [alice], total: 120, limit: 50, offset: params?.offset ?? 0 }
+    )
+
+    const screen = await render(AdminPanel)
+    await expect.element(screen.getByText('Showing 1–50 of 120')).toBeInTheDocument()
+    await expect.element(screen.getByRole('button', { name: 'Page 3' })).toBeInTheDocument()
+
+    await screen.getByRole('button', { name: 'Go to next page' }).click()
+
+    await expect.element(screen.getByText('bob@example.com')).toBeInTheDocument()
+    await expect.element(screen.getByText('Showing 51–100 of 120')).toBeInTheDocument()
+    expect(api.admin.listUsers).toHaveBeenLastCalledWith({ limit: 50, offset: 50 })
+    await expect
+      .element(screen.getByRole('button', { name: 'Page 2' }))
+      .toHaveAttribute('aria-current', 'page')
+
+    await screen.getByRole('button', { name: 'Page 3' }).click()
+    await expect.element(screen.getByText('Showing 101–120 of 120')).toBeInTheDocument()
+    expect(api.admin.listUsers).toHaveBeenLastCalledWith({ limit: 50, offset: 100 })
+  })
+
+  it('ignores a slower response for a page the admin already left', async () => {
+    setCurrentUser(viewer('admin'))
+    const slowPage2 = deferred<AdminUserList>()
+    vi.mocked(api.admin.listUsers).mockImplementation((params) => {
+      if (params?.offset === 50) return slowPage2.promise
+      return Promise.resolve({
+        users: [alice],
+        total: 120,
+        limit: 50,
+        offset: params?.offset ?? 0,
+      })
+    })
+
+    const screen = await render(AdminPanel)
+    await expect.element(screen.getByText('alice@example.com')).toBeInTheDocument()
+
+    await screen.getByRole('button', { name: 'Page 2' }).click()
+    await screen.getByRole('button', { name: 'Page 3' }).click()
+    await expect.element(screen.getByText('Showing 101–120 of 120')).toBeInTheDocument()
+
+    slowPage2.resolve({ users: [bob], total: 120, limit: 50, offset: 50 })
+    await slowPage2.promise
+    await expect.element(screen.getByText('Showing 101–120 of 120')).toBeInTheDocument()
+    await expect.element(screen.getByText('bob@example.com')).not.toBeInTheDocument()
   })
 
   it('lets super-admins change a role', async () => {

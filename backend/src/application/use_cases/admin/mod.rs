@@ -2,4 +2,4 @@
 
 pub mod manage_users;
 
-pub use manage_users::{ListUsersUseCase, SetUserRoleUseCase};
+pub use manage_users::{ListUsersUseCase, SetUserRoleUseCase, UserPage};

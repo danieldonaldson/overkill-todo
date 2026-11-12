@@ -50,9 +50,10 @@ pub async fn list_users(
 ) -> Result<Json<AdminUserListResponse>, AppError> {
     let (limit, offset) = query.paginated();
 
-    let users = deps.list_users_use_case.execute(limit, offset).await?;
+    let page = deps.list_users_use_case.execute(limit, offset).await?;
     Ok(Json(AdminUserListResponse {
-        users: users.iter().map(AdminUserResponse::from).collect(),
+        users: page.users.iter().map(AdminUserResponse::from).collect(),
+        total: page.total,
         limit,
         offset,
     }))

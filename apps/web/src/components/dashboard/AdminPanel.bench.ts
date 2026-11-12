@@ -47,7 +47,7 @@ function viewer(role: UserRole): User {
 }
 
 // Configured at module scope: Vitest bench mode skips beforeAll hooks.
-vi.mocked(api.admin.listUsers).mockResolvedValue({ users, limit: PAGE, offset: 0 })
+vi.mocked(api.admin.listUsers).mockResolvedValue({ users, total: users.length, limit: PAGE, offset: 0 })
 
 async function renderTable(role: UserRole) {
   sessionStorage.clear()

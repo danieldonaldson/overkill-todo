@@ -10,6 +10,7 @@
     CardHeader,
     CardTitle,
   } from '$lib/components/ui/card'
+  import * as Pagination from '$lib/components/ui/pagination'
   import { api } from '../../lib/api'
   import { isApiStatus } from '../../lib/api/errors'
   import { session } from '../../lib/auth/session.svelte'
@@ -19,6 +20,7 @@
   import type { AdminUserRow, UserRole } from '../../lib/types'
 
   const ROLES: UserRole[] = ['user', 'admin', 'super_admin']
+  const PAGE_SIZE = 50
 
   let loading = $state(true)
   let message = $state<string | null>(null)
@@ -27,6 +29,16 @@
   // Users section
   let users = $state<AdminUserRow[]>([])
   let busyUserId = $state<string | null>(null)
+
+  // Pagination (1-based page; the API takes an offset).
+  let page = $state(1)
+  let total = $state(0)
+  let pageLoading = $state(false)
+  // Only the latest request may apply its result, so fast clicking through
+  // pages can't leave an older, slower response on screen.
+  let latestRequest = 0
+  const firstShown = $derived(total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1)
+  const lastShown = $derived(Math.min(page * PAGE_SIZE, total))
 
   // Role selects need a known super-admin; until then the table is read-only.
   const isSuperAdmin = $derived(session.user?.role === 'super_admin')
@@ -47,22 +59,36 @@
     if (confirmedNonAdmin) leave()
   })
 
-  // Load at once without checking the role first (D5): the server decides,
-  // and a 403 sends a non-admin Home before any list could be shown.
-  onMount(async () => {
+  async function loadPage(target: number) {
+    const request = ++latestRequest
+    pageLoading = true
+    error = null
     try {
-      const list = await api.admin.listUsers()
+      const list = await api.admin.listUsers({
+        limit: PAGE_SIZE,
+        offset: (target - 1) * PAGE_SIZE,
+      })
+      if (request !== latestRequest) return
       users = list.users
+      total = list.total
     } catch (loadError: unknown) {
+      if (request !== latestRequest) return
       if (isApiStatus(loadError, 403)) {
         leave()
         return
       }
       error = loadError instanceof Error ? loadError.message : 'Failed to load admin data'
     } finally {
-      loading = false
+      if (request === latestRequest) {
+        loading = false
+        pageLoading = false
+      }
     }
-  })
+  }
+
+  // Load at once without checking the role first (D5): the server decides,
+  // and a 403 sends a non-admin Home before any list could be shown.
+  onMount(() => loadPage(1))
 
   async function handleRoleChange(user: AdminUserRow, event: Event) {
     const select = event.target as HTMLSelectElement
@@ -133,7 +159,12 @@
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <div class="overflow-x-auto">
+        <div
+          class="overflow-x-auto transition-opacity"
+          class:opacity-60={pageLoading}
+          aria-busy={pageLoading}
+          data-testid="admin-users-table"
+        >
           <table class="w-full text-left text-sm">
             <thead class="text-muted-foreground">
               <tr class="border-b border-border">
@@ -173,6 +204,42 @@
             <p class="py-4 text-sm text-muted-foreground">No users.</p>
           {/if}
         </div>
+        {#if total > 0}
+          <div class="mt-4 flex flex-col items-center gap-3 sm:flex-row sm:justify-between">
+            <p class="text-sm text-muted-foreground" data-testid="admin-users-range">
+              Showing {firstShown}–{lastShown} of {total}
+            </p>
+            {#if total > PAGE_SIZE}
+              <Pagination.Root
+                count={total}
+                perPage={PAGE_SIZE}
+                bind:page
+                onPageChange={loadPage}
+                class="mx-0 w-auto"
+              >
+                {#snippet children({ pages, currentPage })}
+                  <Pagination.Content>
+                    <Pagination.Item>
+                      <Pagination.PrevButton />
+                    </Pagination.Item>
+                    {#each pages as item (item.key)}
+                      <Pagination.Item>
+                        {#if item.type === 'ellipsis'}
+                          <Pagination.Ellipsis />
+                        {:else}
+                          <Pagination.Link page={item} isActive={currentPage === item.value} />
+                        {/if}
+                      </Pagination.Item>
+                    {/each}
+                    <Pagination.Item>
+                      <Pagination.NextButton />
+                    </Pagination.Item>
+                  </Pagination.Content>
+                {/snippet}
+              </Pagination.Root>
+            {/if}
+          </div>
+        {/if}
       </CardContent>
     </Card>
   {/if}
