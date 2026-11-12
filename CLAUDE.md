@@ -35,6 +35,8 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
 - Background jobs that must run once go under the leader lock in `main.rs`.
 - Errors: domain errors map to `AppError` in `infrastructure/api`; never leak
   internal error text to clients outside `DEV_MODE`.
+- Telemetry: never record secrets, tokens, codes or emails in spans or logs;
+  `#[tracing::instrument]` always uses `skip_all` with explicit fields.
 
 ## Frontend rules
 

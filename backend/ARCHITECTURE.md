@@ -156,6 +156,38 @@ is no global singleton.
 Never read crypto env vars directly in library code — always go through an injected
 `Crypto`.
 
+## Telemetry
+
+`infrastructure/telemetry/` holds everything OpenTelemetry-specific. The
+application and domain layers only use `tracing` macros.
+
+- **Adapters.** `telemetry::init` picks real or no-op: with
+  `OTEL_EXPORTER_OTLP_ENDPOINT` set, spans and metrics go to the collector over
+  OTLP/HTTP. Without it (only allowed with `DEV_MODE=true`), a tracer provider
+  with no exporter still assigns real trace IDs, so `X-Trace-Id` and log
+  correlation behave the same, and metric instruments are no-ops. Logs go to
+  stdout (`LOG_FORMAT`: JSON in production) with `trace_id`, and the collector
+  ships them.
+- **Instrumentation.** Every `#[tracing::instrument]` uses `skip_all` and lists
+  the fields it records. `skip(self)` alone records every other argument via
+  `Debug`, which is how emails and passwords leaked before. Span names are
+  `handler.*`, `usecase.*`, `service.*` and `repo.<table>.<op>` (repositories add
+  `fields(db.system = "postgresql")`; sqlx statement events attach to that
+  span with the SQL text but never bound parameters). Health endpoints are not
+  traced.
+- **Redaction.** Never record secrets, tokens, codes or email addresses in a
+  span field or log line; log `user_id`, or `email_domain` where the domain
+  matters. As a backstop, `redact.rs` scrubs any field whose name looks
+  sensitive (`password`, `token`, `code`, `session`, `cookie`, …) and the
+  sensitive query parameters in URLs, at both exits: `RedactingSpanProcessor`
+  before export and the log formatters on stdout. The collector applies the
+  same field-name rule again. Add new sensitive names there, with a test.
+- **Metrics.** Instruments in `metrics.rs` are built from an explicit `Meter`
+  passed in, so tests can point them at an in-memory exporter. Production code
+  takes it from `global_meter()`, which `init` wires up before anything else
+  runs. Keep label values bounded (routes use the matched template, unknown
+  paths are `"unmatched"`).
+
 ## Auth flow overview
 
 - **Registration:** email + password → Argon2id hash → unverified user → email code.

@@ -61,6 +61,7 @@ In dev, verification codes print in the backend log.
 | `just api-types`                      | regenerate `backend/openapi.json` + web types   |
 | `just api-types-check`                | fail if either generated API file is stale      |
 | `just load <scenario>`                | k6 load scenario against the capped stack       |
+| `just obs-up` / `just obs-down`       | traces, logs, metrics, alerts and Grafana       |
 
 ### Benchmarks
 
@@ -147,6 +148,36 @@ just load-down
 
 Add a flow in `loadtest/flows/` and a scenario in `loadtest/scenarios/` (one file
 each; the file name is the scenario name), and give every new route a budget.
+
+### Observability
+
+The backend exports traces and metrics over OpenTelemetry, and the collector
+picks up every container's logs. They land in Tempo, VictoriaLogs and
+VictoriaMetrics, with vmalert and Alertmanager for alerts and Grafana in front
+(OT-001; config under `deploy/observability/`). It's an opt-in compose profile:
+
+```bash
+just up && just obs-up   # prod-like stack; its backend already exports to the collector
+just obs-down
+```
+
+- **Grafana** is on http://localhost:3000 (`admin` / `admin` locally, or set
+  `GRAFANA_ADMIN_PASSWORD`). The Service overview and Jobs dashboards are
+  provisioned. Every API response carries `X-Trace-Id`; paste it into Explore →
+  Tempo to open the trace, and follow the links between a trace and its logs.
+- **Alertmanager** is on http://localhost:9093. Locally it has no receiver, so
+  alerts show there and never send email.
+- **With `just dev`** (backend on the host), set
+  `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` in `backend/.env`, and
+  start the stack with
+  `BACKEND_READY_URL=http://host.docker.internal:4322/health/ready just obs-up`
+  so the collector's readiness probe (the backend-down alert) reaches it.
+- **Without the stack**, leave `OTEL_EXPORTER_OTLP_ENDPOINT` empty: nothing is
+  exported, but trace IDs and log correlation still work. With `DEV_MODE=false`
+  the backend refuses to start without it.
+- **Ports** are bound to 127.0.0.1 only (`GRAFANA_PORT`, `ALERTMANAGER_PORT`).
+  `just obs-check` (part of `just ci`) validates the collector config,
+  Alertmanager configs and alert-rule tests.
 
 ## Parallel work (worktrees)
 
