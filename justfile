@@ -121,6 +121,19 @@ obs-up:
 obs-down:
     docker compose --profile observability down
 
+# Delete all stored traces, logs and metrics (Grafana and Alertmanager state is
+# kept). Restarts the stores if the stack was running. Local only.
+obs-wipe:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # The collector mounts the store volumes read-only (disk usage), so it goes too.
+    services=(otel-collector tempo victorialogs victoriametrics)
+    running=$(docker compose --profile observability ps -q "${services[@]}")
+    docker compose --profile observability rm -sf "${services[@]}"
+    for v in tempo-data vlogs-data vmetrics-data; do docker volume rm -f "{{project}}_$v"; done
+    if [[ -n $running ]]; then docker compose --profile observability up -d --wait "${services[@]}"; fi
+    echo "telemetry wiped"
+
 # Check the observability config with the pinned images (part of `just ci`):
 # collector config, alert rule unit tests, and both Alertmanager configs.
 obs-check:

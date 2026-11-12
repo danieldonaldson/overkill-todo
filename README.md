@@ -159,6 +159,7 @@ VictoriaMetrics, with vmalert and Alertmanager for alerts and Grafana in front
 ```bash
 just up && just obs-up   # prod-like stack; its backend already exports to the collector
 just obs-down
+just obs-wipe            # delete stored traces, logs and metrics (keeps Grafana)
 ```
 
 - **Grafana** is on http://localhost:3000 (`admin` / `admin` locally, or set
