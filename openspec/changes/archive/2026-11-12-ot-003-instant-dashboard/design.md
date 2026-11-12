@@ -52,6 +52,14 @@ entry for a Member at any point, and the happy path never renders "Loading...".
 Being wrong is cheap (frontend-only, revert by digest), so CI is the right place
 to test.
 
+**Result (2026-11-12):** it holds. Every wrong-guess test and the happy path
+pass in `just ci` (`dashboard.spec.ts`, `dashboard-optimistic.spec.ts`), and a
+manual check in `just dev` on desktop and phone width, including Slow 3G,
+showed no spinner, no header flicker, correct placeholders and a correctly
+late Admin entry. No decisions changed. There is no production deployment yet,
+so the planned day-in-production check didn't happen. Repeat the 1.13 on-site
+checks after the first deploy.
+
 ## Decisions
 
 ### D1. Flat layout: a persisted header island, panels directly in `<main>`
