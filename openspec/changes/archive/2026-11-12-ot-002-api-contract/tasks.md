@@ -36,10 +36,11 @@ This slice delivers every scenario in `specs/api/spec.md`:
 - [x] 1.8 Add the `api-spec-check`, `api-ts-check` and `api-types-check` recipes. Add `api-types-check` to `just ci`. Add the "API spec current" step to the CI backend job and "API types current" to the web job, and add `backend/openapi.json` to the web job's path filter (D9). Verify: editing a DTO field without regenerating makes `just api-types-check` fail and print `just api-types`. A spec-only change triggers the web job (check `dorny/paths-filter` output on the PR).
 - [x] 1.9 Add the non-blocking pre-commit warning (D9). Verify: staging a DTO change without `backend/openapi.json` prints the warning and still commits. Staging both prints nothing.
 - [x] 1.10 Check that the description stays dev-only. Verify: a `just test-integration` test with dev mode off gets 404 for `/docs` and `/api-doc/openapi.json`. The release-features Clippy step still builds without `swagger-ui`.
-- [ ] 1.11 `just ci` green. Merge to `main`, and deploy (image digest change in the deploy config). Run `just smoke <url>` against production: the API behaves exactly as before, and `/docs` returns 404.
+- [x] 1.11 `just ci` green. Merge to `main`, and deploy (image digest change in the deploy config). Run `just smoke <url>` against production: the API behaves exactly as before, and `/docs` returns 404.
+  - _Done without a deploy: there is no production instance yet._ `just ci` green, merged to `main`, and CI green on the push, where the web job ran for the spec-only change (1.8). Production was stood in for by the local `full` stack (release images, `--no-default-features`, same edge routing): `just smoke http://localhost:8080` passed 22 of 26. The 4 failures were HTTPS (2) and Turnstile (2), neither of which the local stack has. The backend answered 404 for `/docs` and `/api-doc/openapi.json`. The production check is now part of the first deploy in `deploy/compose/README.md`.
 
 ## 2. Feature done
 
-- [ ] 2.1 No flag to remove: the change has no runtime switch. Confirm that `backend/openapi.json` and `schema.d.ts` on `main` match a fresh `just api-types`.
+- [x] 2.1 No flag to remove: the change has no runtime switch. Confirm that `backend/openapi.json` and `schema.d.ts` on `main` match a fresh `just api-types`.
 - [x] 2.2 Update docs. CLAUDE.md Backend rules: mount with `routes!`, run `just api-types` after DTO, annotation or route changes, and `allow`/`expect` need `reason`. Also update `backend/ARCHITECTURE.md` (routing and spec section), and the README recipe table (`just api-types`, `just api-types-check`). Verify: `rg MOUNTED_ROUTE_TEMPLATES` returns nothing in the repo, docs included.
-- [ ] 2.3 Archive the change (`/opsx:archive`), so `openspec/specs/api/spec.md` is created from the delta.
+- [x] 2.3 Archive the change (`/opsx:archive`), so `openspec/specs/api/spec.md` is created from the delta.

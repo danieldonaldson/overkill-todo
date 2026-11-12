@@ -48,6 +48,14 @@ ENV
 alias dc='docker compose -f compose.yaml -f deploy/compose/compose.prod.yaml --profile full'
 dc up -d
 curl -fsS https://app.example.com/api/v1/health/ready
+just smoke https://app.example.com
+# The API description is dev-only (OT-002): the backend must answer 404 for both.
+# The edge sends these paths to web, so ask the backend directly (scratch image,
+# no curl inside: borrow its network namespace).
+for p in /docs /api-doc/openapi.json; do
+  docker run --rm --network "container:$(dc ps -q backend)" curlimages/curl \
+    -s -o /dev/null -w "$p %{http_code}\n" "http://localhost:4322$p"
+done
 ```
 
 The backend runs its embedded migrations at startup (`run_migrations` in
