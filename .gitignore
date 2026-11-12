@@ -38,3 +38,6 @@ deploy/compose/backups/
 # Vitest bench baselines (`just bench-web --outputJson .bench/main.json`)
 .bench/
 backend/openapi.json.tmp
+
+# Load-test run results (`just load`); baselines in loadtest/baselines/ are committed.
+loadtest/results/

@@ -1,0 +1,47 @@
+# Load-test overlay (OT-004). Layered on compose.yaml by the `just load*`
+# recipes only:
+#
+#   docker compose -f compose.yaml -f loadtest/compose.load.yaml --profile full ...
+#
+# Pins every service to its own physical cores and caps it, so runs are
+# comparable from one to the next (design Decisions 2-3). The defaults are for
+# 6 cores / 12 threads where CPUs N and N+6 are SMT siblings (check with
+# /sys/devices/system/cpu/cpu0/topology/thread_siblings_list): backend core 0,
+# db core 1, edge core 2, k6 cores 3-4, and core 5 left for the desktop, OS and
+# observability stack. Override with LOAD_CPUSET_* on other machines, always
+# keeping both threads of a core in the same service.
+
+services:
+  backend:
+    cpuset: '${LOAD_CPUSET_BACKEND:-0,6}'
+    cpus: ${LOAD_CPUS_BACKEND:-2}
+    mem_limit: ${LOAD_MEM_BACKEND:-1g}
+    environment:
+      # Production hashing cost. The local backend/.env uses a ~50x cheaper
+      # setting that would flatter sign-in; `environment` wins over `env_file`.
+      ARGON2_MEMORY_COST: '65536'
+      ARGON2_TIME_COST: '3'
+      ARGON2_PARALLELISM: '4'
+
+  db:
+    cpuset: '${LOAD_CPUSET_DB:-1,7}'
+    cpus: ${LOAD_CPUS_DB:-2}
+    mem_limit: ${LOAD_MEM_DB:-2g}
+
+  edge:
+    cpuset: '${LOAD_CPUSET_EDGE:-2,8}'
+    cpus: ${LOAD_CPUS_EDGE:-1}
+    mem_limit: ${LOAD_MEM_EDGE:-256m}
+
+  # The load generator. Run with `just load <scenario>`, never started by `up`.
+  k6:
+    profiles: ['loadtest']
+    image: grafana/k6:2.3.0@sha256:2dd4756ec6e14e62778916e1eb850108e4b499304c02df56760fa0bdb0fba0b8
+    cpuset: '${LOAD_CPUSET_K6:-3,4,9,10}'
+    mem_limit: 2g
+    # Host UID so result files written to the bind mount stay yours.
+    user: '${LOAD_UID:-1000}:${LOAD_GID:-1000}'
+    working_dir: /loadtest
+    volumes:
+      - ./loadtest:/loadtest:ro
+      - ./loadtest/results:/results

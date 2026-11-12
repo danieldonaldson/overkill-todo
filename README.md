@@ -60,6 +60,7 @@ In dev, verification codes print in the backend log.
 | `just bench-compare [base]`           | base vs working tree, per-bench change report   |
 | `just api-types`                      | regenerate `backend/openapi.json` + web types   |
 | `just api-types-check`                | fail if either generated API file is stale      |
+| `just load <scenario>`                | k6 load scenario against the capped stack       |
 
 ### Benchmarks
 
@@ -96,6 +97,56 @@ just bench-web --compare .bench/main.json                   # frontend, on your 
   benches so a failure fails the run instead of reporting NaN.
 
 Criterion HTML reports land in `backend/target/criterion/report/index.html`.
+
+### Load tests
+
+k6 scenarios that put repeatable load on the prod-like stack on this machine
+and fail if a latency or error budget is exceeded (OT-004). Like benchmarks,
+they're not part of `just ci`.
+
+```bash
+just load-up            # release images behind Caddy, pinned to cores and capped
+just load-seed          # 500 verified test Members via the real sign-up flow (about 1 min, repeatable)
+just load smoke         # 30 s, every route, zero errors allowed
+just load auth-mix      # sign in, check session, refresh, sign out at 10/s for 3 min
+just load-baseline auth-mix  # make the latest complete run the baseline (commit it)
+just load-reset         # delete the test Members
+just load-down
+```
+
+- **Pass/fail.** Budgets (p95/p99 per route, error rate per scenario) live in
+  `loadtest/lib/budgets.js`. A run also fails if k6 couldn't start requests at
+  the planned rate (`dropped iterations`), because the results would describe a
+  lower rate than intended.
+- **Comparable runs.** `loadtest/compose.load.yaml` pins backend, database, edge
+  and k6 to separate physical cores and caps their CPU and memory. The defaults
+  (`LOAD_CPUSET_BACKEND=0,6`, `_DB=1,7`, `_EDGE=2,8`, `_K6=3,4,9,10`) suit a
+  6-core / 12-thread CPU where CPUs N and N+6 share a core. On another machine,
+  check `/sys/devices/system/cpu/cpu*/topology/thread_siblings_list` and keep
+  both threads of a core in one service. It also forces production Argon2 cost, so sign-in isn't
+  flattered by the cheap local setting. Every result records these settings, and
+  the report warns when a baseline was taken with different ones. Each run first
+  clears the test Members' refresh tokens, and waits until the stack has been
+  idle for 2 minutes since the last run (`LOAD_IDLE_SECONDS`, `0` skips). After
+  7–10 minutes of continuous load, refresh and sign-out drift into a slower
+  state that only an idle period clears, so back-to-back runs wouldn't be
+  comparable.
+- **Results** go to `loadtest/results/` (gitignored). After each run, the p95 per
+  route is compared with `loadtest/baselines/<scenario>.json` if one exists.
+  Ctrl-C stops a run and still prints its summary, marked incomplete; incomplete
+  runs can't become baselines.
+- **Live view.** With `just obs-up` running, k6 streams its metrics to
+  VictoriaMetrics (tagged `testid=<scenario>-<time>`). Without it, runs behave the
+  same.
+- **Not production.** The stack runs with `DEV_MODE=true` (needed for the test
+  verification code and the no-op Turnstile and MX checks), and email goes to the
+  console. Results are relative to this machine: use them to catch regressions and
+  find the first bottleneck, not as a capacity figure for the production host.
+- **Local only.** Runs refuse any target but the local edge unless
+  `LOAD_ALLOW_REMOTE=1` is set along with `LOAD_BASE_URL`.
+
+Add a flow in `loadtest/flows/` and a scenario in `loadtest/scenarios/` (one file
+each; the file name is the scenario name), and give every new route a budget.
 
 ## Parallel work (worktrees)
 

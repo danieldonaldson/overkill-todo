@@ -282,6 +282,44 @@ machete:
 # Everything CI gates on. Green here means green CI.
 ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check test test-integration db-prepare-check api-types-check test-web e2e
 
+# ── Load tests (OT-004) ──────────────────────────────────────────────────────────
+# Same release images as `just up`, pinned to cores and capped, with production
+# hashing cost (loadtest/compose.load.yaml). Results are relative to this
+# machine. See README "Load tests".
+
+load_compose := "docker compose -f compose.yaml -f loadtest/compose.load.yaml --profile full"
+
+# Build and start the capped stack in the background; returns once the edge says ready.
+load-up:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{load_compose}} up -d --build --wait
+    url="http://localhost:${EDGE_PORT:-8080}/api/v1/health/ready"
+    for _ in $(seq 60); do curl -fsS -o /dev/null --max-time 2 "$url" && { echo "ready: $url"; exit 0; }; sleep 1; done
+    echo "the stack didn't become ready at $url" >&2; exit 1
+
+load-down:
+    {{load_compose}} --profile loadtest down
+
+# Create n verified test Members (test-load-<i>@example.test) through the real sign-up flow. Safe to repeat.
+load-seed n="500":
+    ./loadtest/run.sh --seed {{n}}
+
+# Run a scenario (smoke, auth-mix, ...); fails if a limit is exceeded. `just load` lists them.
+load scenario="":
+    ./loadtest/run.sh {{ quote(scenario) }}
+
+# Make the latest complete run of a scenario its baseline (commit loadtest/baselines/ afterwards).
+load-baseline scenario:
+    node loadtest/report.mjs --set-baseline {{ quote(scenario) }}
+
+# Delete every seeded test Member (and, by cascade, their sessions). Local only.
+load-reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    printf '%s\n' "DELETE FROM users WHERE email LIKE 'test-load-%@example.test';" \
+      | docker compose exec -T db psql -U overkill_todo -d overkill_todo -v ON_ERROR_STOP=1
+
 # ── Images ───────────────────────────────────────────────────────────────────────
 
 docker-build:
