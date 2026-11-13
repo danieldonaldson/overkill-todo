@@ -41,14 +41,20 @@ fn secure() -> &'static str {
     if is_dev_mode() { "" } else { "; Secure" }
 }
 
-/// Build an httpOnly cookie for the JWT access token.
+/// Path of the session (`auth_token`) cookie. Only the backend reads it, and
+/// every backend route is under `/api`, so pages and static assets never carry
+/// it. (`csrf_token` stays on `/`: page scripts read it.)
+pub const SESSION_COOKIE_PATH: &str = "/api";
+
+/// Build an httpOnly cookie for the JWT access token, scoped to
+/// [`SESSION_COOKIE_PATH`].
 ///
 /// Returns `None` only if the token contains invalid header characters (extremely rare).
 #[must_use]
 pub fn create_jwt_cookie(token: &str, max_age_seconds: i64) -> Option<HeaderValue> {
     let s = secure();
     HeaderValue::from_str(&format!(
-        "auth_token={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age_seconds}{s}"
+        "auth_token={token}; Path={SESSION_COOKIE_PATH}; HttpOnly; SameSite=Lax; Max-Age={max_age_seconds}{s}"
     ))
     .ok()
 }
@@ -130,7 +136,7 @@ pub fn clear_oauth_state_cookie() -> HeaderValue {
 pub fn clear_jwt_cookie() -> HeaderValue {
     let s = secure();
     HeaderValue::from_str(&format!(
-        "auth_token=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{s}"
+        "auth_token=; Path={SESSION_COOKIE_PATH}; HttpOnly; SameSite=Lax; Max-Age=0{s}"
     ))
     .expect("static cookie string is always valid")
 }
@@ -187,11 +193,19 @@ mod tests {
         let c = create_jwt_cookie("tok123", 3600).unwrap();
         let s = c.to_str().unwrap();
         assert!(s.contains("auth_token=tok123"));
-        assert!(s.contains("Path=/"));
+        assert!(s.contains("Path=/api;"), "{s}");
         assert!(s.contains("HttpOnly"));
         assert!(s.contains("SameSite=Lax"));
         assert!(s.contains("Max-Age=3600"));
         assert!(s.contains("Secure"));
+    }
+
+    #[test]
+    fn jwt_cookie_is_cleared_on_its_own_path() {
+        let cleared = clear_jwt_cookie();
+        let s = cleared.to_str().unwrap();
+        assert!(s.starts_with("auth_token=;"), "{s}");
+        assert!(s.contains("Path=/api;") && s.contains("Max-Age=0"), "{s}");
     }
 
     #[test]
