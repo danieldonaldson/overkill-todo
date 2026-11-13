@@ -166,6 +166,13 @@ services:
       - '127.0.0.1:3001:3000'
     restart: unless-stopped
 
+  analytics-retention:
+    environment:
+      PGPASSWORD: !reset null
+      PGPASSWORD_FILE: /run/secrets/analytics_db_password
+    secrets: [analytics_db_password]
+    restart: unless-stopped
+
 secrets:
   db_password:
     file: ./deploy/compose/.secrets/db_password

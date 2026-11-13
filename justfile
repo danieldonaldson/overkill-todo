@@ -133,6 +133,11 @@ analytics-up:
 analytics-down:
     docker compose --profile analytics down
 
+# Check the 90-day retention SQL against a seeded copy of the live Umami schema.
+# Needs `just analytics-up`. Re-run after upgrading Umami.
+analytics-retention-check:
+    ./scripts/check-analytics-retention.sh
+
 # Delete all stored traces, logs and metrics (Grafana and Alertmanager state is
 # kept). Restarts the stores if the stack was running. Local only.
 obs-wipe:

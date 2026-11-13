@@ -264,6 +264,32 @@ database in slice 2.
   backend would then need credentials for the analytics database, and D2
   exists to keep them apart.
 
+Settled in slice 3:
+- **Which tables.** Umami 3.5.0 has no foreign keys (`relationMode =
+  "prisma"`), so nothing cascades. `deploy/analytics/retention.sql` deletes
+  rows older than 90 days from every per-visitor table (`website_event`,
+  `event_data`, `revenue`, `error_event`, `heatmap_event`, `session_replay`,
+  `session_replay_saved`), then old sessions with no events left, then old or
+  orphaned `session_data` / `session_link` rows. A session that started over 90
+  days ago but has recent events stays. `scripts/check-analytics-retention.sh`
+  checks this against a scratch copy of the live schema, seeded at 89 and 91
+  days, and fails if the cutoff is wrong.
+- **Hourly re-push, not just after a run.** VictoriaMetrics treats a series
+  with no fresh samples as absent within minutes, so a once-a-day push would
+  leave the rule with nothing to compare. The job re-pushes its last-success
+  time every hour, and pushes its start time first, so one that never
+  succeeds still alerts (as the backend's jobs do).
+- **Own rule, `last_over_time(…[14d])`.** `JobNotSucceeding` assumes metrics
+  that stay fresh while the backend runs. `AnalyticsRetentionNotSucceeding`
+  reads the newest value from the last 14 days, so a stopped container still
+  fires instead of silently disappearing. No series at all means analytics
+  isn't deployed, which correctly doesn't alert.
+- **Push without curl.** The `postgres:18` image has no curl or wget, so the
+  script POSTs over bash's `/dev/tcp`. If VictoriaMetrics isn't reachable it
+  logs and carries on: deleting old data matters more than reporting it.
+- Production reads the password from the `analytics_db_password` secret
+  (`PGPASSWORD_FILE`, read by the script, since libpq has no such variable).
+
 ## Risks / Trade-offs
 
 - [Edge misconfigured, so Visitors share the proxy's address] → D4 plus the

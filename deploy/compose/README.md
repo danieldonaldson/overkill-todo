@@ -98,6 +98,10 @@ Web analytics (OT-005) on the first deploy, after the app is up (details in
    in Umami (Path `/register` → Event `signup-submitted` → Event
    `email-verified`). It should show your sign-up completed. Delete the test
    account afterwards.
+5. Confirm retention ran: `dc logs analytics-retention` shows "deleted
+   analytics data older than 90 days", and in Grafana Explore
+   `analytics_retention_last_success_timestamp_seconds` has a value (it shows
+   up about a minute after the push).
 
 The backend runs its embedded migrations at startup (`run_migrations` in
 `main.rs`). Postgres serialises concurrent `sqlx` migrators with an advisory
@@ -241,7 +245,7 @@ the edge trusts (it must report 2 Visitors and no stored address) and
 just secrets-decrypt prod        # includes analytics_db_password, umami_app_secret
 
 alias dc='docker compose -f compose.yaml -f deploy/compose/compose.prod.yaml --profile full --profile analytics'
-dc up -d analytics-db umami
+dc up -d analytics-db umami analytics-retention
 ssh -L 3001:localhost:3001 <host>   # from your machine; then open http://localhost:3001
 ```
 
@@ -255,8 +259,22 @@ ssh -L 3001:localhost:3001 <host>   # from your machine; then open http://localh
    the page view appears in Umami within a minute.
 
 **Rollback:** remove `PUBLIC_UMAMI_WEBSITE_ID` from `.env` and `dc up -d web`.
-The site stops loading the tracker at once. Then `dc stop umami analytics-db`
-if you like; the `/stats/*` routes just answer 404 or 502.
+The site stops loading the tracker at once. Then
+`dc stop umami analytics-retention analytics-db` if you like; the `/stats/*`
+routes just answer 404 or 502.
+
+**Kept 90 days.** The `analytics-retention` service runs
+`deploy/analytics/retention.sql` once a day: it deletes page views, events and
+their data older than 90 days, then sessions left without events, in one
+transaction. Run it by hand with
+`dc exec analytics-retention psql -X -f /retention.sql`. After each successful
+run, and every hour, it pushes
+`analytics_retention_last_success_timestamp_seconds` to VictoriaMetrics, so it
+needs the `observability` profile for its alert. **AnalyticsRetentionNotSucceeding**
+emails the operator when no run has succeeded for 2 days and 15 minutes,
+including when the container has stopped. After upgrading Umami, run
+`just analytics-retention-check` locally: it runs the SQL against a seeded
+copy of the new schema.
 
 **Not backed up.** Umami's data lives in the `analytics-db-data` volume and is
 deliberately left out of the nightly dump. Losing it loses analytics history

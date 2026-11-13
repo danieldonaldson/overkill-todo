@@ -281,6 +281,29 @@ services:
       analytics-db:
         condition: service_healthy
 
+  # Deletes analytics data older than 90 days, daily, and reports the last
+  # successful run to VictoriaMetrics (alert AnalyticsRetentionNotSucceeding).
+  # See deploy/analytics/.
+  analytics-retention:
+    logging: *logging
+    profiles: ['analytics']
+    image: postgres:18
+    entrypoint: ['bash', '/retention.sh']
+    environment:
+      PGHOST: analytics-db
+      PGUSER: umami
+      PGDATABASE: umami
+      # Local only; production reads it from the analytics_db_password secret.
+      PGPASSWORD: umami
+    volumes:
+      - ./deploy/analytics/retention.sh:/retention.sh:ro
+      - ./deploy/analytics/retention.sql:/retention.sql:ro
+    mem_limit: 64m
+    depends_on:
+      # Umami creates the schema on its first start.
+      umami:
+        condition: service_healthy
+
 volumes:
   db-data:
   analytics-db-data:

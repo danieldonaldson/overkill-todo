@@ -218,7 +218,9 @@ the website → Funnels → add steps _Path_ `/register`, _Event_
 
 `scripts/check-analytics-visitors.sh` checks that the edge passes the real
 client address (2 Visitors from 2 networks, no address stored). Unset the ID
-to turn analytics off. Its data isn't backed up. Production setup, the edge
+to turn analytics off. Data is kept 90 days (the `analytics-retention`
+service; `just analytics-retention-check` tests its SQL) and isn't backed up.
+Production setup, the edge
 contract a Traefik edge must meet, and operator access are in
 [`deploy/compose/README.md`](deploy/compose/README.md#web-analytics).
 
