@@ -60,6 +60,24 @@ Umami. Production (Traefik, behind Cloudflare) is verified on first deploy in
 two ways: re-run the same check against it, and after a day compare Umami's
 visitor count with Cloudflare Web Analytics. They should be within ~20%.
 
+**Result (slice 1, local `full` + `analytics` stack, 2026-11-13): confirmed.**
+- `scripts/check-analytics-visitors.sh` sent 3 page views through the
+  Caddy edge, two from one address (one forging `X-Analytics-Client-IP`) and
+  one from another, all with one user-agent. Umami counted 3 page views from
+  2 Visitors, and `pg_dump` of the analytics database contains none of the
+  three addresses. With `trusted_proxies` removed from the edge, the same
+  check fails with 1 Visitor, so it catches the failure it exists for.
+- `tests/analytics.spec.ts` runs the real Umami 3.5.0 tracker under the
+  production CSP: no violations on any public or dashboard page, the
+  view-transition move Home → Settings counts as two page views, and query
+  strings and fragments (tokens, the email on `/verify-email`) never reach
+  the payload.
+- Found along the way: the script load sends the session cookie to Umami
+  (now stripped at the edge, D3 rule 4), and Umami trusts client-sent
+  location headers unless told otherwise (D4).
+- Still open until the first deploy: the same check against Traefik behind
+  Cloudflare, and the comparison with Cloudflare Web Analytics.
+
 ## Decisions
 
 ### D1. Umami, self-hosted
@@ -91,6 +109,12 @@ Whatever the edge proxy is, it MUST:
 2. Answer 404 for anything else under `/stats/`, so Umami's login and reports
    are never public.
 3. Leave `/api/*` and all other routes exactly as they are.
+4. Remove `Cookie` and `Authorization` from requests it passes to Umami.
+   Loading `/stats/script.js` is a same-origin request, so the browser
+   attaches the `auth_token` cookie (`Path=/`). Umami needs none of it, and
+   session tokens must not reach a second service. (The tracker's own
+   collect calls already use `credentials: 'omit'`.) Found while building
+   slice 1.
 
 The tracker is told `data-host-url="<origin>/stats"`, so it posts to
 `/stats/api/send` and never touches the backend's `/api/*`.
@@ -145,7 +169,16 @@ visitor counts or skew locations at will.
   chosen with the production setup. The hypothesis check script (task 1.6)
   is edge-agnostic and is re-run against Traefik to confirm.
 - The CDN's IP ranges change rarely. They live in one config snippet with
-  their source URL and a date.
+  their source URL and a date. (In Caddy this is a commented line in the
+  global `servers` block: a snippet can't be imported there, because the
+  global block must come first.) Caddy uses `trusted_proxies_strict`, which
+  walks `X-Forwarded-For` right to left, so a client-added leftmost entry is
+  never believed.
+- Umami 3.5.0 otherwise takes location from client-settable headers
+  (`cf-ipcountry` and similar) before the address. `SKIP_LOCATION_HEADERS=1`
+  turns that off, so location comes only from the address the edge vouches
+  for. `SALT_ROTATION=month` pins the spec's "at most one calendar month"
+  (Umami's default) against upgrades.
 
 ### D5. Loader script and typed `track()`
 
@@ -194,8 +227,9 @@ with `just secrets-new` and decrypted into `deploy/compose/.secrets/`, like
 
 ### D8. Retention job and its alert
 
-Umami OSS has no automatic retention (confirm on the pinned version and
-use it instead if present). An `analytics-retention` compose service, built
+Umami OSS has no automatic retention. Confirmed on the pinned 3.5.0
+(2026-11-13): no retention setting in its env vars or source, so the job below
+is needed. An `analytics-retention` compose service, built
 like `backup`, deletes Umami event and event-data rows older than 90 days and
 then sessions with no remaining events, in one transaction, once a day. After
 a successful run it pushes `analytics_retention_last_success_timestamp_seconds`

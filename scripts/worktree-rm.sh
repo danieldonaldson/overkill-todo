@@ -19,7 +19,7 @@ fi
 project=$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' "$dir/.worktree.env")
 [[ -n $project ]] || { echo "no COMPOSE_PROJECT_NAME in $dir/.worktree.env" >&2; exit 1; }
 # -f: the compose file lives in the worktree being removed.
-docker compose -f "$dir/compose.yaml" -p "$project" --profile full down -v --remove-orphans
+docker compose -f "$dir/compose.yaml" -p "$project" --profile full --profile analytics down -v --remove-orphans
 
 if [[ ${FORCE:-0} == 1 ]]; then git worktree remove --force "$dir"; else git worktree remove "$dir"; fi
 echo "Removed $dir and the $project database. Branch '$branch' kept (git branch -d $branch)."

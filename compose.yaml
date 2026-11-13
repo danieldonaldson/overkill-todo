@@ -73,6 +73,9 @@ services:
     tmpfs: ['/tmp']
     environment:
       PUBLIC_TURNSTILE_SITE_KEY: ''
+      # Web analytics (OT-005): empty = off. Set to the site's ID from Umami
+      # (http://localhost:3001) with the `analytics` profile running.
+      PUBLIC_UMAMI_WEBSITE_ID: ${PUBLIC_UMAMI_WEBSITE_ID:-}
 
   edge:
     logging: *logging
@@ -222,8 +225,65 @@ services:
     mem_limit: 512m
     depends_on: [tempo, victorialogs, victoriametrics]
 
+  # ---- analytics (profile `analytics`, OT-005) --------------------------
+  # Umami with its own Postgres: separate from the product database and not in
+  # its backups, so it can be wiped without touching accounts. Only
+  # /stats/script.js and /stats/api/send are public, via the edge (see
+  # deploy/compose/README.md, "Analytics edge contract"); reports are on
+  # http://localhost:3001 only.
+  analytics-db:
+    logging: *logging
+    profiles: ['analytics']
+    image: postgres:18
+    environment:
+      POSTGRES_USER: umami
+      # Local only; production reads it from the analytics_db_password secret.
+      POSTGRES_PASSWORD: umami
+      POSTGRES_DB: umami
+    volumes:
+      - analytics-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U umami -d umami']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    mem_limit: 256m
+
+  umami:
+    logging: *logging
+    profiles: ['analytics']
+    image: ghcr.io/umami-software/umami:3.5.0@sha256:b64f40400d77bcadd39cf5c62a1e368c99524ca442024f96e1133355a19a5dbc
+    environment:
+      DATABASE_URL: postgres://umami:umami@analytics-db:5432/umami
+      # Local only; production reads it from the umami_app_secret secret.
+      APP_SECRET: local-umami-app-secret
+      # Set by the edge from the trusted client address; any client copy is
+      # overwritten there (design D4).
+      CLIENT_IP_HEADER: x-analytics-client-ip
+      # Location only from that address (GeoLite), never from client-settable
+      # cf-ipcountry-style headers.
+      SKIP_LOCATION_HEADERS: '1'
+      # Same browser = same Visitor for at most a calendar month (spec). This
+      # is Umami's default; pinned so an upgrade can't change it.
+      SALT_ROTATION: month
+      DISABLE_TELEMETRY: '1'
+      DISABLE_UPDATES: '1'
+    ports:
+      - '127.0.0.1:${UMAMI_PORT:-3001}:3000'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -qO- http://127.0.0.1:3000/api/heartbeat || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    mem_limit: 512m
+    depends_on:
+      analytics-db:
+        condition: service_healthy
+
 volumes:
   db-data:
+  analytics-db-data:
   tempo-data:
   vlogs-data:
   vmetrics-data:

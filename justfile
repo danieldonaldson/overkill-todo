@@ -125,6 +125,14 @@ obs-up:
 obs-down:
     docker compose --profile observability down
 
+# Umami web analytics (OT-005) on http://localhost:3001. Reports are local-only;
+# the edge exposes just /stats/script.js and /stats/api/send. See README.
+analytics-up:
+    docker compose --profile analytics up -d --wait
+
+analytics-down:
+    docker compose --profile analytics down
+
 # Delete all stored traces, logs and metrics (Grafana and Alertmanager state is
 # kept). Restarts the stores if the stack was running. Local only.
 obs-wipe:

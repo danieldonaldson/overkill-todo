@@ -17,6 +17,8 @@ Move to Kubernetes only when the workload needs it (see `../k8s/README.md`).
 | `../secrets/prod/backend.sops.env`            | yes, encrypted   | Backend config, the contract is `backend/.env.example` |
 | `../secrets/prod/db_password.sops`            | yes, encrypted   | Postgres password                                      |
 | `../secrets/prod/grafana_admin_password.sops` | yes, encrypted   | Grafana `admin` password (observability)               |
+| `../secrets/prod/analytics_db_password.sops`  | yes, encrypted   | Umami's own Postgres password, hex (analytics)         |
+| `../secrets/prod/umami_app_secret.sops`       | yes, encrypted   | Umami `APP_SECRET` (analytics)                         |
 | `.secrets/`                                   | **never**        | The above, decrypted on the host (gitignored)          |
 | `.env`                                        | on the host only | `DOMAIN`, `BACKEND_IMAGE`, `WEB_IMAGE` (digests)       |
 
@@ -78,6 +80,20 @@ for p in /docs /api-doc/openapi.json; do
     -s -o /dev/null -w "$p %{http_code}\n" "http://localhost:4322$p"
 done
 ```
+
+Web analytics (OT-005) on the first deploy, after the app is up (details in
+[Web analytics](#web-analytics)):
+
+1. Build the [edge contract](#edge-contract) into the Traefik edge, then run
+   `scripts/check-analytics-visitors.sh https://<domain>` against it: 2
+   Visitors, no stored address. Confirm `https://<domain>/stats/` and
+   `/stats/login` answer 404 from outside.
+2. Start `analytics-db` and `umami`, change Umami's `admin` password, create
+   the site and set `PUBLIC_UMAMI_WEBSITE_ID` ([Turning it on](#turning-it-on)).
+   Then `just smoke https://<domain>`.
+3. After a day, compare Umami's Visitors with Cloudflare Web Analytics for the
+   same day. They should be within about 20%. If Umami is far lower, the client
+   address isn't getting through (re-run step 1).
 
 The backend runs its embedded migrations at startup (`run_migrations` in
 `main.rs`). Postgres serialises concurrent `sqlx` migrators with an advisory
@@ -160,6 +176,87 @@ the backend keeps serving and logs a warning that telemetry isn't delivered.
 **Disk.** VictoriaLogs is capped by `VLOGS_MAX_DISK` (default 10 GiB, set in
 `.env`); Tempo and VictoriaLogs data live in the `tempo-data` and `vlogs-data`
 volumes. Alerts on disk use arrive in a later slice.
+
+## Web analytics
+
+Cookie-free page views (and, later, sign-up events) in a self-hosted Umami
+with its own Postgres, under the `analytics` profile (OT-005; design in
+`openspec/changes/ot-005-web-analytics/design.md`). It's off until
+`PUBLIC_UMAMI_WEBSITE_ID` is set on `web`.
+
+### Edge contract
+
+Whatever the edge is (this Caddy now, Traefik in production), it must:
+
+1. **Route two paths only** to Umami, `/stats` prefix removed:
+   `/stats/script.js` → `umami:3000/script.js` and `/stats/api/send` →
+   `umami:3000/api/send`. Anything else under `/stats/` answers **404**, so
+   Umami's login and reports are never public. `/api/*` and every other route
+   stay as they are.
+2. **Pass the real client address** in `X-Analytics-Client-IP` (Umami's
+   `CLIENT_IP_HEADER`), overwriting any copy the client sent. Forwarded
+   headers (`CF-Connecting-IP`, `X-Forwarded-For`) are believed only from
+   known proxies (the CDN's published ranges), otherwise the connection's
+   address is used. Get this wrong and every Visitor collapses into one.
+3. **Drop `Cookie` and `Authorization`** on the way to Umami. The browser
+   sends the session cookie with the script load, and Umami needs none of it.
+
+**Caddy** (`Caddyfile`, `Caddyfile.local`): the global
+`servers { trusted_proxies …; trusted_proxies_strict; client_ip_headers
+CF-Connecting-IP X-Forwarded-For }` block (Cloudflare's ranges in production,
+dated, private ranges locally), `request_header -X-Analytics-Client-IP` for
+every request, and a `handle_path /stats/*` block ahead of the catch-all with
+`header_up X-Analytics-Client-IP {client_ip}`, `header_up -Cookie` and
+`header_up -Authorization`.
+
+**Traefik** (to build with the production setup):
+
+- Entrypoint `forwardedHeaders.trustedIPs` = the CDN's ranges, so Traefik keeps
+  `X-Forwarded-For` only from them and rewrites it otherwise. If Cloudflare is
+  in front, also firewall the origin to Cloudflare's ranges (or use a
+  Cloudflare-aware real-IP plugin), so the forwarded address is trustworthy.
+- A router ``PathPrefix(`/stats/`) && (Path(`/stats/script.js`) ||
+Path(`/stats/api/send`))``, priority above the web catch-all, to the Umami
+  service, with middlewares: `stripPrefix` (`/stats`), and a `headers`
+  middleware removing `Cookie` and `Authorization`
+  (`customRequestHeaders: {Cookie: "", Authorization: ""}`).
+- The client address header: either a real-IP middleware that sets
+  `X-Analytics-Client-IP` from the trusted address, or set Umami's
+  `CLIENT_IP_HEADER=x-forwarded-for` and `TRUSTED_PROXIES` to Traefik's own
+  network so Umami takes the right hop (Umami walks the list right to left).
+- A second router ``PathPrefix(`/stats/`)`` to nothing (Traefik's 404), or no
+  route at all, so the rest of `/stats/` falls through to a 404.
+
+Check it with `scripts/check-analytics-visitors.sh https://<domain>` from a host
+the edge trusts (it must report 2 Visitors and no stored address) and
+`curl -o /dev/null -w '%{http_code}' https://<domain>/stats/login` (404).
+
+### Turning it on
+
+```bash
+just secrets-decrypt prod        # includes analytics_db_password, umami_app_secret
+
+alias dc='docker compose -f compose.yaml -f deploy/compose/compose.prod.yaml --profile full --profile analytics'
+dc up -d analytics-db umami
+ssh -L 3001:localhost:3001 <host>   # from your machine; then open http://localhost:3001
+```
+
+1. Sign in as `admin` / `umami` and **change the password at once**
+   (Settings → Profile). Umami is only on the host's loopback, but the default
+   is public knowledge.
+2. Settings → Websites → Add website, with the production domain. Copy its
+   website ID.
+3. Add `PUBLIC_UMAMI_WEBSITE_ID=<id>` to `.env`, then `dc up -d web`.
+4. Open the site in a browser without Do Not Track or Global Privacy Control:
+   the page view appears in Umami within a minute.
+
+**Rollback:** remove `PUBLIC_UMAMI_WEBSITE_ID` from `.env` and `dc up -d web`.
+The site stops loading the tracker at once. Then `dc stop umami analytics-db`
+if you like; the `/stats/*` routes just answer 404 or 502.
+
+**Not backed up.** Umami's data lives in the `analytics-db-data` volume and is
+deliberately left out of the nightly dump. Losing it loses analytics history
+only. Accounts and the app are unaffected.
 
 ## Not covered here
 
