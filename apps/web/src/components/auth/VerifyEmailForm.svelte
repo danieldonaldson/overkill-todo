@@ -7,6 +7,7 @@
   import CountdownTimer from '../ui/custom/CountdownTimer.svelte'
   import Turnstile, { type TurnstileRef } from '../ui/custom/Turnstile.svelte'
   import { api } from '../../lib/api'
+  import { track } from '../../lib/analytics'
   import { saveSignupHandoff } from '../../lib/auth/signup-handoff'
   import { navigate } from '../../lib/navigation'
 
@@ -43,10 +44,12 @@
       const response = await api.auth.verifyEmail({ email, code: verifyCode })
 
       if (response.signup_token) {
+        track({ name: 'email-verified', props: { via: 'code' } })
         saveSignupHandoff({ token: response.signup_token, email })
         navigate('/set-password')
       } else if (response.user) {
         // Existing user with a password: auto-logged-in via HttpOnly cookies.
+        track({ name: 'email-verified', props: { via: 'code' } })
         navigate('/dashboard')
       } else {
         formError = 'Verification succeeded but no redirect path. Please try logging in.'

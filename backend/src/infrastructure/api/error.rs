@@ -17,7 +17,8 @@ use crate::application::dto::VerificationErrorResponse;
 /// Structured error response returned to clients.
 #[derive(Debug, Serialize, ToSchema)]
 pub struct ErrorResponse {
-    /// Machine-readable error code (e.g. `validation_error`, `csrf_invalid`).
+    /// Machine-readable error code (e.g. `validation_error`, `bot_check_failed`,
+    /// `csrf_invalid`).
     pub code: String,
     /// Human-readable message. Internal details are never included outside
     /// local development.
@@ -45,6 +46,11 @@ pub enum VerificationOrStandardError {
 pub enum AppError {
     #[error("Validation error: {0}")]
     Validation(String),
+    /// The bot check (Turnstile) was missing or failed: a `400` like
+    /// [`AppError::Validation`], but with its own code (`bot_check_failed`) so
+    /// clients and metrics can tell it apart from bad input.
+    #[error("Bot check failed: {0}")]
+    BotCheckFailed(String),
     #[error("Not found: {0}")]
     NotFound(String),
     #[error("Authorization error: {message}")]
@@ -146,6 +152,7 @@ impl AppError {
     const fn error_code(&self) -> &'static str {
         match self {
             Self::Validation(_) => "validation_error",
+            Self::BotCheckFailed(_) => "bot_check_failed",
             Self::NotFound(_) => "not_found",
             Self::Authorization { code, .. } | Self::Forbidden { code, .. } => code,
             Self::Conflict(_) => "conflict",
@@ -264,7 +271,9 @@ impl IntoResponse for AppError {
         let code = self.error_code().to_string();
 
         let (status, message) = match &self {
-            Self::Validation(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            Self::Validation(msg) | Self::BotCheckFailed(msg) => {
+                (StatusCode::BAD_REQUEST, msg.clone())
+            }
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             Self::Authorization { message, .. } => (StatusCode::UNAUTHORIZED, message.clone()),
             Self::Forbidden { message, .. } => (StatusCode::FORBIDDEN, message.clone()),
@@ -374,6 +383,21 @@ mod tests {
         let app_error: AppError = jwt_error.into();
         assert!(
             matches!(&app_error, AppError::Authorization { message, .. } if message.contains("JWT error"))
+        );
+    }
+
+    #[tokio::test]
+    async fn bot_check_failure_is_a_400_with_its_own_code() {
+        let error = AppError::BotCheckFailed("Bot verification failed. Please try again.".into());
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "bot_check_failed");
+        assert_eq!(
+            json["message"],
+            "Bot verification failed. Please try again."
         );
     }
 

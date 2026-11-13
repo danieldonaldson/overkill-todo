@@ -106,7 +106,8 @@ async fn missing_token_is_rejected_on_every_protected_endpoint(pool: PgPool) {
         let (status, body) = post(&app, uri, &body_for(uri, None)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
         assert!(
-            error_text(&body).contains("Bot verification required"),
+            error_text(&body).contains("Bot verification required")
+                && body["code"] == "bot_check_failed",
             "{uri}: {body}"
         );
     }
@@ -119,7 +120,8 @@ async fn blank_token_counts_as_missing(pool: PgPool) {
         let (status, body) = post(&app, uri, &body_for(uri, Some("   "))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
         assert!(
-            error_text(&body).contains("Bot verification required"),
+            error_text(&body).contains("Bot verification required")
+                && body["code"] == "bot_check_failed",
             "{uri}: {body}"
         );
     }
@@ -132,7 +134,8 @@ async fn failed_verification_is_rejected_on_every_protected_endpoint(pool: PgPoo
         let (status, body) = post(&app, uri, &body_for(uri, Some("bot-token"))).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
         assert!(
-            error_text(&body).contains("Bot verification failed"),
+            error_text(&body).contains("Bot verification failed")
+                && body["code"] == "bot_check_failed",
             "{uri}: {body}"
         );
     }

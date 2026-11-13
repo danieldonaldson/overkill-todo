@@ -5,6 +5,7 @@
   import { Alert, AlertDescription } from '$lib/components/ui/alert'
   import { Button } from '$lib/components/ui/button'
   import { FormInput } from '$lib/components/ui/form-input'
+  import { signinRejectedReason, track } from '../../lib/analytics'
   import { api } from '../../lib/api'
   import { loginNoticeFromSearch, type LoginNotice } from '../../lib/auth/login-notice'
   import { navigate } from '../../lib/navigation'
@@ -64,8 +65,10 @@
         password,
         turnstile_token: turnstileToken || undefined,
       })
+      track({ name: 'signin-succeeded' })
       navigate('/dashboard')
     } catch (error: unknown) {
+      track({ name: 'signin-rejected', props: { reason: signinRejectedReason(error) } })
       if (error && typeof error === 'object' && 'error_code' in error) {
         // An unfinished signup gets the same generic invalid-credentials error as
         // a wrong password (the API doesn't reveal which emails have accounts);

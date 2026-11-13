@@ -70,7 +70,7 @@ content, error messages or any other free text.
 | `signup-rejected` | the server rejects a Register form | `reason`: `invalid`, `captcha`, `rate-limited`, `server` |
 | `email-verified` | an email address is verified, by code or by link | `via`: `code`, `link` |
 | `signin-succeeded` | a password sign-in succeeds | none |
-| `signin-rejected` | a password sign-in is refused | `reason`: `credentials`, `unverified`, `captcha`, `rate-limited`, `server` |
+| `signin-rejected` | a password sign-in is refused | `reason`: `credentials`, `captcha`, `rate-limited`, `server` |
 | `oauth-started` | a sign-in or link with an external provider is started | `provider`: `google` |
 | `password-reset-requested` | a reset email is requested | none |
 | `password-reset-completed` | a new password is set from a reset | none |

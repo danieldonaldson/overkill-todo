@@ -194,11 +194,14 @@ visitor counts or skew locations at will.
 - Umami's tracker follows `history.pushState`, so Astro view-transition moves
   between dashboard pages count as page views with no extra code. This is
   verified by a test.
-- `src/lib/analytics.ts` exports `track(event, props?)`, where `event` and
-  `props` are a TypeScript discriminated union generated from the spec's table,
-  so a free-text value fails `tsc`. It calls `window.umami?.track` inside
-  `try/catch` and never awaits or throws, which keeps form submits from
-  waiting on analytics.
+- `src/lib/analytics.ts` exports `track(event)`, where `event` is a
+  discriminated union (`{ name, props? }`) written from the spec's table, so a
+  free-text value, an unknown name or an extra property fails `astro check`
+  (pinned by `@ts-expect-error` lines in its test). It calls
+  `window.umami?.track` inside `try/catch`, swallows the returned promise's
+  rejection, and never awaits or throws, which keeps form submits from
+  waiting on analytics. (Slice 2: one object argument instead of
+  `(event, props?)`, so TypeScript ties each name to its properties.)
 - `config.ts` gains `UMAMI_WEBSITE_ID` and the entrypoint renders
   `PUBLIC_UMAMI_WEBSITE_ID`. Unset means off, which is the feature flag.
 - Rejected: a Svelte island or an Astro-processed `<script>`. Astro may inline
@@ -211,10 +214,28 @@ In the existing Svelte forms, after the API call settles: `RegisterForm`
 `VerifyMagicForm` (`email-verified`), `LoginForm` (`signin-*`), `OAuthButtons`
 (`oauth-started`, before navigation), `ForgotPasswordForm`,
 `ResetPasswordForm` and `SettingsPanel` (deletion). `reason` is mapped from
-HTTP status/`error_code` to the fixed list in one function in
-`lib/analytics.ts`: 400/422 → `invalid`, a captcha error code → `captcha`,
-429 → `rate-limited`, 401 → `credentials`, unverified → `unverified`,
-network/5xx → `server`.
+the HTTP status and the error `code` (never the message) in one place in
+`lib/analytics.ts`: `bot_check_failed` → `captcha`, 429 → `rate-limited`,
+401 → `credentials`, network errors and 5xx → `server`, any other 4xx →
+`invalid` (sign-up) or `credentials` (sign-in).
+
+Settled in slice 2:
+- **`bot_check_failed`.** A failed or missing Turnstile check used to be a
+  plain `400 validation_error`, distinguishable from bad input only by its
+  English message. The backend now answers it with its own code
+  (`AppError::BotCheckFailed`, still `400`, same message), so `captcha` is
+  mapped from the code. OT-007 can count bot-check rejections the same way.
+- **No `unverified` reason.** The backend deliberately answers an unfinished
+  signup exactly like a wrong password, so sign-in never reveals which emails
+  have accounts. The frontend can't tell them apart and mustn't, so the value
+  was removed from the spec.
+- **Rate limiting** is not in the backend; it comes from the production edge
+  (Traefik) as a `429`, which maps to `rate-limited`.
+- **Umami's 300 ms page-view delay.** After a client-side navigation the
+  tracker waits 300 ms and then reads the current URL. A scripted move faster
+  than that (code entered within 300 ms of landing) is recorded as the later
+  page, twice. No person is that fast, and the real-browser check with
+  realistic pauses recorded one view per page, so this is accepted.
 
 ### D7. Operator access
 

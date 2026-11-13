@@ -94,6 +94,10 @@ Web analytics (OT-005) on the first deploy, after the app is up (details in
 3. After a day, compare Umami's Visitors with Cloudflare Web Analytics for the
    same day. They should be within about 20%. If Umami is far lower, the client
    address isn't getting through (re-run step 1).
+4. Sign up once with a real address in a normal browser, then build the funnel
+   in Umami (Path `/register` → Event `signup-submitted` → Event
+   `email-verified`). It should show your sign-up completed. Delete the test
+   account afterwards.
 
 The backend runs its embedded migrations at startup (`run_migrations` in
 `main.rs`). Postgres serialises concurrent `sqlx` migrators with an advisory

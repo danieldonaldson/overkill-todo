@@ -24,7 +24,39 @@ const WEBSITE_ID = '4b0b8e0a-7a4c-4f53-9b1e-2f1d1c6a0e11'
 
 interface Sent {
   type: string
-  payload: { website: string; url: string; referrer?: string; name?: string }
+  payload: {
+    website: string
+    url: string
+    referrer?: string
+    name?: string
+    data?: Record<string, unknown>
+  }
+}
+
+// The spec's event table: each event and the only values its property may take.
+const EVENT_TABLE: Record<string, Record<string, string[]>> = {
+  'signup-submitted': {},
+  'signup-rejected': { reason: ['invalid', 'captcha', 'rate-limited', 'server'] },
+  'email-verified': { via: ['code', 'link'] },
+  'signin-succeeded': {},
+  'signin-rejected': { reason: ['credentials', 'captcha', 'rate-limited', 'server'] },
+  'oauth-started': { provider: ['google'] },
+  'password-reset-requested': {},
+  'password-reset-completed': {},
+  'account-deletion-requested': {},
+}
+
+/** Every named event sent is in the table, with exactly its properties and allowed values. */
+function expectOnlyTableEvents(sent: Sent[]) {
+  for (const { payload } of sent.filter((s) => s.payload.name)) {
+    const allowed = EVENT_TABLE[payload.name!]
+    expect(allowed, `event ${payload.name} is in the spec's table`).toBeDefined()
+    const data = payload.data ?? {}
+    expect(Object.keys(data).sort()).toEqual(Object.keys(allowed).sort())
+    for (const [key, value] of Object.entries(data)) {
+      expect(allowed[key], `${payload.name}.${key}`).toContain(value)
+    }
+  }
 }
 
 interface Setup {
@@ -103,7 +135,8 @@ async function setup(page: Page, { websiteId = WEBSITE_ID, stats = 'ok', privacy
   })
 
   const pageViews = () => sent.filter((s) => s.type === 'event' && !s.payload.name)
-  return { sent, pageViews, statsRequests, cspViolations }
+  const events = () => sent.filter((s) => s.payload.name)
+  return { sent, pageViews, events, statsRequests, cspViolations }
 }
 
 /** Gives the tracker time to send anything it was going to (it delays SPA page views 300 ms). */
@@ -247,6 +280,134 @@ test.describe('web analytics', () => {
       expect(statsRequests).toEqual([])
     })
   }
+
+  test('sign-up funnel: page view, signup-submitted, then email-verified via code', async ({
+    page,
+  }) => {
+    const { sent } = await setup(page)
+    await page.route('**/api/v1/auth/verify-email', (route) =>
+      route.fulfill({ json: { message: 'Verified', signup_token: 'signup-tok-123' } })
+    )
+
+    await page.goto('/register')
+    await page.getByLabel(/email/i).fill('visitor@example.com')
+    await page.getByRole('button', { name: /continue/i }).click()
+    await page.waitForURL('**/verify-email?email=*')
+    // Typed before hydration, the code would be reset by the island.
+    await settle(page)
+    await page.getByLabel('Verification code').pressSequentially('123456')
+    await page.waitForURL('**/set-password')
+    await settle(page)
+
+    const steps = sent.map((s) =>
+      s.payload.name
+        ? `${s.payload.name}${s.payload.data ? ` ${JSON.stringify(s.payload.data)}` : ''}`
+        : `view ${new URL(s.payload.url).pathname}`
+    )
+    const funnel = steps.filter((s) =>
+      ['view /register', 'signup-submitted', 'email-verified {"via":"code"}'].includes(s)
+    )
+    expect(funnel).toEqual(['view /register', 'signup-submitted', 'email-verified {"via":"code"}'])
+    expect(JSON.stringify(sent)).not.toContain('signup-tok-123')
+    expectOnlyTableEvents(sent)
+  })
+
+  test('a sign-up the server rejects sends signup-rejected invalid, without the address or message', async ({
+    page,
+  }) => {
+    const { sent, events } = await setup(page)
+    await page.route('**/api/v1/auth/register', (route) =>
+      route.fulfill({
+        status: 400,
+        json: { code: 'validation_error', message: 'No mail server for nomx.example' },
+      })
+    )
+
+    await page.goto('/register')
+    await page.getByLabel(/email/i).fill('visitor@nomx.example')
+    await page.getByRole('button', { name: /continue/i }).click()
+    await expect(page.getByText('No mail server for nomx.example')).toBeVisible()
+    await settle(page)
+
+    expect(events().map((e) => [e.payload.name, e.payload.data])).toEqual([
+      ['signup-rejected', { reason: 'invalid' }],
+    ])
+    const everything = JSON.stringify(sent)
+    expect(everything).not.toContain('nomx')
+    expect(everything).not.toContain('mail server')
+    expectOnlyTableEvents(sent)
+  })
+
+  test('a failed bot check is reported as captcha', async ({ page }) => {
+    const { events } = await setup(page)
+    await page.route('**/api/v1/auth/login', (route) =>
+      route.fulfill({
+        status: 400,
+        json: { code: 'bot_check_failed', message: 'Bot verification failed. Please try again.' },
+      })
+    )
+
+    await page.goto('/login')
+    await page.getByLabel(/email/i).fill('member@example.com')
+    await page.getByRole('textbox', { name: /password/i }).fill('correct horse battery')
+    await page.getByRole('button', { name: /^sign in$/i }).click()
+    await expect(page.getByText('Bot verification failed')).toBeVisible()
+    await settle(page)
+
+    expect(events().map((e) => [e.payload.name, e.payload.data])).toEqual([
+      ['signin-rejected', { reason: 'captcha' }],
+    ])
+  })
+
+  test('sign-in with the server unreachable sends signin-rejected server and shows the usual error', async ({
+    page,
+  }) => {
+    const { sent, events } = await setup(page)
+    await page.route('**/api/v1/auth/login', (route) => route.abort('connectionrefused'))
+
+    await page.goto('/login')
+    await page.getByLabel(/email/i).fill('member@example.com')
+    await page.getByRole('textbox', { name: /password/i }).fill('correct horse battery')
+    await page.getByRole('button', { name: /^sign in$/i }).click()
+    await expect(page.getByRole('alert')).toBeVisible()
+    await settle(page)
+
+    expect(events().map((e) => [e.payload.name, e.payload.data])).toEqual([
+      ['signin-rejected', { reason: 'server' }],
+    ])
+    expect(JSON.stringify(sent)).not.toContain('member@example.com')
+    expectOnlyTableEvents(sent)
+  })
+
+  test('Continue with Google sends oauth-started before the browser leaves', async ({ page }) => {
+    const { sent, events } = await setup(page)
+    await page.route('**/api/v1/auth/oauth/device-fingerprint', (route) =>
+      route.fulfill({ status: 204 })
+    )
+
+    await page.goto('/login')
+    await settle(page)
+    const leaving = page.waitForRequest('**/api/v1/auth/oauth/google?mode=login')
+    await page.getByRole('button', { name: /google/i }).click()
+    await leaving
+
+    await expect
+      .poll(() => events().map((e) => [e.payload.name, e.payload.data]))
+      .toEqual([['oauth-started', { provider: 'google' }]])
+    expectOnlyTableEvents(sent)
+  })
+
+  test('with analytics blocked, Google sign-in still leaves for the provider', async ({ page }) => {
+    await setup(page, { stats: 'abort' })
+    await page.route('**/api/v1/auth/oauth/device-fingerprint', (route) =>
+      route.fulfill({ status: 204 })
+    )
+
+    await page.goto('/login')
+    const leaving = page.waitForRequest('**/api/v1/auth/oauth/google?mode=login')
+    await page.getByRole('button', { name: /google/i }).click()
+    await leaving
+  })
 
   test('analytics sets no cookie and writes no browser storage', async ({ page, context }) => {
     const { pageViews } = await setup(page)

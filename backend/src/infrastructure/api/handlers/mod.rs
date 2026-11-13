@@ -22,8 +22,9 @@ use crate::infrastructure::api::error::AppError;
 ///
 /// # Errors
 ///
-/// Returns [`AppError::Validation`] if the token is missing/empty (while enabled)
-/// or fails verification, and [`AppError::Internal`] if the upstream call errors.
+/// Returns [`AppError::BotCheckFailed`] (`400 bot_check_failed`) if the token is
+/// missing/empty (while enabled) or fails verification, and
+/// [`AppError::Internal`] if the upstream call errors.
 pub async fn verify_turnstile(
     service: &dyn TurnstileService,
     token: Option<&str>,
@@ -35,7 +36,7 @@ pub async fn verify_turnstile(
     let token = token
         .map(str::trim)
         .filter(|t| !t.is_empty())
-        .ok_or_else(|| AppError::Validation("Bot verification required.".into()))?;
+        .ok_or_else(|| AppError::BotCheckFailed("Bot verification required.".into()))?;
 
     let is_valid = service
         .verify(token)
@@ -43,7 +44,7 @@ pub async fn verify_turnstile(
         .map_err(|e| AppError::Internal(format!("Turnstile verification error: {e}")))?;
 
     if !is_valid {
-        return Err(AppError::Validation(
+        return Err(AppError::BotCheckFailed(
             "Bot verification failed. Please try again.".into(),
         ));
     }

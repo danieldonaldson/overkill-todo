@@ -5,6 +5,7 @@
   import { FormInput } from '$lib/components/ui/form-input'
   import Turnstile, { type TurnstileRef } from '../ui/custom/Turnstile.svelte'
   import { api } from '../../lib/api'
+  import { track } from '../../lib/analytics'
   import { navigate } from '../../lib/navigation'
   import { email, required, validate } from '../../lib/utils/validation'
 
@@ -32,6 +33,7 @@
         email: emailValue,
         turnstile_token: turnstileToken || undefined,
       })
+      track({ name: 'password-reset-requested' })
       navigate(`/reset-password?email=${encodeURIComponent(emailValue)}`)
     } catch (error: unknown) {
       formError = error instanceof Error ? error.message : 'An unexpected error occurred'
