@@ -287,6 +287,11 @@ async fn login_creates_user_and_issues_full_session(pool: PgPool) {
     assert_handoff_cookies_cleared(&resp);
 
     let token = common::cookie_value(&resp, "auth_token").expect("auth_token cookie");
+    // OT-009: the state round-tripped through Google, and the session it
+    // issues is HMAC-SHA-512 under a named key.
+    let header = jsonwebtoken::decode_header(&token).unwrap();
+    assert_eq!(header.alg, jsonwebtoken::Algorithm::HS512);
+    assert!(header.kid.is_some(), "the session token names its key");
     let user = me(&app, &token).await;
     assert_eq!(user["email"], "e2e-oauth-new@example.com");
     assert_eq!(user["email_verified"], true);

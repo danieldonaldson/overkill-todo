@@ -50,7 +50,7 @@ hybrid fails the gate".
 
 ## 4. Feature done
 
-- [ ] 4.1 Verify every scenario in specs/security/spec.md is covered by a test or by a check in `just ci` / `just smoke`
-- [ ] 4.2 Update README.md, backend/ARCHITECTURE.md and deploy/secrets/README.md for the new env vars, `just jwt-keygen`, key rotation (design D5), PQ age keys and the edge TLS contract. Verify by following the README setup from a clean checkout
-- [ ] 4.3 Record the first-deploy notes from design.md Migration Plan where the existing first-deploy notes live, and verify they're listed there
+- [x] 4.1 Verify every scenario in specs/security/spec.md is covered by a test or by a check in `just ci` / `just smoke`
+- [x] 4.2 Update README.md, backend/ARCHITECTURE.md and deploy/secrets/README.md for the new env vars, `just jwt-keygen`, key rotation (design D5), PQ age keys and the edge TLS contract. Verify by following the README setup from a clean checkout
+- [x] 4.3 Record the first-deploy notes from design.md Migration Plan where the existing first-deploy notes live, and verify they're listed there
 - [ ] 4.4 Archive the change with `/opsx:archive` and verify `openspec/specs/security/spec.md` exists

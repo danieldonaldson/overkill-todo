@@ -197,6 +197,32 @@ hybrid one as `Negotiated TLS1.3 group`.
   So every secret present before the cutover was rotated, which was only the
   Grafana admin password.
 
+## Scenario coverage
+
+Where each scenario in specs/security/spec.md is checked (task 4.1,
+2026-11-13). Backend paths are relative to `backend/`.
+
+| Scenario | Checked by |
+|---|---|
+| Signing in issues a quantum-safe session token | `tests/token_keys_integration.rs` (password sign-in, `kid`); `tests/oauth_integration.rs` `login_creates_user_and_issues_full_session` (Google, HS512 + `kid`); `api/jwt.rs` `test_session_token_names_hs512_and_the_active_key` |
+| A token signed with any other algorithm is refused | `api/jwt.rs` `test_rs256_token_rejected`, `test_verify_jwt_wrong_algorithm`; `crypto/keyring.rs` `refuses_alg_none`, `refuses_hs256_under_the_right_key`, `refuses_any_validation_allowing_another_algorithm` |
+| A token naming an unknown key, or no key, is refused | `crypto/keyring.rs` `refuses_a_missing_or_unknown_kid_without_trying_other_keys`; `api/jwt.rs` `test_token_from_an_untrusted_key_rejected` |
+| A tampered token is refused | `crypto/keyring.rs` `refuses_any_change_to_header_claims_or_signature` and the two proptests |
+| A token of the wrong type is refused | `api/jwt.rs` `test_non_session_typ_rejected`; `services/jwt_service.rs` `test_signup_token_rejected_as_reset_token`, `session_token_is_rejected_as_a_signup_token` |
+| Signing in with Google still round-trips its state | `tests/oauth_integration.rs` (full start → callback flows); `api/oauth_state.rs` tampered, expired and untrusted-key tests |
+| Tokens from the previous key keep working after rotation | `tests/token_keys_integration.rs` `tokens_from_the_previous_key_keep_working_after_rotation` |
+| Retiring a key signs its sessions in again silently | `tests/token_keys_integration.rs` `retiring_a_key_signs_its_sessions_in_again_silently` |
+| Retiring a key invalidates its one-time tokens | `tests/token_keys_integration.rs` `retiring_a_key_invalidates_its_reset_links`; `services/jwt_service.rs` `reset_token_from_a_retired_key_is_rejected` |
+| Misconfigured keys stop the backend from starting | `crypto/keyring.rs` `rejects_every_misconfiguration`; `config/settings.rs` `reject_retired_refuses_the_old_rsa_key_settings`; `crypto.rs` `from_settings_rejects_bad_token_keys` |
+| A classical key in the access policy is refused | `scripts/secrets.sh` (`check_key`), checked on a scratch copy in slice 1 |
+| A secret encrypted to a classical recipient fails the gate | `just secrets-check` (in `just ci` and CI), checked on a scratch copy in slice 1 |
+| People and machines can still read their secrets | `just secrets-check` (recipients match the policy); decryption checked with the PQ key in slice 1 |
+| Secrets that were exposed to classical encryption are rotated | Done once in slice 1 (Grafana admin password); the gate stops new exposure |
+| A modern browser gets post-quantum key exchange | `scripts/smoke-tls.sh` via `just smoke https://<domain>`: a first-deploy check (no production yet) |
+| An older client still connects | `scripts/smoke-tls.sh` (classical-only handshake); `tests/tls_key_exchange.rs` fallback test for the backend's clients |
+| Backend calls to external services offer the hybrid first | `tests/tls_key_exchange.rs`; `infrastructure/tls.rs` unit tests |
+| Losing the hybrid fails the gate | `tests/tls_key_exchange.rs` (checked by removing the hybrid); `scripts/smoke-tls.sh` for the edge |
+
 ## Risks / Trade-offs
 
 - [A trusted key leaks and is used to forge tokens] → Same blast radius as a

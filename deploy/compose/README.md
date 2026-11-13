@@ -22,7 +22,9 @@ Move to Kubernetes only when the workload needs it (see `../k8s/README.md`).
 
 Who can decrypt what, and how to add people or hosts, is in
 [`../secrets/README.md`](../secrets/README.md). The host needs its own age key
-listed under `machines:` there with `env: prod`.
+listed under `machines:` there with `env: prod`, generated on the host with
+`age-keygen -pq` (post-quantum keys only; `just secrets-sync` refuses
+classical ones).
 
 `backend.env` must set `DATABASE_URL=postgres://overkill_todo:<db_password>@db:5432/overkill_todo`,
 `DEV_MODE=false`, real SMTP and Turnstile settings, and fresh token, CSRF and
@@ -55,6 +57,17 @@ missing. The backend's own outgoing TLS (Google, Turnstile, SMTP) is pinned
 in code and covered by `just test-integration`.
 
 ## First deploy
+
+Before the first deploy, on a machine cleared for prod (OT-009):
+
+- Give the host a post-quantum age key (`age-keygen -pq` on the host), add it
+  under `machines:` in `deploy/secrets/access.yaml`, `just secrets-sync`, commit.
+- Put a fresh token key in the prod backend env: `JWT_SIGNING_KEY` from
+  `just jwt-keygen`, with no `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY` (the backend
+  refuses to start with them) and `JWT_TRUSTED_KEYS` empty.
+- Make sure the edge offers post-quantum key exchange (see
+  [TLS key exchange](#tls-key-exchange-post-quantum)); `just smoke` below
+  checks it.
 
 ```bash
 # on the host, in a checkout of the repo

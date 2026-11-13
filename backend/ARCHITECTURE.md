@@ -200,6 +200,7 @@ application and domain layers only use `tracing` macros.
 
 - Argon2id for all passwords; tunable cost params from config.
 - Our tokens (session, signup, reset, OAuth state) are HS512 under a named key (`kid`), quantum-safe; only HS512 is accepted on decode, and only from a configured key, never by trying others. Keys rotate via `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS` (OT-009).
+- Outgoing TLS (Google, Turnstile, SMTP) offers post-quantum X25519MLKEM768 first, via the process-wide provider installed at the top of `main` (`infrastructure/tls.rs`); `tests/tls_key_exchange.rs` fails if it's lost (OT-009).
 - Refresh tokens stored as SHA-256 hashes; raw token never persisted.
 - Refresh rotation is atomic (single DB transaction).
 - Revoked refresh-token reuse triggers full-family revocation. The reuse/revoked

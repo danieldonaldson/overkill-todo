@@ -47,21 +47,30 @@ just ci      # everything CI checks, locally
 Make yourself an admin after signing up: `just grant-admin you@example.com`.
 In dev, verification codes print in the backend log.
 
-| Recipe                                | What it runs                                    |
-| ------------------------------------- | ----------------------------------------------- |
-| `just test` / `just test-integration` | backend unit / DB-backed tests                  |
-| `just test-web`                       | `astro check` + Vitest (real Chromium)          |
-| `just e2e`                            | Playwright against the built site, API mocked   |
-| `just e2e-integration`                | Playwright signup against `just dev`            |
-| `just smoke <url>`                    | read-only checks against a deployed site        |
-| `just up`                             | prod-like stack in Docker behind Caddy on :8080 |
-| `just bench` / `just bench-db`        | backend criterion benches / full-router + DB    |
-| `just bench-web`                      | Vitest benches (helpers, client, AdminPanel)    |
-| `just bench-compare [base]`           | base vs working tree, per-bench change report   |
-| `just api-types`                      | regenerate `backend/openapi.json` + web types   |
-| `just api-types-check`                | fail if either generated API file is stale      |
-| `just load <scenario>`                | k6 load scenario against the capped stack       |
-| `just obs-up` / `just obs-down`       | traces, logs, metrics, alerts and Grafana       |
+Tokens are signed with HMAC-SHA-512 keys (`JWT_SIGNING_KEY`, plus
+`JWT_TRUSTED_KEYS` during a rotation; steps in `backend/.env.example`). A
+`backend/.env` from before OT-009 still holds `JWT_PRIVATE_KEY`/`JWT_PUBLIC_KEY`
+and the backend refuses to start with them: replace both with
+`JWT_SIGNING_KEY=$(just jwt-keygen dev)`, or regenerate the file with
+`FORCE=1 ./scripts/gen-dev-env.sh`. Committed secrets use post-quantum age keys
+only (`deploy/secrets/README.md`).
+
+| Recipe                                | What it runs                                                     |
+| ------------------------------------- | ---------------------------------------------------------------- |
+| `just test` / `just test-integration` | backend unit / DB-backed tests                                   |
+| `just test-web`                       | `astro check` + Vitest (real Chromium)                           |
+| `just e2e`                            | Playwright against the built site, API mocked                    |
+| `just e2e-integration`                | Playwright signup against `just dev`                             |
+| `just smoke <url>`                    | read-only checks against a deployed site, incl. post-quantum TLS |
+| `just jwt-keygen [kid]`               | new token key for `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS`         |
+| `just up`                             | prod-like stack in Docker behind Caddy on :8080                  |
+| `just bench` / `just bench-db`        | backend criterion benches / full-router + DB                     |
+| `just bench-web`                      | Vitest benches (helpers, client, AdminPanel)                     |
+| `just bench-compare [base]`           | base vs working tree, per-bench change report                    |
+| `just api-types`                      | regenerate `backend/openapi.json` + web types                    |
+| `just api-types-check`                | fail if either generated API file is stale                       |
+| `just load <scenario>`                | k6 load scenario against the capped stack                        |
+| `just obs-up` / `just obs-down`       | traces, logs, metrics, alerts and Grafana                        |
 
 ### Benchmarks
 
