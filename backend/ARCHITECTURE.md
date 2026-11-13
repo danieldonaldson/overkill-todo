@@ -192,14 +192,14 @@ application and domain layers only use `tracing` macros.
 
 - **Registration:** email + password → Argon2id hash → unverified user → email code.
 - **Email verification:** 6-digit code (hashed) → mark verified → complete signup → JWT + refresh token.
-- **Login:** email + password → Argon2id verify → JWT (RS256, 15 min) + refresh token (SHA-256 hash stored, 30 days) + CSRF token (double-submit cookie).
+- **Login:** email + password → Argon2id verify → JWT (HS512, 15 min) + refresh token (SHA-256 hash stored, 30 days) + CSRF token (double-submit cookie).
 - **Token refresh:** refresh token → device fingerprint check → atomic rotate (single transaction) → new JWT + new refresh token.
 - **OAuth (Google):** authorization-code flow → server-to-server token exchange → Google ID-token signature verified against Google's JWKS (issuer + audience checked) → upsert `oauth_accounts` → auto-link only if email verified by both sides.
 
 ## Security invariants (don't regress these)
 
 - Argon2id for all passwords; tunable cost params from config.
-- RS256 with algorithm pinning on decode — HS256 is rejected.
+- Our tokens (session, signup, reset, OAuth state) are HS512 under a named key (`kid`), quantum-safe; only HS512 is accepted on decode, and only from a configured key, never by trying others. Keys rotate via `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS` (OT-009).
 - Refresh tokens stored as SHA-256 hashes; raw token never persisted.
 - Refresh rotation is atomic (single DB transaction).
 - Revoked refresh-token reuse triggers full-family revocation. The reuse/revoked

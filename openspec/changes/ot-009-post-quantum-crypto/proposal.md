@@ -18,8 +18,8 @@ public-key crypto:
 - **TLS** to browsers and to Google. Traffic recorded today could be
   decrypted later unless the key exchange is post-quantum.
 - **Session, signup, reset and OAuth-state tokens** are signed with RS256. A
-  quantum attacker could forge them and sign in as anyone, including a Super
-  Admin.
+  quantum attacker could recover the signing key from the public key, forge
+  tokens and sign in as anyone, including a Super Admin.
 
 Now is the cheapest time: there is no production yet, so keys can be replaced
 without migrating live sessions or secrets that users depend on.
@@ -32,9 +32,11 @@ as they are.
 - Committed secrets are encrypted only to hybrid post-quantum
   (ML-KEM-768 + X25519) recipients. The access policy refuses classical keys,
   and every secret ever encrypted to a classical key is rotated.
-- Tokens the backend issues and checks are signed with ML-DSA (FIPS 204)
-  instead of RS256. Each token names its signing key, the backend can hold
-  several verification keys at once, and keys can be rotated without signing
+- Tokens the backend issues and checks are signed with HMAC-SHA-512 instead
+  of RS256. The backend is the only party that ever verifies them, so a
+  public-key signature buys nothing, and a symmetric MAC is quantum-safe for
+  the same reason AES-256 is. Each token names its signing key, the backend
+  can hold several keys at once, and keys can be rotated without signing
   anyone out. **BREAKING** for any outstanding token: tokens issued before the
   switch are rejected and Members sign in again (or are refreshed silently).
 - Every TLS connection we control that crosses a network offers hybrid
@@ -53,7 +55,7 @@ None.
 
 ## Appetite
 
-Three weeks.
+Two weeks.
 
 ## Out of Scope
 
@@ -62,9 +64,14 @@ Three weeks.
   and Cloudflare/Turnstile's TLS.
 - Links between containers on the same host (they don't cross a network). If
   one ever does, it falls under this capability.
-- ML-DSA-65/87: tokens at those levels don't fit in a cookie. Key agility
-  makes moving up a later config change.
-- Composite (hybrid classical + PQ) signatures.
+- Post-quantum public-key signatures (ML-DSA) for our tokens. Considered
+  and dropped on 2026-11-13: an ML-DSA-44 token adds about 3 KB to every
+  request (about 2.4 Gbps of inbound traffic at 100k requests/s) and costs
+  far more CPU to verify, for a benefit we only get if someone other than the
+  backend verifies tokens. If that ever happens (for example, issuing OIDC
+  tokens), it's a new change.
+- Narrowing the session cookie to API paths. It's worth doing for request
+  size, but it's not about cryptography.
 
 ## Dependencies
 
@@ -77,11 +84,10 @@ Three weeks.
 
 ## Ready
 
-- **Riskiest unknown:** a hand-written ML-DSA token format is correct and
-  safe (no algorithm confusion, rejects anything unexpected), and the larger
-  token (~3.5 KB) still fits the session cookie and request-header limits
-  across browsers, the edge and the backend.
-- **First slice:** session tokens signed with ML-DSA-44 under a named key,
-  issued at sign-in and accepted on every authenticated request, checked by
-  real sign-in flows in Chromium, Firefox and WebKit. (The small SOPS slice
-  went ahead of it on 2026-11-12, since it's independent and cheap.)
+- **Riskiest unknown:** key handling. A symmetric key both signs and
+  verifies, so every copy of a trusted key is as sensitive as the signing
+  key, and rotation must never leave a window where Members are signed out or
+  a retired key still works.
+- **First slice:** SOPS with post-quantum keys (done 2026-11-12). Then every
+  token signed with HMAC-SHA-512 under a named key, with rotation, in one
+  slice.

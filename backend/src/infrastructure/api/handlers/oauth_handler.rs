@@ -108,7 +108,7 @@ async fn run_real_oauth_flow(
     if code.is_empty() {
         return Err(AppError::Validation("Missing code parameter".into()));
     }
-    let state_claims = verify_oauth_state(deps.crypto.decoding_key(), state)?;
+    let state_claims = verify_oauth_state(deps.crypto.tokens(), state)?;
 
     if state_claims.provider != provider {
         return Err(AppError::Validation("Provider mismatch in state".into()));
@@ -205,7 +205,7 @@ pub async fn oauth_start(
     };
 
     let (state, nonce) = create_oauth_state(
-        deps.crypto.encoding_key(),
+        deps.crypto.tokens(),
         &provider,
         mode_str,
         user_id.as_deref(),
@@ -315,7 +315,7 @@ async fn oauth_callback_inner(
                 if state.is_empty() {
                     default_test_claims(&provider)
                 } else {
-                    verify_oauth_state(deps.crypto.decoding_key(), state)?
+                    verify_oauth_state(deps.crypto.tokens(), state)?
                 }
             } else {
                 default_test_claims(&provider)

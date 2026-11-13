@@ -101,6 +101,10 @@ secrets-check:
 secrets-sync:
     ./scripts/secrets.sh sync
 
+# Print a new token key (`<kid>:<secret>`) for JWT_SIGNING_KEY / JWT_TRUSTED_KEYS; kid defaults to today.
+jwt-keygen kid="":
+    ./scripts/jwt-keygen.sh {{kid}}
+
 # Encrypt stdin into a new secret, e.g. `openssl rand -base64 32 | just secrets-new deploy/secrets/prod/x.sops`.
 secrets-new path:
     ./scripts/secrets.sh new {{path}}

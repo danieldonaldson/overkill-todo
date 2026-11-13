@@ -1,8 +1,12 @@
-//! JWT token creation and verification using RS256.
+//! Session token creation and verification (HMAC-SHA-512 via the token keyring).
 
 use super::error::AppError;
 use chrono::{Duration, Utc};
-use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
+use jsonwebtoken::Validation;
+use jsonwebtoken::errors::ErrorKind;
+use std::sync::LazyLock;
+
+use crate::infrastructure::crypto::TokenKeyring;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -82,20 +86,33 @@ impl Claims {
     ///
     /// Returns [`AppError::Authorization`] if the subject is not a valid UUID.
     pub fn user_id(&self) -> Result<Uuid, AppError> {
-        Uuid::parse_str(&self.sub).map_err(|_| AppError::token_invalid("Invalid user ID in token"))
+        Uuid::parse_str(&self.sub).map_err(|_| {
+            tracing::debug!("session token rejected: subject is not a UUID");
+            AppError::token_rejected()
+        })
     }
 }
 
-/// Creates a signed JWT token for the given user.
+/// The session-token validation, built once: HS512 only, issuer and audience
+/// pinned so a token scoped to another service (or to none) is refused.
+static SESSION_VALIDATION: LazyLock<Validation> = LazyLock::new(|| {
+    let mut validation = TokenKeyring::validation();
+    validation.set_issuer(&[TOKEN_ISSUER]);
+    validation.set_audience(&[TOKEN_AUDIENCE]);
+    validation.set_required_spec_claims(&["exp", "iss", "aud"]);
+    validation
+});
+
+/// Creates a signed session token for the given user.
 ///
-/// Uses RS256 algorithm for signing.
+/// Signed with the keyring's active key (HMAC-SHA-512, `kid` header).
 ///
 /// # Arguments
 ///
 /// * `user_id` - The user's UUID to encode in the token
 /// * `email_verified` - Whether the user's email is verified
 /// * `role` - The user's role (e.g., "user", "admin", "`super_admin`")
-/// * `encoding_key` - RSA private key for signing
+/// * `keys` - The token keyring
 /// * `expiration_minutes` - Token validity duration in minutes
 ///
 /// # Errors
@@ -104,52 +121,39 @@ pub fn create_jwt(
     user_id: Uuid,
     email_verified: bool,
     role: &str,
-    encoding_key: &EncodingKey,
+    keys: &TokenKeyring,
     expiration_minutes: i64,
 ) -> Result<String, AppError> {
     let claims = Claims::new(user_id, email_verified, role, expiration_minutes);
 
-    encode(&Header::new(Algorithm::RS256), &claims, encoding_key)
+    keys.sign(&claims)
         .map_err(|e| AppError::Internal(format!("Failed to create JWT: {e}")))
 }
 
-/// Verifies and decodes a JWT token.
+/// Verifies and decodes a session token.
 ///
 /// # Errors
 ///
-/// Returns [`AppError::Authorization`] if:
-/// - The token has expired
-/// - The token is malformed
-/// - The signature is invalid
-pub fn verify_jwt(token: &str, decoding_key: &DecodingKey) -> Result<Claims, AppError> {
-    // Require and pin the issuer/audience so a token scoped to another service
-    // (or with no scope at all) is rejected, not just an expired/forged one.
-    let mut validation = Validation::new(Algorithm::RS256);
-    validation.set_issuer(&[TOKEN_ISSUER]);
-    validation.set_audience(&[TOKEN_AUDIENCE]);
-    validation.set_required_spec_claims(&["exp", "iss", "aud"]);
-
-    let claims = decode::<Claims>(token, decoding_key, &validation)
-        .map(|data| data.claims)
-        .map_err(|e| match e.kind() {
-            jsonwebtoken::errors::ErrorKind::ExpiredSignature => AppError::token_expired(),
-            jsonwebtoken::errors::ErrorKind::InvalidToken => AppError::token_invalid("malformed"),
-            jsonwebtoken::errors::ErrorKind::InvalidAlgorithm => {
-                AppError::token_invalid("algorithm mismatch")
-            }
-            jsonwebtoken::errors::ErrorKind::InvalidIssuer => {
-                AppError::token_invalid("issuer mismatch")
-            }
-            jsonwebtoken::errors::ErrorKind::InvalidAudience => {
-                AppError::token_invalid("audience mismatch")
-            }
-            _ => AppError::token_invalid(&format!("validation failed: {e}")),
-        })?;
+/// Returns [`AppError::Authorization`]: `token_expired` if the token is valid
+/// but expired, otherwise `token_invalid` with one fixed message (wrong
+/// algorithm, unknown or missing key, bad signature, wrong issuer, audience or
+/// type, or malformed).
+pub fn verify_jwt(token: &str, keys: &TokenKeyring) -> Result<Claims, AppError> {
+    let claims: Claims = keys.verify(token, &SESSION_VALIDATION).map_err(|e| {
+        if *e.kind() == ErrorKind::ExpiredSignature {
+            AppError::token_expired()
+        } else {
+            // The reason stays in debug logs; the token itself is never logged.
+            tracing::debug!(reason = ?e.kind(), "session token rejected");
+            AppError::token_rejected()
+        }
+    })?;
 
     // INVARIANT: reject single-purpose tokens (signup/reset) presented as a
     // session. They are signed with the same key but carry a different `typ`.
     if claims.typ != SESSION_TOKEN_TYPE {
-        return Err(AppError::token_invalid("not a session token"));
+        tracing::debug!("session token rejected: not a session token");
+        return Err(AppError::token_rejected());
     }
 
     Ok(claims)
@@ -158,58 +162,31 @@ pub fn verify_jwt(token: &str, decoding_key: &DecodingKey) -> Result<Claims, App
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::infrastructure::api::error::auth_codes;
+    use crate::infrastructure::crypto::TEST_RSA_PRIVATE_KEY;
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use proptest::prelude::*;
 
-    const TEST_PRIVATE_KEY: &str = r"-----BEGIN PRIVATE KEY-----
-MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDy6CQ7n1LQQVzD
-uFKBXnNBBth+WFGqo9X1x8zcpEIWee8lybAqhzS8pgn1nfD5JTjbCSYaBnXs+G5Y
-uhsybBGVxlBAYKEdCvE3D0FN/5/APHREaKdELzwcC0knurncB91Nwc6rsQPo5GpZ
-mRSXfA9IqZu8hq39JY1+fKwfDnK4VXzc2kSyguQP8vS07M2IIBoYAlIzWZmLQbCe
-2e2iQNkuZk91MYCDXRnWOilzBjEeFjpDc9dUjOBUFWU3LRTT9MI36TaFY8R/S00i
-Dn/HLUhrlxAlX1I0/C6378iQX1TTfvprvSY5k1psgc4DHev/lpW+YQEWRqOatUjW
-Li2KFw2HAgMBAAECggEAEneYrZm+y4t0mIKubxx1qbdyBSUEzHLZRO7UQeAREDFj
-/5z2Uj1mQoNjFXPVCrQMPwbSiT79fy8iAIfhonM54QerOUG/bfxTe2qi/eGVzSEr
-e7nzIYlvyfgHr0gQckx8xDkcU8xI7k9TUI2FVcD+TnlqmCorFyhgOgITeeb4zM+5
-HBxO+tzbjRr/XBhGyaUTJGGVyMMTojPpmODcYzrp/Xn6NONnO5PnsjRil5ki76VH
-rrOVrV0AOYPAKeeW1SHNbVbPv7LaMwTTSPhDZ150MrPLe509QrWQoEkRSqyjZeLE
-6vbPf1y76NRJZYnLqs/gsCZ6tmDX5XhrNvDw/9BVrQKBgQD6ALih6RIqVgtt0mZi
-pSJI1PoVNiewxEBeE+F2RAXdkoCxUdYcN6pAJ5/U9M2zxBDAnfgGkaT9Lngz6YdJ
-rK0HbFr1Lxydn8wk38oJRdy9q3xejTNAaloo4pF9z3WGFpLCllsJDCCrpKZRFS/v
-yv80lvmYxkjOJEYgv1f2CRoPfQKBgQD4u9fms8QySnWET6YZZv5KcYTtt8MjxdIx
-FGNZLYG/S3ATs7qKf2ExlljvGIc6PC8twmWTAWZ0/N8AQNdPwN+N1JypqcpoKGCy
-+B+1BxBJvzSa914YHShqSencgXZ7WOc+jWNtFwjTiipye4xaWntM6Kkah90+srZV
-dvxyS4KoUwKBgCSKdHId6ezMNNFxfkuOzWsNzhvJlZWNqcbWaw7pNF5FapAAYSYw
-sK692+u5eFN9JeGxdS4onY/v+dvEl2SaW5QJL2ZE447aa3E8UIB4eKI0bXI4ezRA
-FzuAmjlkWE4oAH12konI/wF3iGOzkBUhe5nJM2Q0HzIaNTHWJdotTGTVAoGBAJxb
-EHwAcwueDMNwghwjxyQqugHo6y0YlGmvxEfxuEb09+4ao9+d9Q4D0cHy7EaqQIoG
-Um2Xir1tnAz/tZl3x8/TX+uzRP42q5q1KNFWMGH7ZOkpKKgF5Dr0XaL0avNcznhe
-zqpruWuoxcgTbAX8LNgKxQpdb7GTC9Urp8N9PhPrAoGBALOc4pqxt5ku+9RT06ld
-bgfp/q0QK2ctgxJwEHtfPuG40hyrUd+nJ6xnM/faaSNF1ja+K/D3+2mEZEYo7cAg
-0zN9HT6B7HX/hYBxhGRVKDBg0OmSxiA96ti6tDQzS0xp9myeGGo97BtWZNSKwGnm
-DUoBCPh9JHjajqhSI09lGqHH
------END PRIVATE KEY-----";
+    fn keys() -> TokenKeyring {
+        TokenKeyring::for_testing()
+    }
 
-    const TEST_PUBLIC_KEY: &str = r"-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA8ugkO59S0EFcw7hSgV5z
-QQbYflhRqqPV9cfM3KRCFnnvJcmwKoc0vKYJ9Z3w+SU42wkmGgZ17PhuWLobMmwR
-lcZQQGChHQrxNw9BTf+fwDx0RGinRC88HAtJJ7q53AfdTcHOq7ED6ORqWZkUl3wP
-SKmbvIat/SWNfnysHw5yuFV83NpEsoLkD/L0tOzNiCAaGAJSM1mZi0GwntntokDZ
-LmZPdTGAg10Z1jopcwYxHhY6Q3PXVIzgVBVlNy0U0/TCN+k2hWPEf0tNIg5/xy1I
-a5cQJV9SNPwut+/IkF9U0376a70mOZNabIHOAx3r/5aVvmEBFkajmrVI1i4tihcN
-hwIDAQAB
------END PUBLIC KEY-----";
+    /// Assert `result` is the generic invalid-token rejection.
+    fn assert_rejected(result: Result<Claims, AppError>) {
+        match result {
+            Err(AppError::Authorization { code, message }) => {
+                assert_eq!(code, auth_codes::TOKEN_INVALID);
+                assert_eq!(message, "Invalid token");
+            }
+            other => panic!("expected the generic TOKEN_INVALID rejection, got {other:?}"),
+        }
+    }
 
     #[test]
     fn test_create_and_verify_jwt() {
         let user_id = Uuid::now_v7();
-        let encoding_key =
-            EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes()).expect("Invalid private key");
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
-        let token =
-            create_jwt(user_id, true, "user", &encoding_key, 15).expect("Failed to create token");
-        let claims = verify_jwt(&token, &decoding_key).expect("Failed to verify token");
+        let token = create_jwt(user_id, true, "user", &keys(), 15).expect("creates");
+        let claims = verify_jwt(&token, &keys()).expect("verifies");
 
         assert_eq!(claims.user_id().unwrap(), user_id);
         assert!(claims.verified);
@@ -217,16 +194,18 @@ hwIDAQAB
     }
 
     #[test]
+    fn test_session_token_names_hs512_and_the_active_key() {
+        let token = create_jwt(Uuid::now_v7(), true, "user", &keys(), 15).expect("creates");
+        let header = jsonwebtoken::decode_header(&token).unwrap();
+        assert_eq!(header.alg, Algorithm::HS512);
+        assert_eq!(header.kid.as_deref(), Some("test-a"));
+    }
+
+    #[test]
     fn test_create_and_verify_jwt_unverified() {
         let user_id = Uuid::now_v7();
-        let encoding_key =
-            EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes()).expect("Invalid private key");
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
-        let token =
-            create_jwt(user_id, false, "user", &encoding_key, 15).expect("Failed to create token");
-        let claims = verify_jwt(&token, &decoding_key).expect("Failed to verify token");
+        let token = create_jwt(user_id, false, "user", &keys(), 15).expect("creates");
+        let claims = verify_jwt(&token, &keys()).expect("verifies");
 
         assert_eq!(claims.user_id().unwrap(), user_id);
         assert!(!claims.verified);
@@ -235,127 +214,66 @@ hwIDAQAB
     #[test]
     fn test_create_and_verify_jwt_with_admin_role() {
         let user_id = Uuid::now_v7();
-        let encoding_key =
-            EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes()).expect("Invalid private key");
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
-        let token =
-            create_jwt(user_id, true, "admin", &encoding_key, 15).expect("Failed to create token");
-        let claims = verify_jwt(&token, &decoding_key).expect("Failed to verify token");
+        let token = create_jwt(user_id, true, "admin", &keys(), 15).expect("creates");
+        let claims = verify_jwt(&token, &keys()).expect("verifies");
 
         assert_eq!(claims.user_id().unwrap(), user_id);
-        assert!(claims.verified);
         assert_eq!(claims.role, "admin");
     }
 
-    /// A second, unrelated RSA keypair used to prove signature forgery is
-    /// rejected: a token signed with [`TEST_PRIVATE_KEY`] must NOT verify under
-    /// this public key.
-    const OTHER_PUBLIC_KEY: &str = r"-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApVr60DF0XOHqRZxKmwH8
-Mr7IDH59+6cR4KK1V/vQo0/c1IOudbXtecTLii18xo53/sK1lUXdg+vKtSDEv9jq
-/R7YH7tJ6pX2bmokIuLPSLp0m9p+PNGDTX1PmJCAIFullxOZdvpLZ7/B0oQAqfHe
-RiMm8fo15gitxp+qdyIESg8ucuE5H/4MllkT9ekK+geCKe+o64ugcCNzinDXjPGd
-fmtpnnKgBHWB6H2uQ/s8cGpaDx7r8Ml/CsMd0r2icOxlbx/byAUEAfVrrk0oX34U
-NvLSvVZCCdzbmzPemwT6rB4lNm8u5sHlupQ8opKL6Kcj8zXraejD/BUPIMGLRGXW
-WwIDAQAB
------END PUBLIC KEY-----";
-
-    /// Verifying with the MATCHING public key succeeds (sanity baseline for the
-    /// forgery test below). Previously this test was misleadingly named
-    /// `test_wrong_public_key` while actually using the matching key.
+    /// SECURITY: a token signed by a key the verifier doesn't trust is refused.
     #[test]
-    fn test_matching_public_key_succeeds() {
-        let user_id = Uuid::now_v7();
-        let encoding_key =
-            EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes()).expect("Invalid private key");
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
-        let token =
-            create_jwt(user_id, true, "user", &encoding_key, 15).expect("Failed to create token");
-        // Using matching keys should succeed
-        let result = verify_jwt(&token, &decoding_key);
-
-        assert!(result.is_ok());
+    fn test_token_from_an_untrusted_key_rejected() {
+        let other = TokenKeyring::from_config(
+            &crate::infrastructure::crypto::keyring_test_entry("other", 9),
+            None,
+        )
+        .unwrap();
+        let token = create_jwt(Uuid::now_v7(), true, "user", &other, 15).expect("creates");
+        assert_rejected(verify_jwt(&token, &keys()));
     }
 
-    /// SECURITY: a token signed with one RSA keypair MUST NOT verify under a
-    /// different, unrelated public key. This is the real forgery / wrong-key
-    /// rejection test (the old `test_wrong_public_key` did not exercise it).
+    /// SECURITY: an RS256 session token signed by the old RSA key, naming a
+    /// trusted `kid`, is refused.
     #[test]
-    fn test_forged_signature_wrong_public_key_rejected() {
-        let user_id = Uuid::now_v7();
-        // Sign with our real private key...
-        let encoding_key =
-            EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes()).expect("Invalid private key");
+    fn test_rs256_token_rejected() {
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("test-a".into());
+        let rsa = EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY.as_bytes()).unwrap();
+        let claims = Claims::new(Uuid::now_v7(), true, "super_admin", 15);
+        let token = encode(&header, &claims, &rsa).expect("encode failed");
+        assert_rejected(verify_jwt(&token, &keys()));
+    }
+
+    /// SECURITY: an HS256 token under the right key is refused.
+    #[test]
+    fn test_verify_jwt_wrong_algorithm() {
+        let mut header = Header::new(Algorithm::HS256);
+        header.kid = Some("test-a".into());
+        let claims = Claims::new(Uuid::now_v7(), true, "user", 15);
         let token =
-            create_jwt(user_id, true, "user", &encoding_key, 15).expect("Failed to create token");
-
-        // ...but verify against an UNRELATED public key.
-        let other_key =
-            DecodingKey::from_rsa_pem(OTHER_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
-        let result = verify_jwt(&token, &other_key);
-        assert!(
-            result.is_err(),
-            "token signed with a different key must NOT verify"
-        );
-        assert!(
-            matches!(result.unwrap_err(), AppError::Authorization { .. }),
-            "wrong-key verification must map to an Authorization error"
-        );
+            encode(&header, &claims, &EncodingKey::from_secret(&[1u8; 64])).expect("encode failed");
+        assert_rejected(verify_jwt(&token, &keys()));
     }
 
     /// SECURITY: a validly-signed session token whose `iss` is not
     /// [`TOKEN_ISSUER`] must be rejected (cross-service token reuse).
     #[test]
     fn test_wrong_issuer_rejected() {
-        let encoding_key =
-            EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes()).expect("Invalid private key");
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
         let mut claims = Claims::new(Uuid::now_v7(), true, "user", 15);
         claims.iss = "some-other-service".to_string();
-        let token =
-            encode(&Header::new(Algorithm::RS256), &claims, &encoding_key).expect("encode failed");
-
-        let result = verify_jwt(&token, &decoding_key);
-        assert!(
-            result.is_err(),
-            "token with a foreign issuer must not verify"
-        );
-        assert!(matches!(
-            result.unwrap_err(),
-            AppError::Authorization { .. }
-        ));
+        let token = keys().sign(&claims).unwrap();
+        assert_rejected(verify_jwt(&token, &keys()));
     }
 
     /// SECURITY: a validly-signed session token whose `aud` is not
     /// [`TOKEN_AUDIENCE`] must be rejected (token minted for another audience).
     #[test]
     fn test_wrong_audience_rejected() {
-        let encoding_key =
-            EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes()).expect("Invalid private key");
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
         let mut claims = Claims::new(Uuid::now_v7(), true, "user", 15);
         claims.aud = "some-other-audience".to_string();
-        let token =
-            encode(&Header::new(Algorithm::RS256), &claims, &encoding_key).expect("encode failed");
-
-        let result = verify_jwt(&token, &decoding_key);
-        assert!(
-            result.is_err(),
-            "token with a foreign audience must not verify"
-        );
-        assert!(matches!(
-            result.unwrap_err(),
-            AppError::Authorization { .. }
-        ));
+        let token = keys().sign(&claims).unwrap();
+        assert_rejected(verify_jwt(&token, &keys()));
     }
 
     #[test]
@@ -397,7 +315,7 @@ WwIDAQAB
         let result = claims.user_id();
         assert!(result.is_err());
         match result.unwrap_err() {
-            AppError::Authorization { message, .. } => assert!(message.contains("Invalid user ID")),
+            AppError::Authorization { message, .. } => assert_eq!(message, "Invalid token"),
             _ => panic!("Expected Authorization error"),
         }
     }
@@ -416,11 +334,6 @@ WwIDAQAB
             iat: i64,
         }
 
-        let encoding_key =
-            EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes()).expect("Invalid private key");
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
         let now = Utc::now();
         let claims = ForeignClaims {
             sub: Uuid::now_v7().to_string(),
@@ -430,41 +343,23 @@ WwIDAQAB
             exp: (now + Duration::minutes(15)).timestamp(),
             iat: now.timestamp(),
         };
-        let token =
-            encode(&Header::new(Algorithm::RS256), &claims, &encoding_key).expect("encode failed");
-
-        let result = verify_jwt(&token, &decoding_key);
-        assert!(
-            result.is_err(),
-            "signup-typ token must not verify as session"
-        );
+        let token = keys().sign(&claims).unwrap();
+        assert_rejected(verify_jwt(&token, &keys()));
     }
 
     #[test]
     fn test_verify_jwt_invalid_token() {
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
-        let result = verify_jwt("invalid.token.here", &decoding_key);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            AppError::Authorization { .. }
-        ));
+        for token in ["invalid.token.here", "only-one-segment", ""] {
+            assert_rejected(verify_jwt(token, &keys()));
+        }
     }
 
     #[test]
     fn test_verify_jwt_expired_token() {
-        let user_id = Uuid::now_v7();
-        let encoding_key =
-            EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes()).expect("Invalid private key");
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
-        // Create a token that expired 5 minutes ago (use longer time to avoid timing issues)
+        // Expired 5 minutes ago, beyond the 60 s leeway.
         let now = chrono::Utc::now();
         let claims = Claims {
-            sub: user_id.to_string(),
+            sub: Uuid::now_v7().to_string(),
             typ: SESSION_TOKEN_TYPE.to_string(),
             iss: TOKEN_ISSUER.to_string(),
             aud: TOKEN_AUDIENCE.to_string(),
@@ -473,43 +368,12 @@ WwIDAQAB
             exp: (now - chrono::Duration::minutes(5)).timestamp(),
             iat: (now - chrono::Duration::minutes(20)).timestamp(),
         };
+        let token = keys().sign(&claims).unwrap();
 
-        let token =
-            encode(&Header::new(Algorithm::RS256), &claims, &encoding_key).expect("encode failed");
-
-        let result = verify_jwt(&token, &decoding_key);
-        assert!(result.is_err());
-        match result.unwrap_err() {
-            AppError::Authorization { code, .. } => {
-                assert_eq!(
-                    code,
-                    crate::infrastructure::api::error::auth_codes::TOKEN_EXPIRED
-                );
-            }
-            _ => panic!("Expected Authorization error"),
+        match verify_jwt(&token, &keys()).unwrap_err() {
+            AppError::Authorization { code, .. } => assert_eq!(code, auth_codes::TOKEN_EXPIRED),
+            other => panic!("Expected Authorization error, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn test_verify_jwt_wrong_algorithm() {
-        // Create a token with HS256 but try to verify with RS256 key
-        let claims = Claims::new(Uuid::now_v7(), true, "user", 15);
-        let token = encode(
-            &Header::new(Algorithm::HS256),
-            &claims,
-            &EncodingKey::from_secret(b"secret"),
-        )
-        .expect("encode failed");
-
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
-        let result = verify_jwt(&token, &decoding_key);
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            AppError::Authorization { .. }
-        ));
     }
 
     // ==================== Property Tests ====================
@@ -605,36 +469,6 @@ WwIDAQAB
         }
     }
 
-    /// Requesting an RS256 signature with an HMAC secret key makes `encode` fail;
-    /// `create_jwt` must surface that as an internal error rather than panicking.
-    #[test]
-    fn test_create_jwt_encode_failure_is_internal() {
-        let hmac_key = EncodingKey::from_secret(b"not-an-rsa-key");
-        let result = create_jwt(Uuid::now_v7(), true, "user", &hmac_key, 15);
-        match result {
-            Err(AppError::Internal(msg)) => assert!(msg.contains("Failed to create JWT")),
-            other => panic!("expected Internal error, got {other:?}"),
-        }
-    }
-
-    /// A structurally malformed token (not three base64 segments) takes the
-    /// `InvalidToken` arm and maps to a `token_invalid("malformed")` error.
-    #[test]
-    fn test_verify_jwt_malformed_maps_to_token_invalid() {
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-        let result = verify_jwt("only-one-segment", &decoding_key);
-        match result.unwrap_err() {
-            AppError::Authorization { code, .. } => {
-                assert_eq!(
-                    code,
-                    crate::infrastructure::api::error::auth_codes::TOKEN_INVALID
-                );
-            }
-            other => panic!("expected Authorization error, got {other:?}"),
-        }
-    }
-
     /// `default_role` supplies "user" when a token body omits the `role` claim,
     /// preserving backwards compatibility with older tokens.
     #[test]
@@ -650,11 +484,6 @@ WwIDAQAB
             iat: i64,
         }
 
-        let encoding_key =
-            EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes()).expect("Invalid private key");
-        let decoding_key =
-            DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes()).expect("Invalid public key");
-
         let now = Utc::now();
         let claims = RolelessClaims {
             sub: Uuid::now_v7().to_string(),
@@ -665,10 +494,9 @@ WwIDAQAB
             exp: (now + Duration::minutes(15)).timestamp(),
             iat: now.timestamp(),
         };
-        let token =
-            encode(&Header::new(Algorithm::RS256), &claims, &encoding_key).expect("encode failed");
+        let token = keys().sign(&claims).unwrap();
 
-        let verified = verify_jwt(&token, &decoding_key).expect("should verify");
+        let verified = verify_jwt(&token, &keys()).expect("should verify");
         assert_eq!(verified.role, "user");
     }
 }

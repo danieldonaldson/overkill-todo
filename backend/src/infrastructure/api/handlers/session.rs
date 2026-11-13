@@ -92,7 +92,7 @@ pub(crate) fn build_session(
         *user.id().as_uuid(),
         user.email_verified(),
         user.role().to_db_str(),
-        crypto.encoding_key(),
+        crypto.tokens(),
         jwt_expiration_minutes,
     )?;
     let expires_at = (Utc::now() + Duration::minutes(jwt_expiration_minutes)).timestamp();

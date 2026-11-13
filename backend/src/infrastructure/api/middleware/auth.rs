@@ -7,13 +7,12 @@ use axum::{
     middleware::Next,
     response::Response,
 };
-use jsonwebtoken::DecodingKey;
 
 use crate::{
     application::ports::outgoing::{SessionAuthorizationState, UserRepository},
     domain::value_objects::{UserId, UserRole},
     infrastructure::api::{cookies::extract_cookie, error::AppError, verify_jwt},
-    infrastructure::crypto::Crypto,
+    infrastructure::crypto::{Crypto, TokenKeyring},
 };
 
 #[derive(Clone, Debug)]
@@ -73,7 +72,7 @@ where
                 return Ok(Self(None));
             };
             Ok(Self(
-                resolve_principal(crypto.decoding_key(), &parts.headers).ok(),
+                resolve_principal(crypto.tokens(), &parts.headers).ok(),
             ))
         })();
         std::future::ready(result)
@@ -101,12 +100,9 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
 /// The single place that turns a token into a principal — used by the
 /// middleware, the `Option`-returning [`authenticate`], and the
 /// [`OptionalAuthUser`] extractor.
-fn resolve_principal(
-    decoding_key: &DecodingKey,
-    headers: &HeaderMap,
-) -> Result<AuthUser, AppError> {
+fn resolve_principal(keys: &TokenKeyring, headers: &HeaderMap) -> Result<AuthUser, AppError> {
     let token = extract_token(headers).ok_or_else(AppError::token_missing)?;
-    let claims = verify_jwt(&token, decoding_key)?;
+    let claims = verify_jwt(&token, keys)?;
     let user_id = claims.user_id()?;
     let role = UserRole::from_db_str(&claims.role).unwrap_or_default();
     Ok(AuthUser {
@@ -119,8 +115,8 @@ fn resolve_principal(
 
 /// Verify the request's session token and build the [`AuthUser`]. Returns `None`
 /// when no valid session token is present.
-fn authenticate(decoding_key: &DecodingKey, req: &Request) -> Option<AuthUser> {
-    resolve_principal(decoding_key, req.headers()).ok()
+fn authenticate(keys: &TokenKeyring, req: &Request) -> Option<AuthUser> {
+    resolve_principal(keys, req.headers()).ok()
 }
 
 /// Ensure the request's [`AuthUser`] extension is populated, verifying the
@@ -129,15 +125,12 @@ fn authenticate(decoding_key: &DecodingKey, req: &Request) -> Option<AuthUser> {
 ///
 /// Used by the CSRF middleware, which runs *before* `auth_middleware`.
 /// Stashing the verified principal here lets `auth_middleware` reuse it instead
-/// of verifying the (RS256) JWT a second time on the same request.
-pub(crate) fn ensure_authenticated(
-    decoding_key: &DecodingKey,
-    req: &mut Request,
-) -> Option<AuthUser> {
+/// of verifying the JWT a second time on the same request.
+pub(crate) fn ensure_authenticated(keys: &TokenKeyring, req: &mut Request) -> Option<AuthUser> {
     if let Some(user) = req.extensions().get::<AuthUser>().cloned() {
         return Some(user);
     }
-    let user = authenticate(decoding_key, req)?;
+    let user = authenticate(keys, req)?;
     req.extensions_mut().insert(user.clone());
     Some(user)
 }
@@ -158,7 +151,7 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Result<Response, A
             .get::<Arc<Crypto>>()
             .cloned()
             .ok_or_else(|| AppError::Internal("crypto handle not injected".into()))?;
-        let user = resolve_principal(crypto.decoding_key(), req.headers())?;
+        let user = resolve_principal(crypto.tokens(), req.headers())?;
         // Record user_id on the current span for trace correlation.
         tracing::Span::current().record("user_id", user.user_id.to_string());
         req.extensions_mut().insert(user);

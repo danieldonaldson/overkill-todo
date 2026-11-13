@@ -101,6 +101,16 @@ impl AppError {
         }
     }
 
+    /// The rejection for any invalid token: one fixed message whatever check
+    /// failed (OT-009). Expired session tokens use [`AppError::token_expired`].
+    #[must_use]
+    pub fn token_rejected() -> Self {
+        Self::Authorization {
+            code: auth_codes::TOKEN_INVALID,
+            message: crate::infrastructure::crypto::TOKEN_REJECTED_MESSAGE.into(),
+        }
+    }
+
     #[must_use]
     pub fn invalid_credentials() -> Self {
         Self::Authorization {

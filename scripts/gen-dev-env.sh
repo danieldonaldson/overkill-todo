@@ -3,7 +3,10 @@
 # fresh dev-only secrets. Refuses to overwrite an existing file unless FORCE=1.
 # Optional arg: the checkout to write into (default: this script's own).
 set -euo pipefail
-cd "${1:-$(dirname "$0")/..}"
+# Resolve this script's own directory before changing into the target, which may
+# be a worktree of an older commit that lacks the helpers below.
+here=$(cd "$(dirname "$0")" && pwd)
+cd "${1:-$here/..}"
 
 # In a worktree, take its ports from .worktree.env (written by worktree-new.sh).
 if [[ -f .worktree.env ]]; then
@@ -24,11 +27,26 @@ fi
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$tmp/private.pem" 2>/dev/null
-openssl rsa -in "$tmp/private.pem" -pubout -out "$tmp/public.pem" 2>/dev/null
+
+# Token keys in the format the target checkout expects: HMAC keys (OT-009) or,
+# for a checkout from before OT-009, the RSA pair it still reads.
+token_keys=$tmp/token-keys
+if grep -q '^JWT_SIGNING_KEY=' backend/.env.example; then
+  # On its own line so a failure stops the script (set -e ignores failures
+  # inside an argument's command substitution).
+  signing_key=$("$here/jwt-keygen.sh" dev)
+  printf 'JWT_SIGNING_KEY=%s\n' "$signing_key" > "$token_keys"
+else
+  openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$tmp/private.pem" 2>/dev/null
+  openssl rsa -in "$tmp/private.pem" -pubout -out "$tmp/public.pem" 2>/dev/null
+  {
+    printf 'JWT_PRIVATE_KEY="%s"\n' "$(cat "$tmp/private.pem")"
+    printf 'JWT_PUBLIC_KEY="%s"\n' "$(cat "$tmp/public.pem")"
+  } > "$token_keys"
+fi
 
 # Start from the contract so every variable is present, then override dev values.
-grep -vE '^(DEV_MODE|SERVER_PORT|FRONTEND_BASE_URL|GOOGLE_REDIRECT_URI|DATABASE_URL|JWT_PRIVATE_KEY|JWT_PUBLIC_KEY|CSRF_SECRET|SECRETS_ENCRYPTION_KEY|ARGON2_MEMORY_COST|ARGON2_TIME_COST|ARGON2_PARALLELISM)=' \
+grep -vE '^(DEV_MODE|SERVER_PORT|FRONTEND_BASE_URL|GOOGLE_REDIRECT_URI|DATABASE_URL|JWT_SIGNING_KEY|JWT_TRUSTED_KEYS|JWT_PRIVATE_KEY|JWT_PUBLIC_KEY|CSRF_SECRET|SECRETS_ENCRYPTION_KEY|ARGON2_MEMORY_COST|ARGON2_TIME_COST|ARGON2_PARALLELISM)=' \
   backend/.env.example > "$tmp/env"
 {
   cat "$tmp/env"
@@ -45,8 +63,7 @@ grep -vE '^(DEV_MODE|SERVER_PORT|FRONTEND_BASE_URL|GOOGLE_REDIRECT_URI|DATABASE_
   echo "ARGON2_PARALLELISM=1"
   echo "CSRF_SECRET=$(openssl rand -base64 32)"
   echo "SECRETS_ENCRYPTION_KEY=$(openssl rand -base64 32)"
-  printf 'JWT_PRIVATE_KEY="%s"\n' "$(cat "$tmp/private.pem")"
-  printf 'JWT_PUBLIC_KEY="%s"\n' "$(cat "$tmp/public.pem")"
+  cat "$token_keys"
 } > "$out"
 chmod 600 "$out"
 echo "Wrote $out (DEV_MODE=true, fresh keys)."

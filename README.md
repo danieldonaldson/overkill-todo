@@ -8,7 +8,7 @@ at its first real feature instead of at login.
 - **Frontend:** Astro 7 (static) with Svelte 5 islands, Tailwind 4,
   shadcn-svelte (`apps/web`)
 - **Auth:** email + password (Argon2id), email verification, password reset,
-  Google OAuth, Turnstile, RS256 JWT + rotating refresh tokens, CSRF, roles,
+  Google OAuth, Turnstile, HMAC-SHA-512 JWT + rotating refresh tokens, CSRF, roles,
   admin user list, account export and scheduled deletion
 - **Tests:** unit (mockall, proptest), integration (`#[sqlx::test]`), Vitest
   browser-mode components, Playwright e2e (mocked API), real-stack e2e, smoke

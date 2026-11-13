@@ -1,15 +1,22 @@
 //! JWT service implementation.
 
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use chrono::{DateTime, Utc};
-use jsonwebtoken::{Algorithm, Header, Validation, decode, encode};
+use jsonwebtoken::Validation;
 use serde::{Deserialize, Serialize};
 
 use crate::application::ports::JwtService;
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{ResetCodeId, UserId};
-use crate::infrastructure::crypto::Crypto;
+use crate::infrastructure::crypto::{Crypto, TOKEN_REJECTED_MESSAGE as REJECTED, TokenKeyring};
+
+/// The signup/reset validation, built once.
+static ONE_TIME_VALIDATION: LazyLock<Validation> = LazyLock::new(|| {
+    let mut validation = TokenKeyring::validation();
+    validation.set_required_spec_claims(&["sub", "exp", "typ"]);
+    validation
+});
 
 /// JWT claims for signup/reset tokens.
 #[derive(Debug, Serialize, Deserialize)]
@@ -51,28 +58,29 @@ impl CryptoJwtService {
             jti,
         };
 
-        encode(
-            &Header::new(Algorithm::RS256),
-            &claims,
-            self.crypto.encoding_key(),
-        )
-        .map_err(|e| DomainError::Persistence(format!("Failed to create JWT: {e}")))
+        self.crypto
+            .tokens()
+            .sign(&claims)
+            .map_err(|e| DomainError::Persistence(format!("Failed to create JWT: {e}")))
     }
 
     fn validate_token(&self, token: &str, expected_type: &str) -> Result<TokenClaims, DomainError> {
-        let mut validation = Validation::new(Algorithm::RS256);
-        validation.set_required_spec_claims(&["sub", "exp", "typ"]);
+        let claims: TokenClaims = self
+            .crypto
+            .tokens()
+            .verify(token, &ONE_TIME_VALIDATION)
+            .map_err(|e| {
+                // The reason stays in debug logs; the token is never logged.
+                tracing::debug!(reason = ?e.kind(), expected_type, "one-time token rejected");
+                DomainError::Authorization(REJECTED.into())
+            })?;
 
-        let token_data = decode::<TokenClaims>(token, self.crypto.decoding_key(), &validation)
-            .map_err(|e| DomainError::Authorization(format!("Invalid token: {e}")))?;
-
-        if token_data.claims.typ != expected_type {
-            return Err(DomainError::Authorization(format!(
-                "Invalid token type: expected {expected_type}"
-            )));
+        if claims.typ != expected_type {
+            tracing::debug!(expected_type, "one-time token rejected: wrong type");
+            return Err(DomainError::Authorization(REJECTED.into()));
         }
 
-        Ok(token_data.claims)
+        Ok(claims)
     }
 }
 
@@ -194,5 +202,60 @@ mod tests {
         let result = service.validate_signup_token(&token);
 
         assert!(result.is_err());
+    }
+
+    fn assert_rejected<T: std::fmt::Debug>(result: Result<T, DomainError>) {
+        match result {
+            Err(DomainError::Authorization(msg)) => assert_eq!(msg, REJECTED),
+            other => panic!("expected the generic rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejections_never_say_which_check_failed() {
+        let service = test_service();
+        let user_id = UserId::new();
+        let signup = service
+            .create_signup_token(&user_id, Utc::now() + Duration::hours(1))
+            .unwrap();
+        let expired = service
+            .create_signup_token(&user_id, Utc::now() - Duration::hours(1))
+            .unwrap();
+        assert_rejected(service.validate_reset_token(&signup));
+        assert_rejected(service.validate_signup_token(&expired));
+        assert_rejected(service.validate_signup_token("not.a.token"));
+    }
+
+    #[test]
+    fn session_token_is_rejected_as_a_signup_token() {
+        let crypto = Crypto::for_testing();
+        let session = crate::infrastructure::api::create_jwt(
+            uuid::Uuid::now_v7(),
+            true,
+            "user",
+            crypto.tokens(),
+            15,
+        )
+        .unwrap();
+        assert_rejected(test_service().validate_signup_token(&session));
+    }
+
+    #[test]
+    fn reset_token_from_a_retired_key_is_rejected() {
+        let old = Crypto::for_testing_with_tokens(
+            TokenKeyring::from_config(
+                &crate::infrastructure::crypto::keyring_test_entry("retired", 7),
+                None,
+            )
+            .unwrap(),
+        );
+        let token = CryptoJwtService::new(Arc::new(old))
+            .create_reset_token(
+                &UserId::new(),
+                &ResetCodeId::new(),
+                Utc::now() + Duration::hours(1),
+            )
+            .unwrap();
+        assert_rejected(test_service().validate_reset_token(&token));
     }
 }

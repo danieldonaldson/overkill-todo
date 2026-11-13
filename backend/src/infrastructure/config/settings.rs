@@ -123,8 +123,7 @@ fn collect_missing(problems: &mut Vec<String>) {
         "ARGON2_PARALLELISM",
         "JWT_EXPIRATION_MINUTES",
         "REFRESH_TOKEN_EXPIRATION_DAYS",
-        "JWT_PRIVATE_KEY",
-        "JWT_PUBLIC_KEY",
+        "JWT_SIGNING_KEY",
         "CSRF_SECRET",
         "SECRETS_ENCRYPTION_KEY",
     ] {
@@ -138,6 +137,30 @@ fn collect_missing(problems: &mut Vec<String>) {
             "GOOGLE_REDIRECT_URI",
         ] {
             require_env(problems, var);
+        }
+    }
+}
+
+/// Settings that no longer exist. Each is refused if still set, so stale
+/// configuration is noticed rather than silently ignored.
+const RETIRED_VARS: [(&str, &str); 2] = [
+    (
+        "JWT_PRIVATE_KEY",
+        "tokens are now signed with JWT_SIGNING_KEY (generate one with `just jwt-keygen`)",
+    ),
+    (
+        "JWT_PUBLIC_KEY",
+        "tokens are now verified with JWT_SIGNING_KEY and JWT_TRUSTED_KEYS",
+    ),
+];
+
+/// Record a problem for every retired setting that is still set.
+fn reject_retired(problems: &mut Vec<String>) {
+    for (name, why) in RETIRED_VARS {
+        if optional_env(name).is_some() {
+            problems.push(format!(
+                "{name} is no longer used and must be removed: {why}"
+            ));
         }
     }
 }
@@ -206,8 +229,12 @@ pub struct CryptoSettings {
     pub argon2_memory_cost: u32,
     pub argon2_time_cost: u32,
     pub argon2_parallelism: u32,
-    pub jwt_private_key: String,
-    pub jwt_public_key: String,
+    /// The active token key, `<kid>:<base64 secret>` (`JWT_SIGNING_KEY`).
+    pub jwt_signing_key: String,
+    /// Previous token keys still accepted for verification, comma-separated
+    /// `<kid>:<base64 secret>` (`JWT_TRUSTED_KEYS`). Secrets: with HMAC a
+    /// verification key can also sign.
+    pub jwt_trusted_keys: Option<String>,
     pub jwt_expiration_minutes: i64,
     pub refresh_token_expiration_days: i64,
     pub csrf_secret_b64: String,
@@ -315,6 +342,7 @@ impl Settings {
 
         let mut problems: Vec<String> = Vec::new();
         collect_missing(&mut problems);
+        reject_retired(&mut problems);
 
         // Numeric vars are parsed leniently into `problems` so a malformed value
         // (e.g. `SERVER_PORT=foo`) joins the aggregated error rather than panicking.
@@ -383,8 +411,8 @@ impl Settings {
             argon2_memory_cost,
             argon2_time_cost,
             argon2_parallelism,
-            jwt_private_key: required_env("JWT_PRIVATE_KEY"),
-            jwt_public_key: required_env("JWT_PUBLIC_KEY"),
+            jwt_signing_key: required_env("JWT_SIGNING_KEY"),
+            jwt_trusted_keys: optional_env("JWT_TRUSTED_KEYS"),
             jwt_expiration_minutes,
             refresh_token_expiration_days,
             csrf_secret_b64: required_env("CSRF_SECRET"),
@@ -649,6 +677,24 @@ mod tests {
     }
 
     #[test]
+    fn reject_retired_refuses_the_old_rsa_key_settings() {
+        with_env_vars(
+            &[
+                ("JWT_PRIVATE_KEY", "-----BEGIN PRIVATE KEY-----"),
+                ("JWT_PUBLIC_KEY", ""),
+            ],
+            || {
+                let mut problems = Vec::new();
+                reject_retired(&mut problems);
+                assert_eq!(problems.len(), 1, "an empty value counts as unset");
+                assert!(problems[0].starts_with("JWT_PRIVATE_KEY is no longer used"));
+                assert!(problems[0].contains("just jwt-keygen"));
+                assert!(!problems[0].contains("BEGIN"), "never echo the value");
+            },
+        );
+    }
+
+    #[test]
     fn collect_missing_reports_each_required_var_when_all_absent() {
         // Remove every base + feature-flag var so collect_missing sees a clean
         // slate, then assert the core required set is reported.
@@ -664,8 +710,7 @@ mod tests {
             "ARGON2_PARALLELISM",
             "JWT_EXPIRATION_MINUTES",
             "REFRESH_TOKEN_EXPIRATION_DAYS",
-            "JWT_PRIVATE_KEY",
-            "JWT_PUBLIC_KEY",
+            "JWT_SIGNING_KEY",
             "CSRF_SECRET",
             "SECRETS_ENCRYPTION_KEY",
             "GOOGLE_OAUTH_ENABLED",
@@ -684,7 +729,7 @@ mod tests {
         let mut problems = Vec::new();
         collect_missing(&mut problems);
 
-        assert_eq!(problems.len(), 15);
+        assert_eq!(problems.len(), 14);
         assert!(problems.iter().any(|p| p.contains("DATABASE_URL")));
         assert!(
             problems
@@ -723,8 +768,11 @@ mod tests {
             ("ARGON2_PARALLELISM", "1"),
             ("JWT_EXPIRATION_MINUTES", "15"),
             ("REFRESH_TOKEN_EXPIRATION_DAYS", "30"),
-            ("JWT_PRIVATE_KEY", "private"),
-            ("JWT_PUBLIC_KEY", "public"),
+            ("JWT_SIGNING_KEY", "k1:signing"),
+            // Empty counts as unset, and stops `dotenv()` loading a stale
+            // value from a developer's `backend/.env`.
+            ("JWT_PRIVATE_KEY", ""),
+            ("JWT_PUBLIC_KEY", ""),
             ("CSRF_SECRET", "csrf-secret"),
             ("SECRETS_ENCRYPTION_KEY", "enc-key"),
         ];
@@ -792,8 +840,10 @@ mod tests {
             ("ARGON2_PARALLELISM", "2"),
             ("JWT_EXPIRATION_MINUTES", "14"),
             ("REFRESH_TOKEN_EXPIRATION_DAYS", "29"),
-            ("JWT_PRIVATE_KEY", "private-key"),
-            ("JWT_PUBLIC_KEY", "public-key"),
+            ("JWT_SIGNING_KEY", "k1:signing-key"),
+            ("JWT_TRUSTED_KEYS", "k0:old-key"),
+            ("JWT_PRIVATE_KEY", ""),
+            ("JWT_PUBLIC_KEY", ""),
             ("CSRF_SECRET", "csrf-secret"),
             ("SECRETS_ENCRYPTION_KEY", "enc-key"),
             ("GOOGLE_OAUTH_ENABLED", "TRUE"),
@@ -835,8 +885,8 @@ mod tests {
             assert_eq!(s.crypto.argon2_memory_cost, 19456);
             assert_eq!(s.crypto.argon2_time_cost, 3);
             assert_eq!(s.crypto.argon2_parallelism, 2);
-            assert_eq!(s.crypto.jwt_private_key, "private-key");
-            assert_eq!(s.crypto.jwt_public_key, "public-key");
+            assert_eq!(s.crypto.jwt_signing_key, "k1:signing-key");
+            assert_eq!(s.crypto.jwt_trusted_keys.as_deref(), Some("k0:old-key"));
             assert_eq!(s.crypto.jwt_expiration_minutes, 14);
             assert_eq!(s.crypto.refresh_token_expiration_days, 29);
             assert_eq!(s.crypto.csrf_secret_b64, "csrf-secret");

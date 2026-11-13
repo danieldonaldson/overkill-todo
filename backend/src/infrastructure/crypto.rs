@@ -10,22 +10,30 @@
 //! - `ARGON2_MEMORY_COST` - Memory cost in KiB
 //! - `ARGON2_TIME_COST` - Number of iterations
 //! - `ARGON2_PARALLELISM` - Degree of parallelism
-//! - `JWT_PRIVATE_KEY` - RSA private key in PEM format
-//! - `JWT_PUBLIC_KEY` - RSA public key in PEM format
+//! - `JWT_SIGNING_KEY` - the active token key, `<kid>:<base64 secret>` (at
+//!   least 64 bytes; generate with `just jwt-keygen`). See [`TokenKeyring`].
 //! - `JWT_EXPIRATION_MINUTES` - JWT token validity in minutes
 //! - `REFRESH_TOKEN_EXPIRATION_DAYS` - Refresh token validity in days
 //! - `CSRF_SECRET` - Secret for CSRF token signing (base64-encoded)
+//!
+//! Optional: `JWT_TRUSTED_KEYS` - previous token keys still accepted for
+//! verification during a rotation, comma-separated `<kid>:<base64 secret>`.
 
 use aes_gcm::aead::{Aead, Payload};
 use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce};
 use argon2::{Argon2, Params};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use jsonwebtoken::{DecodingKey, EncodingKey};
 use rand::Rng;
 use sha2::{Digest, Sha256};
 
 use crate::infrastructure::config::CryptoSettings;
+
+mod keyring;
+/// A `<kid>:<base64 secret>` entry with a fixed test secret. Test use only.
+#[cfg(test)]
+pub(crate) use keyring::test_entry as keyring_test_entry;
+pub use keyring::{KeyringError, TOKEN_REJECTED_MESSAGE, TokenKeyring};
 
 /// Wire-format prefix for AES-256-GCM-encrypted secrets. The scheme tag plus
 /// version let us migrate to a new algorithm or rotate keys later without
@@ -70,12 +78,9 @@ pub enum CryptoInitError {
     /// `SECRETS_ENCRYPTION_KEY` did not decode to exactly 32 bytes (AES-256).
     #[error("SECRETS_ENCRYPTION_KEY must decode to 32 bytes (AES-256); got {0} bytes")]
     SecretsKeyLength(usize),
-    /// `JWT_PRIVATE_KEY` is not a parseable RSA private key in PEM form.
-    #[error("JWT_PRIVATE_KEY is not a valid RSA private key (PEM): {0}")]
-    JwtPrivateKey(jsonwebtoken::errors::Error),
-    /// `JWT_PUBLIC_KEY` is not a parseable RSA public key in PEM form.
-    #[error("JWT_PUBLIC_KEY is not a valid RSA public key (PEM): {0}")]
-    JwtPublicKey(jsonwebtoken::errors::Error),
+    /// `JWT_SIGNING_KEY` or `JWT_TRUSTED_KEYS` is misconfigured.
+    #[error(transparent)]
+    TokenKeys(#[from] KeyringError),
 }
 
 /// Minimum decoded length of `CSRF_SECRET`. It is an HMAC-SHA256 key, so anything
@@ -97,8 +102,7 @@ fn decode_secret_b64(value: &str) -> Result<Vec<u8>, base64::DecodeError> {
 /// These are expensive to create, so they're built once at startup and reused.
 pub struct Crypto {
     argon2: Argon2<'static>,
-    encoding_key: EncodingKey,
-    decoding_key: DecodingKey,
+    tokens: TokenKeyring,
     jwt_expiration_minutes: i64,
     refresh_token_expiration_days: i64,
     csrf_secret: Vec<u8>,
@@ -111,7 +115,7 @@ impl Crypto {
     /// # Errors
     ///
     /// Returns a [`CryptoInitError`] if the Argon2 parameters, base64 secrets,
-    /// key length, or RSA PEM keys in `settings` are malformed. All failure
+    /// key length, or token keys in `settings` are malformed. All failure
     /// paths surface as a clean message instead of a panic.
     pub fn from_settings(settings: &CryptoSettings) -> Result<Self, CryptoInitError> {
         let params = Params::new(
@@ -141,10 +145,10 @@ impl Crypto {
 
         Ok(Self {
             argon2,
-            encoding_key: EncodingKey::from_rsa_pem(settings.jwt_private_key.as_bytes())
-                .map_err(CryptoInitError::JwtPrivateKey)?,
-            decoding_key: DecodingKey::from_rsa_pem(settings.jwt_public_key.as_bytes())
-                .map_err(CryptoInitError::JwtPublicKey)?,
+            tokens: TokenKeyring::from_config(
+                &settings.jwt_signing_key,
+                settings.jwt_trusted_keys.as_deref(),
+            )?,
             jwt_expiration_minutes: settings.jwt_expiration_minutes,
             refresh_token_expiration_days: settings.refresh_token_expiration_days,
             csrf_secret,
@@ -162,9 +166,6 @@ impl Crypto {
     #[cfg(test)]
     #[must_use]
     pub fn for_testing() -> Self {
-        const TEST_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrrWYCApN+866p\nxXEZHqkl9DTa/nQKcx1LPwryXBqAEfZen+gf038DjbmmzqggEbYTx62aUTiSAEs0\nNoouFy/+B9UUepaOMkQN/JqtxwdQjGSFb9++WCM6+5X7iXoyzjRg0VFqyA6LGGs7\nx1uxStvifhOcmFxLBXPD5shVYlT7KoERRv1FGsX4vbfuAjAku4MDuq7FDmc2a86P\nDGEcmrqGiEKlHrJgEPdYa8/OHxE6/Qy/UgQUjN0sQS7OjwbP5ef+93s8JE03JbLo\nljuerCLR5JVJmgZ4IQOOh5bdCR+/K3ZbyETOG+5Sop3iHMLwGCBls9BKK0eBYaPd\n9pGqzifzAgMBAAECggEADWV4gkulKtDlHkZT7vvfgyCtRzF36KDW9lozBnp9buT3\n7qZXvLQKQ0K56/RQVkBLjvuT5mjUG0B+ndJrsfEJQ69kxzZRrULq4JSHlWvkfDqY\nVXlHYlkKVr3vFDPEH1bL64op6kU2LVB4fa+uzgTjZ6ci7KNPAGOqhuzpURBdRUQI\n5UGDNcZPl5jWBRb9Jtjjkaxtvm2qSXC7jeV6rvcjkQhWHJFL2xrhT1IRKj8bUrLD\n21aLTM+mLW2iCuDSfOC3pWfZoQEhNkdVqsKFnKVOPIGRDysPqeRfloE9uMT7YK95\nT/aRksVvPE+bEDbKvdTsuOvvTKY2HRu2St+KbKtXkQKBgQDqpIArr6eftuInb2a8\ndYIuIWfI6UV9ernc9uXglo9JNGgXqcMI7wzaP35EkqAFROiXg29jjkUgQw8BDqwt\n437ic+Wf5+EYq8hQ8L0ig+zstt3FQ3v2i/teBZqOUsoCElXeYxR4DNbQCEbYAEs4\nzGRoqrBCQ2wwEbp0wxNswTKGvwKBgQC7TbhHQeA1es2RMvfZHIzO/8IoSyUV1F9/\nVDgX+pcUZ0FZfb2OMIDwb1w/1A+84NnC63iSI9E/6Rr6XSCNJk9eJBMBoZ2AD/4s\ngDLI2iAUrQHtuNIhshPAbCaW6AVw46fwtCDALFhXK3rw12nezrgYWfehODqZH0R/\nke9kxuD/zQKBgCY3WLDE0TZQIRFvMXpsYSGGS1MLu0eun2r/w30KyJeRs4p3Gc7w\nsFUzlisw/mMdUAytWY0LdPLGOUFg1GY88UOMwM+EgsLz55JXQ1bFyebb+c7RKPWE\n4xHzM7MOhNxFhDrORF0xKiOD1ZYEpju//nKVqlOAi7Rgjs/JnfZOmR4dAoGAXcX0\na6B8iunXf0lgMs+LY5tCbn/oqjwwL4RPrRmlh+6GFjLQsx5vf3CRY9dcpbiA7YiM\nTcYm3fNrsUrsoB49ACnZZiiuvM3E+CyawFoMU62mWIj+kyYfo2fCDi1NhA5GJ0lX\nWD8bX1ECdQ+0Dnu6SV7JjmqjU8QGvEOo8fBr90UCgYEAxvr4swdT46qEm8kWHU3I\ng7yR2rbNYP9TUqg2YKTX3B1Ab9uX1S9c9gg2RdPp5Mxs4XSqVfqJr+yfZP3lSyUa\nT6l2cr36CBT9QNCpHNsfnv4ar+RDqxxojd1+5RFJU4Kg9cWbwB/oIB0g5T1q0HqJ\npqUx9x2LMNqJelwDx/57zt4=\n-----END PRIVATE KEY-----";
-        const TEST_PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq61mAgKTfvOuqcVxGR6p\nJfQ02v50CnMdSz8K8lwagBH2Xp/oH9N/A425ps6oIBG2E8etmlE4kgBLNDaKLhcv\n/gfVFHqWjjJEDfyarccHUIxkhW/fvlgjOvuV+4l6Ms40YNFRasgOixhrO8dbsUrb\n4n4TnJhcSwVzw+bIVWJU+yqBEUb9RRrF+L237gIwJLuDA7quxQ5nNmvOjwxhHJq6\nhohCpR6yYBD3WGvPzh8ROv0Mv1IEFIzdLEEuzo8Gz+Xn/vd7PCRNNyWy6JY7nqwi\n0eSVSZoGeCEDjoeW3Qkfvyt2W8hEzhvuUqKd4hzC8BggZbPQSitHgWGj3faRqs4n\n8wIDAQAB\n-----END PUBLIC KEY-----";
-
         let params = Params::new(4096, 1, 1, None).expect("test Argon2 params are valid");
         let argon2 = Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params);
         let csrf_secret = URL_SAFE_NO_PAD
@@ -179,14 +180,22 @@ impl Crypto {
 
         Self {
             argon2,
-            encoding_key: EncodingKey::from_rsa_pem(TEST_PRIVATE_KEY.as_bytes())
-                .expect("test RSA private key is valid"),
-            decoding_key: DecodingKey::from_rsa_pem(TEST_PUBLIC_KEY.as_bytes())
-                .expect("test RSA public key is valid"),
+            tokens: TokenKeyring::for_testing(),
             jwt_expiration_minutes: 15,
             refresh_token_expiration_days: 30,
             csrf_secret,
             secret_cipher,
+        }
+    }
+
+    /// [`Crypto::for_testing`] with a different token keyring, e.g. to sign
+    /// with a key another instance doesn't trust. Test use only.
+    #[cfg(test)]
+    #[must_use]
+    pub fn for_testing_with_tokens(tokens: TokenKeyring) -> Self {
+        Self {
+            tokens,
+            ..Self::for_testing()
         }
     }
 
@@ -276,16 +285,10 @@ impl Crypto {
         &self.argon2
     }
 
-    /// Returns the JWT encoding (private) key.
+    /// Returns the keyring that signs and verifies every token we issue.
     #[must_use]
-    pub const fn encoding_key(&self) -> &EncodingKey {
-        &self.encoding_key
-    }
-
-    /// Returns the JWT decoding (public) key.
-    #[must_use]
-    pub const fn decoding_key(&self) -> &DecodingKey {
-        &self.decoding_key
+    pub const fn tokens(&self) -> &TokenKeyring {
+        &self.tokens
     }
 
     /// Returns the configured JWT expiration time in minutes.
@@ -354,6 +357,12 @@ pub fn sha256_hex(input: &str) -> String {
     hasher.update(input.as_bytes());
     hex::encode(hasher.finalize())
 }
+
+/// An RSA private key (PEM) for tests that need a classical RS256 signer: the
+/// Google ID-token tests (Google signs with RS256) and the tests proving our
+/// own verification refuses RS256. Test use only.
+#[cfg(test)]
+pub(crate) const TEST_RSA_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrrWYCApN+866p\nxXEZHqkl9DTa/nQKcx1LPwryXBqAEfZen+gf038DjbmmzqggEbYTx62aUTiSAEs0\nNoouFy/+B9UUepaOMkQN/JqtxwdQjGSFb9++WCM6+5X7iXoyzjRg0VFqyA6LGGs7\nx1uxStvifhOcmFxLBXPD5shVYlT7KoERRv1FGsX4vbfuAjAku4MDuq7FDmc2a86P\nDGEcmrqGiEKlHrJgEPdYa8/OHxE6/Qy/UgQUjN0sQS7OjwbP5ef+93s8JE03JbLo\nljuerCLR5JVJmgZ4IQOOh5bdCR+/K3ZbyETOG+5Sop3iHMLwGCBls9BKK0eBYaPd\n9pGqzifzAgMBAAECggEADWV4gkulKtDlHkZT7vvfgyCtRzF36KDW9lozBnp9buT3\n7qZXvLQKQ0K56/RQVkBLjvuT5mjUG0B+ndJrsfEJQ69kxzZRrULq4JSHlWvkfDqY\nVXlHYlkKVr3vFDPEH1bL64op6kU2LVB4fa+uzgTjZ6ci7KNPAGOqhuzpURBdRUQI\n5UGDNcZPl5jWBRb9Jtjjkaxtvm2qSXC7jeV6rvcjkQhWHJFL2xrhT1IRKj8bUrLD\n21aLTM+mLW2iCuDSfOC3pWfZoQEhNkdVqsKFnKVOPIGRDysPqeRfloE9uMT7YK95\nT/aRksVvPE+bEDbKvdTsuOvvTKY2HRu2St+KbKtXkQKBgQDqpIArr6eftuInb2a8\ndYIuIWfI6UV9ernc9uXglo9JNGgXqcMI7wzaP35EkqAFROiXg29jjkUgQw8BDqwt\n437ic+Wf5+EYq8hQ8L0ig+zstt3FQ3v2i/teBZqOUsoCElXeYxR4DNbQCEbYAEs4\nzGRoqrBCQ2wwEbp0wxNswTKGvwKBgQC7TbhHQeA1es2RMvfZHIzO/8IoSyUV1F9/\nVDgX+pcUZ0FZfb2OMIDwb1w/1A+84NnC63iSI9E/6Rr6XSCNJk9eJBMBoZ2AD/4s\ngDLI2iAUrQHtuNIhshPAbCaW6AVw46fwtCDALFhXK3rw12nezrgYWfehODqZH0R/\nke9kxuD/zQKBgCY3WLDE0TZQIRFvMXpsYSGGS1MLu0eun2r/w30KyJeRs4p3Gc7w\nsFUzlisw/mMdUAytWY0LdPLGOUFg1GY88UOMwM+EgsLz55JXQ1bFyebb+c7RKPWE\n4xHzM7MOhNxFhDrORF0xKiOD1ZYEpju//nKVqlOAi7Rgjs/JnfZOmR4dAoGAXcX0\na6B8iunXf0lgMs+LY5tCbn/oqjwwL4RPrRmlh+6GFjLQsx5vf3CRY9dcpbiA7YiM\nTcYm3fNrsUrsoB49ACnZZiiuvM3E+CyawFoMU62mWIj+kyYfo2fCDi1NhA5GJ0lX\nWD8bX1ECdQ+0Dnu6SV7JjmqjU8QGvEOo8fBr90UCgYEAxvr4swdT46qEm8kWHU3I\ng7yR2rbNYP9TUqg2YKTX3B1Ab9uX1S9c9gg2RdPp5Mxs4XSqVfqJr+yfZP3lSyUa\nT6l2cr36CBT9QNCpHNsfnv4ar+RDqxxojd1+5RFJU4Kg9cWbwB/oIB0g5T1q0HqJ\npqUx9x2LMNqJelwDx/57zt4=\n-----END PRIVATE KEY-----";
 
 #[cfg(test)]
 mod tests {
@@ -578,11 +587,9 @@ mod tests {
 
     // ---- Crypto::from_settings error paths ----------------------------------
     //
-    // Reuse `for_testing`'s known-good RSA PEM keys and base64 secrets so each
-    // test isolates exactly one malformed field.
+    // Known-good keys and base64 secrets, so each test isolates exactly one
+    // malformed field.
 
-    const VALID_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrrWYCApN+866p\nxXEZHqkl9DTa/nQKcx1LPwryXBqAEfZen+gf038DjbmmzqggEbYTx62aUTiSAEs0\nNoouFy/+B9UUepaOMkQN/JqtxwdQjGSFb9++WCM6+5X7iXoyzjRg0VFqyA6LGGs7\nx1uxStvifhOcmFxLBXPD5shVYlT7KoERRv1FGsX4vbfuAjAku4MDuq7FDmc2a86P\nDGEcmrqGiEKlHrJgEPdYa8/OHxE6/Qy/UgQUjN0sQS7OjwbP5ef+93s8JE03JbLo\nljuerCLR5JVJmgZ4IQOOh5bdCR+/K3ZbyETOG+5Sop3iHMLwGCBls9BKK0eBYaPd\n9pGqzifzAgMBAAECggEADWV4gkulKtDlHkZT7vvfgyCtRzF36KDW9lozBnp9buT3\n7qZXvLQKQ0K56/RQVkBLjvuT5mjUG0B+ndJrsfEJQ69kxzZRrULq4JSHlWvkfDqY\nVXlHYlkKVr3vFDPEH1bL64op6kU2LVB4fa+uzgTjZ6ci7KNPAGOqhuzpURBdRUQI\n5UGDNcZPl5jWBRb9Jtjjkaxtvm2qSXC7jeV6rvcjkQhWHJFL2xrhT1IRKj8bUrLD\n21aLTM+mLW2iCuDSfOC3pWfZoQEhNkdVqsKFnKVOPIGRDysPqeRfloE9uMT7YK95\nT/aRksVvPE+bEDbKvdTsuOvvTKY2HRu2St+KbKtXkQKBgQDqpIArr6eftuInb2a8\ndYIuIWfI6UV9ernc9uXglo9JNGgXqcMI7wzaP35EkqAFROiXg29jjkUgQw8BDqwt\n437ic+Wf5+EYq8hQ8L0ig+zstt3FQ3v2i/teBZqOUsoCElXeYxR4DNbQCEbYAEs4\nzGRoqrBCQ2wwEbp0wxNswTKGvwKBgQC7TbhHQeA1es2RMvfZHIzO/8IoSyUV1F9/\nVDgX+pcUZ0FZfb2OMIDwb1w/1A+84NnC63iSI9E/6Rr6XSCNJk9eJBMBoZ2AD/4s\ngDLI2iAUrQHtuNIhshPAbCaW6AVw46fwtCDALFhXK3rw12nezrgYWfehODqZH0R/\nke9kxuD/zQKBgCY3WLDE0TZQIRFvMXpsYSGGS1MLu0eun2r/w30KyJeRs4p3Gc7w\nsFUzlisw/mMdUAytWY0LdPLGOUFg1GY88UOMwM+EgsLz55JXQ1bFyebb+c7RKPWE\n4xHzM7MOhNxFhDrORF0xKiOD1ZYEpju//nKVqlOAi7Rgjs/JnfZOmR4dAoGAXcX0\na6B8iunXf0lgMs+LY5tCbn/oqjwwL4RPrRmlh+6GFjLQsx5vf3CRY9dcpbiA7YiM\nTcYm3fNrsUrsoB49ACnZZiiuvM3E+CyawFoMU62mWIj+kyYfo2fCDi1NhA5GJ0lX\nWD8bX1ECdQ+0Dnu6SV7JjmqjU8QGvEOo8fBr90UCgYEAxvr4swdT46qEm8kWHU3I\ng7yR2rbNYP9TUqg2YKTX3B1Ab9uX1S9c9gg2RdPp5Mxs4XSqVfqJr+yfZP3lSyUa\nT6l2cr36CBT9QNCpHNsfnv4ar+RDqxxojd1+5RFJU4Kg9cWbwB/oIB0g5T1q0HqJ\npqUx9x2LMNqJelwDx/57zt4=\n-----END PRIVATE KEY-----";
-    const VALID_PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq61mAgKTfvOuqcVxGR6p\nJfQ02v50CnMdSz8K8lwagBH2Xp/oH9N/A425ps6oIBG2E8etmlE4kgBLNDaKLhcv\n/gfVFHqWjjJEDfyarccHUIxkhW/fvlgjOvuV+4l6Ms40YNFRasgOixhrO8dbsUrb\n4n4TnJhcSwVzw+bIVWJU+yqBEUb9RRrF+L237gIwJLuDA7quxQ5nNmvOjwxhHJq6\nhohCpR6yYBD3WGvPzh8ROv0Mv1IEFIzdLEEuzo8Gz+Xn/vd7PCRNNyWy6JY7nqwi\n0eSVSZoGeCEDjoeW3Qkfvyt2W8hEzhvuUqKd4hzC8BggZbPQSitHgWGj3faRqs4n\n8wIDAQAB\n-----END PUBLIC KEY-----";
     const VALID_CSRF_B64: &str = "MWq42LqA6RbYEsgrc0w2Ik9YydReTlRwh_D5Ynus2QA";
 
     fn valid_settings() -> CryptoSettings {
@@ -590,8 +597,8 @@ mod tests {
             argon2_memory_cost: 4096,
             argon2_time_cost: 1,
             argon2_parallelism: 1,
-            jwt_private_key: VALID_PRIVATE_KEY.to_string(),
-            jwt_public_key: VALID_PUBLIC_KEY.to_string(),
+            jwt_signing_key: keyring::test_entry("k1", 1),
+            jwt_trusted_keys: Some(keyring::test_entry("k0", 2)),
             jwt_expiration_minutes: 15,
             refresh_token_expiration_days: 30,
             csrf_secret_b64: VALID_CSRF_B64.to_string(),
@@ -666,22 +673,30 @@ mod tests {
     }
 
     #[test]
-    fn from_settings_rejects_bad_private_key() {
-        let mut s = valid_settings();
-        s.jwt_private_key = "not a pem key".to_string();
-        assert!(matches!(
-            Crypto::from_settings(&s),
-            Err(CryptoInitError::JwtPrivateKey(_))
-        ));
+    fn from_settings_loads_the_token_keyring() {
+        let crypto = Crypto::from_settings(&valid_settings()).expect("valid settings build");
+        assert_eq!(crypto.tokens().active_kid(), "k1");
+        assert_eq!(crypto.tokens().trusted_kids(), vec!["k0", "k1"]);
     }
 
     #[test]
-    fn from_settings_rejects_bad_public_key() {
+    fn from_settings_rejects_bad_token_keys() {
         let mut s = valid_settings();
-        s.jwt_public_key = "not a pem key".to_string();
+        s.jwt_signing_key = "k1:dG9vLXNob3J0".to_string();
+        match Crypto::from_settings(&s) {
+            Err(CryptoInitError::TokenKeys(KeyringError::TooShort { kid, .. })) => {
+                assert_eq!(kid, "k1");
+            }
+            Err(other) => panic!("expected TokenKeys(TooShort), got {other:?}"),
+            Ok(_) => panic!("expected TokenKeys(TooShort), got Ok"),
+        }
+        s.jwt_signing_key = keyring::test_entry("k1", 1);
+        s.jwt_trusted_keys = Some(keyring::test_entry("k1", 3));
         assert!(matches!(
             Crypto::from_settings(&s),
-            Err(CryptoInitError::JwtPublicKey(_))
+            Err(CryptoInitError::TokenKeys(
+                KeyringError::DuplicateKid { .. }
+            ))
         ));
     }
 
@@ -712,7 +727,6 @@ mod tests {
         let crypto = Crypto::for_testing();
         // Exercise the const accessors so they are covered.
         let _ = crypto.argon2();
-        let _ = crypto.encoding_key();
-        let _ = crypto.decoding_key();
+        let _ = crypto.tokens();
     }
 }

@@ -525,7 +525,7 @@ async fn callback_with_malformed_user_id_in_state_is_rejected(pool: PgPool) {
     // A correctly signed state whose `user_id` claim isn't a UUID.
     let crypto = common::ensure_test_crypto();
     let (state, nonce) = overkill_todo::infrastructure::api::create_oauth_state(
-        crypto.encoding_key(),
+        crypto.tokens(),
         "google",
         "link",
         Some("not-a-uuid"),

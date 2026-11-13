@@ -45,30 +45,45 @@ use overkill_todo::infrastructure::crypto::Crypto;
 
 static TEST_CRYPTO: OnceLock<Arc<Crypto>> = OnceLock::new();
 
-pub const TEST_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrrWYCApN+866p\nxXEZHqkl9DTa/nQKcx1LPwryXBqAEfZen+gf038DjbmmzqggEbYTx62aUTiSAEs0\nNoouFy/+B9UUepaOMkQN/JqtxwdQjGSFb9++WCM6+5X7iXoyzjRg0VFqyA6LGGs7\nx1uxStvifhOcmFxLBXPD5shVYlT7KoERRv1FGsX4vbfuAjAku4MDuq7FDmc2a86P\nDGEcmrqGiEKlHrJgEPdYa8/OHxE6/Qy/UgQUjN0sQS7OjwbP5ef+93s8JE03JbLo\nljuerCLR5JVJmgZ4IQOOh5bdCR+/K3ZbyETOG+5Sop3iHMLwGCBls9BKK0eBYaPd\n9pGqzifzAgMBAAECggEADWV4gkulKtDlHkZT7vvfgyCtRzF36KDW9lozBnp9buT3\n7qZXvLQKQ0K56/RQVkBLjvuT5mjUG0B+ndJrsfEJQ69kxzZRrULq4JSHlWvkfDqY\nVXlHYlkKVr3vFDPEH1bL64op6kU2LVB4fa+uzgTjZ6ci7KNPAGOqhuzpURBdRUQI\n5UGDNcZPl5jWBRb9Jtjjkaxtvm2qSXC7jeV6rvcjkQhWHJFL2xrhT1IRKj8bUrLD\n21aLTM+mLW2iCuDSfOC3pWfZoQEhNkdVqsKFnKVOPIGRDysPqeRfloE9uMT7YK95\nT/aRksVvPE+bEDbKvdTsuOvvTKY2HRu2St+KbKtXkQKBgQDqpIArr6eftuInb2a8\ndYIuIWfI6UV9ernc9uXglo9JNGgXqcMI7wzaP35EkqAFROiXg29jjkUgQw8BDqwt\n437ic+Wf5+EYq8hQ8L0ig+zstt3FQ3v2i/teBZqOUsoCElXeYxR4DNbQCEbYAEs4\nzGRoqrBCQ2wwEbp0wxNswTKGvwKBgQC7TbhHQeA1es2RMvfZHIzO/8IoSyUV1F9/\nVDgX+pcUZ0FZfb2OMIDwb1w/1A+84NnC63iSI9E/6Rr6XSCNJk9eJBMBoZ2AD/4s\ngDLI2iAUrQHtuNIhshPAbCaW6AVw46fwtCDALFhXK3rw12nezrgYWfehODqZH0R/\nke9kxuD/zQKBgCY3WLDE0TZQIRFvMXpsYSGGS1MLu0eun2r/w30KyJeRs4p3Gc7w\nsFUzlisw/mMdUAytWY0LdPLGOUFg1GY88UOMwM+EgsLz55JXQ1bFyebb+c7RKPWE\n4xHzM7MOhNxFhDrORF0xKiOD1ZYEpju//nKVqlOAi7Rgjs/JnfZOmR4dAoGAXcX0\na6B8iunXf0lgMs+LY5tCbn/oqjwwL4RPrRmlh+6GFjLQsx5vf3CRY9dcpbiA7YiM\nTcYm3fNrsUrsoB49ACnZZiiuvM3E+CyawFoMU62mWIj+kyYfo2fCDi1NhA5GJ0lX\nWD8bX1ECdQ+0Dnu6SV7JjmqjU8QGvEOo8fBr90UCgYEAxvr4swdT46qEm8kWHU3I\ng7yR2rbNYP9TUqg2YKTX3B1Ab9uX1S9c9gg2RdPp5Mxs4XSqVfqJr+yfZP3lSyUa\nT6l2cr36CBT9QNCpHNsfnv4ar+RDqxxojd1+5RFJU4Kg9cWbwB/oIB0g5T1q0HqJ\npqUx9x2LMNqJelwDx/57zt4=\n-----END PRIVATE KEY-----";
+/// A `<kid>:<base64 secret>` token key with a fixed 64-byte test secret.
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
+pub fn test_token_key(kid: &str, fill: u8) -> String {
+    use base64::Engine;
+    format!(
+        "{kid}:{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([fill; 64])
+    )
+}
 
-pub const TEST_PUBLIC_KEY: &str = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq61mAgKTfvOuqcVxGR6p\nJfQ02v50CnMdSz8K8lwagBH2Xp/oH9N/A425ps6oIBG2E8etmlE4kgBLNDaKLhcv\n/gfVFHqWjjJEDfyarccHUIxkhW/fvlgjOvuV+4l6Ms40YNFRasgOixhrO8dbsUrb\n4n4TnJhcSwVzw+bIVWJU+yqBEUb9RRrF+L237gIwJLuDA7quxQ5nNmvOjwxhHJq6\nhohCpR6yYBD3WGvPzh8ROv0Mv1IEFIzdLEEuzo8Gz+Xn/vd7PCRNNyWy6JY7nqwi\n0eSVSZoGeCEDjoeW3Qkfvyt2W8hEzhvuUqKd4hzC8BggZbPQSitHgWGj3faRqs4n\n8wIDAQAB\n-----END PUBLIC KEY-----";
+/// Build a crypto handle with test parameters and the given token keys
+/// (`JWT_SIGNING_KEY` and `JWT_TRUSTED_KEYS` values).
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
+pub fn crypto_with_token_keys(signing: &str, trusted: Option<&str>) -> Arc<Crypto> {
+    // `Crypto::for_testing()` is library-test-only (`cfg(test)`) and not
+    // reachable from this integration-test crate, so build the slice here.
+    let crypto = overkill_todo::infrastructure::config::CryptoSettings {
+        argon2_memory_cost: 4096,
+        argon2_time_cost: 1,
+        argon2_parallelism: 1,
+        jwt_signing_key: signing.to_string(),
+        jwt_trusted_keys: trusted.map(str::to_string),
+        jwt_expiration_minutes: 15,
+        refresh_token_expiration_days: 30,
+        csrf_secret_b64: "MWq42LqA6RbYEsgrc0w2Ik9YydReTlRwh_D5Ynus2QA".to_string(),
+        secrets_encryption_key_b64: "MWq42LqA6RbYEsgrc0w2Ik9YydReTlRwh_D5Ynus2QA".to_string(),
+    };
+    Arc::new(Crypto::from_settings(&crypto).expect("test crypto settings are valid"))
+}
 
 fn test_crypto() -> Arc<Crypto> {
     TEST_CRYPTO
-        .get_or_init(|| {
-            // Only the crypto slice is needed to build a `Crypto` handle;
-            // `Crypto::for_testing()` is library-test-only (`cfg(test)`) and not
-            // reachable from this integration-test crate, so build the slice here.
-            let crypto = overkill_todo::infrastructure::config::CryptoSettings {
-                argon2_memory_cost: 4096,
-                argon2_time_cost: 1,
-                argon2_parallelism: 1,
-                jwt_private_key: TEST_PRIVATE_KEY.to_string(),
-                jwt_public_key: TEST_PUBLIC_KEY.to_string(),
-                jwt_expiration_minutes: 15,
-                refresh_token_expiration_days: 30,
-                csrf_secret_b64: "MWq42LqA6RbYEsgrc0w2Ik9YydReTlRwh_D5Ynus2QA".to_string(),
-                secrets_encryption_key_b64: "MWq42LqA6RbYEsgrc0w2Ik9YydReTlRwh_D5Ynus2QA"
-                    .to_string(),
-            };
-            Arc::new(Crypto::from_settings(&crypto).expect("test Argon2 params are valid"))
-        })
+        .get_or_init(|| crypto_with_token_keys(&test_token_key("it-a", 0x11), None))
         .clone()
 }
 
@@ -123,7 +138,7 @@ pub fn mint_session_jwt(
         user_id,
         email_verified,
         role,
-        crypto.encoding_key(),
+        crypto.tokens(),
         expiration_minutes,
     )
     .expect("failed to mint test JWT")
@@ -147,7 +162,29 @@ pub fn mint_csrf_token(user_id: &str) -> String {
     reason = "`common` is compiled into every test binary; not all of them use this"
 )]
 pub fn create_test_app(pool: PgPool) -> Router {
-    create_test_app_full(pool, console_email(), HashMap::new(), no_op_turnstile())
+    create_test_app_full(
+        pool,
+        test_crypto(),
+        console_email(),
+        HashMap::new(),
+        no_op_turnstile(),
+    )
+}
+
+/// Build the test app with the given crypto handle, e.g. one holding different
+/// token keys to exercise key rotation.
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; not all of them use this"
+)]
+pub fn create_test_app_with_crypto(pool: PgPool, crypto: Arc<Crypto>) -> Router {
+    create_test_app_full(
+        pool,
+        crypto,
+        console_email(),
+        HashMap::new(),
+        no_op_turnstile(),
+    )
 }
 
 /// Build the test app with the given OAuth provider clients registered, so the
@@ -160,7 +197,13 @@ pub fn create_test_app_with_oauth(
     pool: PgPool,
     oauth_clients: HashMap<OAuthProvider, Arc<dyn OAuthProviderClient>>,
 ) -> Router {
-    create_test_app_full(pool, console_email(), oauth_clients, no_op_turnstile())
+    create_test_app_full(
+        pool,
+        test_crypto(),
+        console_email(),
+        oauth_clients,
+        no_op_turnstile(),
+    )
 }
 
 /// The email service every builder uses unless a test wants delivery to fail.
@@ -178,7 +221,13 @@ pub fn create_test_app_with_turnstile(
     pool: PgPool,
     turnstile_service: Arc<dyn TurnstileService>,
 ) -> Router {
-    create_test_app_full(pool, console_email(), HashMap::new(), turnstile_service)
+    create_test_app_full(
+        pool,
+        test_crypto(),
+        console_email(),
+        HashMap::new(),
+        turnstile_service,
+    )
 }
 
 fn console_email() -> Arc<dyn EmailService> {
@@ -269,7 +318,13 @@ pub fn create_test_app_with_email_service(
     pool: PgPool,
     email_service: Arc<dyn EmailService>,
 ) -> Router {
-    create_test_app_full(pool, email_service, HashMap::new(), no_op_turnstile())
+    create_test_app_full(
+        pool,
+        test_crypto(),
+        email_service,
+        HashMap::new(),
+        no_op_turnstile(),
+    )
 }
 
 #[allow(
@@ -278,12 +333,11 @@ pub fn create_test_app_with_email_service(
 )]
 fn create_test_app_full(
     pool: PgPool,
+    crypto: Arc<Crypto>,
     email_service: Arc<dyn EmailService>,
     oauth_clients: HashMap<OAuthProvider, Arc<dyn OAuthProviderClient>>,
     turnstile_service: Arc<dyn TurnstileService>,
 ) -> Router {
-    let crypto = test_crypto();
-
     let code_generator = Arc::new(RandomCodeGenerator::development());
     let jwt_service = Arc::new(CryptoJwtService::new(crypto.clone()));
     let password_hasher = Arc::new(Argon2Hasher::new(crypto.clone()));

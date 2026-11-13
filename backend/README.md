@@ -68,7 +68,7 @@ advisory-lock leader (`leader.rs`), so with N replicas exactly one runs them:
 
 ## Auth model (what's already built)
 
-Argon2id passwords, RS256 access JWTs (short) plus rotating refresh tokens bound
+Argon2id passwords, HMAC-SHA-512 access JWTs (short, quantum-safe, rotatable keys) plus rotating refresh tokens bound
 to a device fingerprint, double-submit CSRF on every cookie-authenticated
 route, email verification codes, password reset, Google OAuth (server-side
 code flow), Turnstile, MX checks, roles (`user` / `admin` / `super_admin`), account export and scheduled deletion.

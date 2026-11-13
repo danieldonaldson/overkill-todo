@@ -3,8 +3,8 @@
 //!
 //! Argon2 runs with the production parameters from `.env.example`, so a
 //! regression there is a real change in login/signup latency, not a test-key
-//! artefact. Everything else uses the shared test keypair (same key size as
-//! production: RSA-2048).
+//! artefact. Everything else uses the shared test token key (same algorithm
+//! and key size as production: HMAC-SHA-512, 64 bytes).
 
 #[path = "../tests/common/mod.rs"]
 mod common;
@@ -34,8 +34,8 @@ fn prod_argon2_crypto() -> Arc<Crypto> {
         argon2_memory_cost: PROD_ARGON2_MEMORY_KIB,
         argon2_time_cost: PROD_ARGON2_TIME,
         argon2_parallelism: PROD_ARGON2_LANES,
-        jwt_private_key: common::TEST_PRIVATE_KEY.to_string(),
-        jwt_public_key: common::TEST_PUBLIC_KEY.to_string(),
+        jwt_signing_key: common::test_token_key("bench", 0x22),
+        jwt_trusted_keys: None,
         jwt_expiration_minutes: 15,
         refresh_token_expiration_days: 30,
         csrf_secret_b64: "MWq42LqA6RbYEsgrc0w2Ik9YydReTlRwh_D5Ynus2QA".to_string(),
@@ -47,26 +47,26 @@ fn prod_argon2_crypto() -> Arc<Crypto> {
 fn jwt(c: &mut Criterion) {
     let crypto = common::ensure_test_crypto();
     let user_id = Uuid::now_v7();
-    let token = create_jwt(user_id, true, "user", crypto.encoding_key(), 15).unwrap();
+    let token = create_jwt(user_id, true, "user", crypto.tokens(), 15).unwrap();
 
     let mut g = c.benchmark_group("jwt");
     g.bench_function("create", |b| {
-        b.iter(|| create_jwt(black_box(user_id), true, "user", crypto.encoding_key(), 15));
+        b.iter(|| create_jwt(black_box(user_id), true, "user", crypto.tokens(), 15));
     });
     // Runs on every authenticated request (auth middleware).
     g.bench_function("verify", |b| {
-        b.iter(|| verify_jwt(black_box(&token), crypto.decoding_key()));
+        b.iter(|| verify_jwt(black_box(&token), crypto.tokens()));
     });
-    // A well-formed signature from another token, so the full RSA check runs
+    // A well-formed signature from another token, so the full MAC check runs
     // (a corrupted base64 tail would fail fast and measure the wrong path).
-    let other = create_jwt(Uuid::now_v7(), true, "user", crypto.encoding_key(), 15).unwrap();
+    let other = create_jwt(Uuid::now_v7(), true, "user", crypto.tokens(), 15).unwrap();
     let forged = format!(
         "{}.{}",
         token.rsplit_once('.').unwrap().0,
         other.rsplit_once('.').unwrap().1
     );
     g.bench_function("verify_bad_signature", |b| {
-        b.iter(|| verify_jwt(black_box(&forged), crypto.decoding_key()));
+        b.iter(|| verify_jwt(black_box(&forged), crypto.tokens()));
     });
     g.finish();
 }
@@ -96,14 +96,14 @@ fn csrf(c: &mut Criterion) {
 
 fn oauth_state(c: &mut Criterion) {
     let crypto = common::ensure_test_crypto();
-    let (state, _) = create_oauth_state(crypto.encoding_key(), "google", "login", None).unwrap();
+    let (state, _) = create_oauth_state(crypto.tokens(), "google", "login", None).unwrap();
 
     let mut g = c.benchmark_group("oauth_state");
     g.bench_function("create", |b| {
-        b.iter(|| create_oauth_state(crypto.encoding_key(), "google", "login", None));
+        b.iter(|| create_oauth_state(crypto.tokens(), "google", "login", None));
     });
     g.bench_function("verify", |b| {
-        b.iter(|| verify_oauth_state(crypto.decoding_key(), black_box(&state)));
+        b.iter(|| verify_oauth_state(crypto.tokens(), black_box(&state)));
     });
     g.finish();
 }

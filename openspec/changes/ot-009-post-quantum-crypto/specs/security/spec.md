@@ -8,48 +8,44 @@ attacker with a large quantum computer.
 
 ## ADDED Requirements
 
-### Requirement: Issued tokens carry a post-quantum signature
+### Requirement: Issued tokens carry a quantum-safe signature
 
 Every token the backend issues and later checks itself (session, signup,
-password-reset and OAuth-state tokens) SHALL be signed with ML-DSA-44
-(FIPS 204). Each token SHALL name the algorithm and the key that signed it. The
-backend SHALL accept a token only if it names ML-DSA-44, names a key the
-backend currently trusts, carries a valid signature from that key, and passes
-the existing expiry, issuer, audience and token-type checks. Anything else
-SHALL be refused the same way an expired or missing token is today, without
-revealing which check failed.
+password-reset and OAuth-state tokens) SHALL be signed with HMAC-SHA-512 under
+a secret key of at least 64 bytes. Each token SHALL name the algorithm and the
+key that signed it. The backend SHALL accept a token only if it names
+HMAC-SHA-512, names a key the backend currently trusts, carries a valid
+signature from that key, and passes the existing expiry, issuer, audience and
+token-type checks. Anything else SHALL be refused with the existing 401
+invalid-token error, whose message does not reveal which check failed. A token
+that is valid except for having expired keeps its distinct expired error, so
+clients know to refresh.
 
-#### Scenario: Signing in issues a post-quantum session token
+#### Scenario: Signing in issues a quantum-safe session token
 
 - **WHEN** a Member signs in with email and password or with Google
-- **THEN** the session token they receive names ML-DSA-44 and the key that signed it
+- **THEN** the session token they receive names HMAC-SHA-512 and the key that signed it
 - **AND** their next authenticated request succeeds
 
-#### Scenario: A classically signed token is refused
+#### Scenario: A token signed with any other algorithm is refused
 
-- **WHEN** a request carries a session token that is validly signed with RS256, or names no algorithm, `none`, or an HMAC algorithm
-- **THEN** the backend responds 401 with the same error body as for a missing token
+- **WHEN** a request carries a session token that is validly signed with RS256, or with HMAC-SHA-256 under the right key, or names no algorithm or `none`
+- **THEN** the backend responds 401 with the same invalid-token body as for any other invalid token
 
-#### Scenario: A token naming an unknown key is refused
+#### Scenario: A token naming an unknown key, or no key, is refused
 
-- **WHEN** a request carries a token naming a key the backend does not trust
+- **WHEN** a request carries a token naming a key the backend does not trust, or naming no key
 - **THEN** the backend responds 401 and does not try other keys
 
 #### Scenario: A tampered token is refused
 
-- **WHEN** any byte of a token's header, claims or signature is changed
+- **WHEN** any part of a token's header, claims or signature is changed
 - **THEN** the backend responds 401
 
 #### Scenario: A token of the wrong type is refused
 
 - **WHEN** a valid signup or password-reset token is sent where a session token is expected, or the other way round
 - **THEN** the backend refuses it, as it does today
-
-#### Scenario: The largest session token fits in the session cookie
-
-- **WHEN** a Super Admin (the longest role) with a verified email signs in
-- **THEN** the session cookie, name and attributes included, is under 4096 bytes
-- **AND** signing in and making authenticated requests work in Chromium, Firefox and WebKit, desktop and mobile emulation
 
 #### Scenario: Signing in with Google still round-trips its state
 
@@ -84,8 +80,8 @@ when their refresh token is still valid.
 
 #### Scenario: Misconfigured keys stop the backend from starting
 
-- **WHEN** the backend starts with no active key, a key that is not a valid ML-DSA-44 key, a key with no name, or two keys with the same name
-- **THEN** it refuses to start and names the problem without printing any key material
+- **WHEN** the backend starts with no active key, a key that is not valid base64 or is shorter than 64 bytes, a key with no name or a malformed name, two keys with the same name, or the old RSA key settings still present
+- **THEN** it refuses to start and names the setting and key name at fault, without printing any key material
 
 ### Requirement: Committed secrets are encrypted only to post-quantum recipients
 

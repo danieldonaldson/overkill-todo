@@ -106,6 +106,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     );
 
     let telemetry = telemetry::init(&settings.telemetry, settings.server.dev_mode)?;
+    crypto.tokens().log_configuration();
 
     tracing::info!(
         "Starting {} on {}",

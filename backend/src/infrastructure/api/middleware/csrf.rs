@@ -129,7 +129,7 @@ pub async fn csrf_middleware(mut req: Request, next: Next) -> Result<Response, A
     // Verifying here also populates the `AuthUser` extension, which the inner
     // `auth_middleware` reuses so the JWT is verified only once per request.
     let user =
-        ensure_authenticated(crypto.decoding_key(), &mut req).ok_or_else(AppError::csrf_invalid)?;
+        ensure_authenticated(crypto.tokens(), &mut req).ok_or_else(AppError::csrf_invalid)?;
 
     // Verify the token signature, expiration, and user binding.
     verify_csrf_token(

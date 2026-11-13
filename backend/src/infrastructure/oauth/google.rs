@@ -293,7 +293,12 @@ impl OAuthProviderClient for GoogleOAuthClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::crypto::Crypto;
+    use crate::infrastructure::crypto::TEST_RSA_PRIVATE_KEY;
+
+    /// An RS256 signer standing in for Google's key.
+    fn google_test_key() -> EncodingKey {
+        EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY.as_bytes()).expect("test RSA key is valid")
+    }
     use jsonwebtoken::{EncodingKey, Header, encode, get_current_timestamp, jwk::Jwk};
     use serde::Serialize;
 
@@ -363,8 +368,7 @@ mod tests {
     #[test]
     fn verify_id_token_accepts_google_issuer_and_client_audience() {
         let client = test_client();
-        let crypto = Crypto::for_testing();
-        let encoding_key = crypto.encoding_key();
+        let encoding_key = &google_test_key();
         let jwks = test_jwks(encoding_key);
         let token = test_id_token(
             encoding_key,
@@ -384,8 +388,7 @@ mod tests {
     #[test]
     fn verify_id_token_rejects_wrong_audience() {
         let client = test_client();
-        let crypto = Crypto::for_testing();
-        let encoding_key = crypto.encoding_key();
+        let encoding_key = &google_test_key();
         let jwks = test_jwks(encoding_key);
         let token = test_id_token(
             encoding_key,
@@ -403,8 +406,7 @@ mod tests {
     #[test]
     fn verify_id_token_rejects_wrong_issuer() {
         let client = test_client();
-        let crypto = Crypto::for_testing();
-        let encoding_key = crypto.encoding_key();
+        let encoding_key = &google_test_key();
         let jwks = test_jwks(encoding_key);
         let token = test_id_token(encoding_key, "test-client-id", "https://attacker.example");
 
@@ -419,8 +421,7 @@ mod tests {
     fn verify_id_token_accepts_bare_google_issuer_variant() {
         // Both `https://accounts.google.com` and `accounts.google.com` are valid.
         let client = test_client();
-        let crypto = Crypto::for_testing();
-        let encoding_key = crypto.encoding_key();
+        let encoding_key = &google_test_key();
         let jwks = test_jwks(encoding_key);
         let token = test_id_token(encoding_key, "test-client-id", "accounts.google.com");
 
@@ -431,8 +432,7 @@ mod tests {
     #[test]
     fn verify_id_token_rejects_token_without_kid() {
         let client = test_client();
-        let crypto = Crypto::for_testing();
-        let encoding_key = crypto.encoding_key();
+        let encoding_key = &google_test_key();
         let jwks = test_jwks(encoding_key);
 
         // Encode a token whose header omits `kid`.
@@ -456,8 +456,7 @@ mod tests {
     #[test]
     fn verify_id_token_rejects_unknown_kid() {
         let client = test_client();
-        let crypto = Crypto::for_testing();
-        let encoding_key = crypto.encoding_key();
+        let encoding_key = &google_test_key();
         // JWKS contains "test-key", but the token is signed referencing "other".
         let jwks = test_jwks(encoding_key);
 
@@ -483,8 +482,7 @@ mod tests {
     #[test]
     fn verify_id_token_rejects_non_rs256_key() {
         let client = test_client();
-        let crypto = Crypto::for_testing();
-        let encoding_key = crypto.encoding_key();
+        let encoding_key = &google_test_key();
         // Build a JWK for "test-key" but mark its algorithm as something other
         // than RS256, so the algorithm guard rejects it before decoding.
         let mut jwk =
@@ -505,8 +503,7 @@ mod tests {
     #[test]
     fn verify_id_token_rejects_malformed_token_header() {
         let client = test_client();
-        let crypto = Crypto::for_testing();
-        let jwks = test_jwks(crypto.encoding_key());
+        let jwks = test_jwks(&google_test_key());
         let err = client.verify_id_token("not-a-jwt", &jwks).unwrap_err();
         assert!(err.to_string().contains("Invalid Google ID token header"));
     }
@@ -521,8 +518,7 @@ mod tests {
     #[tokio::test]
     async fn cached_jwks_returns_fresh_entry_and_jwks_for_kid_hits_cache() {
         let client = test_client();
-        let crypto = Crypto::for_testing();
-        let jwks = test_jwks(crypto.encoding_key());
+        let jwks = test_jwks(&google_test_key());
 
         // No cache yet.
         assert!(client.cached_jwks().await.is_none());
@@ -543,8 +539,7 @@ mod tests {
     #[tokio::test]
     async fn cached_jwks_ignores_stale_entry() {
         let client = test_client();
-        let crypto = Crypto::for_testing();
-        let jwks = test_jwks(crypto.encoding_key());
+        let jwks = test_jwks(&google_test_key());
 
         // Seed an entry older than the TTL.
         *client.jwks_cache.write().await = Some(CachedJwks {
@@ -604,8 +599,7 @@ mod tests {
 
         #[tokio::test]
         async fn exchange_code_success_returns_user_info() {
-            let crypto = Crypto::for_testing();
-            let key = crypto.encoding_key();
+            let key = &google_test_key();
             let id_token = id_token_with_kid(key, "test-key");
 
             let token_server = MockServer::start().await;
@@ -684,8 +678,7 @@ mod tests {
             // signed under "new-key" (a key rotation). The unknown kid must force
             // a fresh JWKS fetch from the endpoint, after which verification
             // succeeds.
-            let crypto = Crypto::for_testing();
-            let key = crypto.encoding_key();
+            let key = &google_test_key();
             let id_token = id_token_with_kid(key, "new-key");
 
             let token_server = MockServer::start().await;
