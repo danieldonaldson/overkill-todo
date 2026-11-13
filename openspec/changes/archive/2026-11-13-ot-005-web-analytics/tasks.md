@@ -44,17 +44,18 @@ Delivers from `specs/analytics/spec.md`:
 - [x] 3.3 Docs (both READMEs): retention period, what the job deletes, how to run it by hand, and the alert. `just ci` green. Note "confirm a retention run and the metric in production" for the first deploy.
   - _Done:_ SQL covers every per-visitor table (no foreign keys in Umami). The metric is re-pushed hourly and the rule uses `last_over_time(...[14d])`, so a stopped container still alerts (design D8). Retention check run with a mutation (92-day cutoff fails); alert tests include never-succeeding and stopped-container cases. Seeded-database check: `just analytics-retention-check`.
 
-## 4. Slice 4: Kubernetes manifests
+## 4. Kubernetes manifests: dropped
 
-Delivers the same behaviour on the optional k8s target (`deploy/k8s/`). No new spec scenarios.
-
-- [ ] 4.1 Manifests for `analytics-db` (StatefulSet + PVC, not in any backup), `umami` (Deployment, digest-pinned, same env as compose, secrets from a Secret, ClusterIP only) and the retention job (CronJob), in their own kustomize component so analytics can be left out.
-- [ ] 4.2 The `/stats` rules from the edge contract in `deploy/k8s/base/ingress.yaml` (two paths to Umami with the prefix stripped, 404 for the rest, `Cookie`/`Authorization` dropped, client address passed only from trusted proxies). Note in `deploy/k8s/README.md` how this depends on the ingress controller.
-- [ ] 4.3 Verify with `kubectl kustomize` (and `kubeconform` if CI already uses it) and in a local cluster if one is set up; otherwise record the check as a first-deploy step for k8s.
+Dropped on 2026-11-13 by decision: compose is the deploy target and k8s is
+optional, so analytics is compose-only. `deploy/k8s/README.md` says so. If the
+k8s target is ever used for production, adding analytics there is a new change
+(the edge contract in `deploy/compose/README.md` says what its ingress must do).
 
 ## 5. Feature done
 
 - [x] 5.1 After slice 1 ships (or, with no production, after 1.6), record what it showed in design.md's Hypothesis, revise decisions, and add the remaining slices here: named events in the auth forms with the typed `track()` (D5, D6); the retention job and its alert (D8); k8s manifests for the analytics services and the `/stats` ingress route.
-- [ ] 5.2 Switch the feature on (set `PUBLIC_UMAMI_WEBSITE_ID` in production). The flag stays as the off-switch, so no removal. Note it as a first-deploy step while there is no production.
-- [ ] 5.3 Update README/docs for any env vars or setup changed by later slices.
-- [ ] 5.4 Archive the change (`/opsx:archive`), creating `openspec/specs/analytics/spec.md`.
+- [x] 5.2 Switch the feature on (set `PUBLIC_UMAMI_WEBSITE_ID` in production). The flag stays as the off-switch, so no removal. Note it as a first-deploy step while there is no production.
+  - _Done without a deploy: there is no production yet._ Switching on (create the site, set `PUBLIC_UMAMI_WEBSITE_ID`) is step 2 of the analytics first-deploy steps in `deploy/compose/README.md`, with the Traefik check, Cloudflare comparison, funnel and retention checks around it.
+- [x] 5.3 Update README/docs for any env vars or setup changed by later slices.
+  - _Done:_ `README.md` (local setup, events, funnel, retention) and `deploy/compose/README.md` (edge contract, secrets, turning on, retention and alert, first-deploy steps) cover every slice; `deploy/k8s/README.md` notes analytics is compose-only.
+- [x] 5.4 Archive the change (`/opsx:archive`), creating `openspec/specs/analytics/spec.md`.

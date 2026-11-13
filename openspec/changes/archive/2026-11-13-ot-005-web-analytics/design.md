@@ -43,8 +43,8 @@ deploy config.
 - Writing the Traefik production config. That belongs to the production
   setup. This change states what it must do and gives the Traefik mapping.
 - High availability for analytics. Losing a few hours of page views is fine.
-- k8s manifests in the first slice (compose is the deploy target; k8s is a later
-  slice).
+- k8s manifests. Compose is the deploy target; a k8s slice was planned and
+  dropped on 2026-11-13, so analytics is compose-only.
 - Server-side event tracking from the backend.
 
 ## Hypothesis
