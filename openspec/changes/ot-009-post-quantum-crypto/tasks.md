@@ -43,10 +43,10 @@ browser gets post-quantum key exchange", "An older client still connects",
 "Backend calls to external services offer the hybrid first", "Losing the
 hybrid fails the gate".
 
-- [ ] 3.1 In `main.rs`, install the aws-lc-rs provider as the process default with `kx_groups` starting at `X25519MLKEM768` (design D6), before any TLS client is built. Verify with a unit test that the installed default's first group is X25519MLKEM768
-- [ ] 3.2 Add `backend/tests/tls_key_exchange.rs`: an in-process rustls server that accepts only X25519MLKEM768, reached with the same reqwest client builder the Google and Turnstile adapters use; a second server accepting only X25519 proves the classical fallback. Verify both pass with `just test-integration`, and that the first fails if the provider's groups are set to X25519 only
-- [ ] 3.3 Add an edge key-exchange check to `just smoke <url>` (design D7): for an `https` URL, connect with `openssl s_client -groups X25519MLKEM768` and fail unless it's negotiated, and check that a classical-only client still connects. Pin OpenSSL ≥ 3.5 in `.mise.toml` if the system one is older. Verify it passes against a public host known to support the hybrid and fails against one that doesn't
-- [ ] 3.4 Document the edge contract (X25519MLKEM768 first, classical fallback; for Traefik, leave `curvePreferences` unset or list X25519MLKEM768 first) in `deploy/compose/README.md`, and add the first-deploy check. Verify `just ci` is green
+- [x] 3.1 In `main.rs`, install the aws-lc-rs provider as the process default with `kx_groups` starting at `X25519MLKEM768` (design D6), before any TLS client is built. Verify with a unit test that the installed default's first group is X25519MLKEM768
+- [x] 3.2 Add `backend/tests/tls_key_exchange.rs`: an in-process rustls server that accepts only X25519MLKEM768, reached with the same reqwest client builder the Google and Turnstile adapters use; a second server accepting only X25519 proves the classical fallback. Verify both pass with `just test-integration`, and that the first fails if the provider's groups are set to X25519 only
+- [x] 3.3 Add an edge key-exchange check to `just smoke <url>` (design D7): for an `https` URL, connect with `openssl s_client -groups X25519MLKEM768` and fail unless it's negotiated, and check that a classical-only client still connects. Pin OpenSSL ≥ 3.5 in `.mise.toml` if the system one is older. Verify it passes against a public host known to support the hybrid and fails against one that doesn't
+- [x] 3.4 Document the edge contract (X25519MLKEM768 first, classical fallback; for Traefik, leave `curvePreferences` unset or list X25519MLKEM768 first) in `deploy/compose/README.md`, and add the first-deploy check. Verify `just ci` is green
 
 ## 4. Feature done
 

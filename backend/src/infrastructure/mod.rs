@@ -9,3 +9,4 @@ pub mod persistence;
 pub mod services;
 pub mod tasks;
 pub mod telemetry;
+pub mod tls;

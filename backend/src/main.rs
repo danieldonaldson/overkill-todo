@@ -91,6 +91,11 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         return Ok(run_healthcheck());
     }
 
+    // Before any TLS client (Google, Turnstile, SMTP) is built: post-quantum
+    // key exchange first (OT-009).
+    overkill_todo::infrastructure::tls::install()
+        .map_err(|e| anyhow::anyhow!("TLS provider setup failed: {e}"))?;
+
     let settings = Settings::from_env()?;
 
     // Build the crypto handle from validated settings and inject it (as

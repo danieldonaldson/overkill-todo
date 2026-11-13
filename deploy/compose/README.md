@@ -25,13 +25,34 @@ Who can decrypt what, and how to add people or hosts, is in
 listed under `machines:` there with `env: prod`.
 
 `backend.env` must set `DATABASE_URL=postgres://overkill_todo:<db_password>@db:5432/overkill_todo`,
-`DEV_MODE=false`, real SMTP and Turnstile settings, and fresh JWT, CSRF and
-encryption keys. The backend refuses to start in production with a no-op adapter
+`DEV_MODE=false`, real SMTP and Turnstile settings, and fresh token, CSRF and
+encryption keys (`JWT_SIGNING_KEY` from `just jwt-keygen`; rotation steps are
+in `backend/.env.example`). The backend refuses to start in production with a no-op adapter
 or missing config, which is the point: a bad deploy fails at boot, not later.
 
 Rate limiting of the auth endpoints (`/api/v1/auth/*`, per client IP) is done at
 the Traefik level, not by this Caddy edge or the backend. Without it, password
 login has no brute-force throttle beyond Turnstile.
+
+### TLS key exchange (post-quantum)
+
+Whatever terminates public TLS (this Caddy edge now, Traefik later, or a CDN
+in front) must offer hybrid post-quantum key exchange, `X25519MLKEM768`,
+first, and still accept classical-only clients (OT-009). Traffic recorded
+today can otherwise be decrypted later by a quantum computer.
+
+- **Caddy** (Go ≥ 1.24): the default. Don't set `curves` in the `tls` block,
+  or list `x25519mlkem768` first.
+- **Traefik** (Go ≥ 1.24): the default. Leave `curvePreferences` unset in
+  the TLS options, or list `X25519MLKEM768` first.
+- **A CDN in front** (e.g. Cloudflare proxying the hostname): the browser leg
+  is the CDN's. Check it offers the hybrid, and apply the same rule to the
+  CDN→origin leg.
+
+`just smoke https://<domain>` checks both halves against the live edge
+(`scripts/smoke-tls.sh`, needs OpenSSL ≥ 3.5) and fails if either is
+missing. The backend's own outgoing TLS (Google, Turnstile, SMTP) is pinned
+in code and covered by `just test-integration`.
 
 ## First deploy
 
@@ -48,7 +69,7 @@ ENV
 alias dc='docker compose -f compose.yaml -f deploy/compose/compose.prod.yaml --profile full'
 dc up -d
 curl -fsS https://app.example.com/api/v1/health/ready
-just smoke https://app.example.com
+just smoke https://app.example.com   # includes the post-quantum key-exchange check
 # The API description is dev-only (OT-002): the backend must answer 404 for both.
 # The edge sends these paths to web, so ask the backend directly (scratch image,
 # no curl inside: borrow its network namespace).

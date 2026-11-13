@@ -4,11 +4,6 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
-[package.metadata.cargo-machete]
-# Not used by name: listed only to enable its `aws_lc_rs` feature for the rustls
-# that reqwest pulls in. cargo-machete can't see feature-only dependencies.
-ignored = ["rustls"]
-
 [lib]
 name = "overkill_todo"
 path = "src/lib.rs"
@@ -45,6 +40,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 async-trait = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "form"] }
+# Process-wide TLS provider with post-quantum key exchange (infrastructure/tls.rs).
 rustls = { version = "0.23", features = ["aws_lc_rs"] }
 hickory-resolver = { version = "0.26", features = ["tokio"] }
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "hostname", "builder"] }

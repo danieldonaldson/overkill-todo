@@ -164,7 +164,13 @@ they stay signed in.
 feature default. A test starts an in-process rustls server that accepts
 *only* X25519MLKEM768 and connects with the same reqwest client builder the
 adapters use. If the hybrid is ever dropped, the handshake fails. The test
-lives in `backend/tests/`, so it runs in `just test`.
+lives in `backend/tests/`, so it runs in `just test-integration`.
+Implemented in slice 3 (`infrastructure/tls.rs`, `tests/tls_key_exchange.rs`).
+reqwest (Google, Turnstile) and lettre (SMTP) both take rustls's process
+default provider, so the one install covers all three. Removing the hybrid
+from the provider makes the hybrid-only tests fail, which was checked by
+doing it. The test server is a plain rustls server on a thread with an
+embedded self-signed certificate, so no new dependencies were needed.
 
 **D7. Edge TLS: a proxy-agnostic contract.** The contract: whatever
 terminates public TLS offers X25519MLKEM768 first and allows classical
@@ -174,7 +180,11 @@ read-only smoke test in `just smoke <url>`: for an `https` URL, connect with
 `openssl s_client -groups X25519MLKEM768` (OpenSSL ≥ 3.5, pinned in
 `.mise.toml` if needed) and fail unless it's negotiated. Locally there's no
 edge TLS, so this check runs only against deployed URLs, which is a
-first-deploy note.
+first-deploy note. Implemented as `scripts/smoke-tls.sh`, run first by
+`just smoke`. It passed against cloudflare.com and failed against two hosts
+without the hybrid (github.com, gnu.org) on 2026-11-13. OpenSSL reports a
+classical group as `Peer Temp Key` (3.5+) or `Server Temp Key` (older), and a
+hybrid one as `Negotiated TLS1.3 group`.
 
 **D8. SOPS: policy refuses classical keys; the gate scans ciphertexts.**
 (Done in slice 1.)

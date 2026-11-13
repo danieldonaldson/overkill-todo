@@ -251,7 +251,9 @@ e2e-integration:
     {{pnpm}} --filter {{web}} test:e2e:integration
 
 # Read-only checks against a deployed environment, e.g. just smoke https://app.example.com
+# (for https, first checks the edge negotiates post-quantum key exchange).
 smoke url:
+    ./scripts/smoke-tls.sh {{url}}
     SMOKE_BASE_URL={{url}} {{pnpm}} --filter {{web}} test:e2e:smoke
 
 # Backend coverage over unit + integration tests. HTML report: backend/target/llvm-cov/html.
