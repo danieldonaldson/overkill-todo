@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { track } from '../../lib/analytics'
   import { api } from '../../lib/api'
   import type { OAuthProvider } from '../../lib/types'
 
@@ -9,6 +10,9 @@
   let { mode = 'login' }: Props = $props()
 
   function handleOAuthClick(provider: OAuthProvider) {
+    // Before the redirect; the tracker sends with `keepalive`, so it survives
+    // the page leaving.
+    track({ name: 'oauth-started', props: { provider } })
     if (mode === 'link') {
       api.oauth.startLink(provider)
       return

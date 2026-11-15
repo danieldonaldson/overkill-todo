@@ -276,3 +276,49 @@ tests:
       - eval_time: 12m
         alertname: LeaderCountWrong
         exp_alerts: []
+
+  # Analytics retention (OT-005). Test time 0 is 946684800 (as above); the job
+  # re-pushes its last-success time every hour.
+
+  # Succeeds daily: the pushed value moves on every 24h. Never fires.
+  - name: daily analytics retention does not fire
+    interval: 1h
+    input_series:
+      - series: 'analytics_retention_last_success_timestamp_seconds'
+        values: '946684800x23 946771200x23 946857600x23 946944000x23'
+    alert_rule_test:
+      - eval_time: 3d23h
+        alertname: AnalyticsRetentionNotSucceeding
+        exp_alerts: []
+
+  # Started but never succeeded: it keeps pushing its start time. Fires once
+  # 2 d 15 m have passed.
+  - name: analytics retention never succeeding fires after 2d15m
+    interval: 1h
+    input_series:
+      - series: 'analytics_retention_last_success_timestamp_seconds'
+        values: '946684800x80'
+    alert_rule_test:
+      - eval_time: 2d15m
+        alertname: AnalyticsRetentionNotSucceeding
+        exp_alerts: []
+      - eval_time: 2d15m30s
+        alertname: AnalyticsRetentionNotSucceeding
+        exp_alerts:
+          - exp_labels: { severity: page, job: analytics_retention }
+            exp_annotations:
+              summary: 'Analytics retention job (analytics_retention) has not succeeded for 2d 0h 15m 30s'
+
+  # Succeeded once, then the container stopped (no more pushes): still fires.
+  - name: stopped analytics retention container fires
+    interval: 1h
+    input_series:
+      - series: 'analytics_retention_last_success_timestamp_seconds'
+        values: '946684800x1'
+    alert_rule_test:
+      - eval_time: 2d16m
+        alertname: AnalyticsRetentionNotSucceeding
+        exp_alerts:
+          - exp_labels: { severity: page, job: analytics_retention }
+            exp_annotations:
+              summary: 'Analytics retention job (analytics_retention) has not succeeded for 2d 0h 16m 0s'

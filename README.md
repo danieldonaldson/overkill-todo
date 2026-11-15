@@ -55,22 +55,23 @@ and the backend refuses to start with them: replace both with
 `FORCE=1 ./scripts/gen-dev-env.sh`. Committed secrets use post-quantum age keys
 only (`deploy/secrets/README.md`).
 
-| Recipe                                | What it runs                                                     |
-| ------------------------------------- | ---------------------------------------------------------------- |
-| `just test` / `just test-integration` | backend unit / DB-backed tests                                   |
-| `just test-web`                       | `astro check` + Vitest (real Chromium)                           |
-| `just e2e`                            | Playwright against the built site, API mocked                    |
-| `just e2e-integration`                | Playwright signup against `just dev`                             |
-| `just smoke <url>`                    | read-only checks against a deployed site, incl. post-quantum TLS |
-| `just jwt-keygen [kid]`               | new token key for `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS`         |
-| `just up`                             | prod-like stack in Docker behind Caddy on :8080                  |
-| `just bench` / `just bench-db`        | backend criterion benches / full-router + DB                     |
-| `just bench-web`                      | Vitest benches (helpers, client, AdminPanel)                     |
-| `just bench-compare [base]`           | base vs working tree, per-bench change report                    |
-| `just api-types`                      | regenerate `backend/openapi.json` + web types                    |
-| `just api-types-check`                | fail if either generated API file is stale                       |
-| `just load <scenario>`                | k6 load scenario against the capped stack                        |
-| `just obs-up` / `just obs-down`       | traces, logs, metrics, alerts and Grafana                        |
+| Recipe                                 | What it runs                                                     |
+| -------------------------------------- | ---------------------------------------------------------------- |
+| `just test` / `just test-integration`  | backend unit / DB-backed tests                                   |
+| `just test-web`                        | `astro check` + Vitest (real Chromium)                           |
+| `just e2e`                             | Playwright against the built site, API mocked                    |
+| `just e2e-integration`                 | Playwright signup against `just dev`                             |
+| `just smoke <url>`                     | read-only checks against a deployed site, incl. post-quantum TLS |
+| `just jwt-keygen [kid]`                | new token key for `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS`         |
+| `just up`                              | prod-like stack in Docker behind Caddy on :8080                  |
+| `just bench` / `just bench-db`         | backend criterion benches / full-router + DB                     |
+| `just bench-web`                       | Vitest benches (helpers, client, AdminPanel)                     |
+| `just bench-compare [base]`            | base vs working tree, per-bench change report                    |
+| `just api-types`                       | regenerate `backend/openapi.json` + web types                    |
+| `just api-types-check`                 | fail if either generated API file is stale                       |
+| `just load <scenario>`                 | k6 load scenario against the capped stack                        |
+| `just obs-up` / `just obs-down`        | traces, logs, metrics, alerts and Grafana                        |
+| `just analytics-up` / `analytics-down` | Umami web analytics on :3001                                     |
 
 ### Benchmarks
 
@@ -188,6 +189,49 @@ just obs-wipe            # delete stored traces, logs and metrics (keeps Grafana
 - **Ports** are bound to 127.0.0.1 only (`GRAFANA_PORT`, `ALERTMANAGER_PORT`).
   `just obs-check` (part of `just ci`) validates the collector config,
   Alertmanager configs and alert-rule tests.
+
+### Web analytics
+
+Anonymous page views and sign-up/sign-in events in a self-hosted Umami with
+its own Postgres (OT-005): no cookies, no browser storage, no query strings or
+fragments, nothing from
+browsers sending Do Not Track or Global Privacy Control. Only
+`/stats/script.js` and `/stats/api/send` go through the edge; reports are
+local-only. It's off unless `PUBLIC_UMAMI_WEBSITE_ID` is set, and only works
+behind the edge (`just up`), not with `just dev`.
+
+```bash
+just up                  # prod-like stack (in another terminal)
+just analytics-up        # Umami on http://localhost:3001
+```
+
+1. Sign in to http://localhost:3001 as `admin` / `umami` (local default) and
+   add a website (any domain). Copy its website ID.
+2. Restart the web container with it:
+   `PUBLIC_UMAMI_WEBSITE_ID=<id> docker compose --profile full up -d web`
+   (in a worktree, load `.worktree.env` first so the project name matches).
+3. Open the site through the edge (http://localhost:8080). The page view
+   shows in Umami within a minute. Umami silently drops bots, headless
+   browsers included, so check with a normal browser.
+
+**Events.** The auth forms record a fixed set of named events through
+`track()` in `apps/web/src/lib/analytics.ts` (`signup-submitted`,
+`signup-rejected`, `email-verified`, `signin-succeeded`, `signin-rejected`,
+`oauth-started`, `password-reset-requested`, `password-reset-completed`,
+`account-deletion-requested`). Its type only accepts the spec's names and
+values, so nothing identifying can be sent. To add an event, change the spec's
+table in `openspec/` first, then the type. To see the sign-up funnel: Umami →
+the website → Funnels → add steps _Path_ `/register`, _Event_
+`signup-submitted`, _Event_ `email-verified`. Locally, sign up with an
+`e2e-…@example.com` address: in `DEV_MODE` its code is always `123456`.
+
+`scripts/check-analytics-visitors.sh` checks that the edge passes the real
+client address (2 Visitors from 2 networks, no address stored). Unset the ID
+to turn analytics off. Data is kept 90 days (the `analytics-retention`
+service; `just analytics-retention-check` tests its SQL) and isn't backed up.
+Production setup, the edge
+contract a Traefik edge must meet, and operator access are in
+[`deploy/compose/README.md`](deploy/compose/README.md#web-analytics).
 
 ## Parallel work (worktrees)
 

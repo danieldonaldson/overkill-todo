@@ -1829,7 +1829,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "description": "Machine-readable error code (e.g. `validation_error`, `csrf_invalid`)."
+            "description": "Machine-readable error code (e.g. `validation_error`, `bot_check_failed`,\n`csrf_invalid`)."
           },
           "message": {
             "type": "string",

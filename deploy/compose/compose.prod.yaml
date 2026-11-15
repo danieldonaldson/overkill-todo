@@ -11,6 +11,9 @@
 #   - with `--profile observability`: telemetry stack, Grafana on the host's
 #     loopback only (reach it through an SSH tunnel; see README), Alertmanager
 #     emailing the operator (alertmanager.prod.yml) and not published at all
+#   - with `--profile analytics`: Umami and its own database (OT-005), passwords
+#     from SOPS, Umami on the host's loopback only (`ssh -L 3001:localhost:3001
+#     <host>`), its database not in the nightly dump
 services:
   db:
     environment:
@@ -40,6 +43,9 @@ services:
     build: !reset null
     environment:
       PUBLIC_TURNSTILE_SITE_KEY: ${PUBLIC_TURNSTILE_SITE_KEY:-}
+      # Web analytics (OT-005): the site ID from Umami. Empty = off; unsetting
+      # it is the rollback.
+      PUBLIC_UMAMI_WEBSITE_ID: ${PUBLIC_UMAMI_WEBSITE_ID:-}
     restart: unless-stopped
 
   edge:
@@ -130,6 +136,43 @@ services:
       - '127.0.0.1:3000:3000'
     restart: unless-stopped
 
+  # ---- analytics (`--profile analytics`, OT-005) ---------------------
+  # Not in `backup`: analytics history is replaceable and kept apart from
+  # account data (design D2).
+  analytics-db:
+    environment:
+      POSTGRES_PASSWORD: !reset null
+      POSTGRES_PASSWORD_FILE: /run/secrets/analytics_db_password
+    secrets: [analytics_db_password]
+    restart: unless-stopped
+
+  umami:
+    environment:
+      DATABASE_URL: !reset null
+      APP_SECRET: !reset null
+    secrets: [analytics_db_password, umami_app_secret]
+    # Umami reads neither value from a file, so build them from the secrets and
+    # then run the image's own entrypoint and command. The password goes into a
+    # URL: create it URL-safe (hex), see README.
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - |
+        export DATABASE_URL="postgres://umami:$$(cat /run/secrets/analytics_db_password)@analytics-db:5432/umami"
+        export APP_SECRET="$$(cat /run/secrets/umami_app_secret)"
+        exec docker-entrypoint.sh sh scripts/start-docker.sh
+    # Host loopback only. The edge exposes just /stats/script.js and
+    # /stats/api/send; reports: `ssh -L 3001:localhost:3001 <host>`.
+    ports: !override
+      - '127.0.0.1:3001:3000'
+    restart: unless-stopped
+
+  analytics-retention:
+    environment:
+      PGPASSWORD: !reset null
+      PGPASSWORD_FILE: /run/secrets/analytics_db_password
+    secrets: [analytics_db_password]
+    restart: unless-stopped
+
 secrets:
   db_password:
     file: ./deploy/compose/.secrets/db_password
@@ -137,6 +180,10 @@ secrets:
     file: ./deploy/compose/.secrets/grafana_admin_password
   alertmanager_smtp_password:
     file: ./deploy/compose/.secrets/alertmanager_smtp_password
+  analytics_db_password:
+    file: ./deploy/compose/.secrets/analytics_db_password
+  umami_app_secret:
+    file: ./deploy/compose/.secrets/umami_app_secret
 
 volumes:
   caddy-data:

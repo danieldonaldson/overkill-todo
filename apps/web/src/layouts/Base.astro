@@ -27,6 +27,9 @@ const { title = 'Overkill Todo Dashboard' } = Astro.props
         (per-env runtime config) before any island hydrates — see src/lib/config.ts. */}
     <script is:inline src="/config.js"></script>
     <script is:inline src="/scripts/theme-init.js"></script>
+    {/* Web analytics loader (OT-005). Off unless UMAMI_WEBSITE_ID is set;
+        deferred so it never delays the page. */}
+    <script is:inline src="/scripts/analytics.js" defer></script>
     {/* Per-layout head content, e.g. DashboardLayout's session hint check. */}
     <slot name="head" />
   </head>

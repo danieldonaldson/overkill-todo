@@ -12,4 +12,5 @@
 // the config. See src/lib/config.ts and docker-entrypoint.d.
 window.__PUBLIC_CONFIG = {
   TURNSTILE_SITE_KEY: '${PUBLIC_TURNSTILE_SITE_KEY}',
+  UMAMI_WEBSITE_ID: '${PUBLIC_UMAMI_WEBSITE_ID}',
 }

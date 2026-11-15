@@ -1,4 +1,17 @@
-# Local prod-like edge: one origin, /api → backend, everything else → web.
+# Local prod-like edge: one origin, /api → backend, /stats → Umami (two paths
+# only), everything else → web.
+{
+	# Client address (OT-005 D4): forwarded headers are believed only from
+	# these proxies, walking X-Forwarded-For right to left. Locally that's the
+	# private ranges (the Docker bridge), so scripts/check-analytics-visitors.sh
+	# can supply addresses. Production trusts only the CDN's ranges.
+	servers {
+		trusted_proxies static private_ranges
+		trusted_proxies_strict
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
 :8080 {
 	# `route` keeps this order. Caddy's default order runs `tracing` before
 	# `request_header`, which would adopt a client's trace context before it is
@@ -7,6 +20,8 @@
 	route {
 		request_header -traceparent
 		request_header -tracestate
+		# Only the edge may say who the client is (OT-005 D4).
+		request_header -X-Analytics-Client-IP
 		# Exports to the collector over OTLP/gRPC (OTEL_* env in compose.yaml)
 		# and puts `traceID`/`spanID` on the access log line.
 		tracing {
@@ -15,6 +30,24 @@
 
 		handle /api/* {
 			reverse_proxy backend:4322
+		}
+		# Web analytics (OT-005 D3): only the tracker and the collect endpoint
+		# are public; Umami's login and reports answer 404. Same block as
+		# production's Caddyfile.
+		handle_path /stats/* {
+			@collect path /script.js /api/send
+			handle @collect {
+				reverse_proxy umami:3000 {
+					header_up X-Analytics-Client-IP {client_ip}
+					# The script load is a same-origin request, so the browser
+					# attaches the session cookie. Umami needs none of it.
+					header_up -Cookie
+					header_up -Authorization
+				}
+			}
+			handle {
+				respond 404
+			}
 		}
 		handle {
 			reverse_proxy web:8080

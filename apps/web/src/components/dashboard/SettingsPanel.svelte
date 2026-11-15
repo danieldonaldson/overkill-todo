@@ -12,6 +12,7 @@
   import { FormInput } from '$lib/components/ui/form-input'
   import { api } from '../../lib/api'
   import { session } from '../../lib/auth/session.svelte'
+  import { track } from '../../lib/analytics'
   import { formatDateTime } from '../../lib/format'
   import { minLength, required, validate } from '../../lib/utils/validation'
 
@@ -154,6 +155,7 @@
         ...(user.has_password ? { password: deletePassword } : {}),
       })
       session.patch({ deletion_scheduled_at: result.deletion_scheduled_at ?? null })
+      track({ name: 'account-deletion-requested' })
       deleteConfirmation = ''
       deletePassword = ''
       message = 'Account deletion scheduled. You can cancel during the grace period.'

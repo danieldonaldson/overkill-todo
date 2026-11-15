@@ -18,6 +18,10 @@ What the base assumes is installed in the cluster:
 - CloudNativePG with the barman-cloud plugin
 - Sealed Secrets or SOPS for `backend-secrets` and the backup credentials
 
+Web analytics (Umami, OT-005) is compose-only: there are no manifests for it
+here. To run it on k8s, the Ingress must meet the edge contract in
+[`../compose/README.md`](../compose/README.md#edge-contract).
+
 ## Deploy model
 
 GitOps: ArgoCD (or Flux) watches `overlays/<env>`. A deploy is a commit that
