@@ -97,6 +97,11 @@ wt-list:
 secrets-check:
     ./scripts/secrets.sh check
 
+# ── Security ─────────────────────────────────────────────────────────────────────
+# Every property in docs/security/threat-model.md names a check (or a gap) that still exists.
+threat-model-check:
+    ./scripts/threat-model-check.sh
+
 # After editing access.yaml: regenerate .sops.yaml and re-key the secrets you can read.
 secrets-sync:
     ./scripts/secrets.sh sync
@@ -299,7 +304,7 @@ machete:
     cd {{backend}} && cargo machete
 
 # Everything CI gates on. Green here means green CI.
-ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check test test-integration db-prepare-check api-types-check test-web e2e
+ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check test-web e2e
 
 # ── Load tests (OT-004) ──────────────────────────────────────────────────────────
 # Same release images as `just up`, pinned to cores and capped, with production

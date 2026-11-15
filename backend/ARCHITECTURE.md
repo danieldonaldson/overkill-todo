@@ -74,9 +74,19 @@ the group it's nested in (`path = "/login"` under `/auth` under `/api/v1`). Use 
 
 - **Protection:** group middleware is applied through the `Guarded` methods
   (`require_auth()`, `require_verified_email()`, `require_fresh_session()`,
-  `require_csrf()`). Each applies the `route_layer` _and_ documents the status it
-  can return (401/403), so the description can't miss a protection. Call them in the
-  order the layers should run, innermost first.
+  `require_admin()`, `require_super_admin()`, `require_csrf()`). Each applies the
+  `route_layer` _and_ documents the status it can return (401/403), so the
+  description can't miss a protection. Call them in the order the layers should
+  run, innermost first. Admin roles are enforced on the group, not only by the
+  handler's `AdminUser` / `SuperAdminUser` extractor.
+- **Public routes:** `tests/route_guards_integration.rs` walks every operation in
+  the description. Each one must be in its `PUBLIC_ROUTES` list or refuse a
+  request without a session, and every `/admin` operation must refuse a Member.
+  Admin-only routes go under `/api/v1/admin` and through `admin_guards()` /
+  `super_admin_guards()`, which check the role after the fresh-session check (so
+  a just-promoted user gets a 401 and refreshes). A
+  new public route goes on that list, with a reason, and gets a property in the
+  threat model.
 - **State:** the whole tree is `OpenApiRouter<AppState>` (`state.rs`). Handlers keep
   extracting their own `State<Arc<…Deps>>` through `FromRef`. `api_routes()` takes no
   values, so `openapi::openapi()` builds the description without a database.
@@ -197,6 +207,14 @@ application and domain layers only use `tracing` macros.
 - **OAuth (Google):** authorization-code flow → server-to-server token exchange → Google ID-token signature verified against Google's JWKS (issuer + audience checked) → upsert `oauth_accounts` → auto-link only if email verified by both sides.
 
 ## Security invariants (don't regress these)
+
+The full list of what auth must guarantee, against which attackers, and which
+test, proof or gate covers each property (or why it isn't covered yet) is the
+threat model: [`docs/security/threat-model.md`](../docs/security/threat-model.md).
+`just threat-model-check` (in `just ci`) fails if a property has no check or
+names one that no longer exists. When you add or change an auth behaviour, add
+or update its property there; the end of that file explains how. The list
+below is the short version.
 
 - Argon2id for all passwords; tunable cost params from config.
 - Our tokens (session, signup, reset, OAuth state) are HS512 under a named key (`kid`), quantum-safe; only HS512 is accepted on decode, and only from a configured key, never by trying others. Keys rotate via `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS` (OT-009).

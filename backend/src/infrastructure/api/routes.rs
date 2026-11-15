@@ -32,6 +32,7 @@ use crate::infrastructure::telemetry::{
 };
 
 use super::{
+    extractors::{AdminUser, SuperAdminUser},
     handlers::{
         admin_handler::{self, AdminHandlerDeps},
         auth_handler::{self, AuthHandlerDeps},
@@ -119,17 +120,23 @@ trait Guarded: Sized {
     /// `require_fresh_session`: rejects a token issued before a password reset,
     /// account purge or role change.
     fn require_fresh_session(self) -> Self;
+    /// The [`AdminUser`] extractor as a route layer: rejects a session whose
+    /// role isn't Admin or Super Admin.
+    fn require_admin(self) -> Self;
+    /// The [`SuperAdminUser`] extractor as a route layer: rejects a session
+    /// whose role isn't Super Admin.
+    fn require_super_admin(self) -> Self;
     /// `csrf_middleware`: rejects state-changing requests without a valid
     /// CSRF token, except on the paths it excludes.
     fn require_csrf(self) -> Self;
 }
 
-fn document(
-    mut router: OpenApiRouter<AppState>,
+fn document<S: Clone + Send + Sync + 'static>(
+    mut router: OpenApiRouter<S>,
     applies: impl Fn(&str, &str) -> bool,
     status: &str,
     description: &str,
-) -> OpenApiRouter<AppState> {
+) -> OpenApiRouter<S> {
     for_each_operation(router.get_openapi_mut(), |method, path, op| {
         if applies(method, path) {
             add_response_if_missing(op, status, description);
@@ -138,7 +145,7 @@ fn document(
     router
 }
 
-impl Guarded for OpenApiRouter<AppState> {
+impl<S: Clone + Send + Sync + 'static> Guarded for OpenApiRouter<S> {
     fn require_auth(self) -> Self {
         document(
             self.route_layer(middleware::from_fn(auth_middleware)),
@@ -166,6 +173,24 @@ impl Guarded for OpenApiRouter<AppState> {
         )
     }
 
+    fn require_admin(self) -> Self {
+        document(
+            self.route_layer(middleware::from_extractor::<AdminUser>()),
+            |_, _| true,
+            "403",
+            "Not an admin (`access_denied`)",
+        )
+    }
+
+    fn require_super_admin(self) -> Self {
+        document(
+            self.route_layer(middleware::from_extractor::<SuperAdminUser>()),
+            |_, _| true,
+            "403",
+            "Not a super admin (`access_denied`)",
+        )
+    }
+
     fn require_csrf(self) -> Self {
         document(
             self.route_layer(middleware::from_fn(csrf_middleware)),
@@ -176,6 +201,43 @@ impl Guarded for OpenApiRouter<AppState> {
             "Missing or invalid CSRF token (`csrf_invalid`)",
         )
     }
+}
+
+/// The guards on an Admin route group: the session first, then
+/// [`require_fresh_session`], then the Admin role, then a verified email.
+///
+/// The role is enforced here, at the route layer, so a handler that forgot its
+/// `AdminUser` extractor still isn't reachable by a Member (threat model P-07).
+/// The handler's extractor stays as a second check. Fresh-session runs *before*
+/// the role check: a token whose role no longer matches the database (just
+/// promoted or demoted) must get its 401 so the client refreshes and retries,
+/// not a 403 from the stale role. Admin-only, so ordinary traffic pays no extra
+/// DB read; the user repository comes from the `Extension` installed in
+/// `create_router`.
+///
+/// Public so `tests/route_guards_integration.rs` can wrap it around a handler
+/// with no extractor.
+#[must_use]
+pub fn admin_guards<S: Clone + Send + Sync + 'static>(
+    routes: OpenApiRouter<S>,
+) -> OpenApiRouter<S> {
+    routes
+        .require_verified_email()
+        .require_admin()
+        .require_fresh_session()
+        .require_auth()
+}
+
+/// As [`admin_guards`], for routes only a Super Admin may use.
+#[must_use]
+pub fn super_admin_guards<S: Clone + Send + Sync + 'static>(
+    routes: OpenApiRouter<S>,
+) -> OpenApiRouter<S> {
+    routes
+        .require_verified_email()
+        .require_super_admin()
+        .require_fresh_session()
+        .require_auth()
 }
 
 /// Every documented route, its group middleware and the `/api/v1` prefix.
@@ -235,19 +297,12 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         .require_verified_email()
         .require_auth();
 
-    // Admin routes (require auth + verified email; the `AdminUser` /
-    // `SuperAdminUser` extractors on each handler enforce the role). The first
-    // admin is bootstrapped out-of-band with `just grant-admin <email>`.
-    let admin = OpenApiRouter::new()
-        .routes(routes!(admin_handler::list_users))
-        .routes(routes!(admin_handler::set_user_role))
-        .require_verified_email()
-        // Runs after `auth_middleware` (AuthUser populated), before the handler:
-        // reject tokens superseded by a role change so demotions take effect at
-        // once. Admin-only, so ordinary traffic pays no extra DB read. The user
-        // repository comes from the `Extension` installed in `create_router`.
-        .require_fresh_session()
-        .require_auth();
+    // Admin routes (see `admin_guards`). The first admin is bootstrapped
+    // out-of-band with `just grant-admin <email>`.
+    let admin = admin_guards(OpenApiRouter::new().routes(routes!(admin_handler::list_users)));
+    // Role management: Super Admin only.
+    let super_admin =
+        super_admin_guards(OpenApiRouter::new().routes(routes!(admin_handler::set_user_role)));
 
     // Health probes, reachable through the single-origin `/api` route for
     // external monitoring. Public (no auth/CSRF), so merged after
@@ -265,6 +320,7 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         .nest("/auth", oauth_protected)
         .nest("/users", profile)
         .nest("/admin", admin)
+        .nest("/admin", super_admin)
         // Mount new authenticated groups above this line so they get CSRF.
         // Public, signature-verified endpoints (e.g. payment webhooks) go below it.
         .require_csrf()
