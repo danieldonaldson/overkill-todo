@@ -7,6 +7,7 @@
   import CodeInput from '../ui/custom/CodeInput.svelte'
   import PasswordStrength from '../ui/custom/PasswordStrength.svelte'
   import { api } from '../../lib/api'
+  import { track } from '../../lib/analytics'
   import { navigate } from '../../lib/navigation'
   import { minLength, required, validate } from '../../lib/utils/validation'
 
@@ -102,6 +103,7 @@
         reset_token: resetToken,
         new_password: password,
       })
+      track({ name: 'password-reset-completed' })
       navigate('/dashboard')
     } catch (error: unknown) {
       if (error && typeof error === 'object' && 'error_code' in error) {

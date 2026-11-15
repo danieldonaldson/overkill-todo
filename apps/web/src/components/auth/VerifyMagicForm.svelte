@@ -4,6 +4,7 @@
   import { Alert, AlertDescription } from '$lib/components/ui/alert'
   import { Button } from '$lib/components/ui/button'
   import { api } from '../../lib/api'
+  import { track } from '../../lib/analytics'
   import { saveSignupHandoff } from '../../lib/auth/signup-handoff'
   import { navigate } from '../../lib/navigation'
 
@@ -32,6 +33,7 @@
 
     try {
       const response = await api.auth.verifyMagicLink(token)
+      track({ name: 'email-verified', props: { via: 'link' } })
       if (response.signup_token && response.user) {
         saveSignupHandoff({ token: response.signup_token, email: response.user.email })
         navigate('/set-password')

@@ -3,6 +3,7 @@
   import { Alert, AlertDescription } from '$lib/components/ui/alert'
   import { Button } from '$lib/components/ui/button'
   import { FormInput } from '$lib/components/ui/form-input'
+  import { signupRejectedReason, track } from '../../lib/analytics'
   import { api } from '../../lib/api'
   import { navigate } from '../../lib/navigation'
   import { email, required, validate } from '../../lib/utils/validation'
@@ -43,8 +44,10 @@
         email: emailValue,
         turnstile_token: turnstileToken || undefined,
       })
+      track({ name: 'signup-submitted' })
       navigate(`/verify-email?email=${encodeURIComponent(emailValue)}`)
     } catch (error: unknown) {
+      track({ name: 'signup-rejected', props: { reason: signupRejectedReason(error) } })
       formError = error instanceof Error ? error.message : 'An unexpected error occurred'
       resetTurnstile()
     } finally {

@@ -43,8 +43,8 @@ deploy config.
 - Writing the Traefik production config. That belongs to the production
   setup. This change states what it must do and gives the Traefik mapping.
 - High availability for analytics. Losing a few hours of page views is fine.
-- k8s manifests in the first slice (compose is the deploy target; k8s is a later
-  slice).
+- k8s manifests. Compose is the deploy target; a k8s slice was planned and
+  dropped on 2026-11-13, so analytics is compose-only.
 - Server-side event tracking from the backend.
 
 ## Hypothesis
@@ -59,6 +59,24 @@ client addresses (via a trusted `X-Forwarded-For`) and sees 2 sessions in
 Umami. Production (Traefik, behind Cloudflare) is verified on first deploy in
 two ways: re-run the same check against it, and after a day compare Umami's
 visitor count with Cloudflare Web Analytics. They should be within ~20%.
+
+**Result (slice 1, local `full` + `analytics` stack, 2026-11-13): confirmed.**
+- `scripts/check-analytics-visitors.sh` sent 3 page views through the
+  Caddy edge, two from one address (one forging `X-Analytics-Client-IP`) and
+  one from another, all with one user-agent. Umami counted 3 page views from
+  2 Visitors, and `pg_dump` of the analytics database contains none of the
+  three addresses. With `trusted_proxies` removed from the edge, the same
+  check fails with 1 Visitor, so it catches the failure it exists for.
+- `tests/analytics.spec.ts` runs the real Umami 3.5.0 tracker under the
+  production CSP: no violations on any public or dashboard page, the
+  view-transition move Home → Settings counts as two page views, and query
+  strings and fragments (tokens, the email on `/verify-email`) never reach
+  the payload.
+- Found along the way: the script load sends the session cookie to Umami
+  (now stripped at the edge, D3 rule 4), and Umami trusts client-sent
+  location headers unless told otherwise (D4).
+- Still open until the first deploy: the same check against Traefik behind
+  Cloudflare, and the comparison with Cloudflare Web Analytics.
 
 ## Decisions
 
@@ -91,6 +109,12 @@ Whatever the edge proxy is, it MUST:
 2. Answer 404 for anything else under `/stats/`, so Umami's login and reports
    are never public.
 3. Leave `/api/*` and all other routes exactly as they are.
+4. Remove `Cookie` and `Authorization` from requests it passes to Umami.
+   Loading `/stats/script.js` is a same-origin request, so the browser
+   attaches the `auth_token` cookie (`Path=/`). Umami needs none of it, and
+   session tokens must not reach a second service. (The tracker's own
+   collect calls already use `credentials: 'omit'`.) Found while building
+   slice 1.
 
 The tracker is told `data-host-url="<origin>/stats"`, so it posts to
 `/stats/api/send` and never touches the backend's `/api/*`.
@@ -145,7 +169,16 @@ visitor counts or skew locations at will.
   chosen with the production setup. The hypothesis check script (task 1.6)
   is edge-agnostic and is re-run against Traefik to confirm.
 - The CDN's IP ranges change rarely. They live in one config snippet with
-  their source URL and a date.
+  their source URL and a date. (In Caddy this is a commented line in the
+  global `servers` block: a snippet can't be imported there, because the
+  global block must come first.) Caddy uses `trusted_proxies_strict`, which
+  walks `X-Forwarded-For` right to left, so a client-added leftmost entry is
+  never believed.
+- Umami 3.5.0 otherwise takes location from client-settable headers
+  (`cf-ipcountry` and similar) before the address. `SKIP_LOCATION_HEADERS=1`
+  turns that off, so location comes only from the address the edge vouches
+  for. `SALT_ROTATION=month` pins the spec's "at most one calendar month"
+  (Umami's default) against upgrades.
 
 ### D5. Loader script and typed `track()`
 
@@ -161,11 +194,14 @@ visitor counts or skew locations at will.
 - Umami's tracker follows `history.pushState`, so Astro view-transition moves
   between dashboard pages count as page views with no extra code. This is
   verified by a test.
-- `src/lib/analytics.ts` exports `track(event, props?)`, where `event` and
-  `props` are a TypeScript discriminated union generated from the spec's table,
-  so a free-text value fails `tsc`. It calls `window.umami?.track` inside
-  `try/catch` and never awaits or throws, which keeps form submits from
-  waiting on analytics.
+- `src/lib/analytics.ts` exports `track(event)`, where `event` is a
+  discriminated union (`{ name, props? }`) written from the spec's table, so a
+  free-text value, an unknown name or an extra property fails `astro check`
+  (pinned by `@ts-expect-error` lines in its test). It calls
+  `window.umami?.track` inside `try/catch`, swallows the returned promise's
+  rejection, and never awaits or throws, which keeps form submits from
+  waiting on analytics. (Slice 2: one object argument instead of
+  `(event, props?)`, so TypeScript ties each name to its properties.)
 - `config.ts` gains `UMAMI_WEBSITE_ID` and the entrypoint renders
   `PUBLIC_UMAMI_WEBSITE_ID`. Unset means off, which is the feature flag.
 - Rejected: a Svelte island or an Astro-processed `<script>`. Astro may inline
@@ -178,10 +214,28 @@ In the existing Svelte forms, after the API call settles: `RegisterForm`
 `VerifyMagicForm` (`email-verified`), `LoginForm` (`signin-*`), `OAuthButtons`
 (`oauth-started`, before navigation), `ForgotPasswordForm`,
 `ResetPasswordForm` and `SettingsPanel` (deletion). `reason` is mapped from
-HTTP status/`error_code` to the fixed list in one function in
-`lib/analytics.ts`: 400/422 → `invalid`, a captcha error code → `captcha`,
-429 → `rate-limited`, 401 → `credentials`, unverified → `unverified`,
-network/5xx → `server`.
+the HTTP status and the error `code` (never the message) in one place in
+`lib/analytics.ts`: `bot_check_failed` → `captcha`, 429 → `rate-limited`,
+401 → `credentials`, network errors and 5xx → `server`, any other 4xx →
+`invalid` (sign-up) or `credentials` (sign-in).
+
+Settled in slice 2:
+- **`bot_check_failed`.** A failed or missing Turnstile check used to be a
+  plain `400 validation_error`, distinguishable from bad input only by its
+  English message. The backend now answers it with its own code
+  (`AppError::BotCheckFailed`, still `400`, same message), so `captcha` is
+  mapped from the code. OT-007 can count bot-check rejections the same way.
+- **No `unverified` reason.** The backend deliberately answers an unfinished
+  signup exactly like a wrong password, so sign-in never reveals which emails
+  have accounts. The frontend can't tell them apart and mustn't, so the value
+  was removed from the spec.
+- **Rate limiting** is not in the backend; it comes from the production edge
+  (Traefik) as a `429`, which maps to `rate-limited`.
+- **Umami's 300 ms page-view delay.** After a client-side navigation the
+  tracker waits 300 ms and then reads the current URL. A scripted move faster
+  than that (code entered within 300 ms of landing) is recorded as the later
+  page, twice. No person is that fast, and the real-browser check with
+  realistic pauses recorded one view per page, so this is accepted.
 
 ### D7. Operator access
 
@@ -194,8 +248,9 @@ with `just secrets-new` and decrypted into `deploy/compose/.secrets/`, like
 
 ### D8. Retention job and its alert
 
-Umami OSS has no automatic retention (confirm on the pinned version and
-use it instead if present). An `analytics-retention` compose service, built
+Umami OSS has no automatic retention. Confirmed on the pinned 3.5.0
+(2026-11-13): no retention setting in its env vars or source, so the job below
+is needed. An `analytics-retention` compose service, built
 like `backup`, deletes Umami event and event-data rows older than 90 days and
 then sessions with no remaining events, in one transaction, once a day. After
 a successful run it pushes `analytics_retention_last_success_timestamp_seconds`
@@ -208,6 +263,32 @@ database in slice 2.
 - Running retention as a backend job under the leader lock was rejected: the
   backend would then need credentials for the analytics database, and D2
   exists to keep them apart.
+
+Settled in slice 3:
+- **Which tables.** Umami 3.5.0 has no foreign keys (`relationMode =
+  "prisma"`), so nothing cascades. `deploy/analytics/retention.sql` deletes
+  rows older than 90 days from every per-visitor table (`website_event`,
+  `event_data`, `revenue`, `error_event`, `heatmap_event`, `session_replay`,
+  `session_replay_saved`), then old sessions with no events left, then old or
+  orphaned `session_data` / `session_link` rows. A session that started over 90
+  days ago but has recent events stays. `scripts/check-analytics-retention.sh`
+  checks this against a scratch copy of the live schema, seeded at 89 and 91
+  days, and fails if the cutoff is wrong.
+- **Hourly re-push, not just after a run.** VictoriaMetrics treats a series
+  with no fresh samples as absent within minutes, so a once-a-day push would
+  leave the rule with nothing to compare. The job re-pushes its last-success
+  time every hour, and pushes its start time first, so one that never
+  succeeds still alerts (as the backend's jobs do).
+- **Own rule, `last_over_time(…[14d])`.** `JobNotSucceeding` assumes metrics
+  that stay fresh while the backend runs. `AnalyticsRetentionNotSucceeding`
+  reads the newest value from the last 14 days, so a stopped container still
+  fires instead of silently disappearing. No series at all means analytics
+  isn't deployed, which correctly doesn't alert.
+- **Push without curl.** The `postgres:18` image has no curl or wget, so the
+  script POSTs over bash's `/dev/tcp`. If VictoriaMetrics isn't reachable it
+  logs and carries on: deleting old data matters more than reporting it.
+- Production reads the password from the `analytics_db_password` secret
+  (`PGPASSWORD_FILE`, read by the script, since libpq has no such variable).
 
 ## Risks / Trade-offs
 

@@ -653,7 +653,10 @@ export interface components {
         };
         /** @description Structured error response returned to clients. */
         ErrorResponse: {
-            /** @description Machine-readable error code (e.g. `validation_error`, `csrf_invalid`). */
+            /**
+             * @description Machine-readable error code (e.g. `validation_error`, `bot_check_failed`,
+             *     `csrf_invalid`).
+             */
             code: string;
             /**
              * @description Human-readable message. Internal details are never included outside

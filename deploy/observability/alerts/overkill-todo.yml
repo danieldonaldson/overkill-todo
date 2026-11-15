@@ -130,3 +130,19 @@ groups:
         annotations:
           summary: '{{ $value }} replicas hold the background-work leader lock (expected exactly 1)'
           dashboard: 'http://localhost:3000/d/jobs/jobs?viewPanel=panel-5'
+
+      # Web analytics retention (OT-005, deploy/analytics/). The job runs daily
+      # and re-pushes its last-success time every hour; on start that time is
+      # the start, so a job that never succeeds still fires. last_over_time
+      # keeps the newest value for 14 days, so a stopped container fires too
+      # (its series goes stale, it doesn't vanish from this query). No series
+      # at all means analytics isn't deployed: no alert.
+      - alert: AnalyticsRetentionNotSucceeding
+        expr: |
+          time() - max(last_over_time(analytics_retention_last_success_timestamp_seconds[14d]))
+            > 2 * 86400 + 900
+        labels:
+          severity: page
+          job: analytics_retention
+        annotations:
+          summary: 'Analytics retention job (analytics_retention) has not succeeded for {{ $value | humanizeDuration }}'

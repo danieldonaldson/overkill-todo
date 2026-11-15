@@ -7,23 +7,43 @@
 
 interface PublicConfig {
   TURNSTILE_SITE_KEY?: string
+  UMAMI_WEBSITE_ID?: string
 }
 
 const runtime: PublicConfig =
   (globalThis as { __PUBLIC_CONFIG?: PublicConfig }).__PUBLIC_CONFIG ?? {}
 
-// An unsubstituted "${VAR}" placeholder (dev, or an env the entrypoint left unset) counts as
-// unset so the import.meta.env fallback wins.
-function runtimeValue(v: string | undefined): string | undefined {
-  return v && !v.startsWith('${') ? v : undefined
+/**
+ * The rendered runtime value if there is one, else the build-time env, else ''.
+ * An unsubstituted "${VAR}" placeholder (dev, or an env the entrypoint left
+ * unset) counts as unset so the build-time fallback wins. Exported for tests.
+ */
+export function resolvePublicValue(
+  runtimeValue: string | undefined,
+  buildValue: string | undefined,
+): string {
+  const rendered = runtimeValue && !runtimeValue.startsWith('${') ? runtimeValue : undefined
+  return rendered ?? buildValue ?? ''
 }
 
 /**
  * Cloudflare Turnstile site key (public). Empty in local dev — the Turnstile
  * widget short-circuits on localhost and the backend skips validation in dev.
  */
-export const TURNSTILE_SITE_KEY: string =
-  runtimeValue(runtime.TURNSTILE_SITE_KEY) ?? import.meta.env.PUBLIC_TURNSTILE_SITE_KEY ?? ''
+export const TURNSTILE_SITE_KEY: string = resolvePublicValue(
+  runtime.TURNSTILE_SITE_KEY,
+  import.meta.env.PUBLIC_TURNSTILE_SITE_KEY,
+)
+
+/**
+ * Umami website ID for web analytics (OT-005). Empty means analytics is off:
+ * this is the feature flag. `public/scripts/analytics.js` reads the same value
+ * from `window.__PUBLIC_CONFIG` to decide whether to load the tracker.
+ */
+export const UMAMI_WEBSITE_ID: string = resolvePublicValue(
+  runtime.UMAMI_WEBSITE_ID,
+  import.meta.env.PUBLIC_UMAMI_WEBSITE_ID,
+)
 
 /**
  * Base path for all backend API calls. Relative so the browser resolves it
