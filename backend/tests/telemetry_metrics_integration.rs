@@ -31,8 +31,7 @@ fn gauge_points(exporter: &InMemoryMetricExporter, name: &str) -> Vec<(String, u
             let state = dp
                 .attributes()
                 .find(|kv| kv.key.as_str() == "state")
-                .map(|kv| kv.value.to_string())
-                .unwrap_or_default();
+                .map_or_default(|kv| kv.value.to_string());
             (state, dp.value())
         })
         .collect();

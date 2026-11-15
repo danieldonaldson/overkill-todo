@@ -69,6 +69,7 @@ only (`deploy/secrets/README.md`).
 | `just bench-compare [base]`            | base vs working tree, per-bench change report                    |
 | `just api-types`                       | regenerate `backend/openapi.json` + web types                    |
 | `just api-types-check`                 | fail if either generated API file is stale                       |
+| `just threat-model-check`              | every auth security property names a check that still exists     |
 | `just load <scenario>`                 | k6 load scenario against the capped stack                        |
 | `just obs-up` / `just obs-down`        | traces, logs, metrics, alerts and Grafana                        |
 | `just analytics-up` / `analytics-down` | Umami web analytics on :3001                                     |
@@ -266,6 +267,7 @@ apps/web/           Astro + Svelte site, Caddy image
 packages/           shared design tokens
 deploy/compose/     single-host production (Caddy TLS, digests, nightly dumps)
 deploy/k8s/         optional kustomize base (CNPG Postgres, Ingress)
+docs/security/      auth threat model: attackers, properties, and the check for each
 scripts/            dev env generation, worktree create/remove
 .github/            CI and Dependabot
 ```

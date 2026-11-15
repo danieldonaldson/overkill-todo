@@ -4,7 +4,7 @@
 # MUST match `channel` in backend/rust-toolchain.toml (CI and the Docker build
 # read that file); `just toolchain-check` fails if they drift. Listed first so
 # the cargo: tools below build with it.
-rust = { version = "1.99.1", components = "rustfmt,clippy,llvm-tools" }
+rust = { version = "1.100.0", components = "rustfmt,clippy,llvm-tools" }
 node = "26"
 pnpm = "11"
 just = "latest"
