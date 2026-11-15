@@ -96,7 +96,7 @@ Each property records how strongly it is checked:
   - `backend/tests/turnstile_integration.rs::upstream_failure_fails_closed_without_leaking_details`
 - Gap: There is no per-account or per-address limit on password attempts in the application. Bot protection and argon2 cost are the only brakes, and a solver farm gets past bot protection. Rate limiting is expected at the edge (Traefik) at first deploy. Until then this is an accepted gap, not a covered property.
 
-### P-04: A session issued before a password reset, account purge or role change is refused on account-sensitive and admin routes
+### P-04: A session issued before a password reset, account purge or role change is refused on `/auth/me`, Google unlink, account-sensitive and admin routes
 
 - Attackers: A3
 - Strength: tested
@@ -106,7 +106,13 @@ Each property records how strongly it is checked:
   - `backend/tests/admin_integration.rs::demoted_admin_token_is_rejected`
   - `backend/src/application/use_cases/auth/reset_password.rs::test_reset_password_success`
   - `backend/src/application/use_cases/user/change_password.rs::test_change_password_without_refresh_token_revokes_all`
-- Gap: The password-reset cutoff is checked only with mocks: the use case records it, and the middleware honours a cutoff. No integration test signs in, resets the password, and shows that the old access token is refused on a sensitive route.
+  - `backend/tests/verification_integration.rs::password_reset_flow_succeeds`
+  - `backend/tests/auth_properties_integration.rs::a_password_reset_ends_earlier_sessions`
+
+Ordinary routes would trust a token until it expires, but there are none
+today: `/auth/me`, Google unlink, the profile routes and the admin routes all
+run the fresh-session check. A route added without it would serve a superseded
+session for up to `JWT_EXPIRATION_MINUTES`.
 
 ### P-05: An account with an unverified email can't use profile or admin routes
 
@@ -176,8 +182,16 @@ Admin. An unknown stored role is rejected rather than defaulted.
 - Attackers: A2
 - Strength: tested
 - Checks:
+  - `backend/tests/auth_properties_integration.rs::a_member_reaches_only_their_own_account`
   - `backend/tests/profile_integration.rs::export_data_returns_user_profile`
-- Gap: The export test checks only the caller's own fields with a single account in the database. Profile handlers take the account from the session, and none accept an account id. That is true by construction today, but no test asserts that an id, email or token naming another account in the path, query or body is ignored, or that an export holds only the caller's data. Planned (OT-010, authorisation slice).
+
+Every account route acts on the account named by the session. The isolation
+test calls each `/users` route, and Google unlink, as one Member, with another
+Member's id and email in the query and in extra body fields. The other Member
+is password-less and has a linked Google identity, so a route that wrongly
+acted on them would visibly succeed. The test checks that the other account's
+stored data (user row, linked identity, sessions) is unchanged and never
+appears in a response.
 
 ### Brute force on one-time codes
 
@@ -252,7 +266,8 @@ Admin. An unknown stored role is rejected rather than defaulted.
 - Checks:
   - `backend/tests/profile_integration.rs::logout_clears_session_cookie`
   - `backend/src/application/use_cases/auth/revoke_token.rs::test_revoke_existing_token`
-- Gap: No end-to-end test shows that a refresh token presented after logout is refused.
+  - `backend/tests/auth_properties_integration.rs::a_refresh_token_is_refused_after_logout`
+- Gap: If revoking the refresh token fails (a database error), logout still clears the cookies and reports success, and the token stays valid until it expires or rotates. Logout logs a warning when this happens, but it doesn't guarantee revocation. The impact is low, since the token was in an `HttpOnly` cookie that has just been cleared.
 
 ### P-18: Retiring a signing key ends its sessions and links, and rotating keeps them
 
@@ -290,14 +305,25 @@ Admin. An unknown stored role is rejected rather than defaulted.
 
 ### P-21: Pre-auth routes that skip CSRF can't be driven cross-site
 
-Login, sign-up, refresh, logout and the code routes are excluded from CSRF.
-They rely on accepting only `application/json` bodies (which a cross-site form
-can't send without a CORS preflight) and on CORS allowing only the frontend
-origin.
+Login, sign-up, refresh, logout, the code routes and the device-fingerprint
+route are excluded from CSRF. Each relies on something a cross-site form can't
+do:
+
+- **Routes with a body** accept only `application/json`. A form can send
+  `text/plain`, form-encoded or multipart bodies without a CORS preflight; each
+  gets the standard JSON 400.
+- **Refresh** requires the `x-device-fingerprint` header, which a form can't
+  set.
+- **CORS** never grants another origin, so a script on another site can't read
+  a response or send JSON.
 
 - Attackers: A1
-- Strength: none
-- Gap: `test_excluded_paths` pins which routes skip CSRF, but nothing tests the defence they rely on. No test shows that a form-encoded or `text/plain` POST to an excluded route is refused, or that CORS refuses another origin. A cross-site logout would succeed if those defences slipped. Planned (OT-010, protocol slice).
+- Strength: tested
+- Checks:
+  - `backend/tests/auth_properties_integration.rs::csrf_exempt_routes_cannot_be_driven_cross_site`
+  - `backend/tests/auth_properties_integration.rs::cors_grants_no_other_origin`
+  - `backend/src/infrastructure/api/middleware/csrf.rs::test_excluded_paths`
+- Gap: Accepted. Logout takes no body and no custom header. A cross-site form can POST to it, and what stops it ending the session is the browser not sending or setting `SameSite=Lax` cookies on a cross-site POST (P-24). A server test can't observe that browser behaviour. The impact would be a forced sign-out, not access.
 
 ### P-22: Google sign-in completes only in the browser that started it
 
@@ -353,15 +379,23 @@ origin.
 
 ### P-27: A database copy gives no usable credentials
 
-Passwords are argon2 hashes, codes and refresh tokens are stored hashed, and
-OAuth secrets are encrypted under a key held outside the database.
+Passwords are argon2 hashes, and codes and refresh tokens are stored as
+hashes. Access, signup and reset tokens are signed rather than stored. Google
+linking keeps only the provider's user id and email, and no provider token is
+stored. (The secrets cipher in `crypto.rs` exists, but nothing calls it yet. If
+a stored secret is ever added, it should be encrypted with it and added to this
+test.)
 
 - Attackers: A5
 - Strength: tested
 - Checks:
-  - `backend/src/infrastructure/crypto.rs::secret_cipher_rejects_plaintext_and_tampering`
-  - `backend/src/infrastructure/crypto.rs::secret_cipher_uses_fresh_nonce_each_call`
-- Gap: No test reads the stored rows after sign-up, sign-in and reset and checks that no code, token or password appears in plain text.
+  - `backend/tests/auth_properties_integration.rs::a_database_copy_holds_no_usable_credentials`
+
+The test runs sign-up, verification, sign-in, refresh and a password reset.
+It dumps every row of every table while each code is still live (using a code
+deletes its row), and again at the end. It checks that none of the passwords,
+codes, magic-link token or other tokens those flows handled appears in any
+dump.
 
 ### Account lifecycle
 
@@ -407,7 +441,7 @@ OAuth secrets are encrypted under a key held outside the database.
   - `backend/src/infrastructure/crypto/keyring.rs::prop_random_segments_never_verify`
   - `backend/src/infrastructure/api/cookies.rs::extract_cookie_returns_none_for_non_utf8_header`
   - `backend/tests/oauth_integration.rs::callback_with_malformed_user_id_in_state_is_rejected`
-- Gap: Sampled. Fuzzing planned (OT-010).
+- Gap: Sampled. Fuzzing every operation is OT-011 (API fuzzing); link its checks here when it lands.
 
 ### P-32: Malformed bodies, queries and paths get the JSON 400 before any handler logic
 
@@ -417,7 +451,7 @@ OAuth secrets are encrypted under a key held outside the database.
   - `backend/tests/api_contract_integration.rs::malformed_json_body_gets_standard_error`
   - `backend/tests/api_contract_integration.rs::malformed_query_parameter_gets_standard_error`
   - `backend/tests/api_contract_integration.rs::malformed_path_parameter_gets_standard_error`
-- Gap: Sampled. Fuzzing planned (OT-010).
+- Gap: Sampled. Fuzzing every operation is OT-011 (API fuzzing); link its checks here when it lands.
 
 ## Spec coverage
 
@@ -437,7 +471,6 @@ OT-010:
 | Email addresses normalise to one identity                 | P-30                                     |
 | Concurrent requests cannot get around auth limits         | P-12, P-14                               |
 | The sign-in protocols resist an active network attacker   | P-15, P-16, P-20, P-21, P-22             |
-| Malformed input never crashes or gets past a check        | P-31, P-32                               |
 | Auth guarantees are machine-checked on every change       | the Strength line of every property      |
 
 ## Adding a property or a check

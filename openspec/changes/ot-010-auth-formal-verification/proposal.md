@@ -38,8 +38,6 @@ itself rules it out.
 - **A protocol model** of sign-in, session refresh, Google sign-in and the CSRF
   defence. It is proven against an attacker who controls the network and can
   hold their own account.
-- **Fuzzing** of token and input parsing, so no input crashes the backend or
-  gets past a check.
 - Time-dependent policy takes "now" as an input instead of reading the clock.
 
 ## Capabilities
@@ -53,14 +51,14 @@ None.
 - `security`: adds the threat-model and coverage requirement, plus
   requirements for route guarding, account isolation, the code-entry lockout,
   one-time codes, refresh tokens (including under concurrency), roles, account
-  deletion, email identity, protocol soundness and robust parsing. All of them
+  deletion, email identity and protocol soundness. All of them
   are machine-checked on every change.
 
 ## Impact
 
 - Backend domain, application callers (time passed in), route wiring and tests.
 - New tooling in the gate and CI: a bounded model checker, a TLA+-family model
-  checker, a protocol prover and a fuzzer, all pinned. None of them ship in the
+  checker and a protocol prover, all pinned. None of them ship in the
   image.
 - A new threat-model document, linked from README and ARCHITECTURE.md.
 - No API, schema, frontend or deploy change is expected. If the proofs find
@@ -76,12 +74,15 @@ None.
   the code by conformance tests, not by refinement proofs.
 - **The frontend, the edge proxy and infrastructure hardening.** Their checks
   are already in the `security` spec or belong to the first deploy.
+- **Fuzzing and malformed-input handling.** OT-011 (API fuzzing) owns these.
+  Threat-model properties P-31 and P-32 link to its checks once it lands.
 - **An external penetration test.** It's still worth doing before launch,
   against the threat model this change produces.
 
 ## Dependencies
 
-None. All the tools are development and CI only.
+None to start. P-31 and P-32 (malformed input) are covered by OT-011's
+checks once it lands. All the tools are development and CI only.
 
 ## Appetite
 
@@ -102,7 +103,6 @@ Each part can be released on its own, in this order:
 4. **Concurrency model** of the attempt claim and refresh rotation, with
    conformance tests.
 5. **Protocol model** of sign-in, refresh, Google sign-in and CSRF.
-6. **Fuzzing** of token and input parsing.
 
 Slice 1 reordered this (design.md, Hypothesis): the cheapest real gaps turned
 out to be missing ordinary tests, not missing proofs.

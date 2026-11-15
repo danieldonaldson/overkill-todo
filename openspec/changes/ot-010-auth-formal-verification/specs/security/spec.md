@@ -268,22 +268,6 @@ SHALL hold:
 - **WHEN** an attacker uses a stolen refresh token after its owner has already refreshed with it
 - **THEN** every session of that Member is revoked
 
-### Requirement: Malformed input never crashes or gets past a check
-
-No sequence of bytes in a token, a cookie, a header, a path, a query or a body
-SHALL make the backend panic, return a 500, or treat the request as more
-authenticated or more authorised than it is.
-
-#### Scenario: Garbage tokens are refused cleanly
-
-- **WHEN** any byte sequence is sent as a session token, refresh token, CSRF token or OAuth state
-- **THEN** the response is a 400 or 401 JSON error and the server keeps serving
-
-#### Scenario: Malformed bodies get the JSON 400
-
-- **WHEN** a request body, query or path is malformed or oversized in any way
-- **THEN** the response is the JSON 400 or 413 and no handler logic runs
-
 ### Requirement: Auth guarantees are machine-checked on every change
 
 Each guarantee in this specification SHALL be checked by the strongest method
@@ -293,7 +277,6 @@ interleaving within stated bounds, not only by examples:
 - a proof over every input for the pure policy rules
 - a model checked over every interleaving for concurrency
 - a symbolic proof against the stated attacker for the protocols
-- fuzzing for parsing
 
 Wherever the check is a model rather than the code itself, conformance tests
 SHALL tie the model to the running code. These checks SHALL run in the full

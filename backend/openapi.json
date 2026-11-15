@@ -666,7 +666,7 @@
             }
           },
           "401": {
-            "description": "Not signed in, or the session has expired",
+            "description": "Session superseded by a password reset, account purge or role change; sign in again",
             "content": {
               "application/json": {
                 "schema": {

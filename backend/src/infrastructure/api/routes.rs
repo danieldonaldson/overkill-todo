@@ -253,9 +253,13 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(auth_handler::logout))
         .routes(routes!(auth_handler::refresh));
 
-    // Authenticated auth routes
+    // Authenticated auth routes. `me` also rejects a session superseded by a
+    // password reset, account purge or role change (threat model P-04): the
+    // client gets a 401, refreshes, and is signed out if the refresh token was
+    // revoked too. The handler reads the user anyway, so the check is cheap.
     let private_auth = OpenApiRouter::new()
         .routes(routes!(auth_handler::me))
+        .require_fresh_session()
         .require_auth();
 
     // Verification routes (no auth)
@@ -277,8 +281,11 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(oauth_handler::oauth_start))
         .routes(routes!(oauth_handler::oauth_callback));
 
+    // Unlinking removes a way to sign in, so like the profile routes it rejects
+    // a session superseded by a password reset or role change (threat model P-04).
     let oauth_protected = OpenApiRouter::new()
         .routes(routes!(oauth_handler::oauth_unlink))
+        .require_fresh_session()
         .require_auth();
 
     // Profile routes (require auth + verified email)
