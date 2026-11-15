@@ -92,7 +92,34 @@ So the order changes. Slice 2 closes the five plain-test gaps, because each is
 a real, unverified security claim, and closing it costs a day or less.
 Authorisation by construction was mostly delivered in slice 1, and its
 remainder (P-09) moves into slice 2. Kani becomes slice 3, then Quint,
-Tamarin and fuzzing.
+then Tamarin. (Fuzzing later moved to OT-011, D10.)
+
+_What slice 2 showed._ All five properties hold in the code. No defect
+needed fixing beyond a logout that silently dropped revocation errors (it
+now logs them). The gaps were in the evidence, and twice in the catalogue's
+own claims:
+
+- **The catalogue had two errors.** P-04 was already tested end to end
+  (`password_reset_flow_succeeds`), but the test's name hid it. P-27 claimed
+  OAuth secrets are encrypted, but nothing calls the cipher, because no OAuth
+  secret is stored. Lesson: reading a test's name isn't enough. Slice 1's
+  "read each linked test" step needs to look at the assertions too.
+- **First-draft tests that couldn't fail.** Code review found that the
+  first versions of the P-27, P-21 and P-09 tests had checks that couldn't
+  fail. The database dump ran after the code rows were deleted. A body used
+  the wrong field name, so it was refused for the wrong reason. Set-password
+  was called where it would be refused on either account. Each now has a
+  scratch-checked failure mode. Lesson: every new check gets a deliberate
+  break before it's trusted, which the formal slices do anyway (a proof that
+  fails first).
+- **Accepted gaps, now explicit.** `/auth/me` serves a pre-reset access token
+  until it expires (P-04). Decided after the slice: `/auth/me` and Google unlink
+  now run the fresh-session check too, closing the gap. Logout can't guarantee
+  revocation when the database fails (P-17). Logout CSRF depends on browser
+  `SameSite` handling (P-21).
+- **OT-011 (API fuzzing) overlaps slice 6.** It was proposed while this
+  slice ran. Decided: slice 6 is dropped, and P-31 and P-32 link to OT-011's
+  checks once it lands (D10).
 
 **Slice 3 (Kani).** We believe Kani can build the domain and prove the
 `AttemptLockout` properties in under about 5 minutes, with bounded symbolic
@@ -281,25 +308,20 @@ We chose Tamarin over ProVerif because refresh rotation with revocation is
 stateful, and Tamarin handles mutable state natively. ProVerif is the
 fallback if proofs don't terminate.
 
-### D10: cargo-fuzz targets, time-boxed in the gate
+### D10: Fuzzing moves to OT-011
 
-The targets are:
-
-- token verification (session, signup and reset)
-- OAuth state decoding
-- cookie and header parsing
-- the full router via tower `oneshot`, with in-memory fakes for the outgoing
-  ports, so it needs no database
-
-`just fuzz-smoke` runs each target for 60 seconds in `ci`, from a corpus
-committed to the repo. Longer runs are manual. cargo-fuzz needs nightly, so
-`just fuzz-smoke` uses `cargo +nightly` with the nightly pinned in the recipe.
+This change planned cargo-fuzz targets for token parsing and the router.
+OT-011 (API fuzzing), proposed while slice 2 ran, fuzzes every described
+operation signed out and signed in, and checks for the JSON 400, no 500s and
+no leaked internal text. That covers P-31 and P-32 more broadly than this plan
+did, so OT-010 dropped its fuzzing slice and the matching spec requirement.
+The two properties link to OT-011's checks when it lands.
 
 ## Risks / Trade-offs
 
 - [Kani lags the pinned toolchain, or chokes on a dependency] → The D4
   fallback crate.
-- [The gate gets slow: Kani, Quint, Tamarin and fuzzing could add several
+- [The gate gets slow: Kani, Quint and Tamarin could add several
   minutes] → Each runs as its own CI job under the paths filter. If one
   exceeds about 10 minutes, it runs only when its inputs change (domain,
   models, or `routes.rs` and `cookies.rs`).
@@ -317,9 +339,6 @@ committed to the repo. Longer runs are manual. cargo-fuzz needs nightly, so
 
 ## Open Questions
 
-- Router fuzzing (D10) needs in-memory fakes for every outgoing port. If some
-  don't exist yet, building them is part of the fuzz slice. This changes the
-  size of that slice, not its approach.
 - Whether the concurrent-refresh model shows a double-issue race in some
   interleaving the existing test doesn't hit. Slice 1 found that one
   concurrent run already passes. If the model finds a race, the fix (a

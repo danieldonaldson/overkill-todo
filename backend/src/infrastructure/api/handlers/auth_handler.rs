@@ -247,8 +247,16 @@ pub async fn logout(
 ) -> (HeaderMap, Json<LogoutResponse>) {
     // Try to revoke the refresh token if present
     if let Some(refresh_token) = extract_refresh_token_cookie(&headers) {
-        // Ignore errors during revocation - we're logging out anyway
-        let _ = deps.revoke_token_use_case.execute(&refresh_token).await;
+        // Signing out still clears the cookies if revocation fails, but the
+        // refresh token then stays valid until it expires or rotates, so say so
+        // (threat model P-17). The error comes from the repository and carries
+        // no token.
+        if let Err(error) = deps.revoke_token_use_case.execute(&refresh_token).await {
+            tracing::warn!(
+                %error,
+                "logout could not revoke the refresh token; it stays valid until it expires"
+            );
+        }
     }
 
     // Clear all cookies

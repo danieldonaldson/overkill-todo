@@ -1395,7 +1395,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            /** @description Not signed in, or the session has expired */
+            /** @description Session superseded by a password reset, account purge or role change; sign in again */
             401: {
                 headers: {
                     [name: string]: unknown;
