@@ -3,7 +3,7 @@
 # ── Build stage: static musl binary ─────────────────────────────────────────────
 # Alpine's rust image targets x86_64-unknown-linux-musl natively, so a plain
 # `cargo build --release` produces a fully static binary (no libc to copy).
-FROM rust:1.99.1-alpine@sha256:44819b27be4c97b0e4d7203bd2e02c4820f97700211b6a37fb4c246a2de59383 AS builder
+FROM rust:1.100.0-alpine@sha256:de1e0058543a81ed7b046629167db587c67a94bdf37cce14eb27f0ec83baaffb AS builder
 
 # Build deps for the C-backed crates:
 #   - aws-lc-rs (via rustls/jsonwebtoken): cmake + a C compiler + perl
@@ -69,7 +69,7 @@ RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
 # It still runs non-root (uid 10001) so it passes a `restricted` PodSecurity namespace;
 # a dev overlay only needs to relax readOnlyRootFilesystem (so cargo can write
 # /app/target) and the probes/resources.
-FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS dev
+FROM rust:1.100.0-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS dev
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake perl pkg-config clang lld libssl-dev bash curl \
