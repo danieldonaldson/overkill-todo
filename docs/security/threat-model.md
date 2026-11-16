@@ -198,15 +198,47 @@ appears in a response.
 ### P-10: A verification or reset code locks after 5 failed attempts; the lock window starts at 15 minutes, doubles per earlier lockout, and is capped at 24 hours; resends wait 5 minutes
 
 - Attackers: A1
-- Strength: tested
+- Strength: proven, tested
 - Checks:
+  - `backend/src/domain/entities/attempt_lockout.rs::lock_window_is_between_15_minutes_and_24_hours`
+  - `backend/src/domain/entities/attempt_lockout.rs::lock_window_never_shrinks_as_lockouts_grow`
+  - `backend/src/domain/entities/attempt_lockout.rs::lock_window_doubles_per_earlier_lockout_up_to_24_hours`
+  - `backend/src/domain/entities/attempt_lockout.rs::locked_inside_the_window_is_never_reissued`
+  - `backend/src/domain/entities/attempt_lockout.rs::unlocked_inside_the_cooldown_is_refused`
+  - `backend/src/domain/entities/attempt_lockout.rs::reissued_once_every_wait_has_passed`
+  - `backend/src/domain/entities/attempt_lockout.rs::reported_waits_are_never_negative`
+  - `backend/src/domain/entities/attempt_lockout.rs::a_lock_with_under_a_second_left_still_holds`
   - `backend/src/domain/entities/attempt_lockout.rs::lock_duration_doubles_per_earlier_lockout`
   - `backend/src/domain/entities/attempt_lockout.rs::lock_duration_is_capped`
   - `backend/src/domain/entities/attempt_lockout.rs::reissue_lock_outranks_cooldown`
   - `backend/src/domain/entities/attempt_lockout.rs::resend_cooldown`
   - `backend/tests/verification_integration.rs::verify_email_locked_code_returns_code_locked`
   - `backend/tests/verification_integration.rs::lock_window_doubles_after_each_lockout`
-- Gap: Sampled at a few points, not proven for every attempt count, lockout count and time. Kani proof planned (OT-010).
+
+**Proven** (Kani, `just verify`) over every `i32` attempt count and lockout
+count, and every send and current time from 2000 to 2200 to the microsecond,
+in either order:
+
+- the window is exactly 15 minutes doubled per earlier lockout (15, 30, 60 …
+  960 minutes), then 24 hours from the 7th lockout on; it's always between 15
+  minutes and 24 hours and never shrinks as lockouts grow
+- a locked code is never reissued inside its window
+- an unlocked code is never reissued inside the 5-minute cooldown
+- a code is reissued once both waits have passed
+- no reported wait is negative, and no code below the cap is reported locked
+
+The proofs run on the integer policy in `attempt_lockout.rs`. The
+`AttemptLockout` methods convert their `DateTime`s to microseconds and call
+it; that conversion is covered by the unit tests above, not by proof. Proving
+through chrono's calendar arithmetic directly didn't finish.
+
+What's proven is the **decision**: given a code's stored state and the time,
+whether a replacement may be issued. Whether the system acts on that decision
+atomically is P-11 and P-12.
+
+The proofs found one defect, now fixed: a wait under one second rounded down
+to zero, so a locked code could be replaced up to a second before its window
+ended.
 
 ### P-11: No path can reset an active lock by issuing a new code
 
@@ -215,6 +247,7 @@ appears in a response.
 - Checks:
   - `backend/tests/verification_integration.rs::resend_while_locked_issues_no_new_code`
   - `backend/tests/verification_integration.rs::reregistering_does_not_reset_a_locked_code`
+- Gap: Known race (found in OT-010 slice 3 review). The issuing paths (`resend_verification`, `request_password_reset`, `send_verification_code`) read the code, decide with `reissue`, hash the new code, and then upsert it with `attempts = 0` and no guard on the stored state. A failed guess that locks the code in that window has its lock overwritten. An attacker who times a resend with each 5th guess gets about 5 guesses per 5-minute cooldown instead of the escalating lock. The fix (a conditional upsert that refuses to replace a locked row) and a model of the race belong to OT-010 slice 4 (Quint).
 
 ### P-12: Concurrent guesses at one code get at most 5 comparisons
 
@@ -228,8 +261,16 @@ appears in a response.
 ### P-13: The failed-attempt counter can't wrap round to "unlocked"
 
 - Attackers: A1
-- Strength: none
-- Gap: Known defect. `increment_attempts` is a plain `i32` increment, and release builds don't check overflow, so it would wrap to negative and read as unlocked. It's unreachable while the database caps attempts at 5. Fixed with a proof in OT-010 (Kani slice).
+- Strength: tested
+- Checks:
+  - `backend/tests/attempt_lockout_integration.rs::register_attempt_caps_under_concurrency`
+
+The counter is incremented only in SQL, by the repositories' attempt claim
+(`SET attempts = attempts + 1 … WHERE attempts < $2`). It stops at the cap of
+5, so it can't approach overflow, and the concurrency test above exercises
+that guard. Slice 3's Kani proof found that the domain's own
+`increment_attempts` could wrap at `i32::MAX`. It had no production caller, so
+it was deleted rather than kept as a second counter that doesn't matter.
 
 ### Sessions and refresh tokens
 

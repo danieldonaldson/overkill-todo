@@ -18,6 +18,9 @@ sccache = "latest"      # compiler cache shared by every worktree (justfile sets
 "cargo:cargo-deny" = "latest"
 "cargo:cargo-machete" = "latest"   # `just machete`
 "cargo:cargo-llvm-cov" = "latest"   # `just coverage` (needs the llvm-tools component above)
+# Kani bounded model checker for the domain proofs (`just verify`, OT-010). Pinned
+# exactly: CI installs the same version. `cargo kani setup` fetches its own nightly.
+"cargo:kani-verifier" = "0.68.0"
 # OpenSpec CLI for the /opsx:* commands (openspec/README.md). Matches the
 # `generatedBy` version of .claude/skills; re-run `openspec update` when bumping.
 "npm:@fission-ai/openspec" = "1.13.1"

@@ -102,6 +102,12 @@ secrets-check:
 threat-model-check:
     ./scripts/threat-model-check.sh
 
+# Kani proofs of the auth domain policy (OT-010): every harness, every input within
+# its stated bounds. Needs the pinned Kani from .mise.toml, then `cargo kani setup` once.
+verify:
+    @cargo kani --version >/dev/null 2>&1 || { echo "Kani isn't installed: run 'mise install', then 'cargo kani setup' once" >&2; exit 1; }
+    cd {{backend}} && SQLX_OFFLINE=true cargo kani
+
 # After editing access.yaml: regenerate .sops.yaml and re-key the secrets you can read.
 secrets-sync:
     ./scripts/secrets.sh sync
@@ -317,7 +323,7 @@ machete:
     cd {{backend}} && cargo machete
 
 # Everything CI gates on. Green here means green CI.
-ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check test-web e2e
+ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check verify test test-integration db-prepare-check api-types-check test-web e2e
 
 # ── Load tests (OT-004) ──────────────────────────────────────────────────────────
 # Same release images as `just up`, pinned to cores and capped, with production

@@ -216,6 +216,34 @@ names one that no longer exists. When you add or change an auth behaviour, add
 or update its property there; the end of that file explains how. The list
 below is the short version.
 
+### Proofs (`just verify`)
+
+Some properties are proven with [Kani](https://model-checking.github.io/kani/),
+a bounded model checker, for every input within stated bounds rather than for
+sampled ones. The harnesses sit in a `#[cfg(kani)] mod verification` next to
+the code they prove, and each has a doc comment stating its bounds.
+`just verify` runs them all (about 15 s warm, a minute cold). It's in
+`just ci`, and CI runs it as its own job.
+
+- **Setup:** `mise install` installs the pinned `kani-verifier` (`.mise.toml`).
+  Run `cargo kani setup` once to fetch Kani's own nightly toolchain, which
+  doesn't touch the pinned Rust. CI reads the same pin.
+- **What's proven:** the code-entry lockout decision (the exact window schedule,
+  never reissued while locked or in the cooldown, reissued once both waits pass,
+  no negative waits), and that the domain's attempt counter can't wrap (threat
+  model P-10, P-13). The proofs cover the decision, not the database writes
+  around it. Those are P-11 and P-12, which are tested, and modelled in a later
+  slice.
+- **Time is an argument.** Policy that depends on the clock takes `now`, and
+  callers pass `Utc::now()`, so a proof can cover every time.
+- **Prove integers, not chrono.** Kani can't get through chrono's calendar
+  arithmetic in reasonable time. The lockout policy is written over integer
+  microseconds (`reissue_at` and friends in `attempt_lockout.rs`), and the
+  `DateTime` methods are thin conversions onto it. Follow the same pattern for
+  new proofs.
+- **Make a proof fail before trusting it:** break the rule it checks on a
+  scratch edit, and see `just verify` fail with a counterexample.
+
 - Argon2id for all passwords; tunable cost params from config.
 - Our tokens (session, signup, reset, OAuth state) are HS512 under a named key (`kid`), quantum-safe; only HS512 is accepted on decode, and only from a configured key, never by trying others. Keys rotate via `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS` (OT-009).
 - Outgoing TLS (Google, Turnstile, SMTP) offers post-quantum X25519MLKEM768 first, via the process-wide provider installed at the top of `main` (`infrastructure/tls.rs`); `tests/tls_key_exchange.rs` fails if it's lost (OT-009).

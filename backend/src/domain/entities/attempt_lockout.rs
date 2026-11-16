@@ -67,65 +67,142 @@ impl AttemptLockout {
     /// The lock window for the current code: [`LOCK_DURATION_MINUTES`] doubled
     /// once per earlier lockout, capped at [`MAX_LOCK_DURATION_MINUTES`].
     #[must_use]
-    pub fn lock_duration(&self) -> Duration {
-        // 2^7 * 15 min already exceeds the cap, so clamping the exponent keeps
-        // the shift in range without changing the result.
-        let doublings = self.lockouts.clamp(0, 7).unsigned_abs();
-        let minutes = (LOCK_DURATION_MINUTES << doublings).min(MAX_LOCK_DURATION_MINUTES);
-        Duration::minutes(minutes)
+    pub const fn lock_duration(&self) -> Duration {
+        Duration::minutes(lock_window_minutes(self.lockouts))
     }
 
     /// Whether the code is at or beyond the failed-attempt cap.
     #[must_use]
     pub const fn is_locked(&self) -> bool {
-        self.attempts >= MAX_ATTEMPTS
+        at_cap(self.attempts)
     }
 
     /// Seconds until a locked code may be replaced via resend, measured from
-    /// `last_sent_at`. Returns 0 when the code is not locked or once the lock
-    /// window has elapsed.
+    /// `last_sent_at`, as of `now`. Returns 0 when the code is not locked or
+    /// once the lock window has elapsed.
     #[must_use]
-    pub fn seconds_until_unlock(&self) -> i64 {
-        if !self.is_locked() {
-            return 0;
-        }
-        let unlock_at = self.last_sent_at + self.lock_duration();
-        (unlock_at - Utc::now()).num_seconds().max(0)
+    pub const fn seconds_until_unlock(&self, now: DateTime<Utc>) -> i64 {
+        seconds_until_unlock_at(
+            self.attempts,
+            self.lockouts,
+            self.last_sent_at.timestamp_micros(),
+            now.timestamp_micros(),
+        )
     }
 
-    /// Whether a new code can be sent (resend cooldown elapsed).
+    /// Whether a new code can be sent as of `now` (resend cooldown elapsed).
     #[must_use]
-    pub fn can_resend(&self) -> bool {
-        self.last_sent_at + Duration::minutes(RESEND_COOLDOWN_MINUTES) <= Utc::now()
+    pub const fn can_resend(&self, now: DateTime<Utc>) -> bool {
+        can_resend_at(self.last_sent_at.timestamp_micros(), now.timestamp_micros())
     }
 
-    /// Seconds until a resend is allowed; 0 if a resend is already allowed.
+    /// Seconds until a resend is allowed as of `now`; 0 if a resend is already
+    /// allowed.
     #[must_use]
-    pub fn seconds_until_resend(&self) -> i64 {
-        let allowed_at = self.last_sent_at + Duration::minutes(RESEND_COOLDOWN_MINUTES);
-        (allowed_at - Utc::now()).num_seconds().max(0)
+    pub const fn seconds_until_resend(&self, now: DateTime<Utc>) -> i64 {
+        seconds_until_resend_at(self.last_sent_at.timestamp_micros(), now.timestamp_micros())
     }
 
-    /// Whether a replacement code may be issued now.
+    /// Whether a replacement code may be issued as of `now`. Callers pass
+    /// `Utc::now()`; taking it as an argument lets the proofs cover every time.
     ///
     /// Issuing upserts a fresh row with `attempts = 0`, so every issuing path
     /// must ask this first or it would clear an active lockout. A lock takes
     /// precedence over the cooldown: it is the longer wait and the one the user
     /// needs to hear about.
     #[must_use]
-    pub fn reissue(&self) -> Reissue {
-        let seconds_until_unlock = self.seconds_until_unlock();
-        if seconds_until_unlock > 0 {
-            Reissue::Locked {
-                seconds_remaining: seconds_until_unlock,
-            }
-        } else if !self.can_resend() {
-            Reissue::Cooldown {
-                seconds_remaining: self.seconds_until_resend(),
-            }
-        } else {
-            Reissue::Allowed
+    pub const fn reissue(&self, now: DateTime<Utc>) -> Reissue {
+        reissue_at(
+            self.attempts,
+            self.lockouts,
+            self.last_sent_at.timestamp_micros(),
+            now.timestamp_micros(),
+        )
+    }
+}
+
+// The lockout policy over plain integers: times are whole microseconds since
+// the Unix epoch (`DateTime::timestamp_micros`, exact for every time chrono can
+// represent). The `AttemptLockout` methods are thin conversions onto these, so
+// the Kani proofs (`verification` below) cover the real decision logic; proving
+// it through chrono's calendar arithmetic directly doesn't finish (design D5).
+
+/// The single definition of "at the failed-attempt cap", shared by
+/// [`AttemptLockout::is_locked`] and the integer policy below.
+const fn at_cap(attempts: i32) -> bool {
+    attempts >= MAX_ATTEMPTS
+}
+
+const MICROS_PER_SECOND: i64 = 1_000_000;
+const MICROS_PER_MINUTE: i64 = 60 * MICROS_PER_SECOND;
+
+/// The lock window in minutes for a code with `lockouts` earlier lockouts.
+const fn lock_window_minutes(lockouts: i32) -> i64 {
+    // 2^7 * 15 min already exceeds the cap, so clamping the exponent keeps the
+    // shift in range without changing the result.
+    let doublings = if lockouts < 0 {
+        0
+    } else if lockouts > 7 {
+        7
+    } else {
+        lockouts.unsigned_abs()
+    };
+    let minutes = LOCK_DURATION_MINUTES << doublings;
+    if minutes < MAX_LOCK_DURATION_MINUTES {
+        minutes
+    } else {
+        MAX_LOCK_DURATION_MINUTES
+    }
+}
+
+/// Seconds from `now_us` until `until_us`, rounded up, so any time left
+/// counts as a second; 0 once `until_us` has passed.
+///
+/// Rounding up matters: rounding down reported a lock with under a second left
+/// as over, so a locked code could be replaced up to a second early (found by
+/// `locked_inside_the_window_is_never_reissued`, OT-010 slice 3).
+const fn whole_seconds_until(until_us: i64, now_us: i64) -> i64 {
+    let remaining = until_us.saturating_sub(now_us);
+    if remaining <= 0 {
+        0
+    } else {
+        (remaining - 1) / MICROS_PER_SECOND + 1
+    }
+}
+
+const fn seconds_until_unlock_at(attempts: i32, lockouts: i32, sent_us: i64, now_us: i64) -> i64 {
+    if !at_cap(attempts) {
+        return 0;
+    }
+    let unlock_us = sent_us.saturating_add(lock_window_minutes(lockouts) * MICROS_PER_MINUTE);
+    whole_seconds_until(unlock_us, now_us)
+}
+
+const fn resend_allowed_at(sent_us: i64) -> i64 {
+    sent_us.saturating_add(RESEND_COOLDOWN_MINUTES * MICROS_PER_MINUTE)
+}
+
+const fn can_resend_at(sent_us: i64, now_us: i64) -> bool {
+    resend_allowed_at(sent_us) <= now_us
+}
+
+const fn seconds_until_resend_at(sent_us: i64, now_us: i64) -> i64 {
+    whole_seconds_until(resend_allowed_at(sent_us), now_us)
+}
+
+/// The reissue decision: see [`AttemptLockout::reissue`].
+const fn reissue_at(attempts: i32, lockouts: i32, sent_us: i64, now_us: i64) -> Reissue {
+    let seconds_until_unlock = seconds_until_unlock_at(attempts, lockouts, sent_us, now_us);
+    if seconds_until_unlock > 0 {
+        Reissue::Locked {
+            seconds_remaining: seconds_until_unlock,
         }
+    } else if !can_resend_at(sent_us, now_us) {
+        Reissue::Cooldown {
+            seconds_remaining: seconds_until_resend_at(sent_us, now_us),
+        }
+    } else {
+        Reissue::Allowed
     }
 }
 
@@ -174,20 +251,150 @@ pub enum AttemptOutcome {
     NotFound,
 }
 
+/// Kani proofs (OT-010, threat model P-10 / P-13). Run with `just verify`.
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// The lock window for a lockout count, in minutes. `last_sent_at` and
+    /// `attempts` don't affect it.
+    fn window_minutes(lockouts: i32) -> i64 {
+        AttemptLockout::new(MAX_ATTEMPTS, DateTime::<Utc>::UNIX_EPOCH, lockouts)
+            .lock_duration()
+            .num_minutes()
+    }
+
+    /// For every `lockouts: i32` (all 2^32 values, including negative and
+    /// corrupt counts): `lock_duration` doesn't panic or overflow, and the
+    /// window is between 15 minutes and 24 hours. The bounds are the spec's
+    /// literal values, not the constants, so a changed constant fails here.
+    #[kani::proof]
+    fn lock_window_is_between_15_minutes_and_24_hours() {
+        let minutes = window_minutes(kani::any());
+        assert!(minutes >= 15, "lock window shorter than 15 minutes");
+        assert!(minutes <= 24 * 60, "lock window longer than 24 hours");
+    }
+
+    /// 2000-01-01T00:00:00Z and 2200-01-01T00:00:00Z in Unix microseconds: the
+    /// bounds on every symbolic timestamp below (design D5).
+    const FROM_US: i64 = 946_684_800 * MICROS_PER_SECOND;
+    const UNTIL_US: i64 = 7_258_118_400 * MICROS_PER_SECOND;
+
+    /// A symbolic timestamp in [2000, 2200), to the microsecond.
+    fn any_time() -> i64 {
+        let us: i64 = kani::any();
+        kani::assume((FROM_US..UNTIL_US).contains(&us));
+        us
+    }
+
+    /// Symbolic `attempts` and `lockouts` (any `i32`), and send and now times
+    /// in [2000, 2200) in either order (a clock behind the send time is
+    /// covered). Returns them with the lock window in microseconds.
+    fn any_case() -> (i32, i32, i64, i64, i64) {
+        let lockouts: i32 = kani::any();
+        let window_us = lock_window_minutes(lockouts) * MICROS_PER_MINUTE;
+        (kani::any(), lockouts, any_time(), any_time(), window_us)
+    }
+
+    /// Spec: a locked code can't be replaced at any instant inside its lock
+    /// window, and the response says how long is left (> 0).
+    #[kani::proof]
+    fn locked_inside_the_window_is_never_reissued() {
+        let (attempts, lockouts, sent, now, window) = any_case();
+        kani::assume(attempts >= 5);
+        kani::assume(now < sent + window);
+        assert!(matches!(
+            reissue_at(attempts, lockouts, sent, now),
+            Reissue::Locked { seconds_remaining } if seconds_remaining > 0
+        ));
+    }
+
+    /// Spec: a code that isn't locked can't be replaced within 5 minutes of the
+    /// last send, and the response says how long is left (> 0).
+    #[kani::proof]
+    fn unlocked_inside_the_cooldown_is_refused() {
+        let (attempts, lockouts, sent, now, _) = any_case();
+        kani::assume(attempts < 5);
+        kani::assume(now < sent + 5 * 60 * MICROS_PER_SECOND);
+        assert!(matches!(
+            reissue_at(attempts, lockouts, sent, now),
+            Reissue::Cooldown { seconds_remaining } if seconds_remaining > 0
+        ));
+    }
+
+    /// Spec: once the lock window (if locked) and the 5-minute cooldown have
+    /// both passed, a replacement is issued.
+    #[kani::proof]
+    fn reissued_once_every_wait_has_passed() {
+        let (attempts, lockouts, sent, now, window) = any_case();
+        kani::assume(attempts < 5 || now >= sent + window);
+        kani::assume(now >= sent + 5 * 60 * MICROS_PER_SECOND);
+        assert_eq!(reissue_at(attempts, lockouts, sent, now), Reissue::Allowed);
+    }
+
+    /// Spec: every reported wait is a whole number of seconds that is never
+    /// negative, and a code below the cap is never reported locked. Over every
+    /// input, with no assumption on the order of the send and now times.
+    #[kani::proof]
+    fn reported_waits_are_never_negative() {
+        let (attempts, lockouts, sent, now, _) = any_case();
+        match reissue_at(attempts, lockouts, sent, now) {
+            Reissue::Allowed => {}
+            Reissue::Locked { seconds_remaining } => {
+                assert!(attempts >= 5, "reported locked below the cap");
+                assert!(seconds_remaining >= 0);
+            }
+            Reissue::Cooldown { seconds_remaining } => assert!(seconds_remaining >= 0),
+        }
+    }
+
+    /// For every `lockouts: i32`: the window is exactly the spec's schedule,
+    /// written out with literal numbers rather than the constants. 15 minutes
+    /// for no (or a corrupt negative) earlier lockout, doubling per earlier
+    /// lockout (15, 30, 60 … 960 minutes for 0 to 6), and 24 hours from the
+    /// 7th on, where the doubling first passes the cap.
+    #[kani::proof]
+    fn lock_window_doubles_per_earlier_lockout_up_to_24_hours() {
+        let lockouts: i32 = kani::any();
+        let expected = match lockouts {
+            i32::MIN..=0 => 15,
+            1 => 30,
+            2 => 60,
+            3 => 120,
+            4 => 240,
+            5 => 480,
+            6 => 960,
+            7..=i32::MAX => 1440,
+        };
+        assert_eq!(window_minutes(lockouts), expected);
+    }
+
+    /// For every pair `a <= b` of `i32` lockout counts: more earlier lockouts
+    /// never give a shorter window.
+    #[kani::proof]
+    fn lock_window_never_shrinks_as_lockouts_grow() {
+        let a: i32 = kani::any();
+        let b: i32 = kani::any();
+        kani::assume(a <= b);
+        assert!(window_minutes(a) <= window_minutes(b));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// One fixed instant, so the tests never depend on the wall clock.
+    fn now() -> DateTime<Utc> {
+        DateTime::from_timestamp(1_800_000_000, 0).expect("valid timestamp")
+    }
+
     fn lockout(attempts: i32, sent_minutes_ago: i64) -> AttemptLockout {
-        AttemptLockout::new(
-            attempts,
-            Utc::now() - Duration::minutes(sent_minutes_ago),
-            0,
-        )
+        AttemptLockout::new(attempts, now() - Duration::minutes(sent_minutes_ago), 0)
     }
 
     fn after_lockouts(lockouts: i32) -> AttemptLockout {
-        AttemptLockout::new(MAX_ATTEMPTS, Utc::now(), lockouts)
+        AttemptLockout::new(MAX_ATTEMPTS, now(), lockouts)
     }
 
     #[test]
@@ -209,11 +416,11 @@ mod tests {
     fn escalated_lock_outlasts_base_window() {
         let l = AttemptLockout::new(
             MAX_ATTEMPTS,
-            Utc::now() - Duration::minutes(LOCK_DURATION_MINUTES + 1),
+            now() - Duration::minutes(LOCK_DURATION_MINUTES + 1),
             2,
         );
         assert!(
-            l.seconds_until_unlock() > 0,
+            l.seconds_until_unlock(now()) > 0,
             "third lock lasts an hour, not 15 min"
         );
     }
@@ -221,14 +428,14 @@ mod tests {
     #[test]
     fn not_locked_below_cap() {
         assert!(!lockout(MAX_ATTEMPTS - 1, 0).is_locked());
-        assert_eq!(lockout(MAX_ATTEMPTS - 1, 0).seconds_until_unlock(), 0);
+        assert_eq!(lockout(MAX_ATTEMPTS - 1, 0).seconds_until_unlock(now()), 0);
     }
 
     #[test]
     fn locked_at_cap_within_window() {
         let l = lockout(MAX_ATTEMPTS, 0);
         assert!(l.is_locked());
-        let secs = l.seconds_until_unlock();
+        let secs = l.seconds_until_unlock(now());
         assert!(secs > 0 && secs <= LOCK_DURATION_MINUTES * 60);
     }
 
@@ -236,21 +443,21 @@ mod tests {
     fn locked_but_window_elapsed() {
         let l = lockout(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1);
         assert!(l.is_locked());
-        assert_eq!(l.seconds_until_unlock(), 0);
+        assert_eq!(l.seconds_until_unlock(now()), 0);
     }
 
     #[test]
     fn reissue_states() {
         assert_eq!(
-            lockout(0, RESEND_COOLDOWN_MINUTES + 1).reissue(),
+            lockout(0, RESEND_COOLDOWN_MINUTES + 1).reissue(now()),
             Reissue::Allowed
         );
         assert!(matches!(
-            lockout(0, 0).reissue(),
+            lockout(0, 0).reissue(now()),
             Reissue::Cooldown { seconds_remaining } if seconds_remaining > 0
         ));
         assert!(matches!(
-            lockout(MAX_ATTEMPTS, 0).reissue(),
+            lockout(MAX_ATTEMPTS, 0).reissue(now()),
             Reissue::Locked { seconds_remaining } if seconds_remaining > 0
         ));
     }
@@ -259,26 +466,41 @@ mod tests {
     #[test]
     fn reissue_lock_outranks_cooldown() {
         let l = lockout(MAX_ATTEMPTS, RESEND_COOLDOWN_MINUTES + 1);
-        assert!(l.can_resend());
-        assert!(matches!(l.reissue(), Reissue::Locked { .. }));
+        assert!(l.can_resend(now()));
+        assert!(matches!(l.reissue(now()), Reissue::Locked { .. }));
     }
 
     /// A locked code whose window has elapsed may be replaced.
     #[test]
     fn reissue_allowed_once_lock_elapses() {
         assert_eq!(
-            lockout(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1).reissue(),
+            lockout(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1).reissue(now()),
             Reissue::Allowed
+        );
+    }
+
+    /// Regression (found by Kani, OT-010 slice 3): with under a second of
+    /// the lock left, the code is still locked and the wait rounds up to 1 s.
+    #[test]
+    fn a_lock_with_under_a_second_left_still_holds() {
+        let now = now();
+        let sent = now - Duration::minutes(LOCK_DURATION_MINUTES) + Duration::milliseconds(500);
+        let l = AttemptLockout::new(MAX_ATTEMPTS, sent, 0);
+        assert_eq!(
+            l.reissue(now),
+            Reissue::Locked {
+                seconds_remaining: 1
+            }
         );
     }
 
     #[test]
     fn resend_cooldown() {
-        assert!(!lockout(0, 0).can_resend());
-        assert!(lockout(0, 0).seconds_until_resend() > 0);
-        assert!(lockout(0, RESEND_COOLDOWN_MINUTES + 1).can_resend());
+        assert!(!lockout(0, 0).can_resend(now()));
+        assert!(lockout(0, 0).seconds_until_resend(now()) > 0);
+        assert!(lockout(0, RESEND_COOLDOWN_MINUTES + 1).can_resend(now()));
         assert_eq!(
-            lockout(0, RESEND_COOLDOWN_MINUTES + 1).seconds_until_resend(),
+            lockout(0, RESEND_COOLDOWN_MINUTES + 1).seconds_until_resend(now()),
             0
         );
     }

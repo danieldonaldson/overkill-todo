@@ -93,7 +93,7 @@ default = ["swagger-ui"]
 swagger-ui = ["dep:utoipa-swagger-ui"]
 
 [lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)"] }
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage_nightly)", "cfg(kani)"] }
 
 # Tuned for a smaller, faster production binary. `lto` + `codegen-units = 1`
 # lengthen the *release* link/compile step but do not affect dev builds.
