@@ -111,8 +111,8 @@ async fn signed_in(app: &Router, email: &str) -> Session {
     .await;
     assert_eq!(resp.status(), StatusCode::OK, "login failed: {body}");
     Session {
-        auth: common::cookie_value(&resp, "auth_token").expect("auth cookie"),
-        refresh: common::cookie_value(&resp, "refresh_token").expect("refresh cookie"),
+        auth: common::cookie_value(&resp, "__Host-auth_token").expect("auth cookie"),
+        refresh: common::cookie_value(&resp, "__Host-refresh_token").expect("refresh cookie"),
         csrf: body["csrf_token"].as_str().unwrap().to_string(),
     }
 }
@@ -135,7 +135,10 @@ async fn refresh(app: &Router, s: &Session) -> axum::http::Response<Body> {
         .uri("/api/v1/auth/refresh")
         .header(
             header::COOKIE,
-            format!("refresh_token={}; csrf_token={}", s.refresh, s.csrf),
+            format!(
+                "__Host-refresh_token={}; __Host-csrf_token={}",
+                s.refresh, s.csrf
+            ),
         )
         .header("x-csrf-token", &s.csrf)
         .header("x-device-fingerprint", FINGERPRINT)
@@ -163,7 +166,7 @@ async fn tokens_from_the_previous_key_keep_working_after_rotation(pool: PgPool) 
 
     // The next token is signed with the new active key.
     let resp = refresh(&app, &session).await;
-    let next = common::cookie_value(&resp, "auth_token").expect("new auth cookie");
+    let next = common::cookie_value(&resp, "__Host-auth_token").expect("new auth cookie");
     assert_eq!(kid_of(&next), "new");
     assert_eq!(me(&app, &next).await.0, StatusCode::OK);
 }
@@ -180,7 +183,7 @@ async fn retiring_a_key_signs_its_sessions_in_again_silently(pool: PgPool) {
 
     // The opaque refresh token isn't signed, so refresh still works.
     let resp = refresh(&app, &session).await;
-    let next = common::cookie_value(&resp, "auth_token").expect("new auth cookie");
+    let next = common::cookie_value(&resp, "__Host-auth_token").expect("new auth cookie");
     assert_eq!(kid_of(&next), "new");
     assert_eq!(me(&app, &next).await.0, StatusCode::OK);
 }

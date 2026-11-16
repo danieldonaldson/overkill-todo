@@ -118,8 +118,49 @@ finish
 
 ((count > 0)) || fail "no properties found in $doc"
 
+# Protocol models (OT-010 design D9): a Tamarin rule that encodes a check the
+# code must make says which integration test shows the code makes it, in a
+# comment block right above the rule:
+#
+#   // Checks: backend/tests/<file>.rs::<fn>
+#   //         backend/tests/<file>.rs::<fn>
+#   rule Name:
+#
+# Each named test must resolve as above, and the block must end at a rule.
+rules=0
+for model in models/*.spthy; do
+  [[ -e $model ]] || continue
+  links=$(awk -v model="$model" '
+    # Indentation and rule attributes (`rule Name[color=...]:`) are allowed, so
+    # no block is skipped silently.
+    function flush(rule) { for (i = 1; i <= n; i++) print rule "\t" checks[i]; n = 0; open = 0 }
+    /^[[:space:]]*\/\/[[:space:]]*Checks:/ {
+      if (open) print "X\t" model ":" NR ": Checks block not followed by a rule"
+      n = 0; open = 1; line = $0; sub(/^[[:space:]]*\/\/[[:space:]]*Checks:[[:space:]]*/, "", line)
+      checks[++n] = line; next }
+    open && /^[[:space:]]*\/\/[[:space:]]+[^[:space:]]+::/ {
+      line = $0; sub(/^[[:space:]]*\/\/[[:space:]]+/, "", line); checks[++n] = line; next }
+    open && /^[[:space:]]*rule[[:space:]]+[A-Za-z0-9_]+[[:space:]]*(\[[^]]*\])?[[:space:]]*:/ {
+      name = $0; sub(/^[[:space:]]*rule[[:space:]]+/, "", name); sub(/[^A-Za-z0-9_].*$/, "", name)
+      flush(model " rule " name); next }
+    open { print "X\t" model ":" NR ": Checks block not followed by a rule"; n = 0; open = 0 }
+    END { if (open) print "X\t" model ": Checks block at end of file" }
+  ' "$model")
+  while IFS=$'\t' read -r where check; do
+    [[ -z $where ]] && continue
+    if [[ $where == X ]]; then
+      fail "$check"
+      continue
+    fi
+    [[ $check == backend/tests/*.rs::* ]] ||
+      fail "$where: '$check' isn't an integration test (backend/tests/<file>.rs::<fn>)"
+    resolve "$where" "$check"
+    rules=$((rules + 1))
+  done <<< "$links"
+done
+
 if ((errors > 0)); then
   echo "threat-model-check: $errors problem(s) in $doc" >&2
   exit 1
 fi
-echo "threat-model-check: $count properties, all checks resolve"
+echo "threat-model-check: $count properties and $rules model-rule tests, all checks resolve"

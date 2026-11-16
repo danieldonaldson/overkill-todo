@@ -61,4 +61,14 @@ test('a new user can register, verify, set a password, and land on the dashboard
   // 4. Completing signup logs the user in (real session cookie) and the
   //    dashboard shows Home, its account check succeeding with that cookie.
   await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
+
+  // 5. The browser kept the `__Host-` session cookies over plain-HTTP
+  //    localhost (a secure context), and they authenticate a request.
+  const names = (await page.context().cookies()).map((c) => c.name)
+  expect(names).toEqual(
+    expect.arrayContaining(['__Host-auth_token', '__Host-refresh_token', '__Host-csrf_token'])
+  )
+  const me = await page.request.get('/api/v1/auth/me')
+  expect(me.status()).toBe(200)
+  expect((await me.json()).email).toBe(email)
 })

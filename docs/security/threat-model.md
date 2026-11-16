@@ -34,8 +34,9 @@ Google account provider itself, or a Member's own unlocked device.
 
 ## Trust boundaries
 
-1. **Browser ↔ edge**: TLS; cookies `HttpOnly; Secure; SameSite=Lax`; CORS
-   allows only the frontend origin.
+1. **Browser ↔ edge**: TLS; cookies `__Host-` prefixed, `Secure; Path=/;
+SameSite=Lax`, and `HttpOnly` except the CSRF cookie; CORS allows only the
+   frontend origin.
 2. **Edge ↔ backend**: same-host proxy. The backend trusts the edge's
    forwarded headers only for tracing, never for auth.
 3. **Backend ↔ database**: every auth decision is made in the backend.
@@ -52,6 +53,31 @@ Each property records how strongly it is checked:
 - **proven**: a proof over every input within stated bounds (Kani).
 - **modelled**: a model checked over every interleaving or attacker action
   (Quint or Tamarin), tied to the code by conformance tests.
+
+## Protocol model
+
+`models/auth_protocols.spthy` (Tamarin, `just protocols`) proves the
+properties marked "Modelled (Tamarin …)" below against this attacker and these
+assumptions:
+
+- **Attacker:** reads, replays and forges anything outside TLS (A4), holds their
+  own account and Google identity, runs their own client, and makes a Member's
+  browser open any URL or submit any cross-site form (A1). Where a lemma allows
+  it, they also steal a browser's cookies, its device fingerprint or a password
+  (A3).
+- **Assumptions:** TLS is a secure channel. The MACs are perfect under keys
+  outside the database: HMAC-SHA-512 for the session JWT and OAuth state,
+  HMAC-SHA-256 for the CSRF token. Google is honest. Cookies are browser state
+  bound to the app's host, which the `__Host-` prefix on every auth cookie
+  makes the browser enforce (P-24). `-D=NO_HOST_PREFIX` is the code before the
+  prefix, where the attacker can write the app's cookies; P-20 and P-22 say
+  what holds then.
+- **Bounds:** none on sessions, browsers, accounts or messages. Time, logout
+  and concurrency are outside the model; Kani and Quint cover those.
+- **Conformance:** each model rule that encodes a check the code makes names
+  the integration test that shows it, and `just threat-model-check` resolves
+  those names. `just protocols` also requires every lemma to be attacked when
+  its check is removed.
 
 ## Properties
 
@@ -362,7 +388,10 @@ Logins aren't modelled: they mint unrelated tokens.
   - `backend/src/application/use_cases/auth/refresh_token.rs::revoked_reuse_revokes_all_even_when_also_expired`
   - `backend/src/domain/entities/refresh_token.rs::test_status_revoked_outranks_expired`
   - `backend/src/domain/entities/refresh_token.rs::test_revoke_is_idempotent`
+  - `backend/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session`
+  - `models/auth_protocols.spthy::stolen_reuse_ends_every_session`
   - `just models`
+  - `just protocols`
 - Gap: Accepted (2026-11-16). This holds only while the token is still stored. Once it has expired and the cleanup job has deleted it, presenting it is refused as an unknown token, not treated as reuse, so the Member's later sessions are not revoked. It can't yield a session either way. The model shows this (`everyReplayOfARotatedTokenIsDetected`, not part of `safety`). Keeping revoked tokens past expiry would close it. It's accepted because the stolen token can't produce a session, and the replay window it gives up only opens after the token's 30-day expiry.
 
 **Modelled** with the P-14 bounds: a request that presents an already rotated
@@ -371,13 +400,55 @@ session of that Member is left live. A request that read the token before a
 concurrent rotation committed gets a conflict instead; the next presentation
 is the reuse.
 
+**Modelled** (Tamarin, `just protocols`; attacker and assumptions under
+[Protocol model](#protocol-model)). Once a rotated token is presented again,
+by anyone and with any fingerprint, no token the Member held before that is
+accepted again. This lemma holds by construction: the model's revoke-all is a
+restriction that says what the code's `UPDATE … WHERE user_id = $1` does. What
+it adds is that the attacker has no way round reuse detection; the evidence
+that the code revokes is the integration test the rule names, and the Quint
+replay. A token deleted by expiry cleanup is outside the lemma, as the gap
+says.
+
 ### P-16: A refresh token works only with the device fingerprint it was issued to
 
 - Attackers: A3
-- Strength: tested
+- Strength: modelled, tested
 - Checks:
+  - `models/auth_protocols.spthy::refresh_needs_the_fingerprint`
+  - `models/auth_protocols.spthy::fingerprint_known_only_if_stolen`
+  - `backend/tests/auth_properties_integration.rs::a_refresh_token_is_refused_from_another_device`
   - `backend/src/application/use_cases/auth/refresh_token.rs::rejects_device_fingerprint_mismatch`
   - `backend/src/domain/entities/refresh_token.rs::test_validate_fingerprint_mismatch`
+  - `just protocols`
+
+**Modelled** (Tamarin, `just protocols`; attacker and assumptions under
+[Protocol model](#protocol-model)). A Member's refresh token works on another
+client only if the fingerprint it's bound to was stolen too, and the
+fingerprint only ever travels inside TLS.
+
+### P-33: A session or refresh token reaches only the Member who signed in, and a replayed sign-in, refresh or Google callback gains nothing
+
+- Attackers: A1, A3, A4
+- Strength: modelled, tested
+- Checks:
+  - `models/auth_protocols.spthy::browser_tokens_stay_secret`
+  - `models/auth_protocols.spthy::replayed_sign_in_gains_nothing`
+  - `models/auth_protocols.spthy::refresh_replay_gains_nothing`
+  - `backend/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session`
+  - `backend/tests/refresh_token_integration.rs::concurrent_rotate_lets_exactly_one_winner`
+  - `just protocols`
+
+**Modelled** (Tamarin, `just protocols`; attacker and assumptions under
+[Protocol model](#protocol-model)). Tokens issued to a browser are never known
+to the attacker unless stolen from it. The attacker's own client gets a
+Member's session only with the Member's password, or by refreshing, which
+needs a token and fingerprint both stolen (P-16). A refresh token yields one
+successor, so replaying it gains nothing; that lemma holds by construction
+from the model's rotate-once restriction (rotation's `WHERE revoked_at IS
+NULL`), which the linked rotation tests show the code makes. With TLS removed
+(`-D=INSECURE_CHANNEL`), both sign-in lemmas are attacked, so they rest on the
+channel.
 
 ### P-17: Signing out revokes the refresh token and clears the session cookie
 
@@ -414,14 +485,26 @@ is the reuse.
 ### P-20: A state-changing request on an authenticated route needs a CSRF token that matches its cookie and is bound to the session's user
 
 - Attackers: A1, A4
-- Strength: tested, property-tested
+- Strength: modelled, tested, property-tested
 - Checks:
   - `backend/tests/security_integration.rs::csrf_header_cookie_mismatch_rejected`
   - `backend/tests/security_integration.rs::csrf_cookie_without_header_rejected`
   - `backend/tests/security_integration.rs::csrf_token_bound_to_other_user_rejected`
   - `backend/src/infrastructure/api/csrf.rs::test_verify_rejects_other_user`
   - `backend/src/infrastructure/api/csrf.rs::prop_arbitrary_strings_fail`
-- Gap: The CSRF defence hasn't been modelled against an attacker who controls a site. Tamarin model planned (OT-010).
+  - `models/auth_protocols.spthy::cross_site_pages_cannot_change_state`
+  - `models/auth_protocols.spthy::cross_site_changes_need_a_token_signed_for_the_member`
+  - `just protocols`
+
+**Modelled** (Tamarin, `just protocols`; attacker and assumptions under
+[Protocol model](#protocol-model)). For this property the modelled browser is
+the worst case: it attaches every cookie to a cross-site request, as if
+`SameSite` didn't apply, so only the double-submit check stands in the way. A
+change accepted from a browser was made by the app's own script, unless that
+browser's tokens were stolen or the Member's password leaked. The user binding
+is what would hold if the attacker could also write the app's cookies
+(`-D=NO_HOST_PREFIX`): a cross-site change still needs a token signed for that
+Member, and without the binding it is attacked.
 
 ### P-21: Pre-auth routes that skip CSRF can't be driven cross-site
 
@@ -438,25 +521,50 @@ do:
   a response or send JSON.
 
 - Attackers: A1
-- Strength: tested
+- Strength: modelled, tested
 - Checks:
+  - `models/auth_protocols.spthy::exempt_routes_cannot_be_driven_cross_site`
+  - `just protocols`
   - `backend/tests/auth_properties_integration.rs::csrf_exempt_routes_cannot_be_driven_cross_site`
   - `backend/tests/auth_properties_integration.rs::cors_grants_no_other_origin`
   - `backend/src/infrastructure/api/middleware/csrf.rs::test_excluded_paths`
-- Gap: Accepted. Logout takes no body and no custom header. A cross-site form can POST to it, and what stops it ending the session is the browser not sending or setting `SameSite=Lax` cookies on a cross-site POST (P-24). A server test can't observe that browser behaviour. The impact would be a forced sign-out, not access.
+- Gap: Accepted. Logout takes no body and no custom header. A cross-site form can POST to it, and what stops it ending the session is the browser not sending or setting `SameSite=Lax` cookies on a cross-site POST (P-24). A server test can't observe that browser behaviour, and the model leaves logout out. The impact would be a forced sign-out, not access.
+
+**Modelled** (Tamarin, `just protocols`; attacker and assumptions under
+[Protocol model](#protocol-model)). Here the modelled browser follows
+`SameSite=Lax` and sends a cross-site request with only a simple body
+(form-encoded, multipart or `text/plain`), no custom header and no cookies. No
+exempt route acts on such a request; if a route accepted a simple body
+(`-D=ACCEPT_SIMPLE_BODIES`), it would be attacked.
 
 ### P-22: Google sign-in completes only in the browser that started it
 
 - Attackers: A1, A4
-- Strength: tested
+- Strength: modelled, tested
 - Checks:
+  - `models/auth_protocols.spthy::google_sign_in_completes_where_it_started`
+  - `models/auth_protocols.spthy::no_login_csrf`
+  - `just protocols`
   - `backend/tests/oauth_integration.rs::callback_without_state_cookie_is_rejected`
   - `backend/tests/oauth_integration.rs::callback_with_another_flows_nonce_is_rejected`
   - `backend/tests/oauth_integration.rs::callback_with_forged_state_is_rejected`
   - `backend/tests/oauth_integration.rs::callback_for_different_provider_than_state_is_rejected`
   - `backend/src/infrastructure/api/oauth_state.rs::tampered_oauth_state_is_refused`
   - `backend/src/infrastructure/api/oauth_state.rs::expired_oauth_state_is_refused`
-- Gap: Tested message by message, but not proven against an active attacker. Tamarin model planned (OT-010).
+  - `backend/tests/oauth_integration.rs::auth_cookies_are_host_only`
+
+**Modelled** (Tamarin, `just protocols`; attacker and assumptions under
+[Protocol model](#protocol-model)). A Google sign-in completes in a browser
+only if that browser started the flow, and a Member's browser is only ever
+signed in to that Member's own account. Without the callback's check that the
+state's nonce equals the `oauth_state` cookie (`-D=NO_STATE_CHECK`), both are
+attacked with the login-CSRF trace. The model found that both also depend on
+the attacker not writing the app's cookies: before every auth cookie got the
+`__Host-` prefix (`-D=NO_HOST_PREFIX`), an attacker on a sibling host, or on
+plain HTTP before HSTS, could plant their own flow's `oauth_state` nonce, or
+their own session cookies, and sign the victim in to the attacker's account.
+Both are still attacked in that variant, and `auth_cookies_are_host_only`
+shows the code sets every cookie with the prefix.
 
 ### P-23: Linking a Google identity can't take over another account
 
@@ -469,15 +577,23 @@ do:
   - `backend/tests/oauth_integration.rs::login_with_unverified_provider_email_creates_no_account`
   - `backend/tests/oauth_integration.rs::verify_email_cannot_take_over_oauth_only_account`
 
-### P-24: Auth cookies are `HttpOnly` (except CSRF), `Secure`, `SameSite=Lax` and scoped to the narrowest path
+### P-24: Auth cookies are `__Host-` prefixed (so only this host, over HTTPS, can set them), `Secure`, `Path=/`, `SameSite=Lax`, and `HttpOnly` except the CSRF cookie
 
 - Attackers: A1, A4
 - Strength: tested
 - Checks:
-  - `backend/src/infrastructure/api/cookies.rs::jwt_cookie_has_expected_attributes`
-  - `backend/src/infrastructure/api/cookies.rs::refresh_cookie_is_scoped_and_secure`
-  - `backend/src/infrastructure/api/cookies.rs::csrf_cookie_is_readable_by_js_but_secure`
-  - `backend/src/infrastructure/api/cookies.rs::oauth_state_cookie_is_scoped_http_only_and_short_lived`
+  - `backend/src/infrastructure/api/cookies.rs::every_cookie_meets_the_host_prefix_rules`
+  - `backend/src/infrastructure/api/cookies.rs::only_the_csrf_cookie_is_readable_by_scripts`
+  - `backend/src/infrastructure/api/cookies.rs::extract_cookie_ignores_the_unprefixed_name`
+  - `backend/tests/oauth_integration.rs::auth_cookies_are_host_only`
+  - `apps/web/tests/integration/signup.spec.ts`
+
+`Path=/` is what the prefix requires, so the session and refresh cookies are
+now sent on every same-origin request, not just to `/api`. They stay
+`HttpOnly`, and neither edge logs `Cookie` headers by default (Caddy redacts
+them; Traefik drops request headers). The real-backend browser flow checks a
+browser keeps and sends the prefixed cookies on `http://localhost`, which
+browsers treat as secure; Safari may need HTTPS for local development.
 
 ### Confidentiality
 
@@ -590,7 +706,7 @@ OT-010:
 | A deleted account stays deleted                           | P-28                                     |
 | Email addresses normalise to one identity                 | P-30                                     |
 | Concurrent requests cannot get around auth limits         | P-11, P-12, P-14, P-15                   |
-| The sign-in protocols resist an active network attacker   | P-15, P-16, P-20, P-21, P-22             |
+| The sign-in protocols resist an active network attacker   | P-15, P-16, P-20, P-21, P-22, P-33       |
 | Auth guarantees are machine-checked on every change       | the Strength line of every property      |
 
 ## Adding a property or a check
@@ -599,9 +715,14 @@ OT-010:
    are never reused.
 2. List checks under `- Checks:` as backticked entries, one per line:
    - `path/to/file.rs::function_name` for a test or Kani harness
-   - `path/to/model.qnt::name` for a model invariant or lemma
+   - `path/to/model.qnt::name` or `path/to/model.spthy::name` for a model
+     invariant or lemma
    - `path/to/file` for a whole-file check, such as a fuzz target
    - `just <recipe>` for a gate
 3. If coverage is missing or weaker than the statement, add a `- Gap:` line
    saying what is missing and where it's planned.
-4. Run `just threat-model-check`.
+4. In a Tamarin model, a rule that encodes a check the code must make names
+   the integration test that shows the code makes it, in a comment block right
+   above the rule (`// Checks: backend/tests/<file>.rs::<fn>`). The gate
+   resolves those too.
+5. Run `just threat-model-check`.

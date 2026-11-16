@@ -23,8 +23,9 @@ use crate::application::use_cases::{
 use crate::domain::entities::OAuthProvider;
 use crate::domain::value_objects::UserId;
 use crate::infrastructure::api::cookies::{
-    clear_oauth_device_fingerprint_cookie, clear_oauth_state_cookie,
-    create_oauth_device_fingerprint_cookie, create_oauth_state_cookie, extract_cookie,
+    OAUTH_DEVICE_FINGERPRINT_COOKIE, OAUTH_STATE_COOKIE, clear_oauth_device_fingerprint_cookie,
+    clear_oauth_state_cookie, create_oauth_device_fingerprint_cookie, create_oauth_state_cookie,
+    extract_cookie,
 };
 use crate::infrastructure::api::error::AppError;
 use crate::infrastructure::api::extractors::{ApiJson, ApiPath, ApiQuery};
@@ -68,12 +69,12 @@ impl OAuthHandlerDeps {
 }
 
 fn extract_oauth_device_fingerprint_cookie(headers: &HeaderMap) -> Option<String> {
-    extract_cookie(headers, "oauth_device_fingerprint")
+    extract_cookie(headers, OAUTH_DEVICE_FINGERPRINT_COOKIE)
 }
 
 /// Read the OAuth state-binding nonce stored at `oauth_start`.
 fn extract_oauth_state_cookie(headers: &HeaderMap) -> Option<String> {
-    extract_cookie(headers, "oauth_state")
+    extract_cookie(headers, OAUTH_STATE_COOKIE)
 }
 
 /// Append the `Set-Cookie` headers that clear the OAuth handoff cookies (the
@@ -516,7 +517,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth_store_device_fingerprint_sets_scoped_cookie() {
+    async fn oauth_store_device_fingerprint_sets_host_only_cookie() {
         let (headers, status) =
             oauth_store_device_fingerprint(ApiJson(OAuthDeviceFingerprintRequest {
                 device_fingerprint: "fingerprint123".to_string(),
@@ -526,9 +527,9 @@ mod tests {
 
         assert_eq!(status, StatusCode::NO_CONTENT);
         let cookie = headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
-        assert!(cookie.starts_with("oauth_device_fingerprint=fingerprint123"));
+        assert!(cookie.starts_with("__Host-oauth_device_fingerprint=fingerprint123"));
         assert!(cookie.contains("HttpOnly"));
-        assert!(cookie.contains("Path=/api/v1/auth/oauth"));
+        assert!(cookie.contains("Path=/;"));
     }
 
     // Cookie construction is covered by tests in `infrastructure::api::cookies`.

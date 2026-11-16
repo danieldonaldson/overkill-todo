@@ -27,6 +27,11 @@ sccache = "latest"      # compiler cache shared by every worktree (justfile sets
 # Java for Apalache, the symbolic checker behind `quint verify` (Quint downloads
 # the Apalache release it was built against on first use).
 java = "temurin-21.0.12+101.0.LTS"
+# Tamarin prover for the protocol model (`just protocols`, OT-010), from the
+# official GitHub releases (no maintained image or registry package exists),
+# plus Maude, its rewriting engine. Pinned exactly: CI installs the same.
+"github:tamarin-prover/tamarin-prover" = { version = "1.12.0", asset_pattern = "tamarin-prover-*-linux64-ubuntu.tar.gz" }
+"github:maude-lang/Maude" = { version = "Maude3.5.1", asset_pattern = "Maude-*-linux-x86_64.zip" }
 # OpenSpec CLI for the /opsx:* commands (openspec/README.md). Matches the
 # `generatedBy` version of .claude/skills; re-run `openspec update` when bumping.
 "npm:@fission-ai/openspec" = "1.13.1"

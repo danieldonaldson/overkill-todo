@@ -11,7 +11,11 @@ use axum::{
 use crate::{
     application::ports::outgoing::{SessionAuthorizationState, UserRepository},
     domain::value_objects::{UserId, UserRole},
-    infrastructure::api::{cookies::extract_cookie, error::AppError, verify_jwt},
+    infrastructure::api::{
+        cookies::{AUTH_COOKIE, extract_cookie},
+        error::AppError,
+        verify_jwt,
+    },
     infrastructure::crypto::{Crypto, TokenKeyring},
 };
 
@@ -90,7 +94,7 @@ fn extract_token(headers: &HeaderMap) -> Option<String> {
     }
 
     // Fallback: try auth_token cookie
-    extract_cookie(headers, "auth_token")
+    extract_cookie(headers, AUTH_COOKIE)
 }
 
 /// Verify a request's session token (Bearer or `auth_token` cookie) and build
@@ -264,7 +268,7 @@ mod tests {
     #[test]
     fn test_extract_token_from_cookie() {
         let req = Request::builder()
-            .header(COOKIE, "auth_token=cookie-jwt-token-456")
+            .header(COOKIE, "__Host-auth_token=cookie-jwt-token-456")
             .body(())
             .unwrap();
 
@@ -276,7 +280,7 @@ mod tests {
     fn test_extract_token_prefers_bearer_over_cookie() {
         let req = Request::builder()
             .header(AUTHORIZATION, "Bearer bearer-token")
-            .header(COOKIE, "auth_token=cookie-token")
+            .header(COOKIE, "__Host-auth_token=cookie-token")
             .body(())
             .unwrap();
 
@@ -288,7 +292,10 @@ mod tests {
     #[test]
     fn test_extract_token_from_cookie_with_multiple_cookies() {
         let req = Request::builder()
-            .header(COOKIE, "other=value; auth_token=my-token; another=foo")
+            .header(
+                COOKIE,
+                "other=value; __Host-auth_token=my-token; another=foo",
+            )
             .body(())
             .unwrap();
 

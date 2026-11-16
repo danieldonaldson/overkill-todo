@@ -33,7 +33,7 @@ use crate::infrastructure::crypto::Crypto;
 pub const CSRF_TOKEN_HEADER: &str = "x-csrf-token";
 
 /// Cookie name for the CSRF token.
-pub const CSRF_TOKEN_COOKIE: &str = "csrf_token";
+pub const CSRF_TOKEN_COOKIE: &str = crate::infrastructure::api::cookies::CSRF_COOKIE;
 
 /// Paths excluded from CSRF validation.
 const EXCLUDED_PATHS: &[&str] = &[
@@ -114,7 +114,7 @@ pub async fn csrf_middleware(mut req: Request, next: Next) -> Result<Response, A
 
     // Extract CSRF token from cookie
     let cookie_token =
-        extract_cookie(req.headers(), "csrf_token").ok_or_else(AppError::csrf_invalid)?;
+        extract_cookie(req.headers(), CSRF_TOKEN_COOKIE).ok_or_else(AppError::csrf_invalid)?;
 
     // Verify header and cookie match (double-submit validation)
     if header_token != cookie_token {

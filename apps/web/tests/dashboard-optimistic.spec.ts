@@ -32,10 +32,21 @@ async function mockMe(page: Page, user: object): Promise<{ count: () => number }
 
 /**
  * A readable CSRF cookie, as a signed-in browser has: mutating requests then go
- * straight out instead of refreshing first to mint one.
+ * straight out instead of refreshing first to mint one. Set from the page, once
+ * per tab, because Chromium refuses a `Secure` `__Host-` cookie added through
+ * the automation API for an `http://` URL, while the page itself (on
+ * `localhost`, a secure context) may set it.
  */
-async function seedCsrfCookie(page: Page, baseURL: string | undefined): Promise<void> {
-  await page.context().addCookies([{ name: 'csrf_token', value: 'e2e-csrf', url: baseURL! }])
+async function seedCsrfCookie(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    try {
+      if (sessionStorage.getItem('e2e-csrf-seeded')) return
+      sessionStorage.setItem('e2e-csrf-seeded', '1')
+      document.cookie = '__Host-csrf_token=e2e-csrf; path=/; secure'
+    } catch {
+      // about:blank and other opaque origins have no storage.
+    }
+  })
 }
 
 /**
@@ -250,12 +261,9 @@ test.describe('wrong guesses', () => {
 // answering with the original account and is called once, so what Settings
 // shows after the move comes from the record, not from a fresh check.
 test.describe('account changes persist across moves', () => {
-  test('setting a password is remembered after moving to Home and back', async ({
-    page,
-    baseURL,
-  }) => {
+  test('setting a password is remembered after moving to Home and back', async ({ page }) => {
     await seedSession(page)
-    await seedCsrfCookie(page, baseURL)
+    await seedCsrfCookie(page)
     const me = await mockMe(page, { ...MEMBER, has_password: false })
     let setBody: unknown = null
     await page.route('**/api/v1/users/password/set', async (route) => {
@@ -282,12 +290,9 @@ test.describe('account changes persist across moves', () => {
     expect(me.count()).toBe(1)
   })
 
-  test('unlinking Google is remembered after moving to Home and back', async ({
-    page,
-    baseURL,
-  }) => {
+  test('unlinking Google is remembered after moving to Home and back', async ({ page }) => {
     await seedSession(page)
-    await seedCsrfCookie(page, baseURL)
+    await seedCsrfCookie(page)
     const me = await mockMe(page, { ...MEMBER, oauth_providers: ['google'] })
     let unlinkCount = 0
     await page.route('**/api/v1/auth/oauth/google/unlink', async (route) => {
@@ -313,12 +318,9 @@ test.describe('account changes persist across moves', () => {
     expect(me.count()).toBe(1)
   })
 
-  test('scheduled deletion is remembered after moving to Home and back', async ({
-    page,
-    baseURL,
-  }) => {
+  test('scheduled deletion is remembered after moving to Home and back', async ({ page }) => {
     await seedSession(page)
-    await seedCsrfCookie(page, baseURL)
+    await seedCsrfCookie(page)
     const me = await mockMe(page, MEMBER)
     await page.route('**/api/v1/users/me', async (route) => {
       if (route.request().method() !== 'DELETE') {
@@ -349,10 +351,9 @@ test.describe('account changes persist across moves', () => {
 
   test('a failed unlink leaves Google linked, also after moving to Home and back', async ({
     page,
-    baseURL,
   }) => {
     await seedSession(page)
-    await seedCsrfCookie(page, baseURL)
+    await seedCsrfCookie(page)
     await mockMe(page, { ...MEMBER, oauth_providers: ['google'] })
     await page.route('**/api/v1/auth/oauth/google/unlink', async (route) => {
       await fulfill(route, {
@@ -380,10 +381,9 @@ test.describe('account changes persist across moves', () => {
 test.describe('sign-out', () => {
   test('Log out on Settings lands on /login and asks the server to end the session', async ({
     page,
-    baseURL,
   }) => {
     await seedSession(page, { cachedUser: MEMBER })
-    await seedCsrfCookie(page, baseURL)
+    await seedCsrfCookie(page)
     await mockMe(page, MEMBER)
     let logoutCount = 0
     await page.route('**/api/v1/auth/logout', async (route) => {
@@ -402,10 +402,9 @@ test.describe('sign-out', () => {
 
   test('pressing back after signing out shows no account content and ends on /login', async ({
     page,
-    baseURL,
   }) => {
     await seedSession(page, { cachedUser: MEMBER })
-    await seedCsrfCookie(page, baseURL)
+    await seedCsrfCookie(page)
     await mockMe(page, MEMBER)
     await page.route('**/api/v1/auth/logout', async (route) => {
       await fulfill(route, { status: 204 })
@@ -451,10 +450,9 @@ test.describe('sign-out', () => {
 
   test('with the server not answering, sign-out still lands on /login within a second', async ({
     page,
-    baseURL,
   }) => {
     await seedSession(page, { cachedUser: MEMBER })
-    await seedCsrfCookie(page, baseURL)
+    await seedCsrfCookie(page)
     await mockMe(page, MEMBER)
     // Never answered while the test runs: the server hangs. Aborted at the
     // end so the request doesn't fall through to the preview proxy.

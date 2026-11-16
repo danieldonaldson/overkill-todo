@@ -13,7 +13,7 @@ use chrono::{DateTime, Duration, Utc};
 
 use crate::domain::entities::User;
 use crate::infrastructure::api::cookies::{
-    create_csrf_cookie, create_jwt_cookie, create_refresh_cookie, extract_cookie,
+    REFRESH_COOKIE, create_csrf_cookie, create_jwt_cookie, create_refresh_cookie, extract_cookie,
 };
 use crate::infrastructure::api::error::AppError;
 use crate::infrastructure::api::{create_jwt, generate_csrf_token};
@@ -44,7 +44,7 @@ pub(crate) fn require_device_fingerprint(headers: &HeaderMap) -> Result<String, 
 
 /// Extract the refresh token from the `refresh_token` cookie.
 pub(crate) fn extract_refresh_token_cookie(headers: &HeaderMap) -> Option<String> {
-    extract_cookie(headers, "refresh_token")
+    extract_cookie(headers, REFRESH_COOKIE)
 }
 
 /// Wait, if needed, until the clock is past the second `cutoff` falls in.
@@ -155,8 +155,9 @@ mod tests {
     }
 
     fn other_cookie_name_strategy() -> impl Strategy<Value = String> {
-        "[a-zA-Z_][a-zA-Z0-9_]{0,20}"
-            .prop_filter("must not be refresh_token", |s| s != "refresh_token")
+        "[a-zA-Z_][a-zA-Z0-9_]{0,20}".prop_filter("must not be the refresh cookie", |s| {
+            s != "__Host-refresh_token"
+        })
     }
 
     fn cookie_pair_strategy() -> impl Strategy<Value = String> {
@@ -182,34 +183,37 @@ mod tests {
     #[test]
     fn parse_refresh_token_extracts_single_cookie() {
         assert_eq!(
-            extract_refresh("refresh_token=abc123"),
+            extract_refresh("__Host-refresh_token=abc123"),
             Some("abc123".to_string())
         );
     }
 
     #[test]
     fn parse_refresh_token_extracts_from_multiple_cookies() {
-        let cookies = "auth_token=xyz; refresh_token=abc123; session_id=999";
+        let cookies = "__Host-auth_token=xyz; __Host-refresh_token=abc123; session_id=999";
         assert_eq!(extract_refresh(cookies), Some("abc123".to_string()));
     }
 
     #[test]
     fn parse_refresh_token_handles_whitespace() {
         assert_eq!(
-            extract_refresh("  refresh_token=abc123  "),
+            extract_refresh("  __Host-refresh_token=abc123  "),
             Some("abc123".to_string())
         );
     }
 
     #[test]
     fn parse_refresh_token_returns_none_when_missing() {
-        assert_eq!(extract_refresh("auth_token=xyz; session_id=999"), None);
+        assert_eq!(
+            extract_refresh("__Host-auth_token=xyz; session_id=999"),
+            None
+        );
     }
 
     proptest! {
         #[test]
         fn prop_refresh_token_always_extracted_when_present(token in token_strategy()) {
-            let result = extract_refresh(&format!("refresh_token={token}"));
+            let result = extract_refresh(&format!("__Host-refresh_token={token}"));
             prop_assert_eq!(result, Some(token));
         }
 
@@ -219,7 +223,7 @@ mod tests {
             token in token_strategy()
         ) {
             let mut cookies: Vec<String> = prefix;
-            cookies.push(format!("refresh_token={token}"));
+            cookies.push(format!("__Host-refresh_token={token}"));
             let cookie_str = cookies.join("; ");
 
             let result = extract_refresh(&cookie_str);
@@ -231,7 +235,7 @@ mod tests {
             token in token_strategy(),
             suffix in prop::collection::vec(cookie_pair_strategy(), 0..5)
         ) {
-            let mut cookies = vec![format!("refresh_token={token}")];
+            let mut cookies = vec![format!("__Host-refresh_token={token}")];
             cookies.extend(suffix);
             let cookie_str = cookies.join("; ");
 
@@ -246,7 +250,7 @@ mod tests {
             suffix in prop::collection::vec(cookie_pair_strategy(), 0..3)
         ) {
             let mut cookies: Vec<String> = prefix;
-            cookies.push(format!("refresh_token={token}"));
+            cookies.push(format!("__Host-refresh_token={token}"));
             cookies.extend(suffix);
             let cookie_str = cookies.join("; ");
 
@@ -271,7 +275,7 @@ mod tests {
         ) {
             let before = " ".repeat(spaces_before);
             let after = " ".repeat(spaces_after);
-            let cookies = format!("{before}refresh_token={token}{after}");
+            let cookies = format!("{before}__Host-refresh_token={token}{after}");
 
             let result = extract_refresh(&cookies);
             prop_assert_eq!(result, Some(token));

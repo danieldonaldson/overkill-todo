@@ -77,7 +77,7 @@ test('HttpClient.request', async ({ bench }) => {
   const client = new HttpClient()
   // A live session, so the client goes straight to fetch without refreshing.
   setTokenExpiry(Math.floor(Date.now() / 1000) + 3600)
-  document.cookie = 'csrf_token=bench-csrf-token; path=/'
+  document.cookie = '__Host-csrf_token=bench-csrf-token; path=/; secure'
   globalThis.fetch = async () =>
     new Response(body, {
       status: 200,

@@ -20,6 +20,7 @@ use overkill_todo::application::dto::OAuthUserInfo;
 use overkill_todo::application::ports::OAuthProviderClient;
 use overkill_todo::domain::entities::OAuthProvider;
 use overkill_todo::domain::errors::DomainError;
+use overkill_todo::infrastructure::api::cookies;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -130,7 +131,10 @@ fn set_cookies(resp: &Response<Body>) -> Vec<String> {
 
 fn assert_handoff_cookies_cleared(resp: &Response<Body>) {
     let cookies = set_cookies(resp);
-    for name in ["oauth_state", "oauth_device_fingerprint"] {
+    for name in [
+        cookies::OAUTH_STATE_COOKIE,
+        cookies::OAUTH_DEVICE_FINGERPRINT_COOKIE,
+    ] {
         assert!(
             cookies
                 .iter()
@@ -163,7 +167,7 @@ async fn start(app: &Router, provider: &str, mode: &str, bearer: Option<&str>) -
         .strip_prefix("https://provider.test/authorize?state=")
         .expect("redirects to the provider's authorization URL")
         .to_string();
-    let nonce = common::cookie_value(&resp, "oauth_state").expect("oauth_state cookie set");
+    let nonce = common::cookie_value(&resp, "__Host-oauth_state").expect("oauth_state cookie set");
     Started { state, nonce }
 }
 
@@ -195,8 +199,13 @@ fn assert_login_error(resp: &Response<Body>, code: &str) {
 async fn login_flow(app: &Router, code: &str, device_fingerprint: Option<&str>) -> Response<Body> {
     let s = start(app, "google", "login", None).await;
     let cookie = device_fingerprint.map_or_else(
-        || format!("oauth_state={}", s.nonce),
-        |fp| format!("oauth_state={}; oauth_device_fingerprint={fp}", s.nonce),
+        || format!("__Host-oauth_state={}", s.nonce),
+        |fp| {
+            format!(
+                "__Host-oauth_state={}; __Host-oauth_device_fingerprint={fp}",
+                s.nonce
+            )
+        },
     );
     callback(
         app,
@@ -264,7 +273,7 @@ async fn password_signup(app: &Router, email: &str) -> String {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    common::cookie_value(&resp, "auth_token").expect("auth_token cookie")
+    common::cookie_value(&resp, "__Host-auth_token").expect("auth_token cookie")
 }
 
 // ---------------------------------------------------------------------------
@@ -279,14 +288,14 @@ async fn login_creates_user_and_issues_full_session(pool: PgPool) {
 
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(location(&resp), "/dashboard");
-    assert!(common::cookie_value(&resp, "csrf_token").is_some());
+    assert!(common::cookie_value(&resp, "__Host-csrf_token").is_some());
     assert!(
-        common::cookie_value(&resp, "refresh_token").is_some(),
+        common::cookie_value(&resp, "__Host-refresh_token").is_some(),
         "a device fingerprint upgrades the session with a refresh token"
     );
     assert_handoff_cookies_cleared(&resp);
 
-    let token = common::cookie_value(&resp, "auth_token").expect("auth_token cookie");
+    let token = common::cookie_value(&resp, "__Host-auth_token").expect("auth_token cookie");
     // OT-009: the state round-tripped through Google, and the session it
     // issues is HMAC-SHA-512 under a named key.
     let header = jsonwebtoken::decode_header(&token).unwrap();
@@ -306,8 +315,8 @@ async fn login_without_device_fingerprint_issues_access_only_session(pool: PgPoo
     let resp = login_flow(&app, "new-user", None).await;
 
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
-    assert!(common::cookie_value(&resp, "auth_token").is_some());
-    assert!(common::cookie_value(&resp, "refresh_token").is_none());
+    assert!(common::cookie_value(&resp, "__Host-auth_token").is_some());
+    assert!(common::cookie_value(&resp, "__Host-refresh_token").is_none());
 }
 
 #[sqlx::test]
@@ -315,12 +324,20 @@ async fn repeat_login_with_same_sub_returns_same_user(pool: PgPool) {
     let app = app(pool);
 
     let first = login_flow(&app, "new-user", None).await;
-    let first_id =
-        me(&app, &common::cookie_value(&first, "auth_token").unwrap()).await["id"].clone();
+    let first_id = me(
+        &app,
+        &common::cookie_value(&first, "__Host-auth_token").unwrap(),
+    )
+    .await["id"]
+        .clone();
 
     let second = login_flow(&app, "new-user", None).await;
-    let second_id =
-        me(&app, &common::cookie_value(&second, "auth_token").unwrap()).await["id"].clone();
+    let second_id = me(
+        &app,
+        &common::cookie_value(&second, "__Host-auth_token").unwrap(),
+    )
+    .await["id"]
+        .clone();
 
     assert_eq!(first_id, second_id);
 }
@@ -334,7 +351,11 @@ async fn login_auto_links_verified_password_account(pool: PgPool) {
     let resp = login_flow(&app, "existing-email", None).await;
 
     assert_eq!(location(&resp), "/dashboard");
-    let user = me(&app, &common::cookie_value(&resp, "auth_token").unwrap()).await;
+    let user = me(
+        &app,
+        &common::cookie_value(&resp, "__Host-auth_token").unwrap(),
+    )
+    .await;
     assert_eq!(user["id"], password_user["id"]);
     assert_eq!(user["oauth_providers"], json!(["google"]));
 }
@@ -356,7 +377,7 @@ async fn login_with_unverified_account_email_redirects_with_conflict(pool: PgPoo
 
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(location(&resp), "/login?error=oauth_email_conflict");
-    assert!(common::cookie_value(&resp, "auth_token").is_none());
+    assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
     assert_handoff_cookies_cleared(&resp);
 }
 
@@ -367,7 +388,7 @@ async fn login_without_provider_email_is_rejected(pool: PgPool) {
     let resp = login_flow(&app, "no-email", None).await;
 
     assert_login_error(&resp, "oauth_failed");
-    assert!(common::cookie_value(&resp, "auth_token").is_none());
+    assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
 }
 
 #[sqlx::test]
@@ -378,7 +399,7 @@ async fn failed_code_exchange_does_not_log_in(pool: PgPool) {
 
     // An upstream failure still lands the browser back on the login page.
     assert_login_error(&resp, "oauth_failed");
-    assert!(common::cookie_value(&resp, "auth_token").is_none());
+    assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -401,7 +422,7 @@ async fn callback_without_state_cookie_is_rejected(pool: PgPool) {
     .await;
 
     assert_login_error(&resp, "oauth_failed");
-    assert!(common::cookie_value(&resp, "auth_token").is_none());
+    assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
 }
 
 #[sqlx::test]
@@ -414,12 +435,12 @@ async fn callback_with_another_flows_nonce_is_rejected(pool: PgPool) {
         &app,
         "google",
         &format!("code=new-user&state={}", attacker.state),
-        Some(&format!("oauth_state={}", victim.nonce)),
+        Some(&format!("__Host-oauth_state={}", victim.nonce)),
     )
     .await;
 
     assert_login_error(&resp, "oauth_failed");
-    assert!(common::cookie_value(&resp, "auth_token").is_none());
+    assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
 }
 
 /// A cancelled consent arrives as `?error=access_denied&state=…` with no code.
@@ -432,12 +453,12 @@ async fn provider_cancellation_redirects_to_login(pool: PgPool) {
         &app,
         "google",
         &format!("error=access_denied&state={}", s.state),
-        Some(&format!("oauth_state={}", s.nonce)),
+        Some(&format!("__Host-oauth_state={}", s.nonce)),
     )
     .await;
 
     assert_login_error(&resp, "oauth_cancelled");
-    assert!(common::cookie_value(&resp, "auth_token").is_none());
+    assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
 }
 
 #[sqlx::test]
@@ -458,7 +479,7 @@ async fn callback_without_code_redirects_to_login(pool: PgPool) {
         &app,
         "google",
         &format!("state={}", s.state),
-        Some(&format!("oauth_state={}", s.nonce)),
+        Some(&format!("__Host-oauth_state={}", s.nonce)),
     )
     .await;
 
@@ -476,7 +497,7 @@ async fn login_with_unverified_provider_email_creates_no_account(pool: PgPool) {
 
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(location(&resp), "/login?error=oauth_email_conflict");
-    assert!(common::cookie_value(&resp, "auth_token").is_none());
+    assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
     let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
         .fetch_one(&pool)
         .await
@@ -501,7 +522,7 @@ async fn callback_with_forged_state_is_rejected(pool: PgPool) {
         &app,
         "google",
         "code=new-user&state=not.a.jwt",
-        Some("oauth_state=whatever"),
+        Some("__Host-oauth_state=whatever"),
     )
     .await;
 
@@ -517,7 +538,7 @@ async fn callback_for_different_provider_than_state_is_rejected(pool: PgPool) {
         &app,
         "google",
         &format!("code=new-user&state={}", s.state),
-        Some(&format!("oauth_state={}", s.nonce)),
+        Some(&format!("__Host-oauth_state={}", s.nonce)),
     )
     .await;
 
@@ -541,7 +562,7 @@ async fn callback_with_malformed_user_id_in_state_is_rejected(pool: PgPool) {
         &app,
         "google",
         &format!("code=link-me&state={state}"),
-        Some(&format!("oauth_state={nonce}")),
+        Some(&format!("__Host-oauth_state={nonce}")),
     )
     .await;
 
@@ -562,14 +583,14 @@ async fn link_attaches_provider_to_signed_in_user(pool: PgPool) {
         &app,
         "apple",
         &format!("code=link-me&state={}", s.state),
-        Some(&format!("oauth_state={}", s.nonce)),
+        Some(&format!("__Host-oauth_state={}", s.nonce)),
     )
     .await;
 
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(location(&resp), "/dashboard/settings?oauth=linked");
     assert!(
-        common::cookie_value(&resp, "auth_token").is_none(),
+        common::cookie_value(&resp, "__Host-auth_token").is_none(),
         "linking must not replace the current session"
     );
     assert_handoff_cookies_cleared(&resp);
@@ -590,7 +611,7 @@ async fn relinking_same_identity_to_same_user_is_idempotent(pool: PgPool) {
             &app,
             "apple",
             &format!("code=link-me&state={}", s.state),
-            Some(&format!("oauth_state={}", s.nonce)),
+            Some(&format!("__Host-oauth_state={}", s.nonce)),
         )
         .await;
         assert_eq!(location(&resp), "/dashboard/settings?oauth=linked");
@@ -609,7 +630,7 @@ async fn link_identity_owned_by_another_user_redirects_already_linked(pool: PgPo
         &app,
         "google",
         &format!("code=new-user&state={}", s.state),
-        Some(&format!("oauth_state={}", s.nonce)),
+        Some(&format!("__Host-oauth_state={}", s.nonce)),
     )
     .await;
 
@@ -628,7 +649,7 @@ async fn link_with_unverified_provider_email_is_refused(pool: PgPool) {
         &app,
         "google",
         &format!("code=unverified&state={}", s.state),
-        Some(&format!("oauth_state={}", s.nonce)),
+        Some(&format!("__Host-oauth_state={}", s.nonce)),
     )
     .await;
 
@@ -675,4 +696,114 @@ async fn verify_email_cannot_take_over_oauth_only_account(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+// ---------------------------------------------------------------------------
+// Cookie integrity (P-22)
+// ---------------------------------------------------------------------------
+
+/// P-22: every auth cookie the server sets or clears is `__Host-` prefixed,
+/// with `Secure`, `Path=/` and no `Domain`, so a browser accepts it only from
+/// this host over HTTPS: a sibling host or a plain-HTTP response can't plant
+/// one. `models/auth_protocols.spthy` names this test on the rule where the
+/// browser stores the app's cookies.
+#[sqlx::test(migrations = "./migrations")]
+async fn auth_cookies_are_host_only(pool: PgPool) {
+    let app = app(pool);
+    let fingerprint = "fp-host-only";
+    let mut seen = Vec::new();
+
+    // The device-fingerprint handoff and the start of a Google sign-in.
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/oauth/device-fingerprint",
+            &json!({ "device_fingerprint": fingerprint }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    seen.extend(set_cookies(&resp));
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oauth/google?mode=login")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    seen.extend(set_cookies(&resp));
+
+    // A callback that signs in (sets the session cookies, clears the handoff),
+    // and one that fails (clears the handoff).
+    let resp = login_flow(&app, "new-user", Some(fingerprint)).await;
+    seen.extend(set_cookies(&resp));
+    let refresh = common::cookie_value(&resp, cookies::REFRESH_COOKIE).expect("refresh cookie");
+    let resp = callback(&app, "google", "code=new-user", None).await;
+    seen.extend(set_cookies(&resp));
+
+    // Refresh (a new session) and sign-out (clears it).
+    let refresh_req = |token: &str, uri: &str| {
+        Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header(
+                header::COOKIE,
+                format!("{}={token}", cookies::REFRESH_COOKIE),
+            )
+            .header("x-device-fingerprint", fingerprint)
+            .body(Body::empty())
+            .unwrap()
+    };
+    let resp = app
+        .clone()
+        .oneshot(refresh_req(&refresh, "/api/v1/auth/refresh"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    seen.extend(set_cookies(&resp));
+    let rotated = common::cookie_value(&resp, cookies::REFRESH_COOKIE).expect("rotated");
+    let resp = app
+        .clone()
+        .oneshot(refresh_req(&rotated, "/api/v1/auth/logout"))
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "logout: {}", resp.status());
+    seen.extend(set_cookies(&resp));
+
+    // Every cookie was both set and cleared along the way.
+    for name in [
+        cookies::AUTH_COOKIE,
+        cookies::REFRESH_COOKIE,
+        cookies::CSRF_COOKIE,
+        cookies::OAUTH_STATE_COOKIE,
+        cookies::OAUTH_DEVICE_FINGERPRINT_COOKIE,
+    ] {
+        let set = seen
+            .iter()
+            .any(|c| c.starts_with(&format!("{name}=")) && !c.starts_with(&format!("{name}=;")));
+        let cleared = seen
+            .iter()
+            .any(|c| c.starts_with(&format!("{name}=;")) && c.contains("Max-Age=0"));
+        assert!(
+            set && cleared,
+            "{name}: set {set}, cleared {cleared}, in {seen:?}"
+        );
+    }
+    for c in &seen {
+        let attrs: Vec<String> = c
+            .split(';')
+            .skip(1)
+            .map(|a| a.trim().to_ascii_lowercase())
+            .collect();
+        assert!(c.starts_with("__Host-"), "not host-prefixed: {c}");
+        assert!(attrs.iter().any(|a| a == "secure"), "not Secure: {c}");
+        assert!(attrs.iter().any(|a| a == "path=/"), "Path isn't /: {c}");
+        assert!(
+            !attrs.iter().any(|a| a.starts_with("domain")),
+            "has a Domain: {c}"
+        );
+    }
 }

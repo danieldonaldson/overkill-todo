@@ -72,6 +72,7 @@ only (`deploy/secrets/README.md`).
 | `just threat-model-check`              | every auth security property names a check that still exists       |
 | `just verify`                          | Kani proofs of the auth lockout policy, every input within bounds  |
 | `just models`                          | Quint concurrency models of code entry and refresh, replayed on DB |
+| `just protocols`                       | Tamarin proofs of the sign-in protocols against a network attacker |
 | `just load <scenario>`                 | k6 load scenario against the capped stack                          |
 | `just obs-up` / `just obs-down`        | traces, logs, metrics, alerts and Grafana                          |
 | `just analytics-up` / `analytics-down` | Umami web analytics on :3001                                       |

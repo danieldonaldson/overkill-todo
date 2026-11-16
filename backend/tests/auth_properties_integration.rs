@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use overkill_todo::infrastructure::api::cookies;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -86,8 +87,8 @@ async fn login(app: &Router, email: &str, password: &str) -> Result<Session, Sta
         return Err(resp.status());
     }
     Ok(Session {
-        auth: common::cookie_value(&resp, "auth_token").expect("auth cookie"),
-        refresh: common::cookie_value(&resp, "refresh_token").expect("refresh cookie"),
+        auth: common::cookie_value(&resp, "__Host-auth_token").expect("auth cookie"),
+        refresh: common::cookie_value(&resp, "__Host-refresh_token").expect("refresh cookie"),
         csrf: body["csrf_token"].as_str().unwrap().to_string(),
     })
 }
@@ -95,19 +96,31 @@ async fn login(app: &Router, email: &str, password: &str) -> Result<Session, Sta
 /// Presents `s`'s refresh token; returns the status and the rotated refresh
 /// token, if a new session was issued.
 async fn try_refresh(app: &Router, s: &Session) -> (StatusCode, Option<String>) {
+    try_refresh_from(app, s, FINGERPRINT).await
+}
+
+/// Like [`try_refresh`], from a device with `fingerprint`.
+async fn try_refresh_from(
+    app: &Router,
+    s: &Session,
+    fingerprint: &str,
+) -> (StatusCode, Option<String>) {
     let req = Request::builder()
         .method("POST")
         .uri("/api/v1/auth/refresh")
         .header(
             header::COOKIE,
-            format!("refresh_token={}; csrf_token={}", s.refresh, s.csrf),
+            format!(
+                "__Host-refresh_token={}; __Host-csrf_token={}",
+                s.refresh, s.csrf
+            ),
         )
         .header("x-csrf-token", &s.csrf)
-        .header("x-device-fingerprint", FINGERPRINT)
+        .header("x-device-fingerprint", fingerprint)
         .body(Body::empty())
         .unwrap();
     let (resp, _) = send(app, req).await;
-    let rotated = common::cookie_value(&resp, "refresh_token").filter(|t| !t.is_empty());
+    let rotated = common::cookie_value(&resp, "__Host-refresh_token").filter(|t| !t.is_empty());
     (resp.status(), rotated)
 }
 
@@ -118,7 +131,7 @@ fn authed(method: &str, uri: &str, s: &Session, body: Option<&Value>) -> Request
         .uri(uri)
         .header(
             header::COOKIE,
-            format!("auth_token={}; csrf_token={}", s.auth, s.csrf),
+            format!("__Host-auth_token={}; __Host-csrf_token={}", s.auth, s.csrf),
         )
         .header("x-csrf-token", &s.csrf)
         .header("x-device-fingerprint", FINGERPRINT);
@@ -228,7 +241,7 @@ async fn a_refresh_token_is_refused_after_logout(pool: PgPool) {
         .header(
             header::COOKIE,
             format!(
-                "auth_token={}; refresh_token={}; csrf_token={}",
+                "__Host-auth_token={}; __Host-refresh_token={}; __Host-csrf_token={}",
                 session.auth, session.refresh, session.csrf
             ),
         )
@@ -243,6 +256,55 @@ async fn a_refresh_token_is_refused_after_logout(pool: PgPool) {
         rotated.is_none(),
         "a signed-out refresh token must not yield a session"
     );
+}
+
+// ── P-15, P-16 (refresh checks that models/auth_protocols.spthy relies on) ───
+
+/// P-15: presenting a refresh token after it was rotated revokes every session
+/// of that Member: the rotated successor and an unrelated sign-in alike.
+#[sqlx::test(migrations = "./migrations")]
+async fn reusing_a_rotated_refresh_token_ends_every_session(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    let email = "test-p15-reuse@example.com";
+    let first = signed_in(&app, email).await;
+    let other = login(&app, email, PASSWORD).await.expect("second sign-in");
+
+    // The owner refreshes, rotating the first token.
+    let (status, rotated) = try_refresh(&app, &first).await;
+    assert_eq!(status, StatusCode::OK);
+    let successor = Session {
+        auth: first.auth.clone(),
+        refresh: rotated.expect("a rotated refresh token"),
+        csrf: first.csrf.clone(),
+    };
+
+    // The rotated token is presented again: refused as reuse.
+    let (status, issued) = try_refresh(&app, &first).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(issued.is_none(), "a rotated token must not yield a session");
+
+    // Every session of the Member has ended.
+    for (name, session) in [("the successor", &successor), ("the other sign-in", &other)] {
+        let (status, issued) = try_refresh(&app, session).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{name} still refreshes");
+        assert!(issued.is_none(), "{name} still yields a session");
+    }
+}
+
+/// P-16: a refresh token presented from another device is refused, and still
+/// works from the device it was issued to.
+#[sqlx::test(migrations = "./migrations")]
+async fn a_refresh_token_is_refused_from_another_device(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    let session = signed_in(&app, "test-p16-fingerprint@example.com").await;
+
+    let (status, issued) = try_refresh_from(&app, &session, "another-device").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(issued.is_none(), "another device must not get a session");
+
+    let (status, issued) = try_refresh(&app, &session).await;
+    assert_eq!(status, StatusCode::OK, "the issuing device is refused too");
+    assert!(issued.is_some());
 }
 
 // ── P-09 ─────────────────────────────────────────────────────────────────────
@@ -516,10 +578,10 @@ fn form_bodies(fields: &Value) -> Vec<(&'static str, String)> {
 
 fn sets_credential_cookie(resp: &axum::http::Response<Body>) -> bool {
     [
-        "auth_token",
-        "refresh_token",
-        "csrf_token",
-        "oauth_device_fingerprint",
+        cookies::AUTH_COOKIE,
+        cookies::REFRESH_COOKIE,
+        cookies::CSRF_COOKIE,
+        cookies::OAUTH_DEVICE_FINGERPRINT_COOKIE,
     ]
     .iter()
     .any(|name| common::cookie_value(resp, name).is_some_and(|v| !v.is_empty()))
@@ -563,7 +625,10 @@ async fn csrf_exempt_routes_cannot_be_driven_cross_site(pool: PgPool) {
     let req = Request::builder()
         .method("POST")
         .uri("/api/v1/auth/refresh")
-        .header(header::COOKIE, format!("refresh_token={}", victim.refresh))
+        .header(
+            header::COOKIE,
+            format!("__Host-refresh_token={}", victim.refresh),
+        )
         .header(header::ORIGIN, OTHER_ORIGIN)
         .body(Body::empty())
         .unwrap();

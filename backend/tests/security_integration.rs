@@ -86,7 +86,7 @@ async fn establish_session(app: &axum::Router, email: &str, password: &str) -> S
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK, "complete-signup failed");
-    let auth_token = common::cookie_value(&resp, "auth_token").expect("auth_token cookie");
+    let auth_token = common::cookie_value(&resp, "__Host-auth_token").expect("auth_token cookie");
     let body = body_json(resp.into_body()).await;
     let csrf_token = body["csrf_token"].as_str().expect("csrf_token").to_string();
     let user_id = body["user"]["id"].as_str().expect("user id").to_string();
@@ -106,8 +106,8 @@ fn change_password_req(
     csrf_header: Option<&str>,
 ) -> Request<Body> {
     let cookie = csrf_cookie.map_or_else(
-        || format!("auth_token={auth_token}"),
-        |c| format!("auth_token={auth_token}; csrf_token={c}"),
+        || format!("__Host-auth_token={auth_token}"),
+        |c| format!("__Host-auth_token={auth_token}; __Host-csrf_token={c}"),
     );
     let mut builder = Request::builder()
         .method("POST")

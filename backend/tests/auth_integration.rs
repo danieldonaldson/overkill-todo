@@ -95,7 +95,7 @@ async fn login_returns_token_after_signup(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::OK, "login failed");
     // The session JWT is delivered as the auth_token cookie, not in the body.
     assert!(
-        common::cookie_value(&resp, "auth_token").is_some(),
+        common::cookie_value(&resp, "__Host-auth_token").is_some(),
         "Expected auth_token cookie in login response"
     );
     let body = body_json(resp.into_body()).await;
@@ -254,7 +254,7 @@ async fn signup_flow_succeeds(pool: PgPool) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK, "complete-signup step failed");
     // The session JWT is delivered as the auth_token cookie, not in the body.
-    let jwt = common::cookie_value(&resp, "auth_token").expect("auth_token cookie");
+    let jwt = common::cookie_value(&resp, "__Host-auth_token").expect("auth_token cookie");
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["user"]["email"], email);
     assert_eq!(body["user"]["email_verified"], true);
