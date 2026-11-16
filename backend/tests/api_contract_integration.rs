@@ -76,7 +76,7 @@ async fn malformed_query_parameter_gets_standard_error(pool: PgPool) {
     let token = common::mint_session_jwt(admin, true, "admin", 15);
     let req = Request::builder()
         .uri("/api/v1/admin/users?limit=lots")
-        .header(header::COOKIE, format!("auth_token={token}"))
+        .header(header::COOKIE, format!("__Host-auth_token={token}"))
         .body(Body::empty())
         .unwrap();
     let resp = common::create_test_app(pool).oneshot(req).await.unwrap();
@@ -94,7 +94,7 @@ async fn malformed_path_parameter_gets_standard_error(pool: PgPool) {
         .header(header::CONTENT_TYPE, "application/json")
         .header(
             header::COOKIE,
-            format!("auth_token={token}; csrf_token={csrf}"),
+            format!("__Host-auth_token={token}; __Host-csrf_token={csrf}"),
         )
         .header("x-csrf-token", csrf)
         .body(Body::from(r#"{"role":"admin"}"#))

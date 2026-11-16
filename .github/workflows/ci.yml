@@ -33,6 +33,7 @@ jobs:
     outputs:
       backend: ${{ github.event_name != 'pull_request' || steps.filter.outputs.backend == 'true' }}
       web: ${{ github.event_name != 'pull_request' || steps.filter.outputs.web == 'true' }}
+      protocols: ${{ github.event_name != 'pull_request' || steps.filter.outputs.protocols == 'true' }}
     steps:
       - uses: dorny/paths-filter@v4
         id: filter
@@ -45,9 +46,16 @@ jobs:
             backend:
               - *shared
               - backend/**
-              - models/**
+              - models/*.qnt
               - scripts/check-rust-pin.sh
               - scripts/models.sh
+            # The Tamarin model (OT-010 design D9). Its result depends only on
+            # the model; the tests its rules name are checked by the always-run
+            # threat-model job.
+            protocols:
+              - *shared
+              - models/*.spthy
+              - scripts/protocols.sh
             web:
               - *shared
               - apps/**
@@ -327,6 +335,21 @@ jobs:
         run: cargo sqlx migrate run
       - run: ./scripts/models.sh
 
+  # Tamarin protocol model (OT-010 design D9): every sign-in lemma proven against
+  # an active network attacker, and each broken variant still attacked. About a
+  # minute; runs when the model or its script changes.
+  protocols:
+    name: Protocol model (Tamarin)
+    needs: changes
+    if: needs.changes.outputs.protocols == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: github:tamarin-prover/tamarin-prover github:maude-lang/Maude
+      - run: ./scripts/protocols.sh
+
   # Cheap and always run: every property in docs/security/threat-model.md names a
   # check or an accepted gap, and every named check still exists (OT-010).
   threat-model:
@@ -343,7 +366,7 @@ jobs:
   images:
     name: Build ${{ matrix.component }} image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [backend, verify, models, web, web-e2e, observability, secrets, threat-model]
+    needs: [backend, verify, models, protocols, web, web-e2e, observability, secrets, threat-model]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

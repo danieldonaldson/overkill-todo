@@ -241,6 +241,92 @@ _What slice 4 showed._
 - **The concurrent-refresh open question is answered: no double issue.**
   Within the bounds, no interleaving gives a token two successors.
 
+**Slice 5 (Tamarin).** We believe the four protocol scenarios can be proven
+against a Dolev-Yao attacker with their own account, and that the riskiest
+part is termination on refresh rotation with revocation, which is stateful.
+ProVerif is the fallback.
+
+_What slice 5 showed._
+
+- **No maintained Tamarin image exists, so Tamarin is pinned through mise
+  (D9).** Tamarin 1.12.0 (official `linux64-ubuntu` release) and Maude 3.5.1
+  (official release zip) install with `mise install` through the `github:`
+  backend and run natively here. The trivial model's lemma proved in 0.06 s
+  (`just protocols` about 0.4 s in all). Tamarin exits 0 even when a lemma is
+  falsified, so `scripts/protocols.sh` reads its summary, fails on
+  wellformedness warnings, and checks each broken variant (an `#ifdef` flag
+  that removes a check) still has an attack. Scratch-checked: a leaked token
+  fails the proof step, and a variant with no attack fails the variant step.
+- **Tamarin terminates, so the ProVerif fallback wasn't needed, but the first
+  model didn't terminate at all.** Written straight from the protocols, every
+  lemma, even the sanity traces, ran past 3 minutes. Bisecting the rules found
+  the causes, and each fix is a modelling choice, not a weakened claim:
+  - **Cookie reads were linear facts re-emitted by every request**, an
+    endless backward chain. Cookies became persistent facts (any cookie a
+    browser ever held may be sent or stolen again, which only helps the
+    attacker); only the refresh token a refresh consumes stays linear.
+  - **The attacker named their own connection ids**, so every honest request
+    raised "could the attacker know this browser's connection?". Attacker
+    connections get their own fresh ids.
+  - **Issuing rules had 15–70 precomputed variants each**, multiplied at every
+    token lookup. Account names are typed as public names, received tokens as
+    fresh values, and every way in (password, refresh, Google) ends in one
+    `Server_issue` rule, so a session has a single source.
+  - **Revoke-all as a per-user epoch** made proofs reason along chains of
+    epochs, which needed induction that didn't terminate. Revoke-all is now
+    what the SQL does: a restriction that no token minted before it rotates
+    after it, plus one that the check and the issue are atomic.
+  - **Two helper lemmas** (the server key and an honest fingerprint are never
+    known unless stolen) are proven first and reused. A ranking oracle was
+    tried and made things worse; it was dropped.
+
+  The final model proves all 16 lemmas in 14.7 s, and `just protocols`, with
+  its 11 variant checks, takes about a minute.
+
+- **No defect in the code, under the stated assumptions.** Every check the
+  model relies on is attacked when it's removed: the state-to-cookie
+  comparison (the login-CSRF trace), the CSRF check, the CSRF token's user
+  binding (under cookie tossing), the fingerprint, revoke-all,
+  `revoked_at IS NULL`, JSON-only bodies on exempt routes, and TLS.
+- **Finding, fixed: login CSRF if the attacker can write the app's
+  cookies.** With cookie writes allowed, the attacker plants their own flow's
+  nonce as the victim's `oauth_state` cookie and signs the victim in to the
+  attacker's account; planting their own session cookies does the same. HSTS
+  has `includeSubDomains` but isn't preloaded, and no cookie had the
+  `__Host-` prefix. The user chose to prefix every auth cookie (task 5.11,
+  D9). That forces `Path=/`, so the session and refresh cookies now go with
+  every same-origin request (still `HttpOnly`; the edge strips them before
+  Umami), and `Secure` in dev, which browsers accept on `http://localhost`.
+  The old code stays in the model as `NO_HOST_PREFIX`, which must still be
+  attacked. The CSRF token survived tossing even before, because it's bound
+  to the user.
+- **Three lemmas were first stated too strongly, and the model said so.** A
+  cross-site change was "attacked" when the attacker had the Member's
+  password, a token stolen from another of the Member's browsers, or was
+  changing their own account (after a tossed login CSRF). With any of those the
+  attacker needs no CSRF, so P-20 is two lemmas: no cross-site change without
+  theft from that browser or the password, and (the binding) none without a
+  token signed for that Member. The sign-in replay lemma is narrowed to what
+  only it says: the attacker's own client gets a session only with the
+  password or by refreshing, which P-16 and P-33's secrecy lemma cover.
+- **Two rule checks had no integration test**, only unit tests: refresh from
+  another device (P-16) and reuse ending every session (P-15). Both were added
+  over the real router, and each failed on a scratch edit that removed its
+  check. `just threat-model-check` now resolves the test each rule names.
+- **Code review found ten issues, all fixed.** The two that mattered for
+  the proofs: variant runs proved only their own lemma, so the `[reuse]`
+  helpers were assumed there, not proven (each variant run now proves them
+  too and requires them to hold); and the P-22 attack the threat model cites
+  wasn't checked by anything (it became a checked known attack, and once
+  task 5.11 fixed it, the old-code variant that must stay attacked). Two refresh lemmas hold by construction from the
+  restrictions that encode the SQL, which the threat model now says, instead
+  of claiming more. The rest were a wrong primitive in the stated assumptions
+  (the CSRF token is HMAC-SHA-256), a rotate rule linked to the logout test,
+  P-20's strength line, six copies of the assumptions (now one section), a
+  variant missing from ARCHITECTURE.md, a parser that skipped indented
+  `// Checks:` blocks, and a CI filter on auth code that can't change the
+  model's result (narrowed to the model and its script).
+
 ## Decisions
 
 ### D1: The threat model is a Markdown file the gate can parse
@@ -448,6 +534,21 @@ threat-model check (D1) resolves those links.
 We chose Tamarin over ProVerif because refresh rotation with revocation is
 stateful, and Tamarin handles mutable state natively. ProVerif is the
 fallback if proofs don't terminate.
+
+_Decided in slice 5:_ no maintained Tamarin image exists (Docker Hub has only
+personal images, and the project publishes none), so the Docker pin is
+dropped. Tamarin and Maude are pinned in `.mise.toml` through mise's `github:`
+backend, from the projects' official release assets (Tamarin 1.12.0, Maude
+3.5.1), like Quint and Kani. CI installs them through mise. We rejected
+building our own image from those releases (slower first run, a second pin to
+keep) and pinning a personal image by digest (an unknown maintainer in the
+gate's supply chain).
+
+_Decided in slice 5, from the model's finding:_ every auth cookie is
+`__Host-` prefixed, so the browser enforces the model's assumption that only
+the app sets its cookies. We accepted `Path=/` for all of them (the prefix
+requires it) and `Secure` in dev. We rejected prefixing only `oauth_state`,
+because planted session cookies give the same login CSRF.
 
 ### D10: Fuzzing moves to OT-011
 

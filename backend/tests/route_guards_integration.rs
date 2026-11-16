@@ -133,7 +133,7 @@ fn with_session(
     builder
         .header(
             header::COOKIE,
-            format!("auth_token={token}; csrf_token={csrf}"),
+            format!("__Host-auth_token={token}; __Host-csrf_token={csrf}"),
         )
         .header("x-csrf-token", csrf)
 }

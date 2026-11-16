@@ -48,7 +48,7 @@ fn post_authed(uri: &str, s: &Session, body: &Value) -> Request<Body> {
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::AUTHORIZATION, format!("Bearer {}", s.token))
-        .header(header::COOKIE, format!("csrf_token={}", s.csrf))
+        .header(header::COOKIE, format!("__Host-csrf_token={}", s.csrf))
         .header("x-csrf-token", &s.csrf)
         .body(Body::from(serde_json::to_vec(body).unwrap()))
         .unwrap()
@@ -69,7 +69,7 @@ fn delete_authed(uri: &str, s: &Session, body: &Value) -> Request<Body> {
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::AUTHORIZATION, format!("Bearer {}", s.token))
-        .header(header::COOKIE, format!("csrf_token={}", s.csrf))
+        .header(header::COOKIE, format!("__Host-csrf_token={}", s.csrf))
         .header("x-csrf-token", &s.csrf)
         .body(Body::from(serde_json::to_vec(body).unwrap()))
         .unwrap()
@@ -106,7 +106,7 @@ async fn signup_and_session(app: &axum::Router, email: &str) -> Session {
         ))
         .await
         .unwrap();
-    let token = common::cookie_value(&resp, "auth_token").expect("auth_token cookie");
+    let token = common::cookie_value(&resp, "__Host-auth_token").expect("auth_token cookie");
     let csrf = body_json(resp.into_body()).await["csrf_token"]
         .as_str()
         .unwrap()
@@ -380,7 +380,7 @@ async fn oauth_store_device_fingerprint_sets_scoped_cookie(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-    let cookie = common::cookie_value(&resp, "oauth_device_fingerprint");
+    let cookie = common::cookie_value(&resp, "__Host-oauth_device_fingerprint");
     assert_eq!(cookie.as_deref(), Some("browser-fp-xyz"));
 }
 

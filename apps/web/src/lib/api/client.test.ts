@@ -45,7 +45,7 @@ const mockFetch = vi.fn()
 
 beforeEach(() => {
   vi.stubGlobal('fetch', mockFetch)
-  document.cookie = 'csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/'
+  document.cookie = '__Host-csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; secure'
   ;(ensureValidToken as Mock).mockResolvedValue(true)
   ;(getTokenExpiry as Mock).mockReturnValue(1_700_000_000)
 })
@@ -85,7 +85,7 @@ describe('HttpClient.request', () => {
   it('skips the token check for auth endpoints', async () => {
     // A csrf cookie is present so this mutating request doesn't trigger a
     // proactive CSRF refresh (which would fire its own fetch).
-    document.cookie = 'csrf_token=csrf-abc; path=/'
+    document.cookie = '__Host-csrf_token=csrf-abc; path=/; secure'
     mockFetch.mockResolvedValueOnce(fakeResponse({ body: { ok: true } }))
     await new HttpClient().request('/auth/login', { method: 'POST' })
     expect(ensureValidToken).not.toHaveBeenCalled()
@@ -119,7 +119,7 @@ describe('HttpClient.request', () => {
   it.each(['/auth/refresh', '/auth/logout', '/auth/register', '/auth/forgot-password'])(
     'skips the token check for %s',
     async (endpoint) => {
-      document.cookie = 'csrf_token=csrf-abc; path=/'
+      document.cookie = '__Host-csrf_token=csrf-abc; path=/; secure'
       mockFetch.mockResolvedValueOnce(fakeResponse({ body: {} }))
       await new HttpClient().request(endpoint, { method: 'POST' })
       expect(ensureValidToken).not.toHaveBeenCalled()
@@ -128,14 +128,14 @@ describe('HttpClient.request', () => {
 
   it('returns undefined for a 204 No Content response', async () => {
     // csrf cookie present so the DELETE doesn't first fire a proactive refresh.
-    document.cookie = 'csrf_token=csrf-abc; path=/'
+    document.cookie = '__Host-csrf_token=csrf-abc; path=/; secure'
     mockFetch.mockResolvedValueOnce(fakeResponse({ status: 204 }))
     const result = await new HttpClient().request('/items/1', { method: 'DELETE' })
     expect(result).toBeUndefined()
   })
 
   it('attaches the CSRF token header on state-changing requests when the cookie is present', async () => {
-    document.cookie = 'csrf_token=csrf-abc; path=/'
+    document.cookie = '__Host-csrf_token=csrf-abc; path=/; secure'
     mockFetch.mockResolvedValueOnce(fakeResponse({ body: {} }))
 
     await new HttpClient().request('/items', { method: 'POST' })
@@ -162,7 +162,7 @@ describe('HttpClient.request', () => {
   })
 
   it('does not attach a CSRF header on GET requests', async () => {
-    document.cookie = 'csrf_token=csrf-abc; path=/'
+    document.cookie = '__Host-csrf_token=csrf-abc; path=/; secure'
     mockFetch.mockResolvedValueOnce(fakeResponse())
 
     await new HttpClient().request('/items')
@@ -209,7 +209,7 @@ describe('HttpClient.request', () => {
   })
 
   it('refreshes and retries once on a 403 csrf_invalid error', async () => {
-    document.cookie = 'csrf_token=csrf-abc; path=/'
+    document.cookie = '__Host-csrf_token=csrf-abc; path=/; secure'
     mockFetch
       .mockResolvedValueOnce(fakeResponse({ status: 403, body: { code: 'csrf_invalid' } }))
       .mockResolvedValueOnce(fakeResponse({ body: { expires_at: 1_700_000_100 } }))
@@ -326,7 +326,7 @@ describe('HttpClient.requestWithFingerprint', () => {
   it('adds the device fingerprint header', async () => {
     // csrf cookie present so the POST doesn't first fire a proactive refresh,
     // keeping the register call as the first (and only) fetch.
-    document.cookie = 'csrf_token=csrf-abc; path=/'
+    document.cookie = '__Host-csrf_token=csrf-abc; path=/; secure'
     mockFetch.mockResolvedValueOnce(fakeResponse({ body: {} }))
 
     await new HttpClient().requestWithFingerprint('/auth/register', { method: 'POST' })

@@ -176,8 +176,8 @@ async fn verify_and_get_signup_token(app: &axum::Router, email: &str) -> String 
 /// no credential of any kind.
 async fn assert_already_verified_without_credentials(resp: axum::http::Response<Body>) {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    assert!(common::cookie_value(&resp, "auth_token").is_none());
-    assert!(common::cookie_value(&resp, "refresh_token").is_none());
+    assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
+    assert!(common::cookie_value(&resp, "__Host-refresh_token").is_none());
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["error_code"], "ALREADY_VERIFIED");
     assert!(body.get("signup_token").is_none());
@@ -728,7 +728,7 @@ async fn password_reset_flow_succeeds(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let old_session = common::cookie_value(&resp, "auth_token").expect("signup session");
+    let old_session = common::cookie_value(&resp, "__Host-auth_token").expect("signup session");
 
     // Request a reset code (dev code for test emails is 123456).
     let resp = app
@@ -767,7 +767,7 @@ async fn password_reset_flow_succeeds(pool: PgPool) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK, "reset-password failed");
     let new_session =
-        common::cookie_value(&resp, "auth_token").expect("expected auth cookie after reset");
+        common::cookie_value(&resp, "__Host-auth_token").expect("expected auth cookie after reset");
 
     // The reset cuts off sessions issued before it on account-sensitive routes,
     // but the session it just issued (in a later second) works.
@@ -983,7 +983,7 @@ async fn verification_gate_blocks_then_allows(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let jwt = common::cookie_value(&resp, "auth_token").expect("auth cookie");
+    let jwt = common::cookie_value(&resp, "__Host-auth_token").expect("auth cookie");
 
     // Verified user reaches the gated endpoint (200, not 403).
     let resp = app

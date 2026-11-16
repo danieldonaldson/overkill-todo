@@ -413,8 +413,9 @@ async fn auth_flows_leave_no_secrets_in_telemetry(pool: PgPool) {
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
-    let auth_token = common::cookie_value(&resp, "auth_token").expect("auth cookie");
-    let refresh_token = common::cookie_value(&resp, "refresh_token").expect("refresh cookie");
+    let auth_token = common::cookie_value(&resp, "__Host-auth_token").expect("auth cookie");
+    let refresh_token =
+        common::cookie_value(&resp, "__Host-refresh_token").expect("refresh cookie");
     let csrf = body["csrf_token"].as_str().unwrap().to_string();
     secrets.extend([auth_token.clone(), refresh_token.clone(), csrf.clone()]);
 
@@ -424,7 +425,7 @@ async fn auth_flows_leave_no_secrets_in_telemetry(pool: PgPool) {
         .uri("/api/v1/auth/refresh")
         .header(
             header::COOKIE,
-            format!("refresh_token={refresh_token}; csrf_token={csrf}"),
+            format!("__Host-refresh_token={refresh_token}; __Host-csrf_token={csrf}"),
         )
         .header("x-csrf-token", &csrf)
         .header("x-device-fingerprint", FINGERPRINT)
@@ -433,7 +434,7 @@ async fn auth_flows_leave_no_secrets_in_telemetry(pool: PgPool) {
         .unwrap();
     let (resp, body) = send(&app, req).await;
     assert_eq!(resp.status(), StatusCode::OK, "refresh failed: {body}");
-    if let Some(rotated) = common::cookie_value(&resp, "refresh_token") {
+    if let Some(rotated) = common::cookie_value(&resp, "__Host-refresh_token") {
         secrets.push(rotated);
     }
     if let Some(t) = body["csrf_token"].as_str() {

@@ -28,8 +28,11 @@ const X_TRACE_ID_HEADER = 'x-trace-id'
 /** Header name for CSRF token */
 const X_CSRF_TOKEN_HEADER = 'x-csrf-token'
 
-/** Cookie name for CSRF token */
-const CSRF_TOKEN_COOKIE = 'csrf_token'
+/**
+ * Cookie name for the CSRF token. The `__Host-` prefix means only this host,
+ * over HTTPS, can set it, so another site can't plant one (OT-010, P-22).
+ */
+const CSRF_TOKEN_COOKIE = '__Host-csrf_token'
 
 /**
  * Last trace ID received from the server.
@@ -46,7 +49,7 @@ export function getLastTraceId(): string | null {
 }
 
 /**
- * Read the CSRF token from the csrf_token cookie.
+ * Read the CSRF token from its cookie.
  * Returns null if the cookie is not present.
  */
 function getCsrfToken(): string | null {

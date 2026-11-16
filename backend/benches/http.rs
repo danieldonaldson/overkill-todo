@@ -82,8 +82,8 @@ async fn ok_json(app: &Router, req: Request<Body>) -> (axum::http::Response<Body
 
 fn session_from(resp: &axum::http::Response<Body>) -> Session {
     Session {
-        auth: common::cookie_value(resp, "auth_token").expect("auth_token cookie"),
-        refresh: common::cookie_value(resp, "refresh_token").expect("refresh_token cookie"),
+        auth: common::cookie_value(resp, "__Host-auth_token").expect("auth_token cookie"),
+        refresh: common::cookie_value(resp, "__Host-refresh_token").expect("refresh_token cookie"),
     }
 }
 
@@ -150,7 +150,7 @@ async fn seed(app: &Router, pool: &PgPool) -> (Session, Session) {
 
 fn get(uri: &str, s: &Session) -> Request<Body> {
     Request::get(uri)
-        .header(header::COOKIE, format!("auth_token={}", s.auth))
+        .header(header::COOKIE, format!("__Host-auth_token={}", s.auth))
         .body(Body::empty())
         .unwrap()
 }
@@ -223,14 +223,14 @@ fn http(c: &mut Criterion) {
             async move {
                 let current = refresh.lock().unwrap().clone();
                 let req = Request::post("/api/v1/auth/refresh")
-                    .header(header::COOKIE, format!("refresh_token={current}"))
+                    .header(header::COOKIE, format!("__Host-refresh_token={current}"))
                     .header("x-device-fingerprint", FINGERPRINT)
                     .body(Body::empty())
                     .unwrap();
                 let resp = app.oneshot(req).await.unwrap();
                 assert_eq!(resp.status(), StatusCode::OK);
-                *refresh.lock().unwrap() =
-                    common::cookie_value(&resp, "refresh_token").expect("rotated refresh cookie");
+                *refresh.lock().unwrap() = common::cookie_value(&resp, "__Host-refresh_token")
+                    .expect("rotated refresh cookie");
             }
         });
     });

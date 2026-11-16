@@ -113,6 +113,11 @@ verify:
 models: db-up db-migrate
     DATABASE_URL={{db_url}} ./scripts/models.sh
 
+# Tamarin protocol model (OT-010): every sign-in lemma proven against an active
+# network attacker, and each broken variant still attacked. Tamarin + Maude from .mise.toml.
+protocols:
+    ./scripts/protocols.sh
+
 # After editing access.yaml: regenerate .sops.yaml and re-key the secrets you can read.
 secrets-sync:
     ./scripts/secrets.sh sync
@@ -328,7 +333,7 @@ machete:
     cd {{backend}} && cargo machete
 
 # Everything CI gates on. Green here means green CI.
-ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check verify models test test-integration db-prepare-check api-types-check test-web e2e
+ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check verify models protocols test test-integration db-prepare-check api-types-check test-web e2e
 
 # ── Load tests (OT-004) ──────────────────────────────────────────────────────────
 # Same release images as `just up`, pinned to cores and capped, with production

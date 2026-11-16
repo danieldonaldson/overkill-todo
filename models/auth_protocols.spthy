@@ -1,0 +1,534 @@
+theory auth_protocols
+begin
+
+/*
+ * OT-010 design D9: the sign-in protocols against an active network attacker.
+ * Run by `just protocols` (scripts/protocols.sh), which proves every lemma and
+ * checks that each broken variant below (an #ifdef flag that removes one check
+ * the code makes) still has an attack.
+ *
+ * Attacker (docs/security/threat-model.md A1, A3, A4): Dolev-Yao. They read,
+ * drop, replay and forge any message outside TLS, register their own accounts
+ * (with their own Google identity), run their own client, and make a victim's
+ * browser visit any URL or submit any cross-site form. A3 rules let them steal
+ * a browser's cookie jar or its device fingerprint; lemmas say when they assume
+ * no theft.
+ *
+ * Assumptions, each a modelling choice the lemmas depend on:
+ * - TLS is a secure channel: Req/Resp facts, which the attacker can neither
+ *   read nor change. Requests on the attacker's own connections are theirs
+ *   (In/Out). -D=INSECURE_CHANNEL drops this and the session lemmas fail.
+ * - The MACs are perfect: HMAC-SHA-512 for the session JWT and OAuth state,
+ *   HMAC-SHA-256 for the CSRF token, all the function mac/2 under server keys
+ *   the attacker never learns (one key here; the code's are separate secrets,
+ *   which only makes forgery harder).
+ * - Cookies are browser state bound to the app's host: only the app's
+ *   responses set them, and only the app's own script reads the readable CSRF
+ *   cookie. The code enforces this with the `__Host-` prefix on every auth
+ *   cookie, which a browser accepts only from this host over HTTPS.
+ *   -D=NO_HOST_PREFIX is the code before that fix: the attacker can write the
+ *   app's cookies (a sibling host, or plain HTTP before HSTS).
+ * - The modelled browser follows SameSite=Lax: a cross-site POST carries no
+ *   cookies and, without a CORS preflight, only a simple body (form-encoded,
+ *   multipart or text/plain) and no custom header. The CSRF lemma doesn't rely
+ *   on this: there, the browser attaches every cookie to a cross-site request
+ *   (worst case), and only the double-submit check stands in the way.
+ * - Google is honest and verified (trust boundary 4): its codes are single use,
+ *   name the Google account that consented, and reach the backend over TLS.
+ *   A Google identity is linked to the account of the same name.
+ *
+ * Bounds: none on the number of sessions, browsers, accounts or messages.
+ * Out of the model: time (token and code expiry, so a refresh token deleted by
+ * expiry cleanup is outside the reuse lemma, as slice 4 recorded for P-15),
+ * logout, password reset and the code routes' own checks (Kani and Quint cover
+ * those), and concurrency (Quint, models/refresh_rotation.qnt).
+ */
+
+functions: mac/2
+
+restriction Unique:
+  "All x #i #j. Unique(x) @ i & Unique(x) @ j ==> #i = #j"
+
+restriction NotEq:
+  "All a b #i. NotEq(a, b) @ i ==> not (a = b)"
+
+// ── Setup: the server's signing key and accounts ───────────────────────────
+
+rule Server_key:
+    [ Fr(~k) ] --[ Unique('server_key'), ServerKey(~k) ]-> [ !Key(~k) ]
+
+// A Member's account; the password is known only to the Member.
+rule Register_member:
+    [ Fr(~pw) ]
+  --[ Unique($U), Honest($U) ]->
+    [ !Pw($U, ~pw), !MemberPw($U, ~pw) ]
+
+// The attacker's own account, with a password they chose.
+rule Register_attacker:
+    [ In(pw) ]
+  --[ Unique($A), Dishonest($A) ]->
+    [ !Pw($A, pw), !AttackerAccount($A) ]
+
+// A3: a Member's password leaks (phishing, reuse elsewhere).
+rule Reveal_password:
+    [ !MemberPw($U, pw) ] --[ RevealPw($U) ]-> [ Out(pw) ]
+
+// A browser a Member uses. Its device fingerprint lives in the app's storage.
+rule Browser:
+    [ !MemberPw($U, pw), Fr(~b), Fr(~fp) ]
+  --[ BrowserOwner(~b, $U), HonestFp(~fp) ]->
+    [ !Browser(~b, $U), !Fp(~b, ~fp) ]
+
+// A3: theft from a browser: its cookie jar (session, refresh and CSRF
+// tokens), or its device fingerprint.
+rule Steal_jar:
+    [ !Cookies(b, jwt, rt, csrf) ] --[ Stolen(b) ]-> [ Out(<jwt, rt, csrf>) ]
+
+rule Steal_fingerprint:
+    [ !Fp(b, fp) ] --[ StolenFp(b), StolenFpValue(fp) ]-> [ Out(fp) ]
+
+// ── Channels ───────────────────────────────────────────────────────────────
+
+// The attacker's own client: any request, on a connection of their own (a
+// fresh one, so it's never a browser's).
+rule Attacker_request:
+    [ In(m), Fr(~c) ] --[ AttackerReq(~c) ]-> [ Req(~c, m), !AttackerConn(~c) ]
+
+rule Attacker_response:
+    [ Resp(c, m), !AttackerConn(c) ] --> [ Out(m) ]
+
+#ifdef INSECURE_CHANNEL
+// Broken variant: no TLS. Everything a browser sends or receives is readable
+// on the wire: the password it signs in with and the session it gets back.
+rule Wire_password:
+    [ !Browser(b, $U), !MemberPw($U, pw) ] --> [ Out(pw) ]
+
+rule Wire_session:
+    [ !Cookies(b, jwt, rt, csrf) ] --> [ Out(<jwt, rt, csrf>) ]
+#endif
+
+#ifdef NO_HOST_PREFIX
+// The code before the `__Host-` prefix: the attacker can write the app's
+// cookies in a browser (a sibling host, or plain HTTP before HSTS). A tossed
+// CSRF cookie is then what the app's script copies into the header, and what
+// a cross-site request carries; a tossed oauth_state cookie goes with a
+// callback; and tossed session cookies sign the browser in to whatever
+// account they name.
+rule Toss_csrf_cookie:
+    [ !Browser(b, $U), In(x) ] --[ Tossed(b) ]-> [ !TossedCsrf(b, x) ]
+
+rule Browser_app_change_tossed:
+    [ !Cookies(b, jwt, rt, csrf), !TossedCsrf(b, x), Fr(~c) ]
+  --[ BrowserReq(~c, b), AppChange(~c) ]->
+    [ Req(~c, <'change', jwt, x, x>), !BrowserConn(~c, b) ]
+
+rule Browser_cross_site_change_tossed:
+    [ !Cookies(b, jwt, rt, csrf), !TossedCsrf(b, x), In(header), Fr(~c) ]
+  --[ BrowserReq(~c, b), CrossSite(~c) ]->
+    [ Req(~c, <'change', jwt, x, header>), !BrowserConn(~c, b) ]
+
+rule Toss_oauth_state_cookie:
+    [ !Browser(b, $U), In(n) ] --[ Tossed(b) ]-> [ !OAuthCookie(b, n) ]
+
+rule Toss_session_cookies:
+    let jwt = <$A, j, s>
+    in
+    [ !Browser(b, $U), In(<jwt, rt, csrf>) ]
+  --[ Tossed(b), BrowserSignedIn(b, $A) ]->
+    [ Jar(b, jwt, rt, csrf), !Cookies(b, jwt, rt, csrf) ]
+#endif
+
+// ── Password sign-in (P-33; scenario "A replayed sign-in message gains
+// nothing") ─────────────────────────────────────────────────────────────────
+
+rule Browser_login:
+    [ !Browser(b, $U), !MemberPw($U, pw), !Fp(b, fp), Fr(~c) ]
+  --[ BrowserReq(~c, b) ]->
+    [ Req(~c, <'login', 'json', <$U, pw>, fp>), !BrowserConn(~c, b) ]
+
+// POST /auth/login: a JSON body naming the account and its password, and the
+// x-device-fingerprint header.
+rule Server_login:
+    [ Req(c, <'login', ctype, <$U, pw>, fp>), !Pw($U, pw) ]
+  --[ NotEq(fp, 'no_header'), ContentType(ctype), ExemptActed(c, 'login'),
+      Checked(c, $U) ]->
+    [ Authed(c, $U, fp) ]
+
+// Every way in (password, refresh, Google) ends here, so a session has one
+// source: a signed session JWT, a refresh token bound to the fingerprint, and
+// a CSRF token bound to the user. The check and the issue are one
+// transaction in the code, so revoke-all can't fall between them
+// (check_and_issue_are_atomic).
+#ifdef NO_CSRF_BINDING
+// Broken variant: the CSRF token is signed without the user.
+rule Server_issue:
+    let jwt  = <$U, ~j, mac(<'jwt', $U, ~j>, ~k)>
+        csrf = <~r, mac(<'csrf', ~r>, ~k)>
+    in
+    [ Authed(c, $U, fp), !Key(~k), Fr(~j), Fr(~rt), Fr(~r) ]
+  --[ Issued(c, $U), TokensIssued($U, c, ~j, ~rt), NewRT(~rt, $U) ]->
+    [ !RT(~rt, $U, fp), Resp(c, <'session', jwt, ~rt, csrf>) ]
+#else
+rule Server_issue:
+    let jwt  = <$U, ~j, mac(<'jwt', $U, ~j>, ~k)>
+        csrf = <~r, mac(<'csrf', ~r, $U>, ~k)>
+    in
+    [ Authed(c, $U, fp), !Key(~k), Fr(~j), Fr(~rt), Fr(~r) ]
+  --[ Issued(c, $U), TokensIssued($U, c, ~j, ~rt), NewRT(~rt, $U) ]->
+    [ !RT(~rt, $U, fp), Resp(c, <'session', jwt, ~rt, csrf>) ]
+#endif
+
+// The browser keeps the session in the app's cookie jar. !Cookies is what
+// requests and theft read; any cookie the browser ever held may be sent or
+// stolen again (an over-approximation that only helps the attacker). Jar is
+// the current refresh token, which a refresh consumes. Only the app's own
+// responses get here, because every auth cookie is `__Host-` prefixed.
+// Checks: backend/tests/oauth_integration.rs::auth_cookies_are_host_only
+rule Browser_store_session:
+    let jwt  = <$A, ~j, s>
+        csrf = <~r, t>
+    in
+    [ Resp(c, <'session', jwt, ~rt, csrf>), !BrowserConn(c, b) ]
+  --[ BrowserSignedIn(b, $A) ]->
+    [ Jar(b, jwt, ~rt, csrf), !Cookies(b, jwt, ~rt, csrf) ]
+
+// ── Refresh with rotation and reuse detection (P-14, P-15, P-16; scenario
+// "Stolen refresh token reuse ends every session") ──────────────────────────
+//
+// Server state is persistent facts plus restrictions, which say what the
+// code's statements say:
+// - !RT(rt, U, fp): a stored token, bound to a fingerprint. Rotate(rt)
+//   happens at most once: the rotation's `WHERE revoked_at IS NULL`
+//   (concurrent use is Quint's, P-14).
+// - RevokeAll(U) sets `revoked_at` on every token the user holds at that
+//   moment, so no token minted before it rotates after it. Tokens minted
+//   later are live.
+
+restriction revoke_all_revokes_existing_tokens:
+  "All U rt #n #r #a. NewRT(rt, U) @ n & RevokeAll(U) @ r & Rotate(rt) @ a
+     & #n < #r & #r < #a ==> F"
+
+restriction check_and_issue_are_atomic:
+  "All U c #k #r #i. Checked(c, U) @ k & RevokeAll(U) @ r & Issued(c, U) @ i
+     & #k < #r & #r < #i ==> F"
+
+#ifdef NO_REVOKED_CHECK
+// Broken variant: a rotated token can be rotated again.
+#else
+restriction rotated_once:
+  "All rt #i #j. Rotate(rt) @ i & Rotate(rt) @ j ==> #i = #j"
+#endif
+
+rule Browser_refresh:
+    [ Jar(b, jwt, rt, csrf), !Fp(b, fp), Fr(~c) ]
+  --[ BrowserReq(~c, b) ]->
+    [ Req(~c, <'refresh', 'no_body', fp, rt>), !BrowserConn(~c, b) ]
+
+#ifdef NO_FINGERPRINT
+// Broken variant: the fingerprint isn't compared.
+rule Server_refresh_rotate:
+    [ Req(c, <'refresh', 'no_body', fp, rt>), !RT(rt, $U, bound) ]
+  --[ NotEq(fp, 'no_header'), ExemptActed(c, 'refresh'), Checked(c, $U),
+      Rotate(rt), RefreshOK(c, rt, bound, $U) ]->
+    [ !RTRotated(rt, $U), Authed(c, $U, fp) ]
+
+#else
+// POST /auth/refresh: the refresh cookie and the x-device-fingerprint header.
+// The token must not be rotated yet (rotated_once; without it,
+// -D=NO_REVOKED_CHECK), nor revoked by revoke-all, and it must be bound to
+// this fingerprint. Rotation revokes it, and Server_issue mints its successor,
+// bound to the same fingerprint.
+// Checks: backend/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session
+//         backend/tests/refresh_token_integration.rs::concurrent_rotate_lets_exactly_one_winner
+//         backend/tests/auth_properties_integration.rs::a_refresh_token_is_refused_from_another_device
+rule Server_refresh_rotate:
+    [ Req(c, <'refresh', 'no_body', fp, rt>), !RT(rt, $U, fp) ]
+  --[ NotEq(fp, 'no_header'), ExemptActed(c, 'refresh'), Checked(c, $U),
+      Rotate(rt), RefreshOK(c, rt, fp, $U) ]->
+    [ !RTRotated(rt, $U), Authed(c, $U, fp) ]
+
+#endif
+
+#ifdef NO_REVOKE_ALL
+// Broken variant: reuse is refused, but the user's sessions stay live.
+rule Server_refresh_reuse:
+    [ Req(c, <'refresh', 'no_body', fp, rt>), !RTRotated(rt, $U) ]
+  --[ ReuseDetected($U, rt, c) ]->
+    [ ]
+#else
+// A rotated token presented again is reuse: every session of the user is
+// revoked, whatever fingerprint came with it.
+// Checks: backend/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session
+rule Server_refresh_reuse:
+    [ Req(c, <'refresh', 'no_body', fp, rt>), !RTRotated(rt, $U) ]
+  --[ ReuseDetected($U, rt, c), RevokeAll($U) ]->
+    [ ]
+#endif
+
+// ── Google sign-in (P-22; scenario "Login CSRF through Google sign-in
+// fails") ─────────────────────────────────────────────────────────────────
+
+rule Browser_oauth_start:
+    [ !Browser(b, U), Fr(~c) ]
+  --[ BrowserReq(~c, b) ]->
+    [ Req(~c, <'oauth_start'>), !BrowserConn(~c, b) ]
+
+// GET /auth/oauth/google/start: a signed state naming a fresh nonce; the
+// nonce also goes in the HttpOnly oauth_state cookie.
+rule Server_oauth_start:
+    [ Req(c, <'oauth_start'>), !Key(k), Fr(~n) ]
+  --[ OAuthStartServed(c, ~n) ]->
+    [ Resp(c, <'oauth_redirect', <~n, mac(<'state', ~n>, k)>, ~n>) ]
+
+rule Browser_oauth_redirect:
+    [ Resp(c, <'oauth_redirect', st, n>), !BrowserConn(c, b), !Browser(b, $U) ]
+  --[ OAuthStartedIn(b, n) ]->
+    [ !OAuthCookie(b, n), AtGoogle(b, $U, st) ]
+
+// The Member consents at Google, which redirects the browser back to the
+// callback with a code for their Google account and the state it was given.
+rule Google_consent:
+    [ AtGoogle(b, $U, st), Fr(~code) ]
+  --[ GoogleCode(~code, $U) ]->
+    [ GCode(~code, $U), Callback(b, ~code, st) ]
+
+// The attacker gets a Google code for their own account, for any state.
+rule Google_consent_attacker:
+    [ !AttackerAccount($A), In(st), Fr(~code) ]
+  --[ GoogleCode(~code, $A) ]->
+    [ GCode(~code, $A), Out(~code) ]
+
+// The browser follows the redirect, sending its oauth_state cookie and its
+// device fingerprint cookie.
+rule Browser_callback:
+    [ Callback(b, code, st), !OAuthCookie(b, n), !Fp(b, fp), Fr(~c) ]
+  --[ BrowserReq(~c, b) ]->
+    [ Req(~c, <'callback', code, st, n, fp>), !BrowserConn(~c, b) ]
+
+// A1/A4: the attacker makes the browser open any callback URL. A top-level
+// GET carries the browser's SameSite=Lax cookies, so its oauth_state cookie
+// (if it has one) goes too.
+rule Browser_forced_callback:
+    [ In(<code, st>), !OAuthCookie(b, n), !Fp(b, fp), Fr(~c) ]
+  --[ BrowserReq(~c, b), CrossSite(~c) ]->
+    [ Req(~c, <'callback', code, st, n, fp>), !BrowserConn(~c, b) ]
+
+rule Browser_forced_callback_no_cookie:
+    [ In(<code, st>), !Browser(b, $U), !Fp(b, fp), Fr(~c) ]
+  --[ BrowserReq(~c, b), CrossSite(~c) ]->
+    [ Req(~c, <'callback', code, st, 'no_cookie', fp>), !BrowserConn(~c, b) ]
+
+#ifdef NO_STATE_CHECK
+// Broken variant: the state's signature is checked, but not that its nonce
+// matches this browser's oauth_state cookie.
+rule Server_oauth_callback:
+    [ Req(c, <'callback', ~code, <~n, mac(<'state', ~n>, ~k)>, cookie, fp>), !Key(~k),
+      GCode(~code, $A) ]
+  --[ OAuthComplete(c, ~n, $A), Checked(c, $A) ]->
+    [ Authed(c, $A, fp) ]
+
+#else
+// GET /auth/oauth/google/callback: the state must be validly signed and its
+// nonce must equal the oauth_state cookie; then the code is exchanged with
+// Google for the account it names.
+// Checks: backend/tests/oauth_integration.rs::callback_with_another_flows_nonce_is_rejected
+//         backend/tests/oauth_integration.rs::callback_without_state_cookie_is_rejected
+//         backend/tests/oauth_integration.rs::callback_with_forged_state_is_rejected
+rule Server_oauth_callback:
+    [ Req(c, <'callback', ~code, <~n, mac(<'state', ~n>, ~k)>, ~n, fp>), !Key(~k),
+      GCode(~code, $A) ]
+  --[ OAuthComplete(c, ~n, $A), Checked(c, $A) ]->
+    [ Authed(c, $A, fp) ]
+
+#endif
+
+// ── CSRF double-submit (P-20; scenario "A cross-site request is refused") ──
+
+// The app's own script reads the CSRF cookie and copies it into the
+// X-CSRF-Token header.
+rule Browser_app_change:
+    [ !Cookies(b, jwt, rt, csrf), Fr(~c) ]
+  --[ BrowserReq(~c, b), AppChange(~c) ]->
+    [ Req(~c, <'change', jwt, csrf, csrf>), !BrowserConn(~c, b) ]
+
+// A page on another site makes the browser send a state-changing request.
+// Worst case for this lemma: the browser attaches every cookie (as if
+// SameSite didn't apply), but the page can't read the CSRF cookie, so it
+// picks the header blind.
+rule Browser_cross_site_change:
+    [ !Cookies(b, jwt, rt, csrf), In(header), Fr(~c) ]
+  --[ BrowserReq(~c, b), CrossSite(~c) ]->
+    [ Req(~c, <'change', jwt, csrf, header>), !BrowserConn(~c, b) ]
+
+// A state-changing request on an authenticated route: a valid session, an
+// X-CSRF-Token header equal to the csrf_token cookie, and a token signed for
+// the session's user.
+// Checks: backend/tests/security_integration.rs::csrf_header_cookie_mismatch_rejected
+//         backend/tests/security_integration.rs::csrf_cookie_without_header_rejected
+//         backend/tests/security_integration.rs::csrf_token_bound_to_other_user_rejected
+rule Server_change:
+    [ Req(c, <'change', <$U, ~j, mac(<'jwt', $U, ~j>, ~k)>,
+              <~r, mac(<'csrf', ~r, $U>, ~k)>, <~r, mac(<'csrf', ~r, $U>, ~k)>>), !Key(~k) ]
+  --[ StateChange($U, c) ]->
+    [ ]
+
+// Broken variants add a weaker rule beside the real one, which is the same as
+// removing its check (Tamarin's preprocessor can't nest #ifdef).
+#ifdef NO_CSRF_CHECK
+// The CSRF middleware is skipped: only the session counts.
+rule Server_change_unchecked:
+    [ Req(c, <'change', <$U, ~j, mac(<'jwt', $U, ~j>, ~k)>, cookie, header>), !Key(~k) ]
+  --[ StateChange($U, c) ]->
+    [ ]
+#endif
+
+#ifdef NO_CSRF_BINDING
+// The token is signed without the user, so any validly signed token passes.
+rule Server_change_unbound:
+    [ Req(c, <'change', <$U, ~j, mac(<'jwt', $U, ~j>, ~k)>,
+              <~r, mac(<'csrf', ~r>, ~k)>, <~r, mac(<'csrf', ~r>, ~k)>>), !Key(~k) ]
+  --[ StateChange($U, c) ]->
+    [ ]
+#endif
+
+// ── CSRF-exempt pre-auth routes (P-21) ─────────────────────────────────────
+
+// A cross-site page drives the browser at an exempt route. The modelled
+// browser: a simple body only, no custom header, and no SameSite=Lax cookies
+// on a cross-site POST.
+rule Browser_cross_site_exempt:
+    [ !Browser(b, $U), In(<route, body>), Fr(~c) ]
+  --[ BrowserReq(~c, b), CrossSite(~c) ]->
+    [ Req(~c, <route, 'simple_body', body, 'no_header'>), !BrowserConn(~c, b) ]
+
+// The app's own pre-auth requests (sign-up, the code routes) send JSON.
+rule Browser_preauth:
+    [ !Browser(b, $U), Fr(~c) ]
+  --[ BrowserReq(~c, b) ]->
+    [ Req(~c, <'preauth', 'json', $U, 'no_header'>), !BrowserConn(~c, b) ]
+
+// Sign-up and the code routes stand for every exempt route with a JSON body:
+// the body must be application/json.
+// Checks: backend/tests/auth_properties_integration.rs::csrf_exempt_routes_cannot_be_driven_cross_site
+rule Server_preauth:
+    [ Req(c, <'preauth', ctype, body, header>) ]
+  --[ ContentType(ctype), ExemptActed(c, 'preauth') ]->
+    [ ]
+
+#ifdef ACCEPT_SIMPLE_BODIES
+// Broken variant: an exempt route accepts a form or text/plain body.
+restriction Json_bodies_only:
+  "All t #i. ContentType(t) @ i ==> t = 'json' | t = 'simple_body'"
+#else
+restriction Json_bodies_only:
+  "All t #i. ContentType(t) @ i ==> t = 'json'"
+#endif
+
+// ── Lemmas ──────────────────────────────────────────────────────────────────
+
+// Sanity: each flow can complete, so no lemma holds only because its premise
+// can't happen. Each trace rules out the flows it doesn't need, which keeps
+// the search from unfolding them.
+lemma password_sign_in_and_refresh_work:
+  exists-trace
+  "Ex b U c rt fp #r #q. RefreshOK(c, rt, fp, U) @ r & BrowserReq(c, b) @ q
+     & not (Ex x #a. AttackerReq(x) @ a)
+     & not (Ex x n A #o. OAuthComplete(x, n, A) @ o)"
+
+lemma google_sign_in_works:
+  exists-trace
+  "Ex b U c n #i #q #o. OAuthComplete(c, n, U) @ i & BrowserReq(c, b) @ q
+     & BrowserOwner(b, U) @ o & not (Ex x #a. AttackerReq(x) @ a)
+     & not (Ex x rt fp V #r. RefreshOK(x, rt, fp, V) @ r)"
+
+lemma stolen_token_reuse_is_detected:
+  exists-trace
+  "Ex U rt c b #s #d #a. Stolen(b) @ s & ReuseDetected(U, rt, c) @ d
+     & AttackerReq(c) @ a
+     & not (Ex x n A #o. OAuthComplete(x, n, A) @ o)"
+
+lemma the_app_can_change_state:
+  exists-trace
+  "Ex U c #i #a. StateChange(U, c) @ i & AppChange(c) @ a
+     & not (Ex x n A #o. OAuthComplete(x, n, A) @ o)
+     & not (Ex x rt fp V #r. RefreshOK(x, rt, fp, V) @ r)"
+
+// Helper lemmas, proven first and reused by the ones after them.
+lemma server_key_secret [reuse]:
+  "All k #i. ServerKey(k) @ i ==> not (Ex #j. K(k) @ j)"
+
+lemma fingerprint_known_only_if_stolen [reuse]:
+  "All fp #i #j. HonestFp(fp) @ i & K(fp) @ j ==> Ex #s. StolenFpValue(fp) @ s"
+
+// 5.2 — tokens issued to a browser stay with it, unless stolen from it.
+lemma browser_tokens_stay_secret:
+  "All U c j rt b #i #q.
+     TokensIssued(U, c, j, rt) @ i & BrowserReq(c, b) @ q
+     & not (Ex #s. Stolen(b) @ s)
+     ==> not (Ex #x. K(rt) @ x) & not (Ex #x. K(j) @ x)"
+
+// 5.2 — a replayed sign-in or Google callback gains nothing: the attacker's
+// own client gets a Member's session only with the Member's password, or by
+// refreshing, which needs a token and fingerprint stolen from the Member's
+// browser (browser_tokens_stay_secret, refresh_needs_the_fingerprint).
+lemma replayed_sign_in_gains_nothing:
+  "All U c j rt #i #a #h.
+     TokensIssued(U, c, j, rt) @ i & AttackerReq(c) @ a & Honest(U) @ h
+     ==> (Ex #r. RevealPw(U) @ r)
+       | (Ex rt0 fp #r. RefreshOK(c, rt0, fp, U) @ r)"
+
+// 5.3 — a refresh token yields at most one successor: replaying it gains
+// nothing.
+lemma refresh_replay_gains_nothing:
+  "All c1 c2 rt fp1 fp2 U #i #j.
+     RefreshOK(c1, rt, fp1, U) @ i & RefreshOK(c2, rt, fp2, U) @ j ==> #i = #j"
+
+// 5.3 — P-15: once a rotated token is presented again, no token minted before
+// that is ever accepted: every session of the Member ends.
+lemma stolen_reuse_ends_every_session:
+  "All U rt c rt2 c2 fp2 #d #n #a.
+     ReuseDetected(U, rt, c) @ d & NewRT(rt2, U) @ n & #n < #d
+     & RefreshOK(c2, rt2, fp2, U) @ a & #d < #a
+     ==> F"
+
+// 5.3 — P-16: a Member's refresh token works on the attacker's client only if
+// the fingerprint it's bound to was stolen too.
+lemma refresh_needs_the_fingerprint:
+  "All c rt fp U #i #a #h.
+     RefreshOK(c, rt, fp, U) @ i & AttackerReq(c) @ a & HonestFp(fp) @ h
+     ==> Ex #s. StolenFpValue(fp) @ s"
+
+// 5.4 — P-22: a Google sign-in completes in a browser only if that browser
+// started the flow (the nonce is its own).
+lemma google_sign_in_completes_where_it_started:
+  "All c n A b #i #q.
+     OAuthComplete(c, n, A) @ i & BrowserReq(c, b) @ q
+     ==> Ex #s. OAuthStartedIn(b, n) @ s & #s < #i"
+
+// 5.4 — no login CSRF: a Member's browser is only ever signed in to that
+// Member's own account.
+lemma no_login_csrf [use_induction]:
+  "All b U A #i #o. BrowserSignedIn(b, A) @ i & BrowserOwner(b, U) @ o ==> A = U"
+
+// 5.5 — P-20: every state change accepted from a browser was made by the
+// app's own script, never by a page on another site, unless that browser's
+// tokens were stolen or the Member's password leaked (A3: with either, the
+// attacker needs no CSRF).
+lemma cross_site_pages_cannot_change_state:
+  "All U c #i #x. StateChange(U, c) @ i & CrossSite(c) @ x
+     ==> (Ex b #q #s. BrowserReq(c, b) @ q & Stolen(b) @ s)
+       | (Ex #r. RevealPw(U) @ r)"
+
+// 5.5 — P-20, the user binding: a cross-site change to a Member's account
+// needs a CSRF token signed for that Member, which a page on another site
+// must already know. It's what holds when the attacker can also write
+// cookies (-D=NO_HOST_PREFIX): their own account's token won't do.
+lemma cross_site_changes_need_a_token_signed_for_the_member:
+  "All U c #i #x. StateChange(U, c) @ i & CrossSite(c) @ x
+     ==> Ex r k #j. K(<r, mac(<'csrf', r, U>, k)>) @ j & #j < #i"
+
+// 5.5 — P-21: no CSRF-exempt route acts on a request a cross-site page made.
+lemma exempt_routes_cannot_be_driven_cross_site:
+  "All c r #i #x. ExemptActed(c, r) @ i & CrossSite(c) @ x ==> F"
+
+end

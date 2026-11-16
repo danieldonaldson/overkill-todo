@@ -281,6 +281,58 @@ against the real repositories.
   then see `just models` fail on a scratch break of the new rule before
   trusting it.
 
+### Protocol model (`just protocols`)
+
+Password sign-in, refresh with rotation and reuse detection, Google sign-in and
+the CSRF double-submit are modelled with [Tamarin](https://tamarin-prover.com)
+in `models/auth_protocols.spthy`, and proven against an active network attacker.
+
+- **Attacker:** Dolev-Yao. They read, replay and forge anything outside TLS,
+  hold their own account and Google identity, run their own client, make a
+  Member's browser open any URL or submit any cross-site form, and (threat
+  model A3) can steal a browser's cookies, its device fingerprint or a
+  password. Each lemma says which thefts it allows.
+- **Assumptions:** TLS is a secure channel; the MACs (HMAC-SHA-512 for the
+  session JWT and OAuth state, HMAC-SHA-256 for the CSRF token) are perfect
+  under keys outside the database; Google is honest; cookies are browser state
+  bound to the app's host (the `__Host-` prefix makes browsers enforce it); the
+  browser follows `SameSite=Lax` and sends no
+  non-simple cross-site body without a preflight (the CSRF lemma drops that and
+  attaches every cookie). No bound on sessions, browsers, accounts or messages.
+  Time, logout and concurrency are outside it (Kani and Quint cover those).
+- **What's proven:** the lemmas named in threat model P-15, P-16, P-20, P-21,
+  P-22 and P-33, plus sanity lemmas that each flow can complete.
+- **Broken variants:** each check the code makes has an `#ifdef` flag that
+  removes it (`NO_STATE_CHECK`, `NO_CSRF_CHECK`, `NO_CSRF_BINDING`,
+  `NO_FINGERPRINT`, `NO_REVOKE_ALL`, `NO_REVOKED_CHECK`, `ACCEPT_SIMPLE_BODIES`,
+  `INSECURE_CHANNEL`), and `scripts/protocols.sh` requires the lemma that relies
+  on it to be attacked, with the helper lemmas still proven in that run.
+  `NO_HOST_PREFIX` is the code before the cookies got the `__Host-` prefix,
+  where an attacker can write the app's cookies: login CSRF (through the
+  `oauth_state` or the session cookies) must still be attacked there, and the
+  CSRF user binding must still hold.
+- **What's proven by construction:** two refresh lemmas restate the
+  restrictions that encode the SQL (rotate once, revoke-all), so they can't
+  catch a change to that SQL; the integration tests their rules name and the
+  Quint replay do.
+- **Conformance:** a symbolic model can't replay against the code, so each
+  rule that encodes a check the code must make names, in a `// Checks:` comment
+  right above it, the integration test that shows the code makes it.
+  `just threat-model-check` fails if a named test no longer exists.
+- **Setup:** `mise install` installs the pinned Tamarin and Maude (official
+  GitHub releases, through mise's `github:` backend). `just protocols` takes
+  about a minute and is in `just ci`; CI runs it as its own job when the model
+  or the script changes (its result depends on nothing else; the tests its
+  rules name are checked by the always-run threat-model job).
+- **Search hints:** the model keeps server state in persistent facts with
+  restrictions (a token rotates once; revoke-all revokes every token that
+  exists at that moment), gives the attacker's connections their own fresh
+  ids, and sends every session through one `Server_issue` rule. Each of these
+  is what makes the proofs terminate; check the run time after changing them.
+- **When you change a check** a rule names (the CSRF middleware, the OAuth
+  callback's state check, refresh), change the rule too, and see its variant
+  still attacked.
+
 - Argon2id for all passwords; tunable cost params from config.
 - Our tokens (session, signup, reset, OAuth state) are HS512 under a named key (`kid`), quantum-safe; only HS512 is accepted on decode, and only from a configured key, never by trying others. Keys rotate via `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS` (OT-009).
 - Outgoing TLS (Google, Turnstile, SMTP) offers post-quantum X25519MLKEM768 first, via the process-wide provider installed at the top of `main` (`infrastructure/tls.rs`); `tests/tls_key_exchange.rs` fails if it's lost (OT-009).
@@ -294,7 +346,14 @@ against the real repositories.
   any account link/login decision.
 - Device fingerprint bound to refresh tokens.
 - CSRF: double-submit cookie, HMAC-verified, constant-time comparison.
-- `Secure` cookie attribute set in non-dev environments.
+- Every auth cookie is `__Host-` prefixed (`cookies.rs` holds the names):
+  `Secure`, `Path=/`, no `Domain`, `SameSite=Lax`, and `HttpOnly` except the
+  CSRF cookie. Browsers accept such a cookie only from this host over HTTPS,
+  so a sibling host or a plain-HTTP response can't plant a session, a nonce or
+  a CSRF token (OT-010 slice 5, threat model P-22, P-24). It's `Secure` in dev
+  too: browsers treat `http://localhost` as secure (Chromium and Firefox;
+  Safari may need HTTPS). The edge strips `Cookie` from requests it proxies to
+  Umami (`/stats/`), since `Path=/` sends the session cookies everywhere.
 - Login brute-force throttling is **handled at the edge, by design** — there is no
   per-account `failed_login`/`locked_until` counter in `login_user.rs`. Password login
   is protected by (a) a reverse-proxy rate limit on `/api/v1/auth/*` (configure one in

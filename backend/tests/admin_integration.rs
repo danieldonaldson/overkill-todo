@@ -21,7 +21,7 @@ async fn admin_get(pool: &PgPool, role: &str, path: &str) -> (Uuid, Request<Body
     let req = Request::builder()
         .method("GET")
         .uri(path)
-        .header(header::COOKIE, format!("auth_token={token}"))
+        .header(header::COOKIE, format!("__Host-auth_token={token}"))
         .body(Body::empty())
         .unwrap();
     (user_id, req)
@@ -46,7 +46,7 @@ async fn admin_mutate(
         .header(header::CONTENT_TYPE, "application/json")
         .header(
             header::COOKIE,
-            format!("auth_token={token}; csrf_token={csrf}"),
+            format!("__Host-auth_token={token}; __Host-csrf_token={csrf}"),
         )
         .header("x-csrf-token", csrf)
         .body(Body::from(serde_json::to_vec(body).unwrap()))
@@ -179,7 +179,7 @@ async fn demoted_admin_token_is_rejected(pool: PgPool) {
     let req = Request::builder()
         .method("GET")
         .uri("/api/v1/admin/users")
-        .header(header::COOKIE, format!("auth_token={token}"))
+        .header(header::COOKIE, format!("__Host-auth_token={token}"))
         .body(Body::empty())
         .unwrap();
     let resp = common::create_test_app(pool).oneshot(req).await.unwrap();

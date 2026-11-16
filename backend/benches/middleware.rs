@@ -120,7 +120,7 @@ fn stack(c: &mut Criterion) {
                 Request::get("/api/v1/users/me/export")
                     .header(
                         header::COOKIE,
-                        format!("auth_token={unverified}; csrf_token={csrf}"),
+                        format!("__Host-auth_token={unverified}; __Host-csrf_token={csrf}"),
                     )
                     .body(Body::empty())
                     .unwrap(),
@@ -139,7 +139,7 @@ fn stack(c: &mut Criterion) {
                     .header(header::CONTENT_TYPE, "application/json")
                     .header(
                         header::COOKIE,
-                        format!("auth_token={unverified}; csrf_token={csrf}"),
+                        format!("__Host-auth_token={unverified}; __Host-csrf_token={csrf}"),
                     )
                     .header("x-csrf-token", &csrf)
                     .body(Body::from(r#"{"current_password":"a","new_password":"b"}"#))
@@ -154,7 +154,7 @@ fn stack(c: &mut Criterion) {
             send(
                 &app,
                 Request::post("/api/v1/users/password/change")
-                    .header(header::COOKIE, format!("auth_token={unverified}"))
+                    .header(header::COOKIE, format!("__Host-auth_token={unverified}"))
                     .body(Body::empty())
                     .unwrap(),
                 StatusCode::FORBIDDEN,
