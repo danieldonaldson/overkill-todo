@@ -76,20 +76,45 @@ defect). It also tests the riskiest unknown for the Kani slices: whether Kani
 can build this crate and reason about its date-time arithmetic in reasonable
 time.
 
-- [ ] 3.1 Install a pinned Kani (`"cargo:kani-verifier"` in `.mise.toml`, then `cargo kani setup`), add `cfg(kani)` to `check-cfg` in `backend/Cargo.toml`, and add one trivial `#[kani::proof]` in `attempt_lockout.rs`. Verify that `SQLX_OFFLINE=true cargo kani` builds the crate and passes, and record the build time in design.md Hypothesis
+- [x] 3.1 Install a pinned Kani (`"cargo:kani-verifier"` in `.mise.toml`, then `cargo kani setup`), add `cfg(kani)` to `check-cfg` in `backend/Cargo.toml`, and add one trivial `#[kani::proof]` in `attempt_lockout.rs`. Verify that `SQLX_OFFLINE=true cargo kani` builds the crate and passes, and record the build time in design.md Hypothesis
 - [ ] 3.2 Only if 3.1 fails or the build takes more than about 5 minutes: extract `src/domain` into a workspace crate `backend/crates/domain` (design D4 fallback) and update ARCHITECTURE.md. Verify `just test` and `just lint` pass and `cargo kani -p <domain crate>` runs the trivial proof
-- [ ] 3.3 Make `AttemptLockout::{seconds_until_unlock, can_resend, seconds_until_resend, reissue}` and the `reissue` delegates on `PasswordResetCode` and `EmailVerificationCode` take `now: DateTime<Utc>` (design D3), and update their application-layer callers to pass `Utc::now()`. Verify `just test` and `just test-integration` pass unchanged
-- [ ] 3.4 Add lock-window harnesses for every `lockouts: i32`: `lock_duration()` doesn't panic or overflow, falls within [15 min, 24 h], and is monotonic (for `a <= b`, `d(a) <= d(b)`). Doc comments state the bounds. Verify each passes with `cargo kani --harness`, and that each fails when `MAX_LOCK_DURATION_MINUTES` or the clamp is broken on a scratch edit
-- [ ] 3.5 Add reissue harnesses over a symbolic `attempts`, `lockouts`, and send and now timestamps bounded to 2000–2200 (design D5): `Locked` whenever locked and inside the window, with `seconds_remaining > 0`; `Cooldown` when not locked and less than 5 minutes since the send; `Allowed` once both waits have passed; every reported wait `>= 0`. If chrono arithmetic is intractable, use the D5 `i64` kernel fallback and record it. Verify each harness passes, and each fails on a scratch edit that breaks its rule
-- [ ] 3.6 Add a harness that calls `increment_attempts` on a code at a symbolic `attempts >= MAX_ATTEMPTS` and asserts it's still locked. Verify it fails today (wrap at `i32::MAX`), then change both entities to `saturating_add` (design D6) and verify it passes, adding a unit test at `i32::MAX`
-- [ ] 3.7 Add `just verify` (design D4) and add it to `ci`. Add a `verify` job to `.github/workflows/ci.yml` under the `changes.backend` filter, with Kani pinned to the same version. Verify `just verify` fails with a counterexample on a scratch break, then revert
-- [ ] 3.8 Link the harnesses from P-10 and P-13, set their strength to `proven`, and remove the gaps. Document `just verify`, the Kani install, and what the proofs cover (with bounds) in README.md and backend/ARCHITECTURE.md. Verify `just threat-model-check` passes
-- [ ] 3.9 Run `/code-review high` on the slice and fix the findings. Verify `just ci` is green
-- [ ] 3.10 Record what slice 3 showed (build time, solver time, whether the D4 or D5 fallbacks were needed) in design.md Hypothesis, and add slice 4 to this file in detail
+  - Not needed and moved out of this change: Kani built the crate in place (3.1). Extracting `src/domain` into its own crate is a separate change, by the user's decision.
+- [x] 3.3 Make `AttemptLockout::{seconds_until_unlock, can_resend, seconds_until_resend, reissue}` and the `reissue` delegates on `PasswordResetCode` and `EmailVerificationCode` take `now: DateTime<Utc>` (design D3), and update their application-layer callers to pass `Utc::now()`. Verify `just test` and `just test-integration` pass unchanged
+- [x] 3.4 Add lock-window harnesses for every `lockouts: i32`: `lock_duration()` doesn't panic or overflow, falls within [15 min, 24 h], and is monotonic (for `a <= b`, `d(a) <= d(b)`). Doc comments state the bounds. Verify each passes with `cargo kani --harness`, and that each fails when `MAX_LOCK_DURATION_MINUTES` or the clamp is broken on a scratch edit
+- [x] 3.5 Add reissue harnesses over a symbolic `attempts`, `lockouts`, and send and now timestamps bounded to 2000–2200 (design D5): `Locked` whenever locked and inside the window, with `seconds_remaining > 0`; `Cooldown` when not locked and less than 5 minutes since the send; `Allowed` once both waits have passed; every reported wait `>= 0`. If chrono arithmetic is intractable, use the D5 `i64` kernel fallback and record it. Verify each harness passes, and each fails on a scratch edit that breaks its rule
+- [x] 3.6 Add a harness that calls `increment_attempts` on a code at a symbolic `attempts >= MAX_ATTEMPTS` and asserts it's still locked. Verify it fails today (wrap at `i32::MAX`), then change both entities to `saturating_add` (design D6) and verify it passes, adding a unit test at `i32::MAX`. (After the slice: `increment_attempts` was deleted, since it had no production caller; see design D6.)
+- [x] 3.7 Add `just verify` (design D4) and add it to `ci`. Add a `verify` job to `.github/workflows/ci.yml` under the `changes.backend` filter, with Kani pinned to the same version. Verify `just verify` fails with a counterexample on a scratch break, then revert
+- [x] 3.8 Link the harnesses from P-10 and P-13, set their strength to `proven`, and remove the gaps. Document `just verify`, the Kani install, and what the proofs cover (with bounds) in README.md and backend/ARCHITECTURE.md. Verify `just threat-model-check` passes
+- [x] 3.9 Run `/code-review high` on the slice and fix the findings. Verify `just ci` is green
+- [x] 3.10 Record what slice 3 showed (build time, solver time, whether the D4 or D5 fallbacks were needed) in design.md Hypothesis, and add slice 4 to this file in detail
 
-## 4. Feature done
+## 4. Slice 4: concurrency is modelled, and the resend race is fixed
 
-- [ ] 4.1 Verify `docs/security/threat-model.md` has no property without a check, except accepted gaps with a reason, and that every scenario in the spec delta is covered by a check `just ci` runs
-- [ ] 4.2 Check README.md and backend/ARCHITECTURE.md describe every verification recipe, the tools and their pins, and what is and isn't proven. Verify by following the README setup from a clean checkout
-- [ ] 4.3 Record the external penetration test (scoped by the threat model) with the first-deploy notes, and verify it's listed there
-- [ ] 4.4 Archive the change with `/opsx:archive` and verify `openspec/specs/security/spec.md` contains the new requirements
+This slice delivers, from specs/security/spec.md:
+
+- Concurrent requests cannot get around auth limits: all three scenarios.
+- Auth guarantees are machine-checked on every change: "A model that drifts
+  from the code fails the gate", for the two models.
+
+It closes the threat-model gaps on P-11 (the resend race slice 3's review
+found), P-12 and P-14. It tests the riskiest unknown for the model slices:
+whether ITF traces from a Quint model can be replayed against the real
+repositories with real concurrent connections, so the model can't drift from
+the code.
+
+- [ ] 4.1 Fix the resend race first (P-11): the user chose to fix it before modelling it. First add an integration test that runs a 5th wrong guess and a resend concurrently many times, and verify it fails on the current unguarded upsert, with the lock overwritten. Then make the issuing upsert conditional, so it refuses to replace a row that's now at the cap and inside its window. Do it in SQL in both repositories (an `ON CONFLICT … DO UPDATE … WHERE` guard), and have the use cases report the existing `Locked` outcome when it refuses. Run `just db-prepare` and commit `backend/.sqlx/`. No migration is needed. Verify the test now passes every time
+- [ ] 4.2 Pin Quint in `.mise.toml` (`"npm:@informalsystems/quint"`, exact version) and add a trivial `models/attempt_claim.qnt` with one invariant. Verify `quint verify` passes (or `quint run` with an invariant, if the Apalache backend needs Java the machine lacks), then fails on a deliberate break. Record the run time and backend in design.md Hypothesis
+- [ ] 4.3 Model the code-entry protocol in `models/attempt_claim.qnt` (design D8). Each request is the sequence of atomic database steps it really runs: the attempt claim (`SET attempts = attempts + 1 … WHERE attempts < 5`), the comparison, delete on success, expiry cleanup, and the issuing paths' read → decide → conditional upsert from 4.1. Invariants: at most 5 comparisons per code; a guess racing a successful verification or cleanup gets the no-code result; a code locked by a guess is never replaced inside its window. Verify the last invariant fails with the old unguarded upsert modelled (a counterexample trace showing the P-11 race) and holds with 4.1's guard
+- [ ] 4.4 Model refresh rotation in `models/refresh_rotation.qnt`: rotate, reuse detection (revoke all), logout and expiry, with concurrent presentations of one token. Invariants: at most one live successor per token, and any reuse after a successful rotation revokes every session. Verify each invariant fails on a deliberate break
+- [ ] 4.5 Conformance: export ITF traces (`quint run --out-itf`) for both models, and add a `#[sqlx::test]` suite that replays each trace's steps against the real repositories with concurrent connections and asserts the database reaches the state the model predicts (the `itf` crate reads the traces). Verify a deliberate change to a repository's SQL fails the suite, naming the step
+- [ ] 4.6 Add `just models` (`quint` checks plus the conformance suite), add it to `ci`, and add a CI job under the `changes.backend` filter with Quint pinned to the same version. Verify it fails on a scratch break, then revert
+- [ ] 4.7 Link the models and conformance tests from P-11, P-12 and P-14, set their strength to `modelled`, and remove or narrow their gaps. Document `just models` in README.md and backend/ARCHITECTURE.md. Verify `just threat-model-check` passes
+- [ ] 4.8 Run `/code-review high` on the slice and fix the findings. Verify `just ci` is green
+- [ ] 4.9 Record what slice 4 showed in design.md Hypothesis, and add slice 5 (Tamarin, design D9) to this file in detail
+
+## 5. Feature done
+
+- [ ] 5.1 Verify `docs/security/threat-model.md` has no property without a check, except accepted gaps with a reason, and that every scenario in the spec delta is covered by a check `just ci` runs
+- [ ] 5.2 Check README.md and backend/ARCHITECTURE.md describe every verification recipe, the tools and their pins, and what is and isn't proven. Verify by following the README setup from a clean checkout
+- [ ] 5.3 Record the external penetration test (scoped by the threat model) with the first-deploy notes, and verify it's listed there
+- [ ] 5.4 Archive the change with `/opsx:archive` and verify `openspec/specs/security/spec.md` contains the new requirements

@@ -98,7 +98,7 @@ impl ResendVerificationUseCase {
             // lockout. Refuse for a short fixed window (LOCK_DURATION_MINUTES)
             // after the lock, then allow a fresh code — rather than blocking for
             // the full 24h code lifetime.
-            match existing_code.reissue() {
+            match existing_code.reissue(chrono::Utc::now()) {
                 Reissue::Allowed => {}
                 Reissue::Locked { seconds_remaining } => {
                     return Err(ResendVerificationError::Locked {

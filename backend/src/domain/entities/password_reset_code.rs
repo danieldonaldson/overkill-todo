@@ -160,17 +160,12 @@ impl PasswordResetCode {
         self.lockout().is_locked()
     }
 
-    /// Whether a replacement code may be issued now (see
+    /// Whether a replacement code may be issued as of `now` (see
     /// [`AttemptLockout::reissue`]). Every path that issues a code for this
     /// user must check it first, or it would clear an active lockout.
     #[must_use]
-    pub fn reissue(&self) -> Reissue {
-        self.lockout().reissue()
-    }
-
-    /// Increments the attempt counter after a failed verification.
-    pub const fn increment_attempts(&mut self) {
-        self.attempts += 1;
+    pub const fn reissue(&self, now: DateTime<Utc>) -> Reissue {
+        self.lockout().reissue(now)
     }
 
     /// Resets the code for a new request.
@@ -199,6 +194,19 @@ mod tests {
         PasswordResetCode::new(UserId::new(), "code_hash".to_string())
     }
 
+    /// A live code that already has `attempts` failed guesses.
+    fn with_attempts(attempts: i32) -> PasswordResetCode {
+        PasswordResetCode::from_persistence(
+            ResetCodeId::new(),
+            UserId::new(),
+            "code_hash".to_string(),
+            Utc::now() + Duration::minutes(EXPIRY_MINUTES),
+            attempts,
+            Utc::now(),
+            Utc::now(),
+        )
+    }
+
     #[test]
     fn test_new_code_is_valid() {
         let code = create_valid_code();
@@ -208,28 +216,8 @@ mod tests {
     }
 
     #[test]
-    fn test_increment_attempts() {
-        let mut code = create_valid_code();
-        assert_eq!(code.attempts(), 0);
-
-        code.increment_attempts();
-        assert_eq!(code.attempts(), 1);
-        assert!(!code.is_locked());
-
-        // Lock after MAX_ATTEMPTS
-        for _ in 1..MAX_ATTEMPTS {
-            code.increment_attempts();
-        }
-        assert_eq!(code.attempts(), MAX_ATTEMPTS);
-        assert!(code.is_locked());
-        assert!(!code.is_valid());
-    }
-
-    #[test]
     fn test_reset() {
-        let mut code = create_valid_code();
-        code.increment_attempts();
-        code.increment_attempts();
+        let mut code = with_attempts(2);
         assert_eq!(code.attempts(), 2);
 
         let original_expires = code.expires_at();
@@ -308,14 +296,14 @@ mod tests {
 
         // Locked, sent just now → within the lock window.
         assert!(matches!(
-            make(MAX_ATTEMPTS, 0).reissue(),
+            make(MAX_ATTEMPTS, 0).reissue(Utc::now()),
             Reissue::Locked { seconds_remaining }
                 if seconds_remaining > 0 && seconds_remaining <= LOCK_DURATION_MINUTES * 60
         ));
 
         // Locked, but the lock window has elapsed → a new request is allowed.
         assert_eq!(
-            make(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1).reissue(),
+            make(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1).reissue(Utc::now()),
             Reissue::Allowed
         );
     }
@@ -324,7 +312,7 @@ mod tests {
     fn test_reissue_cooldown() {
         let recent = PasswordResetCode::new(UserId::new(), "hash".to_string());
         assert!(matches!(
-            recent.reissue(),
+            recent.reissue(Utc::now()),
             Reissue::Cooldown { seconds_remaining } if seconds_remaining > 0
         ));
 
@@ -337,6 +325,6 @@ mod tests {
             Utc::now() - Duration::minutes(RESEND_COOLDOWN_MINUTES + 1),
             Utc::now() - Duration::minutes(RESEND_COOLDOWN_MINUTES + 1),
         );
-        assert_eq!(old.reissue(), Reissue::Allowed);
+        assert_eq!(old.reissue(Utc::now()), Reissue::Allowed);
     }
 }

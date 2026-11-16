@@ -125,6 +125,45 @@ own claims:
 `AttemptLockout` properties in under about 5 minutes, with bounded symbolic
 timestamps. The first task of that slice tests this with a trivial harness.
 
+_What slice 3 showed._
+
+- **Kani builds the crate in place.** The first `cargo kani` took about 51 s
+  wall (4 m 22 s CPU) cold, and `just verify` takes about 13 s warm for all 9
+  harnesses. The domain-crate fallback (D4, task 3.2) wasn't needed, and the
+  user moved that extraction to a separate change.
+- **Proving through chrono doesn't finish; the D5 fallback was needed.** The
+  first reissue harness over `DateTime` ran for more than 12 minutes in CBMC
+  and was stopped. The policy now lives in integer `const fn`s over
+  microseconds (`reissue_at` and friends), which the `AttemptLockout` methods
+  call after `timestamp_micros()`. Each harness solves in under a second
+  (0.08–0.86 s). Microseconds rather than D5's seconds keep the integer policy
+  exactly equivalent to the old chrono arithmetic, so nothing had to be
+  rounded away to make it provable.
+- **Two real defects found.**
+  - **Lock lifted up to a second early.** Wait times were rounded down to
+    whole seconds, so a lock or cooldown with under a second left reported
+    zero and a locked code could be reissued up to a second early. The
+    counterexample was a 24 h lock with 0.93 s left reporting `Allowed`. Waits
+    now round up (`whole_seconds_until`), with a regression unit test.
+  - **The domain counter wrapped.** `increment_attempts` overflowed at
+    `i32::MAX`, and the proof failed with "attempt to add with overflow". It
+    was made to saturate. Code review then showed nothing in production calls
+    it: the real counter is the SQL attempt claim, capped at 5. After the
+    slice, the method was deleted, along with its proof and tests, so there's
+    only one counter. P-13 links the concurrency test that exercises the SQL
+    cap.
+- **Proofs can check a function against itself.** The reissue proofs take
+  the lock window from the function under test, so they can't catch a wrong
+  schedule. A separate proof states the schedule with literal numbers (15, 30
+  … 960, 1440), and a scratch break with no doubling fails only that proof.
+  Lesson: at least one proof per rule must state the spec independently of
+  the code.
+- **The proofs cover the decision, not the system.** Review found a
+  pre-existing race. The issuing paths decide with `reissue`, then upsert the
+  new code with `attempts = 0` and no guard, so a failed guess that locks the
+  code in between has its lock overwritten (P-11 gap). That is concurrency in
+  the database, and slice 4 models it and fixes it.
+
 ## Decisions
 
 ### D1: The threat model is a Markdown file the gate can parse
@@ -253,9 +292,16 @@ calls, and prove the kernel instead.
 
 ### D6: The counter wrap is fixed with `saturating_add`
 
+_Decided in slice 3:_ the proven policy is integer `const fn`s over
+microseconds since the epoch (D5's fallback, with microseconds rather than
+seconds for exactness). "At the cap" has one definition, `at_cap`, shared by
+`is_locked` and the integer policy. Waits round up to whole seconds.
+
 Both `increment_attempts` methods become `saturating_add(1)`. We rejected
 turning on `overflow-checks` in release, because a panic in a request handler
-is a 500, which is a different bug.
+is a 500, which is a different bug. _Superseded after slice 3:_ the methods
+had no production caller and were deleted. The only counter is the SQL
+attempt claim.
 
 ### D7: Email is proven only for short ASCII
 
