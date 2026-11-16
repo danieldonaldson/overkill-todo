@@ -21,6 +21,12 @@ sccache = "latest"      # compiler cache shared by every worktree (justfile sets
 # Kani bounded model checker for the domain proofs (`just verify`, OT-010). Pinned
 # exactly: CI installs the same version. `cargo kani setup` fetches its own nightly.
 "cargo:kani-verifier" = "0.68.0"
+# Quint model checker for the concurrency models (`just models`, OT-010). Pinned
+# exactly: CI installs the same version.
+"npm:@informalsystems/quint" = "0.33.1"
+# Java for Apalache, the symbolic checker behind `quint verify` (Quint downloads
+# the Apalache release it was built against on first use).
+java = "temurin-21.0.12+101.0.LTS"
 # OpenSpec CLI for the /opsx:* commands (openspec/README.md). Matches the
 # `generatedBy` version of .claude/skills; re-run `openspec update` when bumping.
 "npm:@fission-ai/openspec" = "1.13.1"

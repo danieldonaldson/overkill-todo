@@ -119,7 +119,7 @@ impl VerifyEmailUseCase {
         // an expired code — not a lockout.
         let attempts_after = match self
             .email_verification_repo
-            .register_attempt(user.id(), MAX_ATTEMPTS)
+            .register_attempt(user.id(), verification_code.id(), MAX_ATTEMPTS)
             .await
             .map_err(|e| VerifyEmailError::Internal(e.to_string()))?
         {
@@ -157,7 +157,7 @@ impl VerifyEmailUseCase {
         // self-healing: a resend resets `attempts` after the cooldown, well
         // inside the lock window.
         self.email_verification_repo
-            .release_attempt(user.id())
+            .release_attempt(user.id(), verification_code.id())
             .await
             .map_err(|e| VerifyEmailError::Internal(e.to_string()))?;
 
@@ -324,7 +324,7 @@ mod tests {
             .returning(move |_| Ok(Some(valid_code(user_id))));
         codes
             .expect_register_attempt()
-            .returning(|_, _| Ok(AttemptOutcome::Locked));
+            .returning(|_, _, _| Ok(AttemptOutcome::Locked));
 
         let uc = VerifyEmailUseCase::new(
             Arc::new(repo),
@@ -352,7 +352,7 @@ mod tests {
             .returning(move |_| Ok(Some(valid_code(user_id))));
         codes
             .expect_register_attempt()
-            .returning(|_, _| Ok(AttemptOutcome::NotFound));
+            .returning(|_, _, _| Ok(AttemptOutcome::NotFound));
 
         let uc = VerifyEmailUseCase::new(
             Arc::new(repo),
@@ -379,7 +379,7 @@ mod tests {
             .returning(move |_| Ok(Some(valid_code(user_id))));
         codes
             .expect_register_attempt()
-            .returning(|_, _| Ok(AttemptOutcome::Claimed(2)));
+            .returning(|_, _, _| Ok(AttemptOutcome::Claimed(2)));
         codes.expect_release_attempt().never();
 
         let uc = VerifyEmailUseCase::new(
@@ -416,12 +416,12 @@ mod tests {
             .returning(move |_| Ok(Some(valid_code(user_id))));
         codes
             .expect_register_attempt()
-            .returning(|_, _| Ok(AttemptOutcome::Claimed(1)));
+            .returning(|_, _, _| Ok(AttemptOutcome::Claimed(1)));
         // Correct code releases the claimed slot and deletes the code.
         codes
             .expect_release_attempt()
             .times(1)
-            .returning(|_| Ok(()));
+            .returning(|_, _| Ok(()));
         codes
             .expect_delete_for_user()
             .times(1)

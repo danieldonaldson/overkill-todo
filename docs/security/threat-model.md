@@ -243,20 +243,78 @@ ended.
 ### P-11: No path can reset an active lock by issuing a new code
 
 - Attackers: A1
-- Strength: tested
+- Strength: modelled, tested
 - Checks:
+  - `models/attempt_claim.qnt::lockIsNeverLiftedInsideItsWindow`
+  - `models/attempt_claim.qnt::noReissueInsideTheCooldown`
+  - `backend/tests/model_conformance.rs::email_codes_follow_the_attempt_claim_model`
+  - `backend/tests/model_conformance.rs::reset_codes_follow_the_attempt_claim_model`
+  - `backend/tests/reissue_race_integration.rs::resend_racing_the_locking_guess_keeps_the_lock`
+  - `backend/tests/reissue_race_integration.rs::reregister_racing_the_locking_guess_keeps_the_lock`
+  - `backend/tests/reissue_race_integration.rs::reset_request_racing_the_locking_guess_keeps_the_lock`
   - `backend/tests/verification_integration.rs::resend_while_locked_issues_no_new_code`
   - `backend/tests/verification_integration.rs::reregistering_does_not_reset_a_locked_code`
-- Gap: Known race (found in OT-010 slice 3 review). The issuing paths (`resend_verification`, `request_password_reset`, `send_verification_code`) read the code, decide with `reissue`, hash the new code, and then upsert it with `attempts = 0` and no guard on the stored state. A failed guess that locks the code in that window has its lock overwritten. An attacker who times a resend with each 5th guess gets about 5 guesses per 5-minute cooldown instead of the escalating lock. The fix (a conditional upsert that refuses to replace a locked row) and a model of the race belong to OT-010 slice 4 (Quint).
+  - `backend/tests/repository_integration.rs::password_reset_save_upsert_consume`
+  - `backend/tests/repository_integration.rs::set_last_sent_at_moves_only_the_named_unlocked_code`
+  - `backend/src/domain/entities/attempt_lockout.rs::lock_window_table_matches_the_policy`
+  - `just models`
+
+Each issuing path (`resend_verification`, `request_password_reset`,
+`send_verification_code`) decides with `reissue` on the row it read, then
+writes the new code with the repositories' `save`. A wrong guess can lock the
+code between the two, or a concurrent request can issue one, so `save`
+re-checks the whole reissue rule in the same statement, at the new code's send
+time: its `ON CONFLICT … DO UPDATE … WHERE` refuses to replace a row that is at
+the cap inside its lock window, or any row inside the resend cooldown, and the
+use case answers as if it had seen that first. The SQL reads the windows from
+`LOCK_WINDOWS_MINUTES`, which Kani proves equal to the policy for every
+lockout count. Registration's cooldown release after a failed email moves the
+send time of only the code it issued, and only below the cap, since the send
+time also starts the lock window.
+
+**Modelled** (Quint, `just models`): every interleaving of 3 guesses, 2
+issuing requests (decide, write, deliver with a possibly failed email), expiry
+cleanup and time passing, up to 8 steps with Apalache and 30 steps by random
+search, from any one stored code (0–5 attempts, 0–2 earlier lockouts). The
+`unguarded_upsert` module models the old upsert and must keep its
+counterexample (a 4-step race); `lock_only_guard` models a guard without the
+cooldown and must keep its own. Traces replay against both repositories on
+separate connections, issuing codes through the production constructors. The
+race tests drive the real endpoints: before the fix, 37 to 38 of 40 rounds per
+path overwrote the lock. Bound: 3 guesses can't lock a freshly issued code, so
+the model can't tell the release's cap condition apart; its repository test
+covers it.
+
+Found by OT-010 slice 3's review and fixed in slice 4. Before the fix, an
+attacker who timed a resend with each 5th guess got about 5 guesses per
+5-minute cooldown instead of the escalating lock.
 
 ### P-12: Concurrent guesses at one code get at most 5 comparisons
 
 - Attackers: A1
-- Strength: tested
+- Strength: modelled, tested
 - Checks:
+  - `models/attempt_claim.qnt::atMostFiveWrongGuessesPerCode`
+  - `models/attempt_claim.qnt::goneCodeIsNeverReportedLocked`
+  - `backend/tests/model_conformance.rs::email_codes_follow_the_attempt_claim_model`
+  - `backend/tests/model_conformance.rs::reset_codes_follow_the_attempt_claim_model`
   - `backend/tests/attempt_lockout_integration.rs::register_attempt_caps_under_concurrency`
   - `backend/tests/attempt_lockout_integration.rs::register_attempt_reports_not_found_without_row`
-- Gap: One concurrent run is sampled, not every interleaving. Quint model planned (OT-010).
+  - `backend/tests/attempt_lockout_integration.rs::claim_naming_a_replaced_code_finds_no_code`
+  - `just models`
+- Gap: Accepted (2026-11-16). The model treats each statement as atomic. The claim's "does the code still exist" check reads the statement's snapshot, so a guess whose claim waits on a concurrent replacement or deletion of its code can still be told "locked" rather than "no code". The message is the only effect: no slot is taken and nothing is compared. Fixing it would need a stricter isolation level on every guess, for a wording difference.
+
+**Modelled** with the same bounds as P-11: at most 5 wrong guesses are
+compared against any one code (a correct guess releases its slot), and a guess
+whose code was verified, cleaned up or replaced gets the no-code answer, never
+"too many attempts".
+
+The model found a defect, fixed in OT-010 slice 4: the attempt claim named
+only the user. A guess that read a code which was then replaced claimed a slot
+on the new code but was compared against the old one, past the old code's
+cap, and could be told "locked" about a code it never saw. The claim and its
+release now name the code id the guess read. The `claim_by_user` module models
+the old claim and must keep its counterexample (5 steps).
 
 ### P-13: The failed-attempt counter can't wrap round to "unlocked"
 
@@ -277,20 +335,41 @@ it was deleted rather than kept as a second counter that doesn't matter.
 ### P-14: A refresh token yields at most one new session, even under concurrent use
 
 - Attackers: A3
-- Strength: tested
+- Strength: modelled, tested
 - Checks:
+  - `models/refresh_rotation.qnt::atMostOneSuccessorPerToken`
+  - `backend/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
   - `backend/tests/refresh_token_integration.rs::concurrent_rotate_lets_exactly_one_winner`
   - `backend/src/application/use_cases/auth/refresh_token.rs::rotates_token_on_valid_refresh`
-- Gap: One concurrent run is sampled, not every interleaving. Quint model planned (OT-010).
+  - `just models`
+
+**Modelled** (Quint, `just models`): every interleaving of 3 refresh requests
+presenting any of the session's tokens, a sign-out, expiry cleanup and time
+passing, up to 8 steps with Apalache and 30 by random search. Rotation's
+revoke-and-insert transaction is one step, which holds because its
+`WHERE revoked_at IS NULL` re-checks the row after a concurrent writer
+commits. Traces replay against the real repository on separate connections.
+Logins aren't modelled: they mint unrelated tokens.
 
 ### P-15: Presenting a revoked refresh token revokes every session of that Member, even if it has also expired
 
 - Attackers: A3
-- Strength: tested
+- Strength: modelled, tested
 - Checks:
+  - `models/refresh_rotation.qnt::reuseAfterRotationIsDetected`
+  - `models/refresh_rotation.qnt::reuseRevokesEverySession`
+  - `backend/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
   - `backend/src/application/use_cases/auth/refresh_token.rs::revoked_reuse_revokes_all_even_when_also_expired`
   - `backend/src/domain/entities/refresh_token.rs::test_status_revoked_outranks_expired`
   - `backend/src/domain/entities/refresh_token.rs::test_revoke_is_idempotent`
+  - `just models`
+- Gap: Accepted (2026-11-16). This holds only while the token is still stored. Once it has expired and the cleanup job has deleted it, presenting it is refused as an unknown token, not treated as reuse, so the Member's later sessions are not revoked. It can't yield a session either way. The model shows this (`everyReplayOfARotatedTokenIsDetected`, not part of `safety`). Keeping revoked tokens past expiry would close it. It's accepted because the stolen token can't produce a session, and the replay window it gives up only opens after the token's 30-day expiry.
+
+**Modelled** with the P-14 bounds: a request that presents an already rotated
+token, while it's stored, is treated as reuse, and once reuse is detected no
+session of that Member is left live. A request that read the token before a
+concurrent rotation committed gets a conflict instead; the next presentation
+is the reuse.
 
 ### P-16: A refresh token works only with the device fingerprint it was issued to
 
@@ -510,7 +589,7 @@ OT-010:
 | Role management never escalates privilege                 | P-08                                     |
 | A deleted account stays deleted                           | P-28                                     |
 | Email addresses normalise to one identity                 | P-30                                     |
-| Concurrent requests cannot get around auth limits         | P-12, P-14                               |
+| Concurrent requests cannot get around auth limits         | P-11, P-12, P-14, P-15                   |
 | The sign-in protocols resist an active network attacker   | P-15, P-16, P-20, P-21, P-22             |
 | Auth guarantees are machine-checked on every change       | the Strength line of every property      |
 

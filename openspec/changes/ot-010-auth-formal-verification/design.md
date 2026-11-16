@@ -164,6 +164,83 @@ _What slice 3 showed._
   code in between has its lock overwritten (P-11 gap). That is concurrency in
   the database, and slice 4 models it and fixes it.
 
+**Slice 4 (Quint).** We believe the concurrency properties can be modelled
+statement by statement, and that the riskiest part is tying the model to the
+code: whether ITF traces from Quint can be replayed against the real
+repositories, on separate connections, cheaply enough to run on every change.
+The slice fixes the resend race first, with a test that fails before the fix.
+
+_What slice 4 showed._
+
+- **The race was real and easy to hit.** The new race test fires a 5th wrong
+  guess and an issuing request at once, 40 rounds per path, over the real
+  router. Before the fix, 37, 38 and 37 of 40 rounds (resend, re-register,
+  forgot-password) overwrote a lock inside its window. With the guarded upsert
+  it passed 20 runs in a row (2,400 rounds), and the use-case unit tests for
+  the refused write each fail on a scratch edit that ignores the refusal. The
+  guard reads the lock windows from a table the domain exports
+  (`LOCK_WINDOWS_MINUTES`), with a Kani proof that the table, indexed as the
+  SQL indexes it, equals the policy for every `i32`.
+- **Quint 0.33.1 with Apalache works here, so `quint verify` is used, not the
+  `quint run` fallback.** Apalache (0.62.4, which Quint downloads) needs Java;
+  Temurin 21.0.12 is now pinned in `.mise.toml` next to Quint. The trivial
+  model verified in about 3 s (simulation 1.4 s). The real models, every
+  interleaving up to 8 steps: email and reset codes about 35–40 s each,
+  refresh rotation about 110 s. The random search (`quint run`, Rust backend,
+  10,000 executions of 30 steps) takes about a second per model. `just models`
+  takes about 4 minutes in all. Depth 8 covers the races found here (4 and 5
+  steps) with room to spare; deeper bounds grow fast (refresh at 8 is already
+  most of the time).
+- **Conformance replay worked, and catches SQL drift.** 300 random traces per
+  model plus 6 witness traces replay in about 12 s, each step through the
+  repository method that issues that statement, one connection per request,
+  checking results and stored rows after every step. Removing the upsert's
+  guard failed at `email_codes_15.itf.json step 6 issueWrite(1)`, and removing
+  rotation's `revoked_at IS NULL` failed at
+  `refresh_rotation_103.itf.json step 11 refreshRotate(3, token 0)`. Two
+  things were needed beyond the plan: random traces reached a refused write
+  only about 1 time in 100, so `just models` adds witness traces (a run whose
+  "invariant" is that no write is refused, exported as its counterexample);
+  and the suite counts how often each interesting outcome came up and fails
+  if one never did, so a change in the generator can't make it vacuous.
+- **The model found a second defect, now fixed.** The attempt claim named only
+  the user. A guess that read a code which was then legitimately replaced
+  claimed a slot on the new code but was compared against the old one, past
+  the old code's cap, and could be told "locked" about a code it never saw (a
+  5-step counterexample). The claim and its release now name the code id.
+  Behaviour change: such a guess now gets the no-code answer.
+- **Old-code variants keep the invariants honest.** The `unguarded_upsert`
+  and `claim_by_user` modules model the code before this slice, and
+  `just models` fails unless both still have counterexamples. Each invariant
+  also failed on its own scratch break of the model.
+- **Two bounds the model made visible, recorded as gaps rather than fixed.**
+  The claim's existence check reads its statement's snapshot, so a guess whose
+  claim waits on a concurrent replacement can still get "locked" instead of
+  "no code" (message only; P-12). And once an expired refresh token is
+  deleted by the cleanup job, replaying it is refused as unknown rather than
+  treated as reuse (P-15); it can't yield a session. Whether to keep revoked
+  tokens past expiry to close that is a decision for the user.
+- **Code review found three more ways round the same guard, all fixed.**
+  The first guard re-checked only the lock, so issuing requests that all
+  decided just after the cooldown could each replace the code, each bringing
+  fresh guesses; the guard is now the whole reissue rule (lock window and
+  cooldown), with a `lock_only_guard` variant that must still fail. The
+  registration path's cooldown release after a failed email moved the send
+  time of whatever code the user had, which also starts the lock window; it
+  now names the issued code and skips a locked one. And the model stamped a
+  new code's send time at the decision rather than at the write, so the
+  replay didn't exercise production's stamping; the model now stamps at the
+  write and the replay issues codes through the production constructors. The
+  review also caught that a refused resend's follow-up read could turn a
+  uniform 200 into a 500 (now best-effort), and that the witness step
+  accepted any Quint failure as a witness (now checked). Two findings were
+  rejected: comparing with the database's `NOW()` instead of the code's
+  app-stamped send time (the app clock is the one time source, D3, and the
+  decision the guard backs up uses it), and sharing the guard SQL between
+  the two repositories (`query!` needs literal SQL, and both are replayed).
+- **The concurrent-refresh open question is answered: no double issue.**
+  Within the bounds, no interleaving gives a token two successors.
+
 ## Decisions
 
 ### D1: The threat model is a Markdown file the gate can parse
@@ -332,6 +409,24 @@ We chose Quint over TLA+ for its readable syntax, the same model checkers
 underneath (Apalache/TLC), and ITF trace export, which Rust can read with the
 `itf` crate.
 
+_Decided in slice 4:_
+
+- `just models` runs `scripts/models.sh`, which CI runs too: `quint verify`
+  (Apalache, 8 steps) for each model as the code stands, the old-code variants
+  that must still fail, `quint run` (30 steps), then the trace export and the
+  replay. Java (for Apalache) is pinned in `.mise.toml` with Quint; CI installs
+  both through mise.
+- Traces are generated on each run, not committed: Quint's output isn't
+  byte-stable for a seed, and fresh random traces explore more over time.
+  The replay suite is `#[ignore]`d in `just test-integration` and run by
+  `just models`, which supplies the traces.
+- "Concurrent connections" means each request in a trace has its own
+  database session, and the steps run in the trace's order. Each step is one
+  statement, so this reproduces exactly the interleaving the model chose.
+- Time in the models is whole minutes. A `tick` moves every stored timestamp
+  back, so the database's `NOW()` stays the model's `now`, and comparisons
+  with `NOW()` are written for a database clock a little ahead of the model's.
+
 ### D9: Tamarin for the protocols, with lemmas linked to tests
 
 `models/auth_protocols.spthy` models password sign-in, refresh with rotation
@@ -389,3 +484,6 @@ The two properties link to OT-011's checks when it lands.
   interleaving the existing test doesn't hit. Slice 1 found that one
   concurrent run already passes. If the model finds a race, the fix (a
   conditional revoke-and-insert) is designed in that slice.
+  _Answered in slice 4:_ no. Within 8 steps (Apalache) and 30 steps (random
+  search), no interleaving of 3 refreshes, a sign-out and cleanup gives a
+  token two successors.

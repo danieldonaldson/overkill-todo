@@ -5,9 +5,9 @@ use crate::application::ports::{
 };
 use crate::domain::entities::EmailVerificationCode;
 use crate::domain::entities::User;
-use crate::domain::entities::attempt_lockout::RESEND_COOLDOWN_MINUTES;
+use crate::domain::entities::attempt_lockout::{IssueOutcome, RESEND_COOLDOWN_MINUTES};
 use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{Email, UserId};
+use crate::domain::value_objects::{Email, UserId, VerificationCodeId};
 use chrono::{Duration as ChronoDuration, Utc};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -65,6 +65,7 @@ impl From<DispatchError> for DomainError {
 /// magic-link token, which exist in plaintext nowhere else (the database holds
 /// only their hashes).
 pub struct PendingVerificationEmail {
+    code_id: VerificationCodeId,
     email: String,
     code: String,
     first_name: String,
@@ -115,7 +116,9 @@ impl SendVerificationCodeUseCase {
     }
 
     /// Issues a fresh code + magic-link token for `user_id` and persists them,
-    /// returning everything the email still needs.
+    /// returning everything the email still needs, or `None` if the store
+    /// refused because the current code locked after the caller's
+    /// [`Self::reissue_withheld`] check (see [`IssueOutcome::Withheld`]).
     ///
     /// Split out from the send so a caller can put the persistence inside its
     /// request and the SMTP round-trip outside it — the code row must exist
@@ -126,7 +129,7 @@ impl SendVerificationCodeUseCase {
         user_id: UserId,
         email: &Email,
         first_name: &str,
-    ) -> Result<PendingVerificationEmail, DomainError> {
+    ) -> Result<Option<PendingVerificationEmail>, DomainError> {
         // 6-digit code, Argon2-hashed (guessable → Argon2).
         let code = self.code_generator.generate_code(email.as_str());
         let code_hash = self.password_hasher.hash(&code).await?;
@@ -137,16 +140,26 @@ impl SendVerificationCodeUseCase {
 
         let verification_code =
             EmailVerificationCode::new_with_magic_token(user_id, code_hash, magic_token_hash);
-        self.email_verification_repo
+        if self
+            .email_verification_repo
             .save(&verification_code)
-            .await?;
+            .await?
+            == IssueOutcome::Withheld
+        {
+            tracing::info!(
+                user_id = %user_id,
+                "Verification code locked while reissuing; no new code"
+            );
+            return Ok(None);
+        }
 
-        Ok(PendingVerificationEmail {
+        Ok(Some(PendingVerificationEmail {
+            code_id: *verification_code.id(),
             email: email.as_str().to_string(),
             code,
             first_name: first_name.to_string(),
             magic_link: self.magic_link(&magic_token),
-        })
+        }))
     }
 
     /// Whether a new code for `user_id` must be withheld because the current one
@@ -184,20 +197,26 @@ impl SendVerificationCodeUseCase {
         if self.reissue_withheld(&user_id).await? {
             return Ok(());
         }
-        let pending = self.persist_code(user_id, email, first_name).await?;
-        self.send_pending(pending).await
+        match self.persist_code(user_id, email, first_name).await? {
+            Some(pending) => self.send_pending(pending).await,
+            None => Ok(()),
+        }
     }
 
     /// Issues and persists a code for `user` WITHOUT sending its email.
     ///
     /// Pair with [`Self::send_pending`]. Callers that must not put an SMTP
     /// round-trip inside a request budget await this, then hand the returned
-    /// value to a spawned task.
+    /// value to a spawned task. `None` means the current code is locked and
+    /// was kept, so there is nothing to send.
     ///
     /// # Errors
     /// Returns an error if code hashing or persisting the code fails.
     #[tracing::instrument(name = "usecase.issue_verification_code", skip_all, fields(user_id = %user.id()))]
-    pub async fn issue_code(&self, user: &User) -> Result<PendingVerificationEmail, DomainError> {
+    pub async fn issue_code(
+        &self,
+        user: &User,
+    ) -> Result<Option<PendingVerificationEmail>, DomainError> {
         self.persist_code(*user.id(), user.email(), user.first_name())
             .await
     }
@@ -257,8 +276,11 @@ impl SendVerificationCodeUseCase {
         {
             return Ok(());
         }
-        let pending = self.issue_code(user).await.map_err(DispatchError::Issue)?;
+        let Some(pending) = self.issue_code(user).await.map_err(DispatchError::Issue)? else {
+            return Ok(());
+        };
 
+        let code_id = pending.code_id;
         let sent = match tokio::time::timeout(budget, self.send_pending(pending)).await {
             Ok(result) => result,
             Err(_elapsed) => Err(DomainError::ExternalService(format!(
@@ -267,7 +289,7 @@ impl SendVerificationCodeUseCase {
         };
 
         if let Err(e) = sent {
-            self.release_resend_cooldown(user.id()).await;
+            self.release_resend_cooldown(user.id(), &code_id).await;
             return Err(DispatchError::Delivery(e));
         }
 
@@ -280,11 +302,11 @@ impl SendVerificationCodeUseCase {
     /// Best-effort: the caller is already returning a delivery error, and
     /// failing to widen the recovery window must not replace that with a
     /// different one.
-    async fn release_resend_cooldown(&self, user_id: &UserId) {
+    async fn release_resend_cooldown(&self, user_id: &UserId, code_id: &VerificationCodeId) {
         let released = Utc::now() - ChronoDuration::minutes(RESEND_COOLDOWN_MINUTES);
         if let Err(e) = self
             .email_verification_repo
-            .set_last_sent_at(user_id, released)
+            .set_last_sent_at(user_id, code_id, released)
             .await
         {
             tracing::error!(
@@ -407,7 +429,10 @@ mod tests {
     async fn issue_and_deliver_sends_and_keeps_the_cooldown_on_success() {
         let mut mock_repo = MockEmailVerificationRepository::new();
         mock_repo.expect_find_by_user().returning(|_| Ok(None));
-        mock_repo.expect_save().times(1).returning(|_| Ok(()));
+        mock_repo
+            .expect_save()
+            .times(1)
+            .returning(|_| Ok(IssueOutcome::Issued));
         mock_repo.expect_set_last_sent_at().times(0);
 
         let mut mock_email = MockEmailService::new();
@@ -437,15 +462,18 @@ mod tests {
     async fn issue_and_deliver_reports_failure_and_releases_the_cooldown() {
         let mut mock_repo = MockEmailVerificationRepository::new();
         mock_repo.expect_find_by_user().returning(|_| Ok(None));
-        mock_repo.expect_save().times(1).returning(|_| Ok(()));
+        mock_repo
+            .expect_save()
+            .times(1)
+            .returning(|_| Ok(IssueOutcome::Issued));
         mock_repo
             .expect_set_last_sent_at()
             .times(1)
-            .withf(|_, last_sent_at| {
+            .withf(|_, _, last_sent_at| {
                 // Back-dated far enough that `can_resend()` is already true.
                 *last_sent_at <= Utc::now() - ChronoDuration::minutes(RESEND_COOLDOWN_MINUTES)
             })
-            .returning(|_, _| Ok(()));
+            .returning(|_, _, _| Ok(()));
 
         let mut mock_email = MockEmailService::new();
         mock_email
@@ -473,11 +501,14 @@ mod tests {
     async fn issue_and_deliver_gives_up_on_a_hanging_relay_at_the_budget() {
         let mut mock_repo = MockEmailVerificationRepository::new();
         mock_repo.expect_find_by_user().returning(|_| Ok(None));
-        mock_repo.expect_save().times(1).returning(|_| Ok(()));
+        mock_repo
+            .expect_save()
+            .times(1)
+            .returning(|_| Ok(IssueOutcome::Issued));
         mock_repo
             .expect_set_last_sent_at()
             .times(1)
-            .returning(|_, _| Ok(()));
+            .returning(|_, _, _| Ok(()));
 
         let use_case = SendVerificationCodeUseCase::new(
             Arc::new(mock_repo),
@@ -543,7 +574,10 @@ mod tests {
     async fn test_send_verification_code_success() {
         let mut mock_repo = MockEmailVerificationRepository::new();
         mock_repo.expect_find_by_user().returning(|_| Ok(None));
-        mock_repo.expect_save().times(1).returning(|_| Ok(()));
+        mock_repo
+            .expect_save()
+            .times(1)
+            .returning(|_| Ok(IssueOutcome::Issued));
 
         let mut mock_email = MockEmailService::new();
         mock_email
@@ -587,7 +621,10 @@ mod tests {
     async fn issue_code_persists_the_code_without_sending_the_email() {
         let mut mock_repo = MockEmailVerificationRepository::new();
         mock_repo.expect_find_by_user().returning(|_| Ok(None));
-        mock_repo.expect_save().times(1).returning(|_| Ok(()));
+        mock_repo
+            .expect_save()
+            .times(1)
+            .returning(|_| Ok(IssueOutcome::Issued));
 
         let mut mock_email = MockEmailService::new();
         mock_email.expect_send_verification_email().times(0);
@@ -613,7 +650,11 @@ mod tests {
         );
 
         let user = create_test_user();
-        let pending = use_case.issue_code(&user).await.expect("issue_code");
+        let pending = use_case
+            .issue_code(&user)
+            .await
+            .expect("issue_code")
+            .expect("a code is issued");
 
         assert_eq!(pending.code, "123456");
         assert_eq!(pending.email, "test@example.com");
@@ -645,6 +686,7 @@ mod tests {
         );
 
         let pending = PendingVerificationEmail {
+            code_id: VerificationCodeId::new(),
             email: "test@example.com".to_string(),
             code: "123456".to_string(),
             first_name: "Test".to_string(),
@@ -660,7 +702,10 @@ mod tests {
         // exactly like `execute`, but takes the id/email/name directly.
         let mut mock_repo = MockEmailVerificationRepository::new();
         mock_repo.expect_find_by_user().returning(|_| Ok(None));
-        mock_repo.expect_save().times(1).returning(|_| Ok(()));
+        mock_repo
+            .expect_save()
+            .times(1)
+            .returning(|_| Ok(IssueOutcome::Issued));
 
         let mut mock_email = MockEmailService::new();
         mock_email
@@ -743,5 +788,39 @@ mod tests {
             .await;
 
         assert!(matches!(result, Err(DomainError::Persistence(_))));
+    }
+
+    /// P-11: a wrong guess can lock the code between the reissue check and the
+    /// write. The store then refuses (`IssueOutcome::Withheld`), and neither
+    /// entry point sends an email for a code that was never stored.
+    #[tokio::test]
+    async fn a_code_locked_after_the_check_is_kept_and_nothing_is_sent() {
+        for deliver in [false, true] {
+            let mut mock_repo = MockEmailVerificationRepository::new();
+            mock_repo.expect_find_by_user().returning(|_| Ok(None));
+            mock_repo
+                .expect_save()
+                .times(1)
+                .returning(|_| Ok(IssueOutcome::Withheld));
+            mock_repo.expect_set_last_sent_at().times(0);
+
+            let mut mock_email = MockEmailService::new();
+            mock_email.expect_send_verification_email().times(0);
+
+            let use_case = SendVerificationCodeUseCase::new(
+                Arc::new(mock_repo),
+                Arc::new(mock_email),
+                Arc::new(code_gen_returning("123456")),
+                Arc::new(hasher_returning_hash()),
+                "http://localhost:4321".to_string(),
+            );
+
+            let user = create_test_user();
+            if deliver {
+                assert!(use_case.issue_and_deliver(&user, TEST_BUDGET).await.is_ok());
+            } else {
+                assert!(use_case.execute(&user).await.is_ok());
+            }
+        }
     }
 }

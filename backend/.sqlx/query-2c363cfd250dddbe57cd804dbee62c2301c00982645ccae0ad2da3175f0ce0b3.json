@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE email_verification_codes\n            SET attempts = GREATEST(attempts - 1, 0)\n            WHERE user_id = $1 AND id = $2\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2c363cfd250dddbe57cd804dbee62c2301c00982645ccae0ad2da3175f0ce0b3"
+}

@@ -90,7 +90,7 @@ impl ValidateResetCodeUseCase {
         // above and here, which is a no-code case — not a lockout.
         match self
             .password_reset_repo
-            .register_attempt(user.id(), MAX_ATTEMPTS)
+            .register_attempt(user.id(), reset_code.id(), MAX_ATTEMPTS)
             .await?
         {
             AttemptOutcome::Claimed(_) => {}
@@ -122,7 +122,9 @@ impl ValidateResetCodeUseCase {
         // release is preferred over increment-on-failure or a transaction across
         // the Argon2 verify; the residual one-attempt crash window is bounded and
         // self-healing via resend.
-        self.password_reset_repo.release_attempt(user.id()).await?;
+        self.password_reset_repo
+            .release_attempt(user.id(), reset_code.id())
+            .await?;
 
         // Code is valid - generate a short-lived JWT token (5 minutes) bound to
         // this reset-code row so it can only be consumed once.
@@ -188,11 +190,11 @@ mod tests {
         // correct code does not consume an attempt.
         mock_reset_repo
             .expect_register_attempt()
-            .returning(|_, _| Ok(AttemptOutcome::Claimed(1)));
+            .returning(|_, _, _| Ok(AttemptOutcome::Claimed(1)));
         mock_reset_repo
             .expect_release_attempt()
             .times(1)
-            .returning(|_| Ok(()));
+            .returning(|_, _| Ok(()));
 
         let mut mock_hasher = MockPasswordHasher::new();
         mock_hasher.expect_verify().returning(|_, _| Ok(true));
@@ -241,7 +243,7 @@ mod tests {
         // A wrong guess claims the slot (before the compare) and is NOT released.
         mock_reset_repo
             .expect_register_attempt()
-            .returning(|_, _| Ok(AttemptOutcome::Claimed(1)));
+            .returning(|_, _, _| Ok(AttemptOutcome::Claimed(1)));
         mock_reset_repo.expect_release_attempt().never();
 
         let mut mock_hasher = MockPasswordHasher::new();
@@ -294,7 +296,7 @@ mod tests {
         // The atomic claim returns `Locked` once the cap is reached.
         mock_reset_repo
             .expect_register_attempt()
-            .returning(|_, _| Ok(AttemptOutcome::Locked));
+            .returning(|_, _, _| Ok(AttemptOutcome::Locked));
         mock_reset_repo.expect_release_attempt().never();
 
         // verify must not be reached
@@ -346,7 +348,7 @@ mod tests {
         // The row vanished before the claim landed.
         mock_reset_repo
             .expect_register_attempt()
-            .returning(|_, _| Ok(AttemptOutcome::NotFound));
+            .returning(|_, _, _| Ok(AttemptOutcome::NotFound));
         mock_reset_repo.expect_release_attempt().never();
 
         // verify must not be reached

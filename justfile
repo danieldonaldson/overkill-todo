@@ -108,6 +108,11 @@ verify:
     @cargo kani --version >/dev/null 2>&1 || { echo "Kani isn't installed: run 'mise install', then 'cargo kani setup' once" >&2; exit 1; }
     cd {{backend}} && SQLX_OFFLINE=true cargo kani
 
+# Quint concurrency models (OT-010): bounded checks of every invariant, the old
+# code's counterexamples, then traces replayed against Postgres. Quint + Java from .mise.toml.
+models: db-up db-migrate
+    DATABASE_URL={{db_url}} ./scripts/models.sh
+
 # After editing access.yaml: regenerate .sops.yaml and re-key the secrets you can read.
 secrets-sync:
     ./scripts/secrets.sh sync
@@ -323,7 +328,7 @@ machete:
     cd {{backend}} && cargo machete
 
 # Everything CI gates on. Green here means green CI.
-ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check verify test test-integration db-prepare-check api-types-check test-web e2e
+ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check verify models test test-integration db-prepare-check api-types-check test-web e2e
 
 # ── Load tests (OT-004) ──────────────────────────────────────────────────────────
 # Same release images as `just up`, pinned to cores and capped, with production

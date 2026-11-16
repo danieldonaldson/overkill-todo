@@ -232,8 +232,7 @@ the code they prove, and each has a doc comment stating its bounds.
   never reissued while locked or in the cooldown, reissued once both waits pass,
   no negative waits), and that the domain's attempt counter can't wrap (threat
   model P-10, P-13). The proofs cover the decision, not the database writes
-  around it. Those are P-11 and P-12, which are tested, and modelled in a later
-  slice.
+  around it. Those are P-11 and P-12, modelled below.
 - **Time is an argument.** Policy that depends on the clock takes `now`, and
   callers pass `Utc::now()`, so a proof can cover every time.
 - **Prove integers, not chrono.** Kani can't get through chrono's calendar
@@ -243,6 +242,44 @@ the code they prove, and each has a doc comment stating its bounds.
   new proofs.
 - **Make a proof fail before trusting it:** break the rule it checks on a
   scratch edit, and see `just verify` fail with a counterexample.
+
+### Concurrency models (`just models`)
+
+Races between requests are modelled with [Quint](https://quint-lang.org)
+in `models/`, and every model is tied to the code by replaying its traces
+against the real repositories.
+
+- **What's modelled:** `attempt_claim.qnt` is one user's one-time code raced
+  by 3 guesses, 2 code-issuing requests (with a possibly failed email), the
+  expiry cleanup and time passing (modules `email_codes` and `reset_codes`). `refresh_rotation.qnt` is one
+  Member's refresh tokens raced by 3 refreshes, a sign-out and the cleanup.
+  Each request is the sequence of SQL statements it really runs, one model step
+  per statement (or per transaction). The invariants are threat model P-11,
+  P-12, P-14 and P-15, each named in its property's `Checks:`.
+- **What it checks:** Apalache (`quint verify`) checks every interleaving up
+  to 8 steps from any starting code; `quint run` searches 10 000 random
+  executions of 30 steps. The `unguarded_upsert`, `claim_by_user` and `lock_only_guard` modules
+  model the code before OT-010 slice 4 and must still have counterexamples,
+  which keeps the invariants from becoming vacuous.
+- **Conformance:** `quint run --out-itf` exports 300 random traces per model,
+  plus witness traces that reach a refused reissue, and
+  `tests/model_conformance.rs` replays each step through the repository method
+  that issues that statement, one connection per request, checking results and
+  stored rows after every step. A change to a repository's SQL that the model
+  doesn't allow fails there, naming the trace and step. The suite is
+  `#[ignore]`d in `just test-integration`, because it needs the exported
+  traces.
+- **Not covered:** inside one statement, the model assumes atomicity; P-12
+  records the one place a snapshot read can still give a misleading message.
+  Logins and other users aren't modelled.
+- **Setup:** `mise install` installs the pinned Quint and the Java that
+  Apalache needs (`.mise.toml`); Quint downloads its Apalache release on first
+  use. `just models` takes about 4 minutes and is in `just ci`; CI runs it as
+  its own job with the same pins (`scripts/models.sh`).
+- **When you change a statement** the models describe (the attempt claim, the
+  issuing upsert, rotation, revocation, cleanup), change the model step too,
+  then see `just models` fail on a scratch break of the new rule before
+  trusting it.
 
 - Argon2id for all passwords; tunable cost params from config.
 - Our tokens (session, signup, reset, OAuth state) are HS512 under a named key (`kid`), quantum-safe; only HS512 is accepted on decode, and only from a configured key, never by trying others. Keys rotate via `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS` (OT-009).

@@ -16,10 +16,13 @@ use overkill_todo::application::ports::{
     EmailVerificationRepository, OAuthAccountRepository, PasswordResetRepository,
     RefreshTokenRepository, UserRepository,
 };
+use overkill_todo::domain::entities::attempt_lockout::IssueOutcome;
 use overkill_todo::domain::entities::{
     EmailVerificationCode, OAuthAccount, OAuthProvider, PasswordResetCode, RefreshToken, User,
 };
-use overkill_todo::domain::value_objects::{Email, RefreshTokenId, ResetCodeId, UserId};
+use overkill_todo::domain::value_objects::{
+    Email, RefreshTokenId, ResetCodeId, UserId, VerificationCodeId,
+};
 use overkill_todo::infrastructure::persistence::postgres::{
     Database, PostgresEmailVerificationRepository, PostgresOAuthAccountRepository,
     PostgresPasswordResetRepository, PostgresRefreshTokenRepository, PostgresUserRepository,
@@ -31,6 +34,21 @@ use overkill_todo::infrastructure::persistence::postgres::{
 
 /// Inserts a persisted user (via the real user repo) and returns its id, so the
 /// foreign keys on the child tables are satisfied.
+/// Moves every stored code's send time 6 minutes back, past the resend
+/// cooldown, so the next issue may replace it.
+async fn age_codes(pool: &PgPool, table: &str) {
+    let sql = match table {
+        "email_verification_codes" => {
+            "UPDATE email_verification_codes SET last_sent_at = last_sent_at - INTERVAL '6 minutes'"
+        }
+        "password_reset_codes" => {
+            "UPDATE password_reset_codes SET last_sent_at = last_sent_at - INTERVAL '6 minutes'"
+        }
+        other => panic!("no code table {other}"),
+    };
+    sqlx::query(sql).execute(pool).await.unwrap();
+}
+
 async fn seed_user(db: &Arc<Database>, email: &str) -> UserId {
     let user_repo = PostgresUserRepository::new(db.clone());
     let user = User::new(
@@ -323,7 +341,7 @@ async fn refresh_token_rotate_missing_token_conflicts(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn password_reset_save_upsert_consume(pool: PgPool) {
-    let db = Arc::new(Database::from_pool(pool));
+    let db = Arc::new(Database::from_pool(pool.clone()));
     let repo = PostgresPasswordResetRepository::new(db.clone());
     let user_id = seed_user(&db, "reset-repo@example.com").await;
 
@@ -334,9 +352,22 @@ async fn password_reset_save_upsert_consume(pool: PgPool) {
     let found = repo.find_by_user(&user_id).await.unwrap().unwrap();
     assert_eq!(found.code_hash(), "hash-a");
 
-    // Saving again upserts on the unique user_id (replaces the code).
+    // Inside the resend cooldown the store withholds a new code (P-11)...
     let code2 = PasswordResetCode::new(user_id, "hash-b".to_string());
-    repo.save(&code2).await.unwrap();
+    assert_eq!(repo.save(&code2).await.unwrap(), IssueOutcome::Withheld);
+    assert_eq!(
+        repo.find_by_user(&user_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .code_hash(),
+        "hash-a"
+    );
+
+    // ...and once it has passed, saving again upserts on the unique user_id
+    // (replaces the code).
+    age_codes(&pool, "password_reset_codes").await;
+    assert_eq!(repo.save(&code2).await.unwrap(), IssueOutcome::Issued);
     let found = repo.find_by_user(&user_id).await.unwrap().unwrap();
     assert_eq!(found.code_hash(), "hash-b");
 
@@ -365,7 +396,19 @@ async fn password_reset_release_attempt_and_delete_expired(pool: PgPool) {
         Utc::now(),
     );
     repo.save(&code).await.unwrap();
-    repo.release_attempt(&user_id).await.unwrap();
+    // A release naming another code id (one since replaced) changes nothing.
+    repo.release_attempt(&user_id, &ResetCodeId::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        repo.find_by_user(&user_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .attempts(),
+        3
+    );
+    repo.release_attempt(&user_id, code.id()).await.unwrap();
     assert_eq!(
         repo.find_by_user(&user_id)
             .await
@@ -376,7 +419,9 @@ async fn password_reset_release_attempt_and_delete_expired(pool: PgPool) {
     );
 
     // release on a non-existent row is harmless.
-    repo.release_attempt(&UserId::new()).await.unwrap();
+    repo.release_attempt(&UserId::new(), &ResetCodeId::new())
+        .await
+        .unwrap();
 
     // An expired reset code (regardless of user) is purged by delete_expired.
     let expired_user = seed_user(&db, "reset-expired@example.com").await;
@@ -401,7 +446,7 @@ async fn password_reset_release_attempt_and_delete_expired(pool: PgPool) {
 // ---------------------------------------------------------------------------
 
 #[sqlx::test(migrations = "./migrations")]
-async fn email_verification_magic_token_and_resend(pool: PgPool) {
+async fn email_verification_magic_token_lifecycle(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresEmailVerificationRepository::new(db.clone());
     let user_id = seed_user(&db, "verify-repo@example.com").await;
@@ -432,25 +477,6 @@ async fn email_verification_magic_token_and_resend(pool: PgPool) {
         .expect("found by magic token");
     assert_eq!(by_magic.user_id(), &user_id);
 
-    // A plain code resend (magic_token_hash = None) must preserve the magic link.
-    repo.update_for_resend(
-        &user_id,
-        "code-hash-2".to_string(),
-        Utc::now() + Duration::hours(1),
-    )
-    .await
-    .unwrap();
-    let after = repo.find_by_user(&user_id).await.unwrap().unwrap();
-    assert_eq!(after.code_hash(), "code-hash-2");
-    assert_eq!(after.attempts(), 0, "resend resets the attempt counter");
-    assert!(
-        repo.find_by_magic_token_hash("magic-hash")
-            .await
-            .unwrap()
-            .is_some(),
-        "the magic link survives a code resend"
-    );
-
     // save_magic_token replaces the stored magic token.
     repo.save_magic_token(&user_id, "magic-hash-2".to_string())
         .await
@@ -470,7 +496,7 @@ async fn email_verification_magic_token_and_resend(pool: PgPool) {
 
 #[sqlx::test(migrations = "./migrations")]
 async fn email_verification_save_upsert_preserves_magic_token(pool: PgPool) {
-    let db = Arc::new(Database::from_pool(pool));
+    let db = Arc::new(Database::from_pool(pool.clone()));
     let repo = PostgresEmailVerificationRepository::new(db.clone());
     let user_id = seed_user(&db, "verify-upsert@example.com").await;
 
@@ -483,8 +509,10 @@ async fn email_verification_save_upsert_preserves_magic_token(pool: PgPool) {
     .await
     .unwrap();
 
-    // A routine code-send (no magic token) upserts on user_id without clobbering
-    // the previously issued magic link (COALESCE branch).
+    // A routine code-send (no magic token), after the resend cooldown, upserts
+    // on user_id without clobbering the previously issued magic link
+    // (COALESCE branch).
+    age_codes(&pool, "email_verification_codes").await;
     repo.save(&EmailVerificationCode::new(user_id, "c2".to_string()))
         .await
         .unwrap();
@@ -524,4 +552,50 @@ async fn email_verification_delete_expired(pool: PgPool) {
     let deleted = repo.delete_expired().await.unwrap();
     assert_eq!(deleted, 1);
     assert!(repo.find_by_user(&user_id).await.unwrap().is_none());
+}
+
+/// P-11: releasing the resend cooldown after a failed email moves only the
+/// code whose email failed, and never a locked one, since `last_sent_at` also
+/// starts the lock window.
+#[sqlx::test(migrations = "./migrations")]
+async fn set_last_sent_at_moves_only_the_named_unlocked_code(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool));
+    let repo = PostgresEmailVerificationRepository::new(db.clone());
+    let user_id = seed_user(&db, "release-cooldown@example.com").await;
+    let earlier = Utc::now() - Duration::minutes(10);
+    let sent_at = |code: Option<EmailVerificationCode>| code.unwrap().last_sent_at();
+
+    for attempts in [0, 5] {
+        let code = EmailVerificationCode::from_persistence(
+            VerificationCodeId::new(),
+            user_id,
+            "hash".to_string(),
+            Utc::now() + Duration::hours(1),
+            attempts,
+            Utc::now(),
+            Utc::now(),
+            None,
+            None,
+        );
+        repo.save(&code).await.unwrap();
+        let before = sent_at(repo.find_by_user(&user_id).await.unwrap());
+
+        // Another code id (one since replaced): nothing moves.
+        repo.set_last_sent_at(&user_id, &VerificationCodeId::new(), earlier)
+            .await
+            .unwrap();
+        assert_eq!(sent_at(repo.find_by_user(&user_id).await.unwrap()), before);
+
+        // The named code moves only while it is below the cap.
+        repo.set_last_sent_at(&user_id, code.id(), earlier)
+            .await
+            .unwrap();
+        let after = sent_at(repo.find_by_user(&user_id).await.unwrap());
+        if attempts < 5 {
+            assert!((after - earlier).num_milliseconds().abs() < 1);
+        } else {
+            assert_eq!(after, before, "a locked code's window must not move");
+        }
+        repo.delete_for_user(&user_id).await.unwrap();
+    }
 }

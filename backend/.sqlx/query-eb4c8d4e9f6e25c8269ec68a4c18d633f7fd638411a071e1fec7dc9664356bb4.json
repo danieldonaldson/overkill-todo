@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE email_verification_codes\n            SET last_sent_at = $2\n            WHERE user_id = $1 AND id = $3 AND attempts < $4\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz",
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "eb4c8d4e9f6e25c8269ec68a4c18d633f7fd638411a071e1fec7dc9664356bb4"
+}
