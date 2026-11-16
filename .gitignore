@@ -41,3 +41,6 @@ backend/openapi.json.tmp
 
 # Load-test run results (`just load`); baselines in loadtest/baselines/ are committed.
 loadtest/results/
+
+# Apalache run output from `quint verify` (`just models`).
+_apalache-out/

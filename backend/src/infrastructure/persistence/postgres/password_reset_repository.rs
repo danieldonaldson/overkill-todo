@@ -5,7 +5,10 @@ use std::sync::Arc;
 
 use crate::application::ports::PasswordResetRepository;
 use crate::domain::entities::PasswordResetCode;
-use crate::domain::entities::attempt_lockout::{AttemptOutcome, LOCKOUT_MEMORY_DAYS, MAX_ATTEMPTS};
+use crate::domain::entities::attempt_lockout::{
+    AttemptOutcome, IssueOutcome, LOCK_WINDOWS_MINUTES, LOCKOUT_MEMORY_DAYS, MAX_ATTEMPTS,
+    RESEND_COOLDOWN_MINUTES,
+};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{ResetCodeId, UserId};
 use crate::infrastructure::persistence::postgres::connection::Database;
@@ -39,8 +42,8 @@ impl PostgresPasswordResetRepository {
 #[async_trait]
 impl PasswordResetRepository for PostgresPasswordResetRepository {
     #[tracing::instrument(name = "repo.password_reset.save", skip_all, fields(db.system = "postgresql", user_id = %code.user_id()))]
-    async fn save(&self, code: &PasswordResetCode) -> Result<(), DomainError> {
-        sqlx::query!(
+    async fn save(&self, code: &PasswordResetCode) -> Result<IssueOutcome, DomainError> {
+        let stored = sqlx::query!(
             r#"
             INSERT INTO password_reset_codes (id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at)
             VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -54,6 +57,19 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
                 -- lockout and doubles the next lock window. Never reset here.
                 lockouts = password_reset_codes.lockouts
                     + CASE WHEN password_reset_codes.attempts >= $8 THEN 1 ELSE 0 END
+            -- P-11: the caller decided to reissue on a row it read earlier. A
+            -- wrong guess may have locked that row since, or a concurrent
+            -- request issued a code, so re-check the reissue rule here, in the
+            -- statement that writes, at the new code's send time: a row at the
+            -- cap is replaced only once its lock window (the domain's table,
+            -- indexed by lockouts) has passed, and any row only once the
+            -- resend cooldown has.
+            WHERE (password_reset_codes.attempts < $8
+                OR EXCLUDED.last_sent_at >= password_reset_codes.last_sent_at
+                    + ($9::INT8[])[LEAST(GREATEST(password_reset_codes.lockouts, 0), cardinality($9::INT8[]) - 1) + 1]
+                    * INTERVAL '1 minute')
+              AND EXCLUDED.last_sent_at >= password_reset_codes.last_sent_at + $10::INT8 * INTERVAL '1 minute'
+            RETURNING id
             "#,
             code.id().as_uuid(),
             code.user_id().as_uuid(),
@@ -63,12 +79,18 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
             code.last_sent_at(),
             code.created_at(),
             MAX_ATTEMPTS,
+            &LOCK_WINDOWS_MINUTES[..],
+            RESEND_COOLDOWN_MINUTES,
         )
-        .execute(self.db.pool())
+        .fetch_optional(self.db.pool())
         .await
         .map_err(persist_err)?;
 
-        Ok(())
+        Ok(if stored.is_some() {
+            IssueOutcome::Issued
+        } else {
+            IssueOutcome::Withheld
+        })
     }
 
     #[tracing::instrument(name = "repo.password_reset.find_by_user", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
@@ -113,6 +135,7 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
     async fn register_attempt(
         &self,
         user_id: &UserId,
+        code_id: &ResetCodeId,
         max_attempts: i32,
     ) -> Result<AttemptOutcome, DomainError> {
         // One atomic statement: the CTE claims a slot while below the cap, and
@@ -124,15 +147,16 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
             WITH bumped AS (
                 UPDATE password_reset_codes
                 SET attempts = attempts + 1
-                WHERE user_id = $1 AND attempts < $2
+                WHERE user_id = $1 AND id = $3 AND attempts < $2
                 RETURNING attempts
             )
             SELECT
                 (SELECT attempts FROM bumped) AS "bumped_attempts?: i32",
-                EXISTS (SELECT 1 FROM password_reset_codes WHERE user_id = $1) AS "row_exists!"
+                EXISTS (SELECT 1 FROM password_reset_codes WHERE user_id = $1 AND id = $3) AS "row_exists!"
             "#,
             user_id.as_uuid(),
             max_attempts,
+            code_id.as_uuid(),
         )
         .fetch_one(self.db.pool())
         .await
@@ -146,14 +170,19 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
     }
 
     #[tracing::instrument(name = "repo.password_reset.release_attempt", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
-    async fn release_attempt(&self, user_id: &UserId) -> Result<(), DomainError> {
+    async fn release_attempt(
+        &self,
+        user_id: &UserId,
+        code_id: &ResetCodeId,
+    ) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
             UPDATE password_reset_codes
             SET attempts = GREATEST(attempts - 1, 0)
-            WHERE user_id = $1
+            WHERE user_id = $1 AND id = $2
             "#,
             user_id.as_uuid(),
+            code_id.as_uuid(),
         )
         .execute(self.db.pool())
         .await

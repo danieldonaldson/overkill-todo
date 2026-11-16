@@ -1,0 +1,37 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO password_reset_codes (id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at)\n            VALUES ($1, $2, $3, $4, $5, $6, $7)\n            ON CONFLICT (user_id) DO UPDATE SET\n                id = EXCLUDED.id,\n                code_hash = EXCLUDED.code_hash,\n                expires_at = EXCLUDED.expires_at,\n                attempts = EXCLUDED.attempts,\n                last_sent_at = EXCLUDED.last_sent_at,\n                -- Replacing a code that sat at the attempt cap counts as a\n                -- lockout and doubles the next lock window. Never reset here.\n                lockouts = password_reset_codes.lockouts\n                    + CASE WHEN password_reset_codes.attempts >= $8 THEN 1 ELSE 0 END\n            -- P-11: the caller decided to reissue on a row it read earlier. A\n            -- wrong guess may have locked that row since, or a concurrent\n            -- request issued a code, so re-check the reissue rule here, in the\n            -- statement that writes, at the new code's send time: a row at the\n            -- cap is replaced only once its lock window (the domain's table,\n            -- indexed by lockouts) has passed, and any row only once the\n            -- resend cooldown has.\n            WHERE (password_reset_codes.attempts < $8\n                OR EXCLUDED.last_sent_at >= password_reset_codes.last_sent_at\n                    + ($9::INT8[])[LEAST(GREATEST(password_reset_codes.lockouts, 0), cardinality($9::INT8[]) - 1) + 1]\n                    * INTERVAL '1 minute')\n              AND EXCLUDED.last_sent_at >= password_reset_codes.last_sent_at + $10::INT8 * INTERVAL '1 minute'\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "password_reset_codes",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Int4",
+        "Timestamptz",
+        "Timestamptz",
+        "Int4",
+        "Int8Array",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "1f8723c4619898620573130d028e38c2ff36cc2cf82b01229df9431e38c71565"
+}

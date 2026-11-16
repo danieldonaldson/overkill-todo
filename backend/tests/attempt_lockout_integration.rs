@@ -6,13 +6,19 @@
 //!     start from `attempts = 0` cannot collectively exceed `MAX_ATTEMPTS`).
 //!   - finding #2: a claim against a missing row reports `NotFound`, not a
 //!     misleading lockout.
+//!   - OT-010 slice 4: a claim names the code it will be compared against, so
+//!     a guess whose code was replaced reports `NotFound` and takes no slot on
+//!     the new code.
 
 use std::sync::Arc;
 
+use chrono::{Duration, Utc};
 use overkill_todo::application::ports::{PasswordResetRepository, UserRepository};
-use overkill_todo::domain::entities::attempt_lockout::{AttemptOutcome, MAX_ATTEMPTS};
+use overkill_todo::domain::entities::attempt_lockout::{
+    AttemptOutcome, IssueOutcome, MAX_ATTEMPTS,
+};
 use overkill_todo::domain::entities::{PasswordResetCode, User};
-use overkill_todo::domain::value_objects::{Email, UserId};
+use overkill_todo::domain::value_objects::{Email, ResetCodeId, UserId};
 use overkill_todo::infrastructure::persistence::postgres::{
     Database, PostgresPasswordResetRepository, PostgresUserRepository,
 };
@@ -36,17 +42,18 @@ async fn register_attempt_caps_under_concurrency(pool: PgPool) {
     );
     user_repo.save(&user).await.unwrap();
     let user_id = *user.id();
-    reset_repo
-        .save(&PasswordResetCode::new(user_id, "hashed_code".to_string()))
-        .await
-        .unwrap();
+    let code = PasswordResetCode::new(user_id, "hashed_code".to_string());
+    reset_repo.save(&code).await.unwrap();
+    let code_id = *code.id();
 
     // Fire many more parallel claims than the cap allows.
     let mut handles = Vec::new();
     for _ in 0..PARALLEL {
         let repo = reset_repo.clone();
         handles.push(tokio::spawn(async move {
-            repo.register_attempt(&user_id, MAX_ATTEMPTS).await.unwrap()
+            repo.register_attempt(&user_id, &code_id, MAX_ATTEMPTS)
+                .await
+                .unwrap()
         }));
     }
 
@@ -79,8 +86,65 @@ async fn register_attempt_reports_not_found_without_row(pool: PgPool) {
 
     // No reset code row exists for this user → NotFound, never Locked.
     let outcome = reset_repo
-        .register_attempt(&UserId::new(), MAX_ATTEMPTS)
+        .register_attempt(&UserId::new(), &ResetCodeId::new(), MAX_ATTEMPTS)
         .await
         .unwrap();
     assert_eq!(outcome, AttemptOutcome::NotFound);
+}
+
+/// A guess read code A, then a reissue replaced it with code B. Its claim
+/// names A, so it reports `NotFound` (the no-code answer) and leaves B's
+/// attempts alone, even with B at the cap (no misleading "locked"). Claiming
+/// by user alone let it take a slot on B and be compared against A, past A's
+/// cap (`models/attempt_claim.qnt`, module `claim_by_user`).
+#[sqlx::test(migrations = "./migrations")]
+async fn claim_naming_a_replaced_code_finds_no_code(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool));
+    let user_repo = PostgresUserRepository::new(db.clone());
+    let reset_repo = PostgresPasswordResetRepository::new(db);
+    let user = User::new(
+        Email::new("replaced@example.com").unwrap(),
+        Some("password_hash".to_string()),
+        "Replaced".to_string(),
+        "Code".to_string(),
+    );
+    user_repo.save(&user).await.unwrap();
+    let user_id = *user.id();
+
+    // Code A was sent 10 minutes ago, so B may replace it (past the cooldown).
+    let sent_a = Utc::now() - Duration::minutes(10);
+    let read = PasswordResetCode::from_persistence(
+        ResetCodeId::new(),
+        user_id,
+        "code_a".to_string(),
+        sent_a + Duration::minutes(15),
+        0,
+        sent_a,
+        sent_a,
+    );
+    assert_eq!(reset_repo.save(&read).await.unwrap(), IssueOutcome::Issued);
+    let current = PasswordResetCode::new(user_id, "code_b".to_string());
+    assert_eq!(
+        reset_repo.save(&current).await.unwrap(),
+        IssueOutcome::Issued
+    );
+
+    for expected_attempts in [0, MAX_ATTEMPTS] {
+        if expected_attempts > 0 {
+            for _ in 0..MAX_ATTEMPTS {
+                reset_repo
+                    .register_attempt(&user_id, current.id(), MAX_ATTEMPTS)
+                    .await
+                    .unwrap();
+            }
+        }
+        let outcome = reset_repo
+            .register_attempt(&user_id, read.id(), MAX_ATTEMPTS)
+            .await
+            .unwrap();
+        assert_eq!(outcome, AttemptOutcome::NotFound);
+        let stored = reset_repo.find_by_user(&user_id).await.unwrap().unwrap();
+        assert_eq!(stored.id(), current.id());
+        assert_eq!(stored.attempts(), expected_attempts);
+    }
 }

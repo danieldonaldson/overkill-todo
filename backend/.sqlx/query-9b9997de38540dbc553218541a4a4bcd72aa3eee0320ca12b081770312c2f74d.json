@@ -1,0 +1,39 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            INSERT INTO email_verification_codes (id, user_id, code_hash, expires_at, attempts, last_sent_at, created_at, magic_token_hash, magic_token_expires_at)\n            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)\n            ON CONFLICT (user_id) DO UPDATE SET\n                id = EXCLUDED.id,\n                code_hash = EXCLUDED.code_hash,\n                expires_at = EXCLUDED.expires_at,\n                attempts = EXCLUDED.attempts,\n                last_sent_at = EXCLUDED.last_sent_at,\n                -- Replacing a code that sat at the attempt cap counts as a\n                -- lockout and doubles the next lock window. Never reset here.\n                lockouts = email_verification_codes.lockouts\n                    + CASE WHEN email_verification_codes.attempts >= $10 THEN 1 ELSE 0 END,\n                -- A routine 6-digit code-send carries magic_token_hash = NULL;\n                -- only overwrite when a new magic token is actually supplied so a\n                -- previously issued magic link stays matchable. The link's expiry\n                -- is preserved alongside it so a code resend never extends it.\n                magic_token_hash = COALESCE(EXCLUDED.magic_token_hash, email_verification_codes.magic_token_hash),\n                magic_token_expires_at = COALESCE(EXCLUDED.magic_token_expires_at, email_verification_codes.magic_token_expires_at)\n            -- P-11: the caller decided to reissue on a row it read earlier. A\n            -- wrong guess may have locked that row since, or a concurrent\n            -- request issued a code, so re-check the reissue rule here, in the\n            -- statement that writes, at the new code's send time: a row at the\n            -- cap is replaced only once its lock window (the domain's table,\n            -- indexed by lockouts) has passed, and any row only once the\n            -- resend cooldown has.\n            WHERE (email_verification_codes.attempts < $10\n                OR EXCLUDED.last_sent_at >= email_verification_codes.last_sent_at\n                    + ($11::INT8[])[LEAST(GREATEST(email_verification_codes.lockouts, 0), cardinality($11::INT8[]) - 1) + 1]\n                    * INTERVAL '1 minute')\n              AND EXCLUDED.last_sent_at >= email_verification_codes.last_sent_at + $12::INT8 * INTERVAL '1 minute'\n            RETURNING id\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "email_verification_codes",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Int4",
+        "Timestamptz",
+        "Timestamptz",
+        "Text",
+        "Timestamptz",
+        "Int4",
+        "Int8Array",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "9b9997de38540dbc553218541a4a4bcd72aa3eee0320ca12b081770312c2f74d"
+}

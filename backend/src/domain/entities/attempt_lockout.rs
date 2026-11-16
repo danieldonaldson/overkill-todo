@@ -155,6 +155,27 @@ const fn lock_window_minutes(lockouts: i32) -> i64 {
     }
 }
 
+/// The lock window in minutes by earlier lockout count: entry `n` is the
+/// window after `n` lockouts, and the last entry holds for every count beyond
+/// it (a negative count reads entry 0).
+///
+/// The repositories' issuing upsert passes this table to SQL, so the guard
+/// that refuses to replace a locked code (P-11) uses the same windows as
+/// [`AttemptLockout::reissue`] rather than restating the doubling rule. Kani
+/// proves the table and [`lock_window_minutes`] agree for every `i32`
+/// (`lock_window_table_matches_the_policy`).
+pub const LOCK_WINDOWS_MINUTES: [i64; 8] = {
+    let mut table = [0; 8];
+    let mut index = 0;
+    let mut lockouts = 0;
+    while index < table.len() {
+        table[index] = lock_window_minutes(lockouts);
+        index += 1;
+        lockouts += 1;
+    }
+    table
+};
+
 /// Seconds from `now_us` until `until_us`, rounded up, so any time left
 /// counts as a second; 0 once `until_us` has passed.
 ///
@@ -249,6 +270,21 @@ pub enum AttemptOutcome {
     Locked,
     /// No code row exists for this user (expired or deleted concurrently).
     NotFound,
+}
+
+/// What happened to a newly issued one-time code when it was stored.
+///
+/// The issuing paths decide with [`AttemptLockout::reissue`] on a row they
+/// read earlier. A wrong guess can lock that row in between, or a concurrent
+/// request can issue a code first, so the store re-checks the whole reissue
+/// rule in the same statement as the write (P-11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueOutcome {
+    /// The code is stored, replacing any earlier one.
+    Issued,
+    /// Nothing was written: at the new code's send time, the stored code was
+    /// locked inside its window or still inside the resend cooldown.
+    Withheld,
 }
 
 /// Kani proofs (OT-010, threat model P-10 / P-13). Run with `just verify`.
@@ -367,6 +403,17 @@ mod verification {
             7..=i32::MAX => 1440,
         };
         assert_eq!(window_minutes(lockouts), expected);
+    }
+
+    /// For every `i32` lockout count: the table the issuing upsert's SQL
+    /// guard reads, indexed the way that SQL indexes it (clamped to the table),
+    /// gives the same window as the policy.
+    #[kani::proof]
+    fn lock_window_table_matches_the_policy() {
+        let lockouts: i32 = kani::any();
+        let last = LOCK_WINDOWS_MINUTES.len() - 1;
+        let index = usize::try_from(lockouts.max(0)).map_or(last, |i| i.min(last));
+        assert_eq!(LOCK_WINDOWS_MINUTES[index], lock_window_minutes(lockouts));
     }
 
     /// For every pair `a <= b` of `i32` lockout counts: more earlier lockouts

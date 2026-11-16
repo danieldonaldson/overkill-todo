@@ -5,6 +5,7 @@ use crate::application::ports::{
     CodeGenerator, EmailService, PasswordHasher, PasswordResetRepository,
 };
 use crate::domain::entities::PasswordResetCode;
+use crate::domain::entities::attempt_lockout::IssueOutcome;
 use crate::domain::errors::DomainError;
 use std::sync::Arc;
 
@@ -79,8 +80,17 @@ impl RequestPasswordResetUseCase {
         // Create the reset code entity (replaces any existing code for this user)
         let reset_code = PasswordResetCode::new(*user.id(), code_hash);
 
-        // Save to database (upsert - replaces existing code)
-        self.password_reset_repo.save(&reset_code).await?;
+        // Save to database (upsert - replaces existing code). A wrong guess
+        // can lock the current code after the check above; the store then
+        // refuses to replace it, and this answers as if the lock had been seen
+        // first.
+        if self.password_reset_repo.save(&reset_code).await? == IssueOutcome::Withheld {
+            tracing::info!(
+                user_id = %user.id(),
+                "Password reset code locked while re-requesting; no new code"
+            );
+            return Ok(true);
+        }
 
         // Send the email
         self.email_service
@@ -129,7 +139,9 @@ mod tests {
         mock_reset_repo
             .expect_find_by_user()
             .returning(|_| Ok(None));
-        mock_reset_repo.expect_save().returning(|_| Ok(()));
+        mock_reset_repo
+            .expect_save()
+            .returning(|_| Ok(IssueOutcome::Issued));
 
         let mut mock_email_service = MockEmailService::new();
         mock_email_service
@@ -234,5 +246,49 @@ mod tests {
         let result = use_case.execute("test@example.com").await;
         assert!(result.is_ok());
         assert!(result.unwrap()); // reports success without sending
+    }
+
+    /// P-11: a wrong guess locks the code after the reissue check, so the
+    /// store refuses the new one. The request still answers `true` (open
+    /// enumeration policy) and sends nothing.
+    #[tokio::test]
+    async fn test_request_reset_refused_by_the_store_sends_nothing() {
+        let user = create_test_user();
+        let mut mock_user_repo = MockUserRepository::new();
+        mock_user_repo
+            .expect_find_by_email()
+            .returning(move |_| Ok(Some(user.clone())));
+
+        let mut mock_reset_repo = MockPasswordResetRepository::new();
+        mock_reset_repo
+            .expect_find_by_user()
+            .returning(|_| Ok(None));
+        mock_reset_repo
+            .expect_save()
+            .times(1)
+            .returning(|_| Ok(IssueOutcome::Withheld));
+
+        let mut mock_email_service = MockEmailService::new();
+        mock_email_service
+            .expect_send_password_reset_email()
+            .times(0);
+        let mut mock_code_generator = MockCodeGenerator::new();
+        mock_code_generator
+            .expect_generate_code()
+            .returning(|_| "123456".to_string());
+        let mut mock_hasher = MockPasswordHasher::new();
+        mock_hasher
+            .expect_hash()
+            .returning(|_| Ok("hashed".to_string()));
+
+        let use_case = RequestPasswordResetUseCase::new(
+            Arc::new(mock_user_repo),
+            Arc::new(mock_reset_repo),
+            Arc::new(mock_email_service),
+            Arc::new(mock_code_generator),
+            Arc::new(mock_hasher),
+        );
+
+        assert!(use_case.execute("test@example.com").await.unwrap());
     }
 }

@@ -45,7 +45,9 @@ jobs:
             backend:
               - *shared
               - backend/**
+              - models/**
               - scripts/check-rust-pin.sh
+              - scripts/models.sh
             web:
               - *shared
               - apps/**
@@ -279,6 +281,52 @@ jobs:
           kani-version: ${{ steps.pin.outputs.kani }}
           working-directory: backend
 
+  # Quint concurrency models (`just models`, OT-010): Apalache's bounded checks, the old
+  # code's counterexamples, then the exported traces replayed against Postgres. Node,
+  # Java and Quint come from .mise.toml through mise, so CI checks with the local pins.
+  models:
+    name: Concurrency models (Quint)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: overkill_todo
+          POSTGRES_PASSWORD: overkill_todo
+          POSTGRES_DB: overkill_todo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://overkill_todo:overkill_todo@localhost/overkill_todo
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        working-directory: backend
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest,sqlx-cli
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: node java npm:@informalsystems/quint
+      - name: Run migrations
+        working-directory: backend
+        run: cargo sqlx migrate run
+      - run: ./scripts/models.sh
+
   # Cheap and always run: every property in docs/security/threat-model.md names a
   # check or an accepted gap, and every named check still exists (OT-010).
   threat-model:
@@ -295,7 +343,7 @@ jobs:
   images:
     name: Build ${{ matrix.component }} image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [backend, verify, web, web-e2e, observability, secrets, threat-model]
+    needs: [backend, verify, models, web, web-e2e, observability, secrets, threat-model]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

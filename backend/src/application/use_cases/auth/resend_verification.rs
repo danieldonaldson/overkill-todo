@@ -4,8 +4,10 @@ use crate::application::ports::UserRepository;
 use crate::application::ports::{
     CodeGenerator, EmailService, EmailVerificationRepository, PasswordHasher,
 };
+use crate::domain::entities::attempt_lockout::IssueOutcome;
 use crate::domain::entities::email_verification_code::RESEND_COOLDOWN_MINUTES;
 use crate::domain::entities::{EmailVerificationCode, Reissue};
+use crate::domain::value_objects::UserId;
 use std::sync::Arc;
 
 /// Result of a resend operation, including metadata for the frontend.
@@ -121,12 +123,20 @@ impl ResendVerificationUseCase {
             .await
             .map_err(|e| ResendVerificationError::Internal(e.to_string()))?;
 
-        // Create or update the verification code
+        // Create or update the verification code. A wrong guess can lock the
+        // current code after the decision above, or a concurrent request
+        // issue one; the store then refuses, and the caller gets the answer it
+        // would have got had it seen that first.
         let verification_code = EmailVerificationCode::new(*user.id(), code_hash);
-        self.email_verification_repo
+        let stored = self
+            .email_verification_repo
             .save(&verification_code)
             .await
             .map_err(|e| ResendVerificationError::Internal(e.to_string()))?;
+        if stored == IssueOutcome::Withheld {
+            tracing::info!(user_id = %user.id(), "Verification code changed while resending; no new code");
+            return Err(self.withheld(user.id()).await);
+        }
 
         // Send the verification email. Resend is code-only: the original
         // magic-link token (preserved by the verification upsert's COALESCE)
@@ -143,6 +153,34 @@ impl ResendVerificationUseCase {
         Ok(ResendResult {
             cooldown_seconds: RESEND_COOLDOWN_MINUTES * 60,
         })
+    }
+}
+
+impl ResendVerificationUseCase {
+    /// Why the store withheld a new code: the stored code's own reissue
+    /// decision now. Best-effort: if it can't be read, or no longer refuses,
+    /// this reports the full cooldown rather than failing a request whose
+    /// answer the handler makes uniform anyway.
+    async fn withheld(&self, user_id: &UserId) -> ResendVerificationError {
+        let cooldown = ResendVerificationError::CooldownActive {
+            seconds_remaining: RESEND_COOLDOWN_MINUTES * 60,
+        };
+        match self.email_verification_repo.find_by_user(user_id).await {
+            Ok(Some(code)) => match code.reissue(chrono::Utc::now()) {
+                Reissue::Locked { seconds_remaining } => ResendVerificationError::Locked {
+                    seconds_until_unlock: seconds_remaining,
+                },
+                Reissue::Cooldown { seconds_remaining } => {
+                    ResendVerificationError::CooldownActive { seconds_remaining }
+                }
+                Reissue::Allowed => cooldown,
+            },
+            Ok(None) => cooldown,
+            Err(e) => {
+                tracing::warn!(user_id = %user_id, error = %e, "Could not read the code a resend was refused for");
+                cooldown
+            }
+        }
     }
 }
 
@@ -190,7 +228,9 @@ mod tests {
         mock_verification_repo
             .expect_find_by_user()
             .returning(|_| Ok(None));
-        mock_verification_repo.expect_save().returning(|_| Ok(()));
+        mock_verification_repo
+            .expect_save()
+            .returning(|_| Ok(IssueOutcome::Issued));
 
         let mut mock_email_service = MockEmailService::new();
         mock_email_service
@@ -324,5 +364,143 @@ mod tests {
 
         let result = use_case.execute("test@example.com").await;
         assert!(matches!(result, Err(ResendVerificationError::NotFound(_))));
+    }
+
+    /// P-11: a wrong guess locks the code after the reissue check, so the
+    /// store refuses the new one. The resend reports `Locked`, with the wait
+    /// read from the stored code, and sends nothing.
+    #[tokio::test]
+    async fn resend_refused_by_the_store_reports_locked() {
+        use crate::domain::entities::email_verification_code::MAX_ATTEMPTS;
+        use crate::domain::value_objects::VerificationCodeId;
+        use chrono::{Duration, Utc};
+
+        let user = create_unverified_user();
+        let user_id = *user.id();
+        let mut mock_user_repo = MockUserRepository::new();
+        mock_user_repo
+            .expect_find_by_email()
+            .returning(move |_| Ok(Some(user.clone())));
+
+        // First read: 4 attempts, sent 6 minutes ago, so a resend is allowed.
+        // Second read (after the refused write): the guess has locked it.
+        let code = move |attempts| {
+            EmailVerificationCode::from_persistence(
+                VerificationCodeId::new(),
+                user_id,
+                "hash".to_string(),
+                Utc::now() + Duration::hours(1),
+                attempts,
+                Utc::now() - Duration::minutes(6),
+                Utc::now() - Duration::minutes(6),
+                None,
+                None,
+            )
+        };
+        let mut reads = 0;
+        let mut mock_verification_repo = MockEmailVerificationRepository::new();
+        mock_verification_repo
+            .expect_find_by_user()
+            .times(2)
+            .returning(move |_| {
+                reads += 1;
+                Ok(Some(code(if reads == 1 {
+                    MAX_ATTEMPTS - 1
+                } else {
+                    MAX_ATTEMPTS
+                })))
+            });
+        mock_verification_repo
+            .expect_save()
+            .times(1)
+            .returning(|_| Ok(IssueOutcome::Withheld));
+
+        let mut mock_email_service = MockEmailService::new();
+        mock_email_service.expect_send_verification_email().times(0);
+        let mut mock_code_generator = MockCodeGenerator::new();
+        mock_code_generator
+            .expect_generate_code()
+            .returning(|_| "123456".to_string());
+        let mut mock_hasher = MockPasswordHasher::new();
+        mock_hasher
+            .expect_hash()
+            .returning(|_| Ok("hashed".to_string()));
+
+        let use_case = ResendVerificationUseCase::new(
+            Arc::new(mock_user_repo),
+            Arc::new(mock_verification_repo),
+            Arc::new(mock_email_service),
+            Arc::new(mock_code_generator),
+            Arc::new(mock_hasher),
+        );
+
+        // 15-minute window from a send 6 minutes ago: about 9 minutes left
+        // (rounded up to whole seconds).
+        match use_case.execute("test@example.com").await {
+            Err(ResendVerificationError::Locked {
+                seconds_until_unlock,
+            }) => assert!(
+                (8 * 60..=9 * 60 + 1).contains(&seconds_until_unlock),
+                "got {seconds_until_unlock}"
+            ),
+            other => panic!("expected Locked, got {other:?}"),
+        }
+    }
+
+    /// A refused resend whose follow-up read fails still answers like a
+    /// cooldown, never with an internal error (the handler's answer must not
+    /// depend on the account's state).
+    #[tokio::test]
+    async fn resend_refused_by_the_store_never_fails_on_the_follow_up_read() {
+        let user = create_unverified_user();
+        let mut mock_user_repo = MockUserRepository::new();
+        mock_user_repo
+            .expect_find_by_email()
+            .returning(move |_| Ok(Some(user.clone())));
+
+        let mut reads = 0;
+        let mut mock_verification_repo = MockEmailVerificationRepository::new();
+        mock_verification_repo
+            .expect_find_by_user()
+            .times(2)
+            .returning(move |_| {
+                reads += 1;
+                if reads == 1 {
+                    Ok(None)
+                } else {
+                    Err(crate::domain::errors::DomainError::Persistence(
+                        "down".into(),
+                    ))
+                }
+            });
+        mock_verification_repo
+            .expect_save()
+            .times(1)
+            .returning(|_| Ok(IssueOutcome::Withheld));
+
+        let mut mock_email_service = MockEmailService::new();
+        mock_email_service.expect_send_verification_email().times(0);
+        let mut mock_code_generator = MockCodeGenerator::new();
+        mock_code_generator
+            .expect_generate_code()
+            .returning(|_| "123456".to_string());
+        let mut mock_hasher = MockPasswordHasher::new();
+        mock_hasher
+            .expect_hash()
+            .returning(|_| Ok("hashed".to_string()));
+
+        let use_case = ResendVerificationUseCase::new(
+            Arc::new(mock_user_repo),
+            Arc::new(mock_verification_repo),
+            Arc::new(mock_email_service),
+            Arc::new(mock_code_generator),
+            Arc::new(mock_hasher),
+        );
+
+        assert!(matches!(
+            use_case.execute("test@example.com").await,
+            Err(ResendVerificationError::CooldownActive { seconds_remaining })
+                if seconds_remaining == RESEND_COOLDOWN_MINUTES * 60
+        ));
     }
 }

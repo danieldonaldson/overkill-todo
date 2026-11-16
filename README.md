@@ -55,25 +55,26 @@ and the backend refuses to start with them: replace both with
 `FORCE=1 ./scripts/gen-dev-env.sh`. Committed secrets use post-quantum age keys
 only (`deploy/secrets/README.md`).
 
-| Recipe                                 | What it runs                                                      |
-| -------------------------------------- | ----------------------------------------------------------------- |
-| `just test` / `just test-integration`  | backend unit / DB-backed tests                                    |
-| `just test-web`                        | `astro check` + Vitest (real Chromium)                            |
-| `just e2e`                             | Playwright against the built site, API mocked                     |
-| `just e2e-integration`                 | Playwright signup against `just dev`                              |
-| `just smoke <url>`                     | read-only checks against a deployed site, incl. post-quantum TLS  |
-| `just jwt-keygen [kid]`                | new token key for `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS`          |
-| `just up`                              | prod-like stack in Docker behind Caddy on :8080                   |
-| `just bench` / `just bench-db`         | backend criterion benches / full-router + DB                      |
-| `just bench-web`                       | Vitest benches (helpers, client, AdminPanel)                      |
-| `just bench-compare [base]`            | base vs working tree, per-bench change report                     |
-| `just api-types`                       | regenerate `backend/openapi.json` + web types                     |
-| `just api-types-check`                 | fail if either generated API file is stale                        |
-| `just threat-model-check`              | every auth security property names a check that still exists      |
-| `just verify`                          | Kani proofs of the auth lockout policy, every input within bounds |
-| `just load <scenario>`                 | k6 load scenario against the capped stack                         |
-| `just obs-up` / `just obs-down`        | traces, logs, metrics, alerts and Grafana                         |
-| `just analytics-up` / `analytics-down` | Umami web analytics on :3001                                      |
+| Recipe                                 | What it runs                                                       |
+| -------------------------------------- | ------------------------------------------------------------------ |
+| `just test` / `just test-integration`  | backend unit / DB-backed tests                                     |
+| `just test-web`                        | `astro check` + Vitest (real Chromium)                             |
+| `just e2e`                             | Playwright against the built site, API mocked                      |
+| `just e2e-integration`                 | Playwright signup against `just dev`                               |
+| `just smoke <url>`                     | read-only checks against a deployed site, incl. post-quantum TLS   |
+| `just jwt-keygen [kid]`                | new token key for `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS`           |
+| `just up`                              | prod-like stack in Docker behind Caddy on :8080                    |
+| `just bench` / `just bench-db`         | backend criterion benches / full-router + DB                       |
+| `just bench-web`                       | Vitest benches (helpers, client, AdminPanel)                       |
+| `just bench-compare [base]`            | base vs working tree, per-bench change report                      |
+| `just api-types`                       | regenerate `backend/openapi.json` + web types                      |
+| `just api-types-check`                 | fail if either generated API file is stale                         |
+| `just threat-model-check`              | every auth security property names a check that still exists       |
+| `just verify`                          | Kani proofs of the auth lockout policy, every input within bounds  |
+| `just models`                          | Quint concurrency models of code entry and refresh, replayed on DB |
+| `just load <scenario>`                 | k6 load scenario against the capped stack                          |
+| `just obs-up` / `just obs-down`        | traces, logs, metrics, alerts and Grafana                          |
+| `just analytics-up` / `analytics-down` | Umami web analytics on :3001                                       |
 
 ### Benchmarks
 
