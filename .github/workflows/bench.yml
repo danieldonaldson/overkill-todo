@@ -83,6 +83,9 @@ jobs:
         with:
           workspaces: backend
           save-if: ${{ github.ref == 'refs/heads/main' }}
+          # A red run on main still saves the dependencies it compiled, so the
+          # fix-up push after it doesn't rebuild them from a stale cache again.
+          cache-on-failure: true
 
       - name: Build benches (warm cache)
         if: github.event_name != 'pull_request'
