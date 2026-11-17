@@ -66,4 +66,4 @@ not from validation rules, so `positive_data_acceptance` is tried again here.
 ## 3. Feature done
 
 - [x] 3.1 Document `just fuzz-api` (what it checks, how to reproduce a failure with a seed, how to add an exclusion) in `README.md`. Add the "dev-mode differences a client can see" note to `backend/ARCHITECTURE.md`. Mention in CLAUDE.md that a new route is fuzzed automatically and must stay clean. Verify: the docs list the same command, defaults and exclusions as `apifuzz/`.
-- [ ] 3.2 Archive the change (`/opsx:archive`), syncing the `api` spec delta. Verify: `openspec validate --specs` passes, and `openspec/specs/api/spec.md` contains the three new requirements.
+- [x] 3.2 Archive the change (`/opsx:archive`), syncing the `api` spec delta. Verify: `openspec validate --specs` passes, and `openspec/specs/api/spec.md` contains the three new requirements.
