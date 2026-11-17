@@ -191,7 +191,8 @@ trusted.
 
 - [x] 7.1 Verify `docs/security/threat-model.md` has no property without a check, except accepted gaps with a reason, and that every scenario in the spec delta is covered by a check `just ci` runs
   - No property says "planned (OT-010)" any more. Eight gaps remain, each with a reason or a home: P-03 (edge rate limiting, first deploy), P-12, P-15, P-17, P-21 (accepted), P-30 (ASCII up to 8 bytes, D7), P-31 and P-32 (OT-011). Every requirement maps to properties in the threat model's Spec coverage table, and `just ci` was green on 2026-11-17 (21 Kani harnesses, models, protocols, 806 integration tests, e2e).
-- [ ] 7.2 Check README.md and backend/ARCHITECTURE.md describe every verification recipe, the tools and their pins, and what is and isn't proven. Verify by following the README setup from a clean checkout
+- [x] 7.2 Check README.md and backend/ARCHITECTURE.md describe every verification recipe, the tools and their pins, and what is and isn't proven. Verify by following the README setup from a clean checkout
+  - Found and fixed: `just setup` didn't run `cargo kani setup`, so a fresh checkout's `just ci` failed at `just verify`. README gained "What's proven about auth". Followed the README from a clean `just wt-new` checkout of 21b772d (2026-11-17): `mise install`, `just setup`, then `threat-model-check`, `verify` (185 s cold), `protocols` (86 s) and `models` (335 s) all passed.
 - [x] 7.3 Record the external penetration test (scoped by the threat model) with the first-deploy notes, and verify it's listed there
   - Listed under "Security (OT-010), before launch" in `deploy/compose/README.md` (First deploy), next to P-03's edge rate limiting, which the threat model already expects there.
-- [ ] 7.4 Archive the change with `/opsx:archive` and verify `openspec/specs/security/spec.md` contains the new requirements
+- [x] 7.4 Archive the change with `/opsx:archive` and verify `openspec/specs/security/spec.md` contains the new requirements
