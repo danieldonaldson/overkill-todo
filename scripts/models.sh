@@ -115,6 +115,13 @@ next "claim_by_user breaks atMostFiveWrongGuessesPerCode, as it must" \
 next "lock_only_guard breaks noReissueInsideTheCooldown, as it must" \
   fails $ac lock_only_guard noReissueInsideTheCooldown
 
+# `quint run` fetches its evaluator from GitHub on first use. Several fetching
+# at once on a fresh machine (CI) all fail, so one runs alone first, alongside
+# the Apalache checks above, and the rest start once it has installed it.
+spawn "refresh_rotation keeps safety (quint run, 30 steps)" \
+  quint run $rr --invariant safety --max-steps 30 --max-samples 10000 --verbosity 1
+wait "$!" || true
+
 for m in email_codes reset_codes; do
   spawn "$m keeps safety (quint run, 30 steps)" \
     quint run $ac --main=$m --invariant safety --max-steps 30 --max-samples 10000 --verbosity 1
@@ -123,8 +130,6 @@ for m in email_codes reset_codes; do
     --out-itf "$traces/${m}_{seq}.itf.json" --verbosity 1
   spawn "$m witness traces exported" witnesses $m
 done
-spawn "refresh_rotation keeps safety (quint run, 30 steps)" \
-  quint run $rr --invariant safety --max-steps 30 --max-samples 10000 --verbosity 1
 spawn "refresh_rotation traces exported" \
   quint run $rr --max-steps 20 --n-traces 300 --max-samples 300 \
   --out-itf "$traces/refresh_rotation_{seq}.itf.json" --verbosity 1
