@@ -5,7 +5,7 @@ use crate::application::ports::{JwtService, PasswordHasher, PasswordResetReposit
 use crate::domain::entities::attempt_lockout::AttemptOutcome;
 use crate::domain::entities::password_reset_code::MAX_ATTEMPTS;
 use crate::domain::errors::DomainError;
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use std::sync::Arc;
 
 /// Duration in minutes for reset token validity.
@@ -77,7 +77,7 @@ impl ValidateResetCodeUseCase {
             })?;
 
         // Check if expired
-        if reset_code.is_expired(Utc::now()) {
+        if reset_code.is_expired(Timestamp::now()) {
             return Err(DomainError::Validation(
                 "Reset code has expired. Please request a new one.".into(),
             ));
@@ -120,7 +120,7 @@ impl ValidateResetCodeUseCase {
         // it if it expired meanwhile, so no code is accepted from its expiry
         // instant on (P-19). The claim is by code id and a resend makes a new
         // one, so the expiry loaded above is still this code's.
-        if reset_code.is_expired(Utc::now()) {
+        if reset_code.is_expired(Timestamp::now()) {
             return Err(DomainError::Validation(
                 "Reset code has expired. Please request a new one.".into(),
             ));
@@ -138,7 +138,7 @@ impl ValidateResetCodeUseCase {
 
         // Code is valid - generate a short-lived JWT token (5 minutes) bound to
         // this reset-code row so it can only be consumed once.
-        let expires_at = Utc::now() + Duration::minutes(RESET_TOKEN_EXPIRY_MINUTES);
+        let expires_at = Timestamp::now() + SignedDuration::from_mins(RESET_TOKEN_EXPIRY_MINUTES);
         let token = self
             .jwt_service
             .create_reset_token(user.id(), reset_code.id(), expires_at)?;
@@ -159,7 +159,7 @@ mod tests {
     use crate::domain::entities::PasswordResetCode;
     use crate::domain::entities::User;
     use crate::domain::value_objects::{Email, ResetCodeId};
-    use chrono::{Duration, Utc};
+    use jiff::{SignedDuration, Timestamp};
 
     fn create_test_user() -> User {
         let mut user = User::new(
@@ -181,10 +181,10 @@ mod tests {
             ResetCodeId::new(),
             user_id,
             "hashed_code".to_string(),
-            Utc::now() + Duration::minutes(15),
+            Timestamp::now() + SignedDuration::from_mins(15),
             0,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
         );
 
         let mut mock_user_repo = MockUserRepository::new();
@@ -236,10 +236,10 @@ mod tests {
             ResetCodeId::new(),
             user_id,
             "hashed_code".to_string(),
-            Utc::now() + Duration::milliseconds(50),
+            Timestamp::now() + SignedDuration::from_millis(50),
             0,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
         );
 
         let mut mock_user_repo = MockUserRepository::new();
@@ -284,10 +284,10 @@ mod tests {
             ResetCodeId::new(),
             user_id,
             "hashed_code".to_string(),
-            Utc::now() + Duration::minutes(15),
+            Timestamp::now() + SignedDuration::from_mins(15),
             0,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
         );
 
         let mut mock_user_repo = MockUserRepository::new();
@@ -337,10 +337,10 @@ mod tests {
             ResetCodeId::new(),
             user_id,
             "hashed_code".to_string(),
-            Utc::now() + Duration::minutes(15),
+            Timestamp::now() + SignedDuration::from_mins(15),
             MAX_ATTEMPTS,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
         );
 
         let mut mock_user_repo = MockUserRepository::new();
@@ -389,10 +389,10 @@ mod tests {
             ResetCodeId::new(),
             user_id,
             "hashed_code".to_string(),
-            Utc::now() + Duration::minutes(15),
+            Timestamp::now() + SignedDuration::from_mins(15),
             0,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
         );
 
         let mut mock_user_repo = MockUserRepository::new();
@@ -474,10 +474,10 @@ mod tests {
             ResetCodeId::new(),
             user_id,
             "hashed_code".to_string(),
-            Utc::now() - Duration::minutes(1), // Expired
+            Timestamp::now() - SignedDuration::from_mins(1), // Expired
             0,
-            Utc::now() - Duration::minutes(16),
-            Utc::now() - Duration::minutes(16),
+            Timestamp::now() - SignedDuration::from_mins(16),
+            Timestamp::now() - SignedDuration::from_mins(16),
         );
 
         let mut mock_user_repo = MockUserRepository::new();

@@ -66,14 +66,14 @@ mod tests {
     use crate::application::ports::outgoing::token_service::MockTokenService;
     use crate::domain::entities::RefreshToken;
     use crate::domain::value_objects::UserId;
-    use chrono::{Duration, Utc};
+    use jiff::{SignedDuration, Timestamp};
 
     fn create_valid_refresh_token() -> RefreshToken {
         RefreshToken::new(
             UserId::new(),
             "hashed_test_token".to_string(),
             "device_fingerprint".to_string(),
-            Utc::now() + Duration::days(30),
+            Timestamp::now() + SignedDuration::from_hours(24 * 30),
         )
     }
 
@@ -122,7 +122,7 @@ mod tests {
         let mut mock_repo = MockRefreshTokenRepository::new();
         mock_repo.expect_find_by_hash().times(1).returning(|_| {
             let mut token = create_valid_refresh_token();
-            token.revoke(Utc::now());
+            token.revoke(Timestamp::now());
             Ok(Some(token))
         });
         // revoke should NOT be called since already revoked

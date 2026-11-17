@@ -9,7 +9,7 @@ mod common;
 
 use std::sync::Arc;
 
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use sqlx::PgPool;
 
 use overkill_todo::application::ports::{
@@ -139,7 +139,7 @@ async fn refresh_token_save_find_revoke_and_revoke_all(pool: PgPool) {
     // Unknown hash → None.
     assert!(repo.find_by_hash("missing").await.unwrap().is_none());
 
-    let expires = Utc::now() + Duration::days(30);
+    let expires = Timestamp::now() + SignedDuration::from_hours(24 * 30);
     let token = RefreshToken::new(
         user_id,
         "hash-1".to_string(),
@@ -191,7 +191,7 @@ async fn refresh_token_revoke_all_except_keeps_current(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresRefreshTokenRepository::new(db.clone());
     let user_id = seed_user(&db, "revoke-except@example.com").await;
-    let expires = Utc::now() + Duration::days(30);
+    let expires = Timestamp::now() + SignedDuration::from_hours(24 * 30);
 
     let current = RefreshToken::new(
         user_id,
@@ -295,13 +295,13 @@ async fn refresh_token_delete_expired_removes_only_expired(pool: PgPool) {
         user_id,
         "active-hash".to_string(),
         "device".to_string(),
-        Utc::now() + Duration::days(30),
+        Timestamp::now() + SignedDuration::from_hours(24 * 30),
     );
     let expired = RefreshToken::new(
         user_id,
         "expired-hash".to_string(),
         "device".to_string(),
-        Utc::now() - Duration::days(1),
+        Timestamp::now() - SignedDuration::from_hours(24),
     );
     repo.save(&active).await.unwrap();
     repo.save(&expired).await.unwrap();
@@ -323,7 +323,7 @@ async fn refresh_token_rotate_missing_token_conflicts(pool: PgPool) {
         user_id,
         "new-hash".to_string(),
         "device".to_string(),
-        Utc::now() + Duration::days(30),
+        Timestamp::now() + SignedDuration::from_hours(24 * 30),
     );
     let result = repo.rotate(&RefreshTokenId::new(), &successor).await;
     assert!(
@@ -390,10 +390,10 @@ async fn password_reset_release_attempt_and_delete_expired(pool: PgPool) {
         ResetCodeId::new(),
         user_id,
         "hash".to_string(),
-        Utc::now() + Duration::hours(1),
+        Timestamp::now() + SignedDuration::from_hours(1),
         3,
-        Utc::now(),
-        Utc::now(),
+        Timestamp::now(),
+        Timestamp::now(),
     );
     repo.save(&code).await.unwrap();
     // A release naming another code id (one since replaced) changes nothing.
@@ -429,10 +429,10 @@ async fn password_reset_release_attempt_and_delete_expired(pool: PgPool) {
         ResetCodeId::new(),
         expired_user,
         "old".to_string(),
-        Utc::now() - Duration::hours(1),
+        Timestamp::now() - SignedDuration::from_hours(1),
         0,
-        Utc::now() - Duration::hours(2),
-        Utc::now() - Duration::hours(2),
+        Timestamp::now() - SignedDuration::from_hours(2),
+        Timestamp::now() - SignedDuration::from_hours(2),
     );
     repo.save(&expired).await.unwrap();
     let deleted = repo.delete_expired().await.unwrap();
@@ -539,10 +539,10 @@ async fn email_verification_delete_expired(pool: PgPool) {
         overkill_todo::domain::value_objects::VerificationCodeId::new(),
         user_id,
         "hash".to_string(),
-        Utc::now() - Duration::hours(1),
+        Timestamp::now() - SignedDuration::from_hours(1),
         0,
-        Utc::now() - Duration::hours(2),
-        Utc::now() - Duration::hours(2),
+        Timestamp::now() - SignedDuration::from_hours(2),
+        Timestamp::now() - SignedDuration::from_hours(2),
         None,
         None,
     );
@@ -562,7 +562,7 @@ async fn set_last_sent_at_moves_only_the_named_unlocked_code(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresEmailVerificationRepository::new(db.clone());
     let user_id = seed_user(&db, "release-cooldown@example.com").await;
-    let earlier = Utc::now() - Duration::minutes(10);
+    let earlier = Timestamp::now() - SignedDuration::from_mins(10);
     let sent_at = |code: Option<EmailVerificationCode>| code.unwrap().last_sent_at();
 
     for attempts in [0, 5] {
@@ -570,10 +570,10 @@ async fn set_last_sent_at_moves_only_the_named_unlocked_code(pool: PgPool) {
             VerificationCodeId::new(),
             user_id,
             "hash".to_string(),
-            Utc::now() + Duration::hours(1),
+            Timestamp::now() + SignedDuration::from_hours(1),
             attempts,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
             None,
             None,
         );
@@ -592,7 +592,7 @@ async fn set_last_sent_at_moves_only_the_named_unlocked_code(pool: PgPool) {
             .unwrap();
         let after = sent_at(repo.find_by_user(&user_id).await.unwrap());
         if attempts < 5 {
-            assert!((after - earlier).num_milliseconds().abs() < 1);
+            assert!((after - earlier).as_millis().abs() < 1);
         } else {
             assert_eq!(after, before, "a locked code's window must not move");
         }

@@ -5,7 +5,7 @@ use axum::{
     extract::State,
     http::{StatusCode, header::HeaderMap},
 };
-use chrono::Utc;
+use jiff::Timestamp;
 use std::sync::Arc;
 
 use crate::{
@@ -134,7 +134,7 @@ fn build_export(
         created_at: parts.created_at,
         updated_at: parts.updated_at,
         linked_oauth_accounts,
-        exported_at: Utc::now(),
+        exported_at: Timestamp::now(),
     }
 }
 

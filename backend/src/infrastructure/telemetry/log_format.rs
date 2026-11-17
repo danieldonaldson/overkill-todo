@@ -132,7 +132,7 @@ where
         let mut obj = Map::new();
         obj.insert(
             "timestamp".into(),
-            Value::from(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)),
+            Value::from(format!("{:.6}", jiff::Timestamp::now())),
         );
         obj.insert("level".into(), Value::from(meta.level().as_str()));
         obj.insert("target".into(), Value::from(meta.target()));

@@ -62,7 +62,7 @@ impl RequestPasswordResetUseCase {
         // suppressed we still report success — surfacing a distinct error would
         // leak that the email exists, violating the open-enumeration policy.
         if let Some(existing) = self.password_reset_repo.find_by_user(user.id()).await?
-            && !existing.reissue(chrono::Utc::now()).is_allowed()
+            && !existing.reissue(jiff::Timestamp::now()).is_allowed()
         {
             tracing::info!(
                 user_id = %user.id(),
@@ -203,7 +203,7 @@ mod tests {
     async fn test_request_reset_suppressed_while_locked() {
         use crate::domain::entities::password_reset_code::MAX_ATTEMPTS;
         use crate::domain::value_objects::ResetCodeId;
-        use chrono::{Duration, Utc};
+        use jiff::{SignedDuration, Timestamp};
 
         let user = create_test_user();
 
@@ -217,10 +217,10 @@ mod tests {
             ResetCodeId::new(),
             *create_test_user().id(),
             "hash".to_string(),
-            Utc::now() + Duration::minutes(15),
+            Timestamp::now() + SignedDuration::from_mins(15),
             MAX_ATTEMPTS,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
         );
 
         let mut mock_reset_repo = MockPasswordResetRepository::new();

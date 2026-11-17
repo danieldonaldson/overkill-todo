@@ -2,7 +2,7 @@
 
 use super::schema_enums::{OAuthProviderName, RoleName};
 use super::validation::validate_verification_code;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -93,7 +93,7 @@ pub struct LinkedOAuthAccountExport {
     #[schema(nullable = false)]
     pub provider_email: Option<String>,
     /// When the provider account was linked.
-    pub linked_at: DateTime<Utc>,
+    pub linked_at: Timestamp,
 }
 
 /// Machine-readable export of the personal data held about the authenticated
@@ -113,15 +113,15 @@ pub struct AccountExportResponse {
     pub pending_email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
-    pub deletion_scheduled_at: Option<DateTime<Utc>>,
+    pub deletion_scheduled_at: Option<Timestamp>,
     #[schema(value_type = RoleName)]
     pub role: String,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     /// All OAuth providers linked to this account.
     pub linked_oauth_accounts: Vec<LinkedOAuthAccountExport>,
     /// When this export was generated.
-    pub exported_at: DateTime<Utc>,
+    pub exported_at: Timestamp,
 }
 
 /// Response to an account-deletion request or its cancellation.
@@ -131,5 +131,5 @@ pub struct AccountDeletionResponse {
     /// cancellation; set ~14 days out after a deletion request.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
-    pub deletion_scheduled_at: Option<DateTime<Utc>>,
+    pub deletion_scheduled_at: Option<Timestamp>,
 }

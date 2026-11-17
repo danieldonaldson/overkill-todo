@@ -1,6 +1,7 @@
 use super::connection::Database;
 use super::error::persist_err;
 use super::models::{DbUserRole, UserRow};
+use super::time::{ToDb, ToDomain};
 use crate::application::ports::outgoing::{
     AccountLifecycleRepository, SessionAuthorizationState, UserRepository,
 };
@@ -10,7 +11,7 @@ use crate::domain::{
     value_objects::{AccountStatus, Email, PendingEmailChange, UserId},
 };
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use std::sync::Arc;
 
 pub struct PostgresUserRepository {
@@ -35,12 +36,15 @@ impl PostgresUserRepository {
             email_verified: row.email_verified,
             pending_email_change: PendingEmailChange::from_columns(
                 pending_email,
-                row.pending_email_requested_at,
+                row.pending_email_requested_at.to_domain(),
             ),
-            status: AccountStatus::from_columns(row.deleted_at, row.deletion_scheduled_at),
+            status: AccountStatus::from_columns(
+                row.deleted_at.to_domain(),
+                row.deletion_scheduled_at.to_domain(),
+            ),
             role: row.role.into(),
-            created_at: row.created_at,
-            updated_at: row.updated_at,
+            created_at: row.created_at.to_domain(),
+            updated_at: row.updated_at.to_domain(),
             version: row.version,
         }))
     }
@@ -82,12 +86,12 @@ impl UserRepository for PostgresUserRepository {
             user.last_name(),
             user.email_verified(),
             user.pending_email().map(Email::as_str),
-            user.pending_email_requested_at(),
-            user.deleted_at(),
-            user.deletion_scheduled_at(),
+            user.pending_email_requested_at().to_db(),
+            user.deleted_at().to_db(),
+            user.deletion_scheduled_at().to_db(),
             DbUserRole::from(user.role()) as _,
-            user.created_at(),
-            user.updated_at(),
+            user.created_at().to_db(),
+            user.updated_at().to_db(),
             user.version(),
         )
         .execute(self.db.pool())
@@ -257,7 +261,7 @@ impl UserRepository for PostgresUserRepository {
 
         Ok(row.map(|r| SessionAuthorizationState {
             role: r.role.into(),
-            tokens_valid_after: r.tokens_valid_after,
+            tokens_valid_after: r.tokens_valid_after.to_domain(),
         }))
     }
 
@@ -313,7 +317,7 @@ impl UserRepository for PostgresUserRepository {
     async fn revoke_sessions_issued_before(
         &self,
         id: &UserId,
-        cutoff: DateTime<Utc>,
+        cutoff: Timestamp,
     ) -> Result<(), DomainError> {
         // GREATEST ignores NULL, and never moves an existing cutoff backwards.
         // No version bump: the cutoff isn't part of the `User` entity, so it
@@ -325,7 +329,7 @@ impl UserRepository for PostgresUserRepository {
             WHERE id = $1
             "#,
             id.as_uuid(),
-            cutoff,
+            cutoff.to_db(),
         )
         .execute(self.db.pool())
         .await
@@ -424,8 +428,8 @@ impl AccountLifecycleRepository for PostgresUserRepository {
             user.email().as_str(),
             user.first_name(),
             user.last_name(),
-            user.deleted_at(),
-            user.updated_at(),
+            user.deleted_at().to_db(),
+            user.updated_at().to_db(),
         )
         .execute(&mut *tx)
         .await
@@ -479,7 +483,7 @@ impl AccountLifecycleRepository for PostgresUserRepository {
 mod tests {
     use super::*;
     use crate::infrastructure::persistence::postgres::models::UserRow;
-    use chrono::Utc;
+    use jiff::Timestamp;
     use proptest::prelude::*;
     use uuid::Uuid;
 
@@ -504,7 +508,7 @@ mod tests {
 
     /// Creates a valid `UserRow` with the given email.
     fn create_user_row(email: String) -> UserRow {
-        let now = Utc::now();
+        let now = Timestamp::now();
         UserRow {
             id: Uuid::new_v4(),
             email,
@@ -517,8 +521,8 @@ mod tests {
             deleted_at: None,
             deletion_scheduled_at: None,
             role: DbUserRole::User,
-            created_at: now,
-            updated_at: now,
+            created_at: now.to_db(),
+            updated_at: now.to_db(),
             version: 0,
         }
     }
@@ -551,7 +555,7 @@ mod tests {
             first_name in "\\PC{1,20}",
             last_name in "\\PC{1,20}",
         ) {
-            let now = Utc::now();
+            let now = Timestamp::now();
             let row = UserRow {
                 id: Uuid::new_v4(),
                 email: email.clone(),
@@ -564,8 +568,8 @@ mod tests {
                 deleted_at: None,
                 deletion_scheduled_at: None,
                 role: DbUserRole::User,
-                created_at: now,
-                updated_at: now,
+                created_at: now.to_db(),
+                updated_at: now.to_db(),
                 version: 0,
             };
 
@@ -593,7 +597,7 @@ mod tests {
             email in valid_email_strategy(),
             pending_email in valid_email_strategy(),
         ) {
-            let now = Utc::now();
+            let now = Timestamp::now();
             let row = UserRow {
                 id: Uuid::new_v4(),
                 email,
@@ -602,12 +606,12 @@ mod tests {
                 last_name: "User".to_string(),
                 email_verified: false,
                 pending_email: Some(pending_email.clone()),
-                pending_email_requested_at: Some(now),
+                pending_email_requested_at: Some(now.to_db()),
                 deleted_at: None,
                 deletion_scheduled_at: None,
                 role: DbUserRole::User,
-                created_at: now,
-                updated_at: now,
+                created_at: now.to_db(),
+                updated_at: now.to_db(),
                 version: 0,
             };
 
@@ -628,7 +632,7 @@ mod tests {
             email in valid_email_strategy(),
             pending_email in invalid_email_strategy(),
         ) {
-            let now = Utc::now();
+            let now = Timestamp::now();
             let row = UserRow {
                 id: Uuid::new_v4(),
                 email,
@@ -637,12 +641,12 @@ mod tests {
                 last_name: "User".to_string(),
                 email_verified: false,
                 pending_email: Some(pending_email.clone()),
-                pending_email_requested_at: Some(now),
+                pending_email_requested_at: Some(now.to_db()),
                 deleted_at: None,
                 deletion_scheduled_at: None,
                 role: DbUserRole::User,
-                created_at: now,
-                updated_at: now,
+                created_at: now.to_db(),
+                updated_at: now.to_db(),
                 version: 0,
             };
 
@@ -656,7 +660,7 @@ mod tests {
             email in valid_email_strategy(),
         ) {
             let original_id = Uuid::new_v4();
-            let now = Utc::now();
+            let now = Timestamp::now();
             let row = UserRow {
                 id: original_id,
                 email,
@@ -669,8 +673,8 @@ mod tests {
                 deleted_at: None,
                 deletion_scheduled_at: None,
                 role: DbUserRole::User,
-                created_at: now,
-                updated_at: now,
+                created_at: now.to_db(),
+                updated_at: now.to_db(),
                 version: 0,
             };
 
@@ -687,7 +691,7 @@ mod tests {
             email in valid_email_strategy(),
             email_verified in proptest::bool::ANY,
         ) {
-            let now = Utc::now();
+            let now = Timestamp::now();
             let row = UserRow {
                 id: Uuid::new_v4(),
                 email,
@@ -700,8 +704,8 @@ mod tests {
                 deleted_at: None,
                 deletion_scheduled_at: None,
                 role: DbUserRole::User,
-                created_at: now,
-                updated_at: now,
+                created_at: now.to_db(),
+                updated_at: now.to_db(),
                 version: 0,
             };
 

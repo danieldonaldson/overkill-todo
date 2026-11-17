@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use super::time::{ToDb, ToDomain};
 use crate::application::ports::RefreshTokenRepository;
 use crate::domain::entities::RefreshToken;
 use crate::domain::errors::DomainError;
@@ -27,9 +28,9 @@ impl PostgresRefreshTokenRepository {
             UserId::from_uuid(row.user_id),
             row.token_hash,
             row.device_fingerprint,
-            row.expires_at,
-            row.revoked_at,
-            row.created_at,
+            row.expires_at.to_domain(),
+            row.revoked_at.to_domain(),
+            row.created_at.to_domain(),
         )
     }
 }
@@ -47,9 +48,9 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
             token.user_id().as_uuid(),
             token.token_hash(),
             token.device_fingerprint(),
-            token.expires_at(),
-            token.revoked_at(),
-            token.created_at(),
+            token.expires_at().to_db(),
+            token.revoked_at().to_db(),
+            token.created_at().to_db(),
         )
         .execute(self.db.pool())
         .await
@@ -170,7 +171,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
             new_token.user_id().as_uuid(),
             new_token.token_hash(),
             new_token.device_fingerprint(),
-            new_token.expires_at(),
+            new_token.expires_at().to_db(),
         )
         .execute(&mut *tx)
         .await

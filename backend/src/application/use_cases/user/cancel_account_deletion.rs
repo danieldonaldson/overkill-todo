@@ -43,7 +43,7 @@ impl CancelAccountDeletionUseCase {
         }
 
         // Refuses an already-deleted account.
-        user.cancel_deletion(chrono::Utc::now())?;
+        user.cancel_deletion(jiff::Timestamp::now())?;
         self.user_repository.save(&user).await?;
 
         tracing::info!(user_id = %user_id, "Scheduled account deletion cancelled");
@@ -56,7 +56,7 @@ mod tests {
     use super::*;
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
     use crate::domain::entities::{User, UserBuilder};
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     fn make_user(status: AccountStatus) -> User {
         UserBuilder::new()
@@ -67,7 +67,7 @@ mod tests {
 
     fn pending() -> AccountStatus {
         AccountStatus::PendingDeletion {
-            scheduled_for: Utc::now() + chrono::Duration::days(14),
+            scheduled_for: Timestamp::now() + jiff::SignedDuration::from_hours(24 * 14),
         }
     }
 
@@ -105,7 +105,7 @@ mod tests {
     #[tokio::test]
     async fn already_deleted_is_rejected() {
         let user = make_user(AccountStatus::Deleted {
-            deleted_at: Utc::now(),
+            deleted_at: Timestamp::now(),
         });
         let user_id = *user.id();
 

@@ -108,7 +108,7 @@ impl VerifyEmailUseCase {
             .ok_or(VerifyEmailError::CodeExpired)?;
 
         // Check if expired
-        if verification_code.is_expired(chrono::Utc::now()) {
+        if verification_code.is_expired(jiff::Timestamp::now()) {
             return Err(VerifyEmailError::CodeExpired);
         }
 
@@ -148,7 +148,7 @@ impl VerifyEmailUseCase {
         // it if it expired meanwhile, so no code is accepted from its expiry
         // instant on (P-19). The claim is by code id and a resend makes a new
         // one, so the expiry loaded above is still this code's.
-        if verification_code.is_expired(chrono::Utc::now()) {
+        if verification_code.is_expired(jiff::Timestamp::now()) {
             return Err(VerifyEmailError::CodeExpired);
         }
 
@@ -205,7 +205,7 @@ mod tests {
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
     use crate::domain::entities::{EmailVerificationCode, UserBuilder};
     use crate::domain::value_objects::{UserId, VerificationCodeId};
-    use chrono::{Duration, Utc};
+    use jiff::{SignedDuration, Timestamp};
 
     const EMAIL: &str = "verify@example.com";
 
@@ -228,10 +228,10 @@ mod tests {
             VerificationCodeId::new(),
             user_id,
             "code-hash".to_string(),
-            Utc::now() - Duration::hours(1),
+            Timestamp::now() - SignedDuration::from_hours(1),
             0,
-            Utc::now() - Duration::hours(25),
-            Utc::now() - Duration::hours(25),
+            Timestamp::now() - SignedDuration::from_hours(25),
+            Timestamp::now() - SignedDuration::from_hours(25),
             None,
             None,
         )
@@ -415,7 +415,7 @@ mod tests {
             .returning(move |_| Ok(Some(user(user_id, false))));
         repo.expect_mark_email_verified().never();
 
-        let expires_at = Utc::now() + Duration::milliseconds(50);
+        let expires_at = Timestamp::now() + SignedDuration::from_millis(50);
         let mut codes = MockEmailVerificationRepository::new();
         codes.expect_find_by_user().returning(move |_| {
             Ok(Some(EmailVerificationCode::from_persistence(
@@ -424,8 +424,8 @@ mod tests {
                 "code-hash".to_string(),
                 expires_at,
                 0,
-                Utc::now(),
-                Utc::now(),
+                Timestamp::now(),
+                Timestamp::now(),
                 None,
                 None,
             )))

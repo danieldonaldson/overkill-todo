@@ -2,7 +2,7 @@
 
 use crate::domain::entities::attempt_lockout::{self, AttemptLockout, Reissue};
 use crate::domain::value_objects::{ResetCodeId, UserId};
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 
 // The brute-force lockout policy (attempt cap, lock window, resend cooldown) is
 // shared with the email-verification flow; re-export it here so existing call
@@ -29,10 +29,10 @@ pub struct PasswordResetCode {
     id: ResetCodeId,
     user_id: UserId,
     code_hash: String,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
     attempts: i32,
-    last_sent_at: DateTime<Utc>,
-    created_at: DateTime<Utc>,
+    last_sent_at: Timestamp,
+    created_at: Timestamp,
     /// Codes for this user replaced while locked at the attempt cap; each
     /// doubles the next lock window. Persisted, never set by the domain.
     lockouts: i32,
@@ -47,12 +47,12 @@ impl PasswordResetCode {
     /// * `code_hash` - Argon2 hash of the 6-digit code
     #[must_use]
     pub fn new(user_id: UserId, code_hash: String) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         Self {
             id: ResetCodeId::new(),
             user_id,
             code_hash,
-            expires_at: now + Duration::minutes(EXPIRY_MINUTES),
+            expires_at: now + SignedDuration::from_mins(EXPIRY_MINUTES),
             attempts: 0,
             last_sent_at: now,
             created_at: now,
@@ -66,10 +66,10 @@ impl PasswordResetCode {
         id: ResetCodeId,
         user_id: UserId,
         code_hash: String,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
         attempts: i32,
-        last_sent_at: DateTime<Utc>,
-        created_at: DateTime<Utc>,
+        last_sent_at: Timestamp,
+        created_at: Timestamp,
     ) -> Self {
         Self {
             id,
@@ -118,7 +118,7 @@ impl PasswordResetCode {
 
     /// Returns when this code expires.
     #[must_use]
-    pub const fn expires_at(&self) -> DateTime<Utc> {
+    pub const fn expires_at(&self) -> Timestamp {
         self.expires_at
     }
 
@@ -130,19 +130,19 @@ impl PasswordResetCode {
 
     /// Returns when this code was created.
     #[must_use]
-    pub const fn created_at(&self) -> DateTime<Utc> {
+    pub const fn created_at(&self) -> Timestamp {
         self.created_at
     }
 
     /// Returns when a code was last sent.
     #[must_use]
-    pub const fn last_sent_at(&self) -> DateTime<Utc> {
+    pub const fn last_sent_at(&self) -> Timestamp {
         self.last_sent_at
     }
 
     /// Checks if this code has expired.
     #[must_use]
-    pub const fn is_expired(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_expired(&self, now: Timestamp) -> bool {
         attempt_lockout::expired(self.expires_at, now)
     }
 
@@ -164,7 +164,7 @@ impl PasswordResetCode {
     /// [`AttemptLockout::reissue`]). Every path that issues a code for this
     /// user must check it first, or it would clear an active lockout.
     #[must_use]
-    pub const fn reissue(&self, now: DateTime<Utc>) -> Reissue {
+    pub fn reissue(&self, now: Timestamp) -> Reissue {
         self.lockout().reissue(now)
     }
 
@@ -172,16 +172,16 @@ impl PasswordResetCode {
     ///
     /// Updates the code hash, resets attempts, and updates expiry.
     pub fn reset(&mut self, new_code_hash: String) {
-        let now = Utc::now();
+        let now = Timestamp::now();
         self.code_hash = new_code_hash;
         self.attempts = 0;
         self.last_sent_at = now;
-        self.expires_at = now + Duration::minutes(EXPIRY_MINUTES);
+        self.expires_at = now + SignedDuration::from_mins(EXPIRY_MINUTES);
     }
 
     /// Checks if this code is valid (not expired and not locked).
     #[must_use]
-    pub const fn is_valid(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_valid(&self, now: Timestamp) -> bool {
         !self.is_expired(now) && !self.is_locked()
     }
 }
@@ -200,18 +200,18 @@ mod tests {
             ResetCodeId::new(),
             UserId::new(),
             "code_hash".to_string(),
-            Utc::now() + Duration::minutes(EXPIRY_MINUTES),
+            Timestamp::now() + SignedDuration::from_mins(EXPIRY_MINUTES),
             attempts,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
         )
     }
 
     #[test]
     fn test_new_code_is_valid() {
         let code = create_valid_code();
-        assert!(code.is_valid(Utc::now()));
-        assert!(!code.is_expired(Utc::now()));
+        assert!(code.is_valid(Timestamp::now()));
+        assert!(!code.is_expired(Timestamp::now()));
         assert!(!code.is_locked());
     }
 
@@ -236,14 +236,14 @@ mod tests {
             ResetCodeId::new(),
             UserId::new(),
             "hash".to_string(),
-            Utc::now() - Duration::minutes(1), // Expired 1 minute ago
+            Timestamp::now() - SignedDuration::from_mins(1), // Expired 1 minute ago
             0,
-            Utc::now() - Duration::minutes(16),
-            Utc::now() - Duration::minutes(16),
+            Timestamp::now() - SignedDuration::from_mins(16),
+            Timestamp::now() - SignedDuration::from_mins(16),
         );
 
-        assert!(code.is_expired(Utc::now()));
-        assert!(!code.is_valid(Utc::now()));
+        assert!(code.is_expired(Timestamp::now()));
+        assert!(!code.is_valid(Timestamp::now()));
     }
 
     #[test]
@@ -251,8 +251,8 @@ mod tests {
         let id = ResetCodeId::new();
         let user_id = UserId::new();
         let code_hash = "hash".to_string();
-        let expires_at = Utc::now() + Duration::minutes(15);
-        let created_at = Utc::now();
+        let expires_at = Timestamp::now() + SignedDuration::from_mins(15);
+        let created_at = Timestamp::now();
 
         let code = PasswordResetCode::from_persistence(
             id,
@@ -268,15 +268,15 @@ mod tests {
         assert_eq!(code.user_id(), &user_id);
         assert_eq!(code.code_hash(), &code_hash);
         assert_eq!(code.attempts(), 2);
-        assert!(code.is_valid(Utc::now()));
+        assert!(code.is_valid(Timestamp::now()));
     }
 
     #[test]
     fn test_expiry_is_15_minutes() {
         let code = create_valid_code();
-        let expected_expiry = code.created_at() + Duration::minutes(EXPIRY_MINUTES);
+        let expected_expiry = code.created_at() + SignedDuration::from_mins(EXPIRY_MINUTES);
         // Allow 1 second tolerance for test execution time
-        let diff = (code.expires_at() - expected_expiry).num_seconds().abs();
+        let diff = (code.expires_at() - expected_expiry).as_secs().abs();
         assert!(diff <= 1);
     }
 
@@ -287,23 +287,23 @@ mod tests {
                 ResetCodeId::new(),
                 UserId::new(),
                 "hash".to_string(),
-                Utc::now() + Duration::minutes(EXPIRY_MINUTES),
+                Timestamp::now() + SignedDuration::from_mins(EXPIRY_MINUTES),
                 attempts,
-                Utc::now() - Duration::minutes(sent_minutes_ago),
-                Utc::now() - Duration::minutes(sent_minutes_ago),
+                Timestamp::now() - SignedDuration::from_mins(sent_minutes_ago),
+                Timestamp::now() - SignedDuration::from_mins(sent_minutes_ago),
             )
         };
 
         // Locked, sent just now → within the lock window.
         assert!(matches!(
-            make(MAX_ATTEMPTS, 0).reissue(Utc::now()),
+            make(MAX_ATTEMPTS, 0).reissue(Timestamp::now()),
             Reissue::Locked { seconds_remaining }
                 if seconds_remaining > 0 && seconds_remaining <= LOCK_DURATION_MINUTES * 60
         ));
 
         // Locked, but the lock window has elapsed → a new request is allowed.
         assert_eq!(
-            make(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1).reissue(Utc::now()),
+            make(MAX_ATTEMPTS, LOCK_DURATION_MINUTES + 1).reissue(Timestamp::now()),
             Reissue::Allowed
         );
     }
@@ -312,7 +312,7 @@ mod tests {
     fn test_reissue_cooldown() {
         let recent = PasswordResetCode::new(UserId::new(), "hash".to_string());
         assert!(matches!(
-            recent.reissue(Utc::now()),
+            recent.reissue(Timestamp::now()),
             Reissue::Cooldown { seconds_remaining } if seconds_remaining > 0
         ));
 
@@ -320,11 +320,11 @@ mod tests {
             ResetCodeId::new(),
             UserId::new(),
             "hash".to_string(),
-            Utc::now() + Duration::minutes(EXPIRY_MINUTES),
+            Timestamp::now() + SignedDuration::from_mins(EXPIRY_MINUTES),
             0,
-            Utc::now() - Duration::minutes(RESEND_COOLDOWN_MINUTES + 1),
-            Utc::now() - Duration::minutes(RESEND_COOLDOWN_MINUTES + 1),
+            Timestamp::now() - SignedDuration::from_mins(RESEND_COOLDOWN_MINUTES + 1),
+            Timestamp::now() - SignedDuration::from_mins(RESEND_COOLDOWN_MINUTES + 1),
         );
-        assert_eq!(old.reissue(Utc::now()), Reissue::Allowed);
+        assert_eq!(old.reissue(Timestamp::now()), Reissue::Allowed);
     }
 }

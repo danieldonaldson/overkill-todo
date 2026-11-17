@@ -271,9 +271,9 @@ in either order:
 - no reported wait is negative, and no code below the cap is reported locked
 
 The proofs run on the integer policy in `attempt_lockout.rs`. The
-`AttemptLockout` methods convert their `DateTime`s to microseconds and call
+`AttemptLockout` methods convert their `Timestamp`s to microseconds and call
 it; that conversion is covered by the unit tests above, not by proof. Proving
-through chrono's calendar arithmetic directly didn't finish.
+through the date library's arithmetic directly (chrono, at the time) didn't finish.
 
 What's proven is the **decision**: given a code's stored state and the time,
 whether a replacement may be issued. Whether the system acts on that decision

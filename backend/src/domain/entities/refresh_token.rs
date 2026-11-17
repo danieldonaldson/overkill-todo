@@ -2,7 +2,7 @@
 
 use crate::domain::entities::attempt_lockout::expired_at;
 use crate::domain::value_objects::{RefreshTokenId, UserId};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 /// Lifecycle of a [`RefreshToken`]; see [`RefreshToken::status`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,9 +34,9 @@ pub struct RefreshToken {
     user_id: UserId,
     token_hash: String,
     device_fingerprint: String,
-    expires_at: DateTime<Utc>,
-    revoked_at: Option<DateTime<Utc>>,
-    created_at: DateTime<Utc>,
+    expires_at: Timestamp,
+    revoked_at: Option<Timestamp>,
+    created_at: Timestamp,
 }
 
 impl RefreshToken {
@@ -53,7 +53,7 @@ impl RefreshToken {
         user_id: UserId,
         token_hash: String,
         device_fingerprint: String,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
     ) -> Self {
         Self {
             id: RefreshTokenId::new(),
@@ -62,7 +62,7 @@ impl RefreshToken {
             device_fingerprint,
             expires_at,
             revoked_at: None,
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
         }
     }
 
@@ -75,9 +75,9 @@ impl RefreshToken {
         user_id: UserId,
         token_hash: String,
         device_fingerprint: String,
-        expires_at: DateTime<Utc>,
-        revoked_at: Option<DateTime<Utc>>,
-        created_at: DateTime<Utc>,
+        expires_at: Timestamp,
+        revoked_at: Option<Timestamp>,
+        created_at: Timestamp,
     ) -> Self {
         Self {
             id,
@@ -116,19 +116,19 @@ impl RefreshToken {
 
     /// Returns when this token expires.
     #[must_use]
-    pub const fn expires_at(&self) -> DateTime<Utc> {
+    pub const fn expires_at(&self) -> Timestamp {
         self.expires_at
     }
 
     /// Returns when this token was revoked, if at all.
     #[must_use]
-    pub const fn revoked_at(&self) -> Option<DateTime<Utc>> {
+    pub const fn revoked_at(&self) -> Option<Timestamp> {
         self.revoked_at
     }
 
     /// Returns when this token was created.
     #[must_use]
-    pub const fn created_at(&self) -> DateTime<Utc> {
+    pub const fn created_at(&self) -> Timestamp {
         self.created_at
     }
 
@@ -140,24 +140,24 @@ impl RefreshToken {
     ///
     /// [`Revoked`]: RefreshTokenStatus::Revoked
     #[must_use]
-    pub const fn status(&self, now: DateTime<Utc>) -> RefreshTokenStatus {
+    pub fn status(&self, now: Timestamp) -> RefreshTokenStatus {
         status_at(
             self.revoked_at.is_some(),
-            self.expires_at.timestamp_micros(),
-            now.timestamp_micros(),
+            self.expires_at.as_microsecond(),
+            now.as_microsecond(),
         )
     }
 
     /// Checks if this token is valid (not expired and not revoked) as of `now`.
     #[must_use]
-    pub fn is_valid(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_valid(&self, now: Timestamp) -> bool {
         self.status(now) == RefreshTokenStatus::Active
     }
 
     /// Checks if this token has expired as of `now`.
     #[must_use]
-    pub const fn is_expired(&self, now: DateTime<Utc>) -> bool {
-        expired_at(self.expires_at.timestamp_micros(), now.timestamp_micros())
+    pub fn is_expired(&self, now: Timestamp) -> bool {
+        expired_at(self.expires_at.as_microsecond(), now.as_microsecond())
     }
 
     /// Checks if this token has been revoked.
@@ -170,7 +170,7 @@ impl RefreshToken {
     ///
     /// If the token is already revoked, this is a no-op: the first revocation
     /// time is kept.
-    pub const fn revoke(&mut self, now: DateTime<Utc>) {
+    pub const fn revoke(&mut self, now: Timestamp) {
         self.revoked_at = Some(first_revocation(self.revoked_at, now));
     }
 
@@ -243,14 +243,14 @@ mod verification {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
+    use jiff::SignedDuration;
 
     fn create_valid_token() -> RefreshToken {
         RefreshToken::new(
             UserId::new(),
             "token_hash".to_string(),
             "device_fingerprint".to_string(),
-            Utc::now() + Duration::days(30),
+            Timestamp::now() + SignedDuration::from_hours(24 * 30),
         )
     }
 
@@ -259,44 +259,44 @@ mod tests {
             UserId::new(),
             "token_hash".to_string(),
             "device_fingerprint".to_string(),
-            Utc::now() - Duration::hours(1),
+            Timestamp::now() - SignedDuration::from_hours(1),
         )
     }
 
     #[test]
     fn test_status_revoked_outranks_expired() {
         let mut token = create_expired_token();
-        assert_eq!(token.status(Utc::now()), RefreshTokenStatus::Expired);
+        assert_eq!(token.status(Timestamp::now()), RefreshTokenStatus::Expired);
 
-        token.revoke(Utc::now());
+        token.revoke(Timestamp::now());
 
-        assert_eq!(token.status(Utc::now()), RefreshTokenStatus::Revoked);
+        assert_eq!(token.status(Timestamp::now()), RefreshTokenStatus::Revoked);
     }
 
     #[test]
     fn test_new_token_is_valid() {
         let token = create_valid_token();
-        assert!(token.is_valid(Utc::now()));
-        assert!(!token.is_expired(Utc::now()));
+        assert!(token.is_valid(Timestamp::now()));
+        assert!(!token.is_expired(Timestamp::now()));
         assert!(!token.is_revoked());
     }
 
     #[test]
     fn test_expired_token_is_not_valid() {
         let token = create_expired_token();
-        assert!(!token.is_valid(Utc::now()));
-        assert!(token.is_expired(Utc::now()));
+        assert!(!token.is_valid(Timestamp::now()));
+        assert!(token.is_expired(Timestamp::now()));
         assert!(!token.is_revoked());
     }
 
     #[test]
     fn test_revoke_token() {
         let mut token = create_valid_token();
-        assert!(token.is_valid(Utc::now()));
+        assert!(token.is_valid(Timestamp::now()));
 
-        token.revoke(Utc::now());
+        token.revoke(Timestamp::now());
 
-        assert!(!token.is_valid(Utc::now()));
+        assert!(!token.is_valid(Timestamp::now()));
         assert!(token.is_revoked());
         assert!(token.revoked_at().is_some());
     }
@@ -304,11 +304,11 @@ mod tests {
     #[test]
     fn test_revoke_is_idempotent() {
         let mut token = create_valid_token();
-        token.revoke(Utc::now());
+        token.revoke(Timestamp::now());
         let first_revoked_at = token.revoked_at();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
-        token.revoke(Utc::now());
+        token.revoke(Timestamp::now());
 
         assert_eq!(token.revoked_at(), first_revoked_at);
     }
@@ -331,8 +331,8 @@ mod tests {
         let user_id = UserId::new();
         let token_hash = "hash".to_string();
         let fingerprint = "fingerprint".to_string();
-        let expires_at = Utc::now() + Duration::days(30);
-        let created_at = Utc::now();
+        let expires_at = Timestamp::now() + SignedDuration::from_hours(24 * 30);
+        let created_at = Timestamp::now();
 
         let token = RefreshToken::from_persistence(
             id,
@@ -348,6 +348,6 @@ mod tests {
         assert_eq!(token.user_id(), &user_id);
         assert_eq!(token.token_hash(), &token_hash);
         assert_eq!(token.device_fingerprint(), &fingerprint);
-        assert!(token.is_valid(Utc::now()));
+        assert!(token.is_valid(Timestamp::now()));
     }
 }

@@ -9,7 +9,7 @@
 //! the result in its own response DTO.
 
 use axum::http::header::{self, HeaderMap};
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 
 use crate::domain::entities::User;
 use crate::infrastructure::api::cookies::{
@@ -53,9 +53,9 @@ pub(crate) fn extract_refresh_token_cookie(headers: &HeaderMap) -> Option<String
 /// revocation cutoff (`iat > cutoff`), so a session issued in the same second
 /// as the cutoff would be rejected along with the ones it was meant to replace.
 /// Call this before issuing the replacement session; it waits at most a second.
-pub(crate) async fn wait_until_after_second_of(cutoff: DateTime<Utc>) {
-    let next_second_ms = (cutoff.timestamp() + 1) * 1000;
-    let remaining_ms = next_second_ms - Utc::now().timestamp_millis();
+pub(crate) async fn wait_until_after_second_of(cutoff: Timestamp) {
+    let next_second_ms = (cutoff.as_second() + 1) * 1000;
+    let remaining_ms = next_second_ms - Timestamp::now().as_millisecond();
     if let Ok(ms) = u64::try_from(remaining_ms)
         && ms > 0
     {
@@ -95,7 +95,8 @@ pub(crate) fn build_session(
         crypto.tokens(),
         jwt_expiration_minutes,
     )?;
-    let expires_at = (Utc::now() + Duration::minutes(jwt_expiration_minutes)).timestamp();
+    let expires_at =
+        (Timestamp::now() + SignedDuration::from_mins(jwt_expiration_minutes)).as_second();
     // CSRF token bound to this user.
     let csrf_token = generate_csrf_token(crypto.csrf_secret(), &user.id().to_string());
     let headers = build_session_cookies(crypto, &token, refresh_token, &csrf_token)?;

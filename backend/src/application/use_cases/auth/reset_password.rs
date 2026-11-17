@@ -6,7 +6,7 @@ use crate::application::ports::{
 };
 use crate::domain::entities::User;
 use crate::domain::errors::DomainError;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use std::sync::Arc;
 
 /// A completed password reset.
@@ -17,7 +17,7 @@ pub struct PasswordReset {
     /// Session cutoff recorded by the reset: access tokens issued at or before
     /// this second are rejected on routes that check session freshness. A new
     /// session for the resetting device must be issued in a later second.
-    pub sessions_valid_after: DateTime<Utc>,
+    pub sessions_valid_after: Timestamp,
 }
 
 /// Use case for resetting a user's password.
@@ -122,7 +122,7 @@ impl ResetPasswordUseCase {
         // tokens already out there (up to their remaining lifetime otherwise),
         // on the routes that check session freshness. App clock, not the DB's:
         // it's compared with `iat`, which this process stamps.
-        let sessions_valid_after = Utc::now();
+        let sessions_valid_after = Timestamp::now();
         self.user_repo
             .revoke_sessions_issued_before(user.id(), sessions_valid_after)
             .await?;

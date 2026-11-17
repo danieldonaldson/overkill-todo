@@ -100,7 +100,7 @@ impl ResendVerificationUseCase {
             // lockout. Refuse for a short fixed window (LOCK_DURATION_MINUTES)
             // after the lock, then allow a fresh code — rather than blocking for
             // the full 24h code lifetime.
-            match existing_code.reissue(chrono::Utc::now()) {
+            match existing_code.reissue(jiff::Timestamp::now()) {
                 Reissue::Allowed => {}
                 Reissue::Locked { seconds_remaining } => {
                     return Err(ResendVerificationError::Locked {
@@ -166,7 +166,7 @@ impl ResendVerificationUseCase {
             seconds_remaining: RESEND_COOLDOWN_MINUTES * 60,
         };
         match self.email_verification_repo.find_by_user(user_id).await {
-            Ok(Some(code)) => match code.reissue(chrono::Utc::now()) {
+            Ok(Some(code)) => match code.reissue(jiff::Timestamp::now()) {
                 Reissue::Locked { seconds_remaining } => ResendVerificationError::Locked {
                     seconds_until_unlock: seconds_remaining,
                 },
@@ -295,7 +295,7 @@ mod tests {
     async fn test_resend_blocked_while_locked() {
         use crate::domain::entities::email_verification_code::MAX_ATTEMPTS;
         use crate::domain::value_objects::VerificationCodeId;
-        use chrono::{Duration, Utc};
+        use jiff::{SignedDuration, Timestamp};
 
         let user = create_unverified_user();
         let user_id = *user.id();
@@ -312,10 +312,10 @@ mod tests {
             VerificationCodeId::new(),
             user_id,
             "hash".to_string(),
-            Utc::now() + Duration::hours(1),
+            Timestamp::now() + SignedDuration::from_hours(1),
             MAX_ATTEMPTS,
-            Utc::now() - Duration::minutes(10),
-            Utc::now() - Duration::minutes(10),
+            Timestamp::now() - SignedDuration::from_mins(10),
+            Timestamp::now() - SignedDuration::from_mins(10),
             None,
             None,
         );
@@ -373,7 +373,7 @@ mod tests {
     async fn resend_refused_by_the_store_reports_locked() {
         use crate::domain::entities::email_verification_code::MAX_ATTEMPTS;
         use crate::domain::value_objects::VerificationCodeId;
-        use chrono::{Duration, Utc};
+        use jiff::{SignedDuration, Timestamp};
 
         let user = create_unverified_user();
         let user_id = *user.id();
@@ -389,10 +389,10 @@ mod tests {
                 VerificationCodeId::new(),
                 user_id,
                 "hash".to_string(),
-                Utc::now() + Duration::hours(1),
+                Timestamp::now() + SignedDuration::from_hours(1),
                 attempts,
-                Utc::now() - Duration::minutes(6),
-                Utc::now() - Duration::minutes(6),
+                Timestamp::now() - SignedDuration::from_mins(6),
+                Timestamp::now() - SignedDuration::from_mins(6),
                 None,
                 None,
             )

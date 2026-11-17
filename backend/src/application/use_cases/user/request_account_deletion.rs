@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 use crate::application::ports::{PasswordHasher, UserRepository};
 use crate::domain::errors::DomainError;
@@ -50,7 +50,7 @@ impl RequestAccountDeletionUseCase {
         &self,
         user_id: &UserId,
         password: Option<&str>,
-    ) -> Result<DateTime<Utc>, DomainError> {
+    ) -> Result<Timestamp, DomainError> {
         let mut user = self
             .user_repository
             .find_by_id(user_id)
@@ -73,7 +73,7 @@ impl RequestAccountDeletionUseCase {
         }
 
         // Refuses an already-deleted account.
-        let scheduled_at = user.schedule_deletion(Utc::now())?;
+        let scheduled_at = user.schedule_deletion(Timestamp::now())?;
         self.user_repository.save(&user).await?;
 
         tracing::info!(user_id = %user_id, %scheduled_at, "Account deletion scheduled");
@@ -91,7 +91,7 @@ mod tests {
     fn make_user(password_hash: Option<&str>, scheduled: bool) -> User {
         let mut user = UserBuilder::new().password_hash(password_hash).build();
         if scheduled {
-            user.schedule_deletion(Utc::now()).unwrap();
+            user.schedule_deletion(Timestamp::now()).unwrap();
         }
         user
     }
@@ -112,7 +112,7 @@ mod tests {
 
         let uc = RequestAccountDeletionUseCase::new(Arc::new(repo), Arc::new(hasher));
         let scheduled = uc.execute(&user_id, Some("pw")).await.unwrap();
-        assert!(scheduled > Utc::now());
+        assert!(scheduled > Timestamp::now());
     }
 
     #[tokio::test]
@@ -188,7 +188,7 @@ mod tests {
         let user = UserBuilder::new()
             .password_hash(None)
             .status(AccountStatus::Deleted {
-                deleted_at: Utc::now(),
+                deleted_at: Timestamp::now(),
             })
             .build();
         let user_id = *user.id();

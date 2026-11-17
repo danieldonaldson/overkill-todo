@@ -8,7 +8,7 @@
 use crate::application::ports::{JwtService, PasswordHasher, UserRepository};
 use crate::domain::entities::User;
 use crate::domain::errors::DomainError;
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use std::sync::Arc;
 
 /// Signup token validity in minutes.
@@ -53,7 +53,7 @@ impl CompleteSignupUseCase {
                 "Account already has a password set".into(),
             ));
         }
-        let expires_at = Utc::now() + Duration::minutes(SIGNUP_TOKEN_EXPIRY_MINUTES);
+        let expires_at = Timestamp::now() + SignedDuration::from_mins(SIGNUP_TOKEN_EXPIRY_MINUTES);
         self.jwt_service.create_signup_token(user.id(), expires_at)
     }
 
@@ -290,7 +290,7 @@ mod tests {
         let mut jwt = MockJwtService::new();
         jwt.expect_create_signup_token()
             .withf(move |id, expires_at| {
-                let minutes = (*expires_at - Utc::now()).num_minutes();
+                let minutes = (*expires_at - Timestamp::now()).as_mins();
                 *id == user_id
                     && (SIGNUP_TOKEN_EXPIRY_MINUTES - 1..=SIGNUP_TOKEN_EXPIRY_MINUTES)
                         .contains(&minutes)

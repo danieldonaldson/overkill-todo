@@ -2,7 +2,7 @@
 
 use crate::domain::entities::attempt_lockout::{self, AttemptLockout, Reissue};
 use crate::domain::value_objects::{UserId, VerificationCodeId};
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 
 // The brute-force lockout policy (attempt cap, lock window, resend cooldown) is
 // shared with the password-reset flow; re-export it here so existing call sites
@@ -22,7 +22,7 @@ pub const EXPIRY_HOURS: i64 = 24;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MagicToken {
     hash: String,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
 }
 
 impl MagicToken {
@@ -35,13 +35,13 @@ impl MagicToken {
 
     /// When the link stops working.
     #[must_use]
-    pub const fn expires_at(&self) -> DateTime<Utc> {
+    pub const fn expires_at(&self) -> Timestamp {
         self.expires_at
     }
 
     /// Whether the link has expired as of `now`.
     #[must_use]
-    pub const fn is_expired(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_expired(&self, now: Timestamp) -> bool {
         attempt_lockout::expired(self.expires_at, now)
     }
 }
@@ -62,10 +62,10 @@ pub struct EmailVerificationCode {
     id: VerificationCodeId,
     user_id: UserId,
     code_hash: String,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
     attempts: i32,
-    last_sent_at: DateTime<Utc>,
-    created_at: DateTime<Utc>,
+    last_sent_at: Timestamp,
+    created_at: Timestamp,
     /// The one-click magic link issued alongside the code, if any.
     magic_token: Option<MagicToken>,
     /// Codes for this user replaced while locked at the attempt cap; each
@@ -82,12 +82,12 @@ impl EmailVerificationCode {
     /// * `code_hash` - Argon2 hash of the 6-digit code
     #[must_use]
     pub fn new(user_id: UserId, code_hash: String) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         Self {
             id: VerificationCodeId::new(),
             user_id,
             code_hash,
-            expires_at: now + Duration::hours(EXPIRY_HOURS),
+            expires_at: now + SignedDuration::from_hours(EXPIRY_HOURS),
             attempts: 0,
             last_sent_at: now,
             created_at: now,
@@ -103,18 +103,18 @@ impl EmailVerificationCode {
         code_hash: String,
         magic_token_hash: String,
     ) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         Self {
             id: VerificationCodeId::new(),
             user_id,
             code_hash,
-            expires_at: now + Duration::hours(EXPIRY_HOURS),
+            expires_at: now + SignedDuration::from_hours(EXPIRY_HOURS),
             attempts: 0,
             last_sent_at: now,
             created_at: now,
             magic_token: Some(MagicToken {
                 hash: magic_token_hash,
-                expires_at: now + Duration::hours(EXPIRY_HOURS),
+                expires_at: now + SignedDuration::from_hours(EXPIRY_HOURS),
             }),
             lockouts: 0,
         }
@@ -135,12 +135,12 @@ impl EmailVerificationCode {
         id: VerificationCodeId,
         user_id: UserId,
         code_hash: String,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
         attempts: i32,
-        last_sent_at: DateTime<Utc>,
-        created_at: DateTime<Utc>,
+        last_sent_at: Timestamp,
+        created_at: Timestamp,
         magic_token_hash: Option<String>,
-        magic_token_expires_at: Option<DateTime<Utc>>,
+        magic_token_expires_at: Option<Timestamp>,
     ) -> Self {
         Self {
             id,
@@ -192,7 +192,7 @@ impl EmailVerificationCode {
 
     /// Returns when this code expires.
     #[must_use]
-    pub const fn expires_at(&self) -> DateTime<Utc> {
+    pub const fn expires_at(&self) -> Timestamp {
         self.expires_at
     }
 
@@ -204,13 +204,13 @@ impl EmailVerificationCode {
 
     /// Returns when a code was last sent.
     #[must_use]
-    pub const fn last_sent_at(&self) -> DateTime<Utc> {
+    pub const fn last_sent_at(&self) -> Timestamp {
         self.last_sent_at
     }
 
     /// Returns when this code was created.
     #[must_use]
-    pub const fn created_at(&self) -> DateTime<Utc> {
+    pub const fn created_at(&self) -> Timestamp {
         self.created_at
     }
 
@@ -228,20 +228,20 @@ impl EmailVerificationCode {
 
     /// Returns when the magic link token expires, if set.
     #[must_use]
-    pub fn magic_token_expires_at(&self) -> Option<DateTime<Utc>> {
+    pub fn magic_token_expires_at(&self) -> Option<Timestamp> {
         self.magic_token.as_ref().map(MagicToken::expires_at)
     }
 
     /// Checks whether the magic link can no longer be redeemed: it has expired,
     /// or there is none.
     #[must_use]
-    pub fn is_magic_token_expired(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_magic_token_expired(&self, now: Timestamp) -> bool {
         attempt_lockout::magic_link_expired(self.magic_token_expires_at(), now)
     }
 
     /// Checks if this code has expired.
     #[must_use]
-    pub const fn is_expired(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_expired(&self, now: Timestamp) -> bool {
         attempt_lockout::expired(self.expires_at, now)
     }
 
@@ -263,7 +263,7 @@ impl EmailVerificationCode {
     /// [`AttemptLockout::reissue`]). Every path that issues a code for this
     /// user must check it first, or it would clear an active lockout.
     #[must_use]
-    pub const fn reissue(&self, now: DateTime<Utc>) -> Reissue {
+    pub fn reissue(&self, now: Timestamp) -> Reissue {
         self.lockout().reissue(now)
     }
 
@@ -271,16 +271,16 @@ impl EmailVerificationCode {
     ///
     /// Updates the code hash, resets attempts, and updates `last_sent_at`.
     pub fn reset_for_resend(&mut self, new_code_hash: String) {
-        let now = Utc::now();
+        let now = Timestamp::now();
         self.code_hash = new_code_hash;
         self.attempts = 0;
         self.last_sent_at = now;
-        self.expires_at = now + Duration::hours(EXPIRY_HOURS);
+        self.expires_at = now + SignedDuration::from_hours(EXPIRY_HOURS);
     }
 
     /// Checks if this code is valid (not expired and not locked).
     #[must_use]
-    pub const fn is_valid(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_valid(&self, now: Timestamp) -> bool {
         !self.is_expired(now) && !self.is_locked()
     }
 }
@@ -299,10 +299,10 @@ mod tests {
             VerificationCodeId::new(),
             UserId::new(),
             "code_hash".to_string(),
-            Utc::now() + Duration::hours(EXPIRY_HOURS),
+            Timestamp::now() + SignedDuration::from_hours(EXPIRY_HOURS),
             attempts,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
             None,
             None,
         )
@@ -311,8 +311,8 @@ mod tests {
     #[test]
     fn test_new_code_is_valid() {
         let code = create_valid_code();
-        assert!(code.is_valid(Utc::now()));
-        assert!(!code.is_expired(Utc::now()));
+        assert!(code.is_valid(Timestamp::now()));
+        assert!(!code.is_expired(Timestamp::now()));
         assert!(!code.is_locked());
     }
 
@@ -320,7 +320,7 @@ mod tests {
     fn test_cannot_resend_immediately() {
         let code = create_valid_code();
         assert!(matches!(
-            code.reissue(Utc::now()),
+            code.reissue(Timestamp::now()),
             Reissue::Cooldown { seconds_remaining } if seconds_remaining > 0
         ));
     }
@@ -346,16 +346,16 @@ mod tests {
             VerificationCodeId::new(),
             UserId::new(),
             "hash".to_string(),
-            Utc::now() - Duration::hours(1), // Expired 1 hour ago
+            Timestamp::now() - SignedDuration::from_hours(1), // Expired 1 hour ago
             0,
-            Utc::now() - Duration::hours(25),
-            Utc::now() - Duration::hours(25),
+            Timestamp::now() - SignedDuration::from_hours(25),
+            Timestamp::now() - SignedDuration::from_hours(25),
             None,
             None,
         );
 
-        assert!(code.is_expired(Utc::now()));
-        assert!(!code.is_valid(Utc::now()));
+        assert!(code.is_expired(Timestamp::now()));
+        assert!(!code.is_valid(Timestamp::now()));
     }
 
     #[test]
@@ -363,9 +363,9 @@ mod tests {
         let id = VerificationCodeId::new();
         let user_id = UserId::new();
         let code_hash = "hash".to_string();
-        let expires_at = Utc::now() + Duration::hours(24);
-        let last_sent_at = Utc::now();
-        let created_at = Utc::now();
+        let expires_at = Timestamp::now() + SignedDuration::from_hours(24);
+        let last_sent_at = Timestamp::now();
+        let created_at = Timestamp::now();
 
         let code = EmailVerificationCode::from_persistence(
             id,
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(code.user_id(), &user_id);
         assert_eq!(code.code_hash(), &code_hash);
         assert_eq!(code.attempts(), 2);
-        assert!(code.is_valid(Utc::now()));
+        assert!(code.is_valid(Timestamp::now()));
     }
 
     #[test]
@@ -403,15 +403,15 @@ mod tests {
             VerificationCodeId::new(),
             UserId::new(),
             "hash".to_string(),
-            Utc::now() + Duration::hours(24),
+            Timestamp::now() + SignedDuration::from_hours(24),
             MAX_ATTEMPTS,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
             None,
             None,
         );
         assert!(matches!(
-            just_locked.reissue(Utc::now()),
+            just_locked.reissue(Timestamp::now()),
             Reissue::Locked { seconds_remaining }
                 if seconds_remaining > 0 && seconds_remaining <= LOCK_DURATION_MINUTES * 60
         ));
@@ -421,14 +421,14 @@ mod tests {
             VerificationCodeId::new(),
             UserId::new(),
             "hash".to_string(),
-            Utc::now() + Duration::hours(24),
+            Timestamp::now() + SignedDuration::from_hours(24),
             MAX_ATTEMPTS,
-            Utc::now() - Duration::minutes(LOCK_DURATION_MINUTES + 1),
-            Utc::now() - Duration::minutes(LOCK_DURATION_MINUTES + 1),
+            Timestamp::now() - SignedDuration::from_mins(LOCK_DURATION_MINUTES + 1),
+            Timestamp::now() - SignedDuration::from_mins(LOCK_DURATION_MINUTES + 1),
             None,
             None,
         );
-        assert_eq!(lock_elapsed.reissue(Utc::now()), Reissue::Allowed);
+        assert_eq!(lock_elapsed.reissue(Timestamp::now()), Reissue::Allowed);
     }
 
     #[test]
@@ -438,22 +438,28 @@ mod tests {
                 VerificationCodeId::new(),
                 UserId::new(),
                 "hash".to_string(),
-                Utc::now() + Duration::hours(24),
+                Timestamp::now() + SignedDuration::from_hours(24),
                 0,
-                Utc::now(),
-                Utc::now(),
+                Timestamp::now(),
+                Timestamp::now(),
                 Some("magic_hash".to_string()),
                 magic_expiry,
             )
         };
 
         // Future expiry → not expired.
-        assert!(!make(Some(Utc::now() + Duration::hours(1))).is_magic_token_expired(Utc::now()));
+        assert!(
+            !make(Some(Timestamp::now() + SignedDuration::from_hours(1)))
+                .is_magic_token_expired(Timestamp::now())
+        );
         // Past expiry → expired.
-        assert!(make(Some(Utc::now() - Duration::hours(1))).is_magic_token_expired(Utc::now()));
+        assert!(
+            make(Some(Timestamp::now() - SignedDuration::from_hours(1)))
+                .is_magic_token_expired(Timestamp::now())
+        );
         // No recorded expiry → no usable token, so treated as expired.
         let no_expiry = make(None);
         assert!(no_expiry.magic_token().is_none());
-        assert!(no_expiry.is_magic_token_expired(Utc::now()));
+        assert!(no_expiry.is_magic_token_expired(Timestamp::now()));
     }
 }

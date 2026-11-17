@@ -1,6 +1,6 @@
 //! OAuth account entity for linking external provider accounts to users.
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use uuid::Uuid;
 
 use crate::domain::value_objects::UserId;
@@ -42,7 +42,7 @@ pub struct OAuthAccount {
     provider: OAuthProvider,
     provider_user_id: String,
     provider_email: Option<String>,
-    linked_at: DateTime<Utc>,
+    linked_at: Timestamp,
 }
 
 impl OAuthAccount {
@@ -60,7 +60,7 @@ impl OAuthAccount {
             provider,
             provider_user_id,
             provider_email,
-            linked_at: Utc::now(),
+            linked_at: Timestamp::now(),
         }
     }
 
@@ -72,7 +72,7 @@ impl OAuthAccount {
         provider: OAuthProvider,
         provider_user_id: String,
         provider_email: Option<String>,
-        linked_at: DateTime<Utc>,
+        linked_at: Timestamp,
     ) -> Self {
         Self {
             id,
@@ -110,7 +110,7 @@ impl OAuthAccount {
     }
 
     #[must_use]
-    pub const fn linked_at(&self) -> DateTime<Utc> {
+    pub const fn linked_at(&self) -> Timestamp {
         self.linked_at
     }
 }
@@ -167,7 +167,7 @@ mod tests {
     fn test_from_persistence_preserves_all_fields() {
         let id = Uuid::now_v7();
         let user_id = UserId::new();
-        let linked_at = Utc::now() - chrono::Duration::days(3);
+        let linked_at = Timestamp::now() - jiff::SignedDuration::from_hours(24 * 3);
         let account = OAuthAccount::from_persistence(
             id,
             user_id,

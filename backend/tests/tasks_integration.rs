@@ -315,7 +315,7 @@ async fn purge_finalizes_account_past_grace_period(pool: PgPool) {
     let uc = purge_uc(&pool);
     assert_eq!(uc.run_once().await.unwrap(), 1);
 
-    let row = sqlx::query_as::<_, (String, Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>, Option<String>, String)>(
+    let row = sqlx::query_as::<_, (String, Option<jiff_sqlx::Timestamp>, Option<jiff_sqlx::Timestamp>, Option<String>, String)>(
         "SELECT email, deleted_at, deletion_scheduled_at, password_hash, first_name FROM users WHERE id = $1",
     )
     .bind(id)

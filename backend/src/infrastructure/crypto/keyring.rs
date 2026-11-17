@@ -307,7 +307,7 @@ mod tests {
     fn claims() -> TestClaims {
         TestClaims {
             sub: "user-1".into(),
-            exp: chrono::Utc::now().timestamp() + 600,
+            exp: jiff::Timestamp::now().as_second() + 600,
         }
     }
 

@@ -15,7 +15,7 @@ mod common;
 
 use std::sync::Arc;
 
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use sqlx::PgPool;
 
 use overkill_todo::application::ports::{
@@ -135,7 +135,7 @@ async fn refresh_token_duplicate_hash_maps_23505_to_conflict(pool: PgPool) {
     let repo = PostgresRefreshTokenRepository::new(db.clone());
     let user_id = seed_user(&db, "refresh-dup@example.com").await;
 
-    let expires = Utc::now() + Duration::days(30);
+    let expires = Timestamp::now() + SignedDuration::from_hours(24 * 30);
     let token = RefreshToken::new(
         user_id,
         "dup-hash".to_string(),

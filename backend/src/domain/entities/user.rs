@@ -2,7 +2,7 @@ use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{
     AccountStatus, AlreadyDeleted, Email, PendingEmailChange, UserId, UserRole,
 };
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 /// How long a user can cancel a deletion request before the account is purged.
 pub const DELETION_GRACE_PERIOD_DAYS: i64 = 14;
@@ -64,8 +64,8 @@ pub struct User {
     status: AccountStatus,
     // Authorization
     role: UserRole,
-    created_at: DateTime<Utc>,
-    updated_at: DateTime<Utc>,
+    created_at: Timestamp,
+    updated_at: Timestamp,
     /// Optimistic-concurrency token. Carries the version this entity was loaded
     /// at; `save` applies its write only when the persisted row still matches,
     /// then bumps it. A fresh (unsaved) user starts at 0.
@@ -88,8 +88,8 @@ pub struct UserParts {
     pub pending_email_change: Option<PendingEmailChange>,
     pub status: AccountStatus,
     pub role: UserRole,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     /// Optimistic-concurrency version the row was loaded at (0 for a new user).
     pub version: i64,
 }
@@ -129,7 +129,7 @@ impl User {
         first_name: String,
         last_name: String,
     ) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         Self {
             id: UserId::new(),
             email,
@@ -226,13 +226,13 @@ impl User {
 
     /// Returns when the user was created.
     #[must_use]
-    pub const fn created_at(&self) -> DateTime<Utc> {
+    pub const fn created_at(&self) -> Timestamp {
         self.created_at
     }
 
     /// Returns when the user was last updated.
     #[must_use]
-    pub const fn updated_at(&self) -> DateTime<Utc> {
+    pub const fn updated_at(&self) -> Timestamp {
         self.updated_at
     }
 
@@ -264,7 +264,7 @@ impl User {
 
     /// Returns when the pending email was requested, if any.
     #[must_use]
-    pub fn pending_email_requested_at(&self) -> Option<DateTime<Utc>> {
+    pub fn pending_email_requested_at(&self) -> Option<Timestamp> {
         self.pending_email_change
             .as_ref()
             .map(PendingEmailChange::requested_at)
@@ -299,7 +299,7 @@ impl User {
     /// This also updates the `updated_at` timestamp.
     pub fn set_role(&mut self, role: UserRole) {
         self.role = role;
-        self.updated_at = Utc::now();
+        self.updated_at = Timestamp::now();
     }
 
     /// Marks the user's email as verified.
@@ -307,7 +307,7 @@ impl User {
     /// This also updates the `updated_at` timestamp.
     pub fn mark_email_verified(&mut self) {
         self.email_verified = true;
-        self.updated_at = Utc::now();
+        self.updated_at = Timestamp::now();
     }
 
     /// Updates the user's password hash.
@@ -316,7 +316,7 @@ impl User {
     /// Can be used to set a password for OAuth-only users.
     pub fn update_password(&mut self, password_hash: String) {
         self.password_hash = Some(password_hash);
-        self.updated_at = Utc::now();
+        self.updated_at = Timestamp::now();
     }
 
     /// Requests an email change to a new address.
@@ -324,7 +324,7 @@ impl User {
     /// Replaces any earlier pending change. The change must be confirmed by
     /// verifying the new email address.
     pub fn request_email_change(&mut self, new_email: Email) {
-        let now = Utc::now();
+        let now = Timestamp::now();
         self.pending_email_change = Some(PendingEmailChange::new(new_email, now));
         self.updated_at = now;
     }
@@ -338,14 +338,14 @@ impl User {
         if let Some(change) = self.pending_email_change.take() {
             self.email = change.into_new_email();
             self.email_verified = true;
-            self.updated_at = Utc::now();
+            self.updated_at = Timestamp::now();
         }
     }
 
     /// Cancels any pending email change request.
     pub fn cancel_email_change(&mut self) {
         if self.pending_email_change.take().is_some() {
-            self.updated_at = Utc::now();
+            self.updated_at = Timestamp::now();
         }
     }
 
@@ -357,13 +357,13 @@ impl User {
 
     /// Returns when the account was permanently deleted (soft-deleted), if any.
     #[must_use]
-    pub const fn deleted_at(&self) -> Option<DateTime<Utc>> {
+    pub const fn deleted_at(&self) -> Option<Timestamp> {
         self.status.deleted_at()
     }
 
     /// Returns when the account is scheduled for deletion, if any.
     #[must_use]
-    pub const fn deletion_scheduled_at(&self) -> Option<DateTime<Utc>> {
+    pub const fn deletion_scheduled_at(&self) -> Option<Timestamp> {
         self.status.deletion_scheduled_at()
     }
 
@@ -386,11 +386,13 @@ impl User {
     ///
     /// # Errors
     /// [`DomainError::Validation`] if the account is already deleted.
-    pub fn schedule_deletion(&mut self, now: DateTime<Utc>) -> Result<DateTime<Utc>, DomainError> {
+    pub fn schedule_deletion(&mut self, now: Timestamp) -> Result<Timestamp, DomainError> {
         let before = self.status;
         let scheduled_for = self
             .status
-            .schedule_deletion(now + chrono::Duration::days(DELETION_GRACE_PERIOD_DAYS))
+            .schedule_deletion(
+                now + jiff::SignedDuration::from_hours(24 * DELETION_GRACE_PERIOD_DAYS),
+            )
             .map_err(|AlreadyDeleted| already_deleted())?;
         if self.status != before {
             self.updated_at = now;
@@ -402,7 +404,7 @@ impl User {
     ///
     /// # Errors
     /// [`DomainError::Validation`] if the account is already deleted.
-    pub fn cancel_deletion(&mut self, now: DateTime<Utc>) -> Result<(), DomainError> {
+    pub fn cancel_deletion(&mut self, now: Timestamp) -> Result<(), DomainError> {
         let before = self.status;
         self.status
             .cancel_deletion()
@@ -424,11 +426,7 @@ impl User {
     ///
     /// # Errors
     /// [`DomainError::Validation`] if the account is already deleted.
-    pub fn anonymize(
-        &mut self,
-        anonymous_email: Email,
-        now: DateTime<Utc>,
-    ) -> Result<(), DomainError> {
+    pub fn anonymize(&mut self, anonymous_email: Email, now: Timestamp) -> Result<(), DomainError> {
         self.status
             .anonymize(now)
             .map_err(|AlreadyDeleted| already_deleted())?;
@@ -444,7 +442,7 @@ impl User {
     /// Returns true if the account is pending deletion and its grace period
     /// has elapsed as of `now`.
     #[must_use]
-    pub fn is_ready_for_deletion(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_ready_for_deletion(&self, now: Timestamp) -> bool {
         self.status.is_ready_to_purge(now)
     }
 
@@ -488,7 +486,7 @@ impl User {
     pub fn update_name(&mut self, first_name: String, last_name: String) {
         self.first_name = first_name;
         self.last_name = last_name;
-        self.updated_at = Utc::now();
+        self.updated_at = Timestamp::now();
     }
 }
 
@@ -522,7 +520,7 @@ impl UserBuilder {
         reason = "test-only; the default literal is valid"
     )]
     pub fn new() -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         Self {
             parts: UserParts {
                 id: UserId::new(),
@@ -703,7 +701,7 @@ mod tests {
         assert_eq!(default.role(), UserRole::User);
 
         let id = UserId::new();
-        let now = Utc::now();
+        let now = Timestamp::now();
         let custom = UserBuilder::new()
             .id(id)
             .email("admin@example.com")
@@ -833,22 +831,22 @@ mod tests {
         let mut user = UserBuilder::new().build();
         assert!(!user.is_scheduled_for_deletion());
 
-        let scheduled = user.schedule_deletion(Utc::now()).unwrap();
+        let scheduled = user.schedule_deletion(Timestamp::now()).unwrap();
 
         assert!(user.is_scheduled_for_deletion());
         assert_eq!(user.deletion_scheduled_at(), Some(scheduled));
-        assert!(scheduled > Utc::now());
+        assert!(scheduled > Timestamp::now());
         // Grace period is 14 days; not ready yet.
-        assert!(!user.is_ready_for_deletion(Utc::now()));
+        assert!(!user.is_ready_for_deletion(Timestamp::now()));
     }
 
     #[test]
     fn test_cancel_deletion_clears_schedule() {
         let mut user = UserBuilder::new().build();
-        user.schedule_deletion(Utc::now()).unwrap();
+        user.schedule_deletion(Timestamp::now()).unwrap();
         assert!(user.is_scheduled_for_deletion());
 
-        user.cancel_deletion(Utc::now()).unwrap();
+        user.cancel_deletion(Timestamp::now()).unwrap();
 
         assert!(!user.is_scheduled_for_deletion());
         assert!(user.deletion_scheduled_at().is_none());
@@ -859,7 +857,7 @@ mod tests {
         let mut user = UserBuilder::new().build();
         let updated_before = user.updated_at();
 
-        user.cancel_deletion(Utc::now()).unwrap();
+        user.cancel_deletion(Timestamp::now()).unwrap();
 
         assert!(!user.is_scheduled_for_deletion());
         assert_eq!(user.updated_at(), updated_before);
@@ -870,28 +868,28 @@ mod tests {
         let parts = UserBuilder::new().build().into_parts();
         let user = User::from_persistence(UserParts {
             status: AccountStatus::PendingDeletion {
-                scheduled_for: Utc::now() - chrono::Duration::days(1),
+                scheduled_for: Timestamp::now() - jiff::SignedDuration::from_hours(24),
             },
             ..parts
         });
-        assert!(user.is_ready_for_deletion(Utc::now()));
+        assert!(user.is_ready_for_deletion(Timestamp::now()));
     }
 
     #[test]
     fn test_is_ready_for_deletion_false_when_not_scheduled() {
         let user = UserBuilder::new().build();
-        assert!(!user.is_ready_for_deletion(Utc::now()));
+        assert!(!user.is_ready_for_deletion(Timestamp::now()));
     }
 
     #[test]
     fn test_anonymize_replaces_pii_and_soft_deletes() {
         let mut user = UserBuilder::new().build();
         user.request_email_change(Email::new("new@example.com").unwrap());
-        user.schedule_deletion(Utc::now()).unwrap();
+        user.schedule_deletion(Timestamp::now()).unwrap();
         assert!(!user.is_deleted());
 
         let anon = Email::new("deleted-123@anonymized.local").unwrap();
-        user.anonymize(anon.clone(), Utc::now()).unwrap();
+        user.anonymize(anon.clone(), Timestamp::now()).unwrap();
 
         assert_eq!(user.email(), &anon);
         assert!(!user.has_password());
@@ -907,10 +905,10 @@ mod tests {
     #[test]
     fn test_schedule_deletion_is_idempotent() {
         let mut user = UserBuilder::new().build();
-        let first = user.schedule_deletion(Utc::now()).unwrap();
+        let first = user.schedule_deletion(Timestamp::now()).unwrap();
         let updated = user.updated_at();
 
-        let second = user.schedule_deletion(Utc::now()).unwrap();
+        let second = user.schedule_deletion(Timestamp::now()).unwrap();
 
         assert_eq!(first, second, "re-requesting must not move the date");
         assert_eq!(user.updated_at(), updated);
@@ -918,7 +916,7 @@ mod tests {
 
     #[test]
     fn test_deleted_is_terminal() {
-        let deleted_at = Utc::now();
+        let deleted_at = Timestamp::now();
         let deleted = || {
             UserBuilder::new()
                 .status(AccountStatus::Deleted { deleted_at })
@@ -928,15 +926,15 @@ mod tests {
 
         let mut user = deleted();
         assert!(matches!(
-            user.schedule_deletion(Utc::now()),
+            user.schedule_deletion(Timestamp::now()),
             Err(DomainError::Validation(_))
         ));
         assert!(matches!(
-            user.cancel_deletion(Utc::now()),
+            user.cancel_deletion(Timestamp::now()),
             Err(DomainError::Validation(_))
         ));
         assert!(matches!(
-            user.anonymize(anon(), Utc::now()),
+            user.anonymize(anon(), Timestamp::now()),
             Err(DomainError::Validation(_))
         ));
 

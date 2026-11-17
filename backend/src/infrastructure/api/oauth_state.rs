@@ -3,7 +3,7 @@
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use std::sync::LazyLock;
 
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use jsonwebtoken::Validation;
 use rand::Rng;
 
@@ -39,7 +39,7 @@ pub fn create_oauth_state(
     mode: &str,
     user_id: Option<&str>,
 ) -> Result<(String, String), AppError> {
-    let exp = Utc::now() + Duration::minutes(5);
+    let exp = Timestamp::now() + SignedDuration::from_mins(5);
     let nonce = generate_nonce();
 
     let claims = OAuthStateClaims {
@@ -47,7 +47,7 @@ pub fn create_oauth_state(
         mode: mode.to_string(),
         user_id: user_id.map(String::from),
         provider: provider.to_string(),
-        exp: exp.timestamp(),
+        exp: exp.as_second(),
     };
 
     let token = keys
@@ -125,7 +125,7 @@ mod tests {
             mode: "link".into(),
             user_id: Some("u-2".into()),
             provider: "google".into(),
-            exp: (Utc::now() + Duration::minutes(5)).timestamp(),
+            exp: (Timestamp::now() + SignedDuration::from_mins(5)).as_second(),
         };
         parts[1] = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&forged).unwrap());
         assert_invalid_state(verify_oauth_state(&keys, &parts.join(".")));
@@ -139,7 +139,7 @@ mod tests {
             mode: "login".into(),
             user_id: None,
             provider: "google".into(),
-            exp: (Utc::now() - Duration::minutes(5)).timestamp(),
+            exp: (Timestamp::now() - SignedDuration::from_mins(5)).as_second(),
         };
         let state = keys.sign(&expired).unwrap();
         assert_invalid_state(verify_oauth_state(&keys, &state));

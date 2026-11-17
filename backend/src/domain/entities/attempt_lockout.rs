@@ -7,7 +7,7 @@
 //! the two flows (24h vs 15min) and stays on each entity. This module owns the
 //! shared arithmetic so the two flows cannot drift.
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 
 /// Maximum number of failed attempts before a code is locked.
 pub const MAX_ATTEMPTS: i32 = 5;
@@ -48,7 +48,7 @@ pub const LOCKOUT_MEMORY_DAYS: i32 = 30;
 #[derive(Debug, Clone, Copy)]
 pub struct AttemptLockout {
     attempts: i32,
-    last_sent_at: DateTime<Utc>,
+    last_sent_at: Timestamp,
     lockouts: i32,
 }
 
@@ -56,7 +56,7 @@ impl AttemptLockout {
     /// Creates a lockout view over an attempt count, last-sent timestamp, and
     /// the number of earlier lockouts.
     #[must_use]
-    pub const fn new(attempts: i32, last_sent_at: DateTime<Utc>, lockouts: i32) -> Self {
+    pub const fn new(attempts: i32, last_sent_at: Timestamp, lockouts: i32) -> Self {
         Self {
             attempts,
             last_sent_at,
@@ -67,8 +67,8 @@ impl AttemptLockout {
     /// The lock window for the current code: [`LOCK_DURATION_MINUTES`] doubled
     /// once per earlier lockout, capped at [`MAX_LOCK_DURATION_MINUTES`].
     #[must_use]
-    pub const fn lock_duration(&self) -> Duration {
-        Duration::minutes(lock_window_minutes(self.lockouts))
+    pub const fn lock_duration(&self) -> SignedDuration {
+        SignedDuration::from_mins(lock_window_minutes(self.lockouts))
     }
 
     /// Whether the code is at or beyond the failed-attempt cap.
@@ -81,51 +81,51 @@ impl AttemptLockout {
     /// `last_sent_at`, as of `now`. Returns 0 when the code is not locked or
     /// once the lock window has elapsed.
     #[must_use]
-    pub const fn seconds_until_unlock(&self, now: DateTime<Utc>) -> i64 {
+    pub fn seconds_until_unlock(&self, now: Timestamp) -> i64 {
         seconds_until_unlock_at(
             self.attempts,
             self.lockouts,
-            self.last_sent_at.timestamp_micros(),
-            now.timestamp_micros(),
+            self.last_sent_at.as_microsecond(),
+            now.as_microsecond(),
         )
     }
 
     /// Whether a new code can be sent as of `now` (resend cooldown elapsed).
     #[must_use]
-    pub const fn can_resend(&self, now: DateTime<Utc>) -> bool {
-        can_resend_at(self.last_sent_at.timestamp_micros(), now.timestamp_micros())
+    pub fn can_resend(&self, now: Timestamp) -> bool {
+        can_resend_at(self.last_sent_at.as_microsecond(), now.as_microsecond())
     }
 
     /// Seconds until a resend is allowed as of `now`; 0 if a resend is already
     /// allowed.
     #[must_use]
-    pub const fn seconds_until_resend(&self, now: DateTime<Utc>) -> i64 {
-        seconds_until_resend_at(self.last_sent_at.timestamp_micros(), now.timestamp_micros())
+    pub fn seconds_until_resend(&self, now: Timestamp) -> i64 {
+        seconds_until_resend_at(self.last_sent_at.as_microsecond(), now.as_microsecond())
     }
 
     /// Whether a replacement code may be issued as of `now`. Callers pass
-    /// `Utc::now()`; taking it as an argument lets the proofs cover every time.
+    /// `Timestamp::now()`; taking it as an argument lets the proofs cover every time.
     ///
     /// Issuing upserts a fresh row with `attempts = 0`, so every issuing path
     /// must ask this first or it would clear an active lockout. A lock takes
     /// precedence over the cooldown: it is the longer wait and the one the user
     /// needs to hear about.
     #[must_use]
-    pub const fn reissue(&self, now: DateTime<Utc>) -> Reissue {
+    pub fn reissue(&self, now: Timestamp) -> Reissue {
         reissue_at(
             self.attempts,
             self.lockouts,
-            self.last_sent_at.timestamp_micros(),
-            now.timestamp_micros(),
+            self.last_sent_at.as_microsecond(),
+            now.as_microsecond(),
         )
     }
 }
 
 // The lockout policy over plain integers: times are whole microseconds since
-// the Unix epoch (`DateTime::timestamp_micros`, exact for every time chrono can
+// the Unix epoch (`Timestamp::as_microsecond`, exact for every time jiff can
 // represent). The `AttemptLockout` methods are thin conversions onto these, so
 // the Kani proofs (`verification` below) cover the real decision logic; proving
-// it through chrono's calendar arithmetic directly doesn't finish (design D5).
+// it through jiff's timestamp arithmetic directly doesn't finish (design D5).
 
 /// The single definition of "at the failed-attempt cap", shared by
 /// [`AttemptLockout::is_locked`] and the integer policy below.
@@ -139,8 +139,8 @@ const fn at_cap(attempts: i32) -> bool {
 /// entities call it, and refresh tokens share `expired_at`. Times compare to
 /// the microsecond, Postgres's precision.
 #[must_use]
-pub const fn expired(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
-    expired_at(expires_at.timestamp_micros(), now.timestamp_micros())
+pub fn expired(expires_at: Timestamp, now: Timestamp) -> bool {
+    expired_at(expires_at.as_microsecond(), now.as_microsecond())
 }
 
 /// Whether a magic link with expiry `expires_at` can't be redeemed at `now`.
@@ -148,12 +148,11 @@ pub const fn expired(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
 /// There is none, or it has expired. Only the link's own expiry counts, so a
 /// resend, which moves the code's expiry, never revives it.
 #[must_use]
-pub const fn magic_link_expired(expires_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
-    let expires_us = match expires_at {
-        Some(at) => Some(at.timestamp_micros()),
-        None => None,
-    };
-    magic_link_expired_at(expires_us, now.timestamp_micros())
+pub fn magic_link_expired(expires_at: Option<Timestamp>, now: Timestamp) -> bool {
+    magic_link_expired_at(
+        expires_at.map(Timestamp::as_microsecond),
+        now.as_microsecond(),
+    )
 }
 
 /// The expiry rule over microseconds: expired from the expiry instant on.
@@ -330,9 +329,9 @@ pub(crate) mod verification {
     /// The lock window for a lockout count, in minutes. `last_sent_at` and
     /// `attempts` don't affect it.
     fn window_minutes(lockouts: i32) -> i64 {
-        AttemptLockout::new(MAX_ATTEMPTS, DateTime::<Utc>::UNIX_EPOCH, lockouts)
+        AttemptLockout::new(MAX_ATTEMPTS, Timestamp::UNIX_EPOCH, lockouts)
             .lock_duration()
-            .num_minutes()
+            .as_mins()
     }
 
     /// For every `lockouts: i32` (all 2^32 values, including negative and
@@ -494,12 +493,16 @@ mod tests {
     use super::*;
 
     /// One fixed instant, so the tests never depend on the wall clock.
-    fn now() -> DateTime<Utc> {
-        DateTime::from_timestamp(1_800_000_000, 0).expect("valid timestamp")
+    fn now() -> Timestamp {
+        Timestamp::from_second(1_800_000_000).expect("valid timestamp")
     }
 
     fn lockout(attempts: i32, sent_minutes_ago: i64) -> AttemptLockout {
-        AttemptLockout::new(attempts, now() - Duration::minutes(sent_minutes_ago), 0)
+        AttemptLockout::new(
+            attempts,
+            now() - SignedDuration::from_mins(sent_minutes_ago),
+            0,
+        )
     }
 
     fn after_lockouts(lockouts: i32) -> AttemptLockout {
@@ -508,15 +511,27 @@ mod tests {
 
     #[test]
     fn lock_duration_doubles_per_earlier_lockout() {
-        assert_eq!(after_lockouts(0).lock_duration(), Duration::minutes(15));
-        assert_eq!(after_lockouts(1).lock_duration(), Duration::minutes(30));
-        assert_eq!(after_lockouts(2).lock_duration(), Duration::minutes(60));
-        assert_eq!(after_lockouts(6).lock_duration(), Duration::minutes(960));
+        assert_eq!(
+            after_lockouts(0).lock_duration(),
+            SignedDuration::from_mins(15)
+        );
+        assert_eq!(
+            after_lockouts(1).lock_duration(),
+            SignedDuration::from_mins(30)
+        );
+        assert_eq!(
+            after_lockouts(2).lock_duration(),
+            SignedDuration::from_mins(60)
+        );
+        assert_eq!(
+            after_lockouts(6).lock_duration(),
+            SignedDuration::from_mins(960)
+        );
     }
 
     #[test]
     fn lock_duration_is_capped() {
-        let cap = Duration::minutes(MAX_LOCK_DURATION_MINUTES);
+        let cap = SignedDuration::from_mins(MAX_LOCK_DURATION_MINUTES);
         assert_eq!(after_lockouts(7).lock_duration(), cap);
         assert_eq!(after_lockouts(1_000).lock_duration(), cap);
     }
@@ -525,7 +540,7 @@ mod tests {
     fn escalated_lock_outlasts_base_window() {
         let l = AttemptLockout::new(
             MAX_ATTEMPTS,
-            now() - Duration::minutes(LOCK_DURATION_MINUTES + 1),
+            now() - SignedDuration::from_mins(LOCK_DURATION_MINUTES + 1),
             2,
         );
         assert!(
@@ -593,7 +608,8 @@ mod tests {
     #[test]
     fn a_lock_with_under_a_second_left_still_holds() {
         let now = now();
-        let sent = now - Duration::minutes(LOCK_DURATION_MINUTES) + Duration::milliseconds(500);
+        let sent = now - SignedDuration::from_mins(LOCK_DURATION_MINUTES)
+            + SignedDuration::from_millis(500);
         let l = AttemptLockout::new(MAX_ATTEMPTS, sent, 0);
         assert_eq!(
             l.reissue(now),

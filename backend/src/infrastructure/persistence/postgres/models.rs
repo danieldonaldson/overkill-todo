@@ -1,6 +1,6 @@
 use crate::domain::entities::OAuthProvider;
 use crate::domain::value_objects::UserRole;
-use chrono::{DateTime, Utc};
+use jiff_sqlx::Timestamp;
 use sqlx::FromRow;
 use uuid::Uuid;
 
@@ -69,12 +69,12 @@ pub struct UserRow {
     pub last_name: String,
     pub email_verified: bool,
     pub pending_email: Option<String>,
-    pub pending_email_requested_at: Option<DateTime<Utc>>,
-    pub deleted_at: Option<DateTime<Utc>>,
-    pub deletion_scheduled_at: Option<DateTime<Utc>>,
+    pub pending_email_requested_at: Option<Timestamp>,
+    pub deleted_at: Option<Timestamp>,
+    pub deletion_scheduled_at: Option<Timestamp>,
     pub role: DbUserRole,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
     pub version: i64,
 }
 
@@ -84,9 +84,9 @@ pub struct RefreshTokenRow {
     pub user_id: Uuid,
     pub token_hash: String,
     pub device_fingerprint: String,
-    pub expires_at: DateTime<Utc>,
-    pub revoked_at: Option<DateTime<Utc>>,
-    pub created_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
+    pub revoked_at: Option<Timestamp>,
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, FromRow)]
@@ -94,12 +94,12 @@ pub struct EmailVerificationCodeRow {
     pub id: Uuid,
     pub user_id: Uuid,
     pub code_hash: String,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub attempts: i32,
-    pub last_sent_at: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
+    pub last_sent_at: Timestamp,
+    pub created_at: Timestamp,
     pub magic_token_hash: Option<String>,
-    pub magic_token_expires_at: Option<DateTime<Utc>>,
+    pub magic_token_expires_at: Option<Timestamp>,
     pub lockouts: i32,
 }
 
@@ -108,10 +108,10 @@ pub struct PasswordResetCodeRow {
     pub id: Uuid,
     pub user_id: Uuid,
     pub code_hash: String,
-    pub expires_at: DateTime<Utc>,
+    pub expires_at: Timestamp,
     pub attempts: i32,
-    pub last_sent_at: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
+    pub last_sent_at: Timestamp,
+    pub created_at: Timestamp,
     pub lockouts: i32,
 }
 
@@ -122,5 +122,5 @@ pub struct OAuthAccountRow {
     pub provider: DbOAuthProvider,
     pub provider_user_id: String,
     pub provider_email: Option<String>,
-    pub linked_at: DateTime<Utc>,
+    pub linked_at: Timestamp,
 }

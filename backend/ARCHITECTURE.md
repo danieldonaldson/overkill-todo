@@ -249,11 +249,11 @@ and email proofs). It's in
   concurrent writes are P-11, P-12 and P-14, modelled below; the
   last-Super-Admin guard and the purge job's due check are SQL, and tested.
 - **Time is an argument.** Policy that depends on the clock takes `now`, and
-  callers pass `Utc::now()`, so a proof can cover every time.
-- **Prove integers, not chrono.** Kani can't get through chrono's calendar
+  callers pass `Timestamp::now()`, so a proof can cover every time.
+- **Prove integers, not jiff.** Kani can't get through jiff's timestamp
   arithmetic in reasonable time. The lockout policy is written over integer
   microseconds (`reissue_at` and friends in `attempt_lockout.rs`), and the
-  `DateTime` methods are thin conversions onto it. Follow the same pattern for
+  `Timestamp` methods are thin conversions onto it. Follow the same pattern for
   new proofs.
 - **Make a proof fail before trusting it:** break the rule it checks on a
   scratch edit, and see `just verify` fail with a counterexample.

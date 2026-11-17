@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, LazyLock};
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use jsonwebtoken::Validation;
 use serde::{Deserialize, Serialize};
 
@@ -47,13 +47,13 @@ impl CryptoJwtService {
     fn create_token(
         &self,
         user_id: &UserId,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
         token_type: &str,
         jti: Option<String>,
     ) -> Result<String, DomainError> {
         let claims = TokenClaims {
             sub: user_id.to_string(),
-            exp: expires_at.timestamp(),
+            exp: expires_at.as_second(),
             typ: token_type.to_string(),
             jti,
         };
@@ -95,7 +95,7 @@ impl JwtService for CryptoJwtService {
     fn create_signup_token(
         &self,
         user_id: &UserId,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
     ) -> Result<String, DomainError> {
         self.create_token(user_id, expires_at, "signup", None)
     }
@@ -104,7 +104,7 @@ impl JwtService for CryptoJwtService {
         &self,
         user_id: &UserId,
         reset_code_id: &ResetCodeId,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
     ) -> Result<String, DomainError> {
         self.create_token(
             user_id,
@@ -133,7 +133,7 @@ impl JwtService for CryptoJwtService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
+    use jiff::SignedDuration;
 
     fn test_service() -> CryptoJwtService {
         CryptoJwtService::new(Arc::new(Crypto::for_testing()))
@@ -143,7 +143,7 @@ mod tests {
     fn test_create_and_validate_signup_token() {
         let service = test_service();
         let user_id = UserId::new();
-        let expires_at = Utc::now() + Duration::hours(1);
+        let expires_at = Timestamp::now() + SignedDuration::from_hours(1);
 
         let token = service.create_signup_token(&user_id, expires_at).unwrap();
         let validated_id = service.validate_signup_token(&token).unwrap();
@@ -156,7 +156,7 @@ mod tests {
         let service = test_service();
         let user_id = UserId::new();
         let reset_code_id = ResetCodeId::new();
-        let expires_at = Utc::now() + Duration::hours(1);
+        let expires_at = Timestamp::now() + SignedDuration::from_hours(1);
 
         let token = service
             .create_reset_token(&user_id, &reset_code_id, expires_at)
@@ -171,7 +171,7 @@ mod tests {
     fn test_signup_token_rejected_as_reset_token() {
         let service = test_service();
         let user_id = UserId::new();
-        let expires_at = Utc::now() + Duration::hours(1);
+        let expires_at = Timestamp::now() + SignedDuration::from_hours(1);
 
         // Signup tokens carry no jti and a different type; must not pass reset validation.
         let token = service.create_signup_token(&user_id, expires_at).unwrap();
@@ -182,7 +182,7 @@ mod tests {
     fn test_wrong_token_type_fails() {
         let service = test_service();
         let user_id = UserId::new();
-        let expires_at = Utc::now() + Duration::hours(1);
+        let expires_at = Timestamp::now() + SignedDuration::from_hours(1);
 
         // Create a signup token
         let token = service.create_signup_token(&user_id, expires_at).unwrap();
@@ -196,7 +196,7 @@ mod tests {
     fn test_expired_token_fails() {
         let service = test_service();
         let user_id = UserId::new();
-        let expires_at = Utc::now() - Duration::hours(1); // Expired
+        let expires_at = Timestamp::now() - SignedDuration::from_hours(1); // Expired
 
         let token = service.create_signup_token(&user_id, expires_at).unwrap();
         let result = service.validate_signup_token(&token);
@@ -216,10 +216,10 @@ mod tests {
         let service = test_service();
         let user_id = UserId::new();
         let signup = service
-            .create_signup_token(&user_id, Utc::now() + Duration::hours(1))
+            .create_signup_token(&user_id, Timestamp::now() + SignedDuration::from_hours(1))
             .unwrap();
         let expired = service
-            .create_signup_token(&user_id, Utc::now() - Duration::hours(1))
+            .create_signup_token(&user_id, Timestamp::now() - SignedDuration::from_hours(1))
             .unwrap();
         assert_rejected(service.validate_reset_token(&signup));
         assert_rejected(service.validate_signup_token(&expired));
@@ -253,7 +253,7 @@ mod tests {
             .create_reset_token(
                 &UserId::new(),
                 &ResetCodeId::new(),
-                Utc::now() + Duration::hours(1),
+                Timestamp::now() + SignedDuration::from_hours(1),
             )
             .unwrap();
         assert_rejected(test_service().validate_reset_token(&token));

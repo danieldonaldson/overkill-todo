@@ -143,7 +143,7 @@ mod tests {
     use crate::domain::entities::UserParts;
     use crate::domain::value_objects::AccountStatus;
     use crate::domain::value_objects::{UserId, UserRole};
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     fn create_incomplete_user() -> User {
         User::from_persistence(UserParts {
@@ -156,8 +156,8 @@ mod tests {
             pending_email_change: None,
             status: AccountStatus::Active,
             role: UserRole::User,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
             version: 0,
         })
     }
@@ -173,8 +173,8 @@ mod tests {
             pending_email_change: None,
             status: AccountStatus::Active,
             role: UserRole::User,
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: Timestamp::now(),
+            updated_at: Timestamp::now(),
             version: 0,
         })
     }

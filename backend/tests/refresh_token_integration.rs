@@ -10,7 +10,7 @@ mod common;
 
 use std::sync::Arc;
 
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use sqlx::PgPool;
 
 use overkill_todo::application::ports::{RefreshTokenRepository, UserRepository};
@@ -37,7 +37,7 @@ async fn concurrent_rotate_lets_exactly_one_winner(pool: PgPool) {
     user_repo.save(&user).await.expect("save user");
     let user_id = user.id().as_uuid();
 
-    let expires = Utc::now() + Duration::days(30);
+    let expires = Timestamp::now() + SignedDuration::from_hours(24 * 30);
     let original = RefreshToken::new(
         *user.id(),
         "original-hash".to_string(),
@@ -101,7 +101,7 @@ async fn concurrent_rotate_lets_exactly_one_winner(pool: PgPool) {
     .unwrap_or(0);
     assert_eq!(active, 1, "exactly one active token after rotation");
 
-    let original_revoked: Option<chrono::DateTime<Utc>> = sqlx::query_scalar!(
+    let original_revoked: Option<jiff_sqlx::Timestamp> = sqlx::query_scalar!(
         "SELECT revoked_at FROM refresh_tokens WHERE id = $1",
         old_id.as_uuid()
     )

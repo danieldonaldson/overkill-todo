@@ -98,7 +98,7 @@ impl VerifyMagicLinkUseCase {
         // Check if the magic link is expired. Uses the token's own expiry, not
         // the 6-digit code's `expires_at`, so resending a code never extends or
         // revives a previously-issued link.
-        if verification_code.is_magic_token_expired(chrono::Utc::now()) {
+        if verification_code.is_magic_token_expired(jiff::Timestamp::now()) {
             return Err(VerifyMagicLinkError::TokenExpired);
         }
 
@@ -160,7 +160,7 @@ mod tests {
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
     use crate::domain::entities::{EmailVerificationCode, UserBuilder};
     use crate::domain::value_objects::{UserId, VerificationCodeId};
-    use chrono::{Duration, Utc};
+    use jiff::{SignedDuration, Timestamp};
 
     fn create_test_user(verified: bool) -> User {
         UserBuilder::new()
@@ -188,12 +188,12 @@ mod tests {
             VerificationCodeId::new(),
             user_id,
             "code_hash".to_string(), // Not used for magic link verification
-            Utc::now() + Duration::hours(24),
+            Timestamp::now() + SignedDuration::from_hours(24),
             0,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
             Some(token_hash),
-            Some(Utc::now() + Duration::hours(24)),
+            Some(Timestamp::now() + SignedDuration::from_hours(24)),
         );
 
         let mut mock_user_repo = MockUserRepository::new();
@@ -252,12 +252,12 @@ mod tests {
             VerificationCodeId::new(),
             user_id,
             "code_hash".to_string(),
-            Utc::now() - Duration::hours(1), // Expired
+            Timestamp::now() - SignedDuration::from_hours(1), // Expired
             0,
-            Utc::now() - Duration::hours(25),
-            Utc::now() - Duration::hours(25),
+            Timestamp::now() - SignedDuration::from_hours(25),
+            Timestamp::now() - SignedDuration::from_hours(25),
             Some(token_hash),
-            Some(Utc::now() - Duration::hours(1)), // magic link expired
+            Some(Timestamp::now() - SignedDuration::from_hours(1)), // magic link expired
         );
 
         let mock_user_repo = MockUserRepository::new();
@@ -289,12 +289,12 @@ mod tests {
             VerificationCodeId::new(),
             user_id,
             "code_hash".to_string(),
-            Utc::now() + Duration::hours(24), // code not expired
-            MAX_ATTEMPTS,                     // at the attempt cap → locked
-            Utc::now(),                       // last_sent_at within lock window
-            Utc::now(),
+            Timestamp::now() + SignedDuration::from_hours(24), // code not expired
+            MAX_ATTEMPTS,                                      // at the attempt cap → locked
+            Timestamp::now(),                                  // last_sent_at within lock window
+            Timestamp::now(),
             Some(token_hash),
-            Some(Utc::now() + Duration::hours(24)), // magic link not expired
+            Some(Timestamp::now() + SignedDuration::from_hours(24)), // magic link not expired
         );
 
         let mock_user_repo = MockUserRepository::new();
@@ -322,12 +322,12 @@ mod tests {
             VerificationCodeId::new(),
             user_id,
             "code_hash".to_string(),
-            Utc::now() + Duration::hours(24),
+            Timestamp::now() + SignedDuration::from_hours(24),
             0,
-            Utc::now(),
-            Utc::now(),
+            Timestamp::now(),
+            Timestamp::now(),
             Some(token_hash),
-            Some(Utc::now() + Duration::hours(24)),
+            Some(Timestamp::now() + SignedDuration::from_hours(24)),
         );
 
         let mut mock_user_repo = MockUserRepository::new();

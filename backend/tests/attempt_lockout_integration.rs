@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use overkill_todo::application::ports::{PasswordResetRepository, UserRepository};
 use overkill_todo::domain::entities::attempt_lockout::{
     AttemptOutcome, IssueOutcome, MAX_ATTEMPTS,
@@ -112,12 +112,12 @@ async fn claim_naming_a_replaced_code_finds_no_code(pool: PgPool) {
     let user_id = *user.id();
 
     // Code A was sent 10 minutes ago, so B may replace it (past the cooldown).
-    let sent_a = Utc::now() - Duration::minutes(10);
+    let sent_a = Timestamp::now() - SignedDuration::from_mins(10);
     let read = PasswordResetCode::from_persistence(
         ResetCodeId::new(),
         user_id,
         "code_a".to_string(),
-        sent_a + Duration::minutes(15),
+        sent_a + SignedDuration::from_mins(15),
         0,
         sent_a,
         sent_a,

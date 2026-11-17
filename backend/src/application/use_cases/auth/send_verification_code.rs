@@ -8,7 +8,7 @@ use crate::domain::entities::User;
 use crate::domain::entities::attempt_lockout::{IssueOutcome, RESEND_COOLDOWN_MINUTES};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{Email, UserId, VerificationCodeId};
-use chrono::{Duration as ChronoDuration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use sha2::{Digest, Sha256};
 use std::fmt;
 use std::sync::Arc;
@@ -175,7 +175,7 @@ impl SendVerificationCodeUseCase {
             .email_verification_repo
             .find_by_user(user_id)
             .await?
-            .is_some_and(|code| !code.reissue(Utc::now()).is_allowed());
+            .is_some_and(|code| !code.reissue(Timestamp::now()).is_allowed());
         if withheld {
             tracing::info!(
                 user_id = %user_id,
@@ -303,7 +303,7 @@ impl SendVerificationCodeUseCase {
     /// failing to widen the recovery window must not replace that with a
     /// different one.
     async fn release_resend_cooldown(&self, user_id: &UserId, code_id: &VerificationCodeId) {
-        let released = Utc::now() - ChronoDuration::minutes(RESEND_COOLDOWN_MINUTES);
+        let released = Timestamp::now() - SignedDuration::from_mins(RESEND_COOLDOWN_MINUTES);
         if let Err(e) = self
             .email_verification_repo
             .set_last_sent_at(user_id, code_id, released)
@@ -471,7 +471,8 @@ mod tests {
             .times(1)
             .withf(|_, _, last_sent_at| {
                 // Back-dated far enough that `can_resend()` is already true.
-                *last_sent_at <= Utc::now() - ChronoDuration::minutes(RESEND_COOLDOWN_MINUTES)
+                *last_sent_at
+                    <= Timestamp::now() - SignedDuration::from_mins(RESEND_COOLDOWN_MINUTES)
             })
             .returning(|_, _, _| Ok(()));
 

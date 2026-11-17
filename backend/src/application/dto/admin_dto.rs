@@ -1,7 +1,7 @@
 //! DTOs for the admin panel (`/api/v1/admin`).
 
 use super::schema_enums::RoleName;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -21,10 +21,10 @@ pub struct AdminUserResponse {
     #[schema(value_type = RoleName)]
     pub role: String,
     pub email_verified: bool,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
-    pub deletion_scheduled_at: Option<DateTime<Utc>>,
+    pub deletion_scheduled_at: Option<Timestamp>,
 }
 
 impl From<&User> for AdminUserResponse {

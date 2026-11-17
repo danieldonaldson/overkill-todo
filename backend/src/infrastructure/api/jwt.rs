@@ -1,7 +1,7 @@
 //! Session token creation and verification (HMAC-SHA-512 via the token keyring).
 
 use super::error::AppError;
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use jsonwebtoken::Validation;
 use jsonwebtoken::errors::ErrorKind;
 use std::sync::LazyLock;
@@ -65,8 +65,8 @@ impl Claims {
     /// Creates new claims for the given user with an expiration time in minutes.
     #[must_use]
     pub fn new(user_id: Uuid, email_verified: bool, role: &str, expiration_minutes: i64) -> Self {
-        let now = Utc::now();
-        let exp = now + Duration::minutes(expiration_minutes);
+        let now = Timestamp::now();
+        let exp = now + SignedDuration::from_mins(expiration_minutes);
 
         Self {
             sub: user_id.to_string(),
@@ -75,8 +75,8 @@ impl Claims {
             aud: TOKEN_AUDIENCE.to_string(),
             verified: email_verified,
             role: role.to_string(),
-            exp: exp.timestamp(),
-            iat: now.timestamp(),
+            exp: exp.as_second(),
+            iat: now.as_second(),
         }
     }
 
@@ -334,14 +334,14 @@ mod tests {
             iat: i64,
         }
 
-        let now = Utc::now();
+        let now = Timestamp::now();
         let claims = ForeignClaims {
             sub: Uuid::now_v7().to_string(),
             typ: "signup".to_string(),
             iss: TOKEN_ISSUER.to_string(),
             aud: TOKEN_AUDIENCE.to_string(),
-            exp: (now + Duration::minutes(15)).timestamp(),
-            iat: now.timestamp(),
+            exp: (now + SignedDuration::from_mins(15)).as_second(),
+            iat: now.as_second(),
         };
         let token = keys().sign(&claims).unwrap();
         assert_rejected(verify_jwt(&token, &keys()));
@@ -357,7 +357,7 @@ mod tests {
     #[test]
     fn test_verify_jwt_expired_token() {
         // Expired 5 minutes ago, beyond the 60 s leeway.
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         let claims = Claims {
             sub: Uuid::now_v7().to_string(),
             typ: SESSION_TOKEN_TYPE.to_string(),
@@ -365,8 +365,8 @@ mod tests {
             aud: TOKEN_AUDIENCE.to_string(),
             verified: true,
             role: "user".to_string(),
-            exp: (now - chrono::Duration::minutes(5)).timestamp(),
-            iat: (now - chrono::Duration::minutes(20)).timestamp(),
+            exp: (now - jiff::SignedDuration::from_mins(5)).as_second(),
+            iat: (now - jiff::SignedDuration::from_mins(20)).as_second(),
         };
         let token = keys().sign(&claims).unwrap();
 
@@ -484,15 +484,15 @@ mod tests {
             iat: i64,
         }
 
-        let now = Utc::now();
+        let now = Timestamp::now();
         let claims = RolelessClaims {
             sub: Uuid::now_v7().to_string(),
             typ: SESSION_TOKEN_TYPE.to_string(),
             iss: TOKEN_ISSUER.to_string(),
             aud: TOKEN_AUDIENCE.to_string(),
             verified: true,
-            exp: (now + Duration::minutes(15)).timestamp(),
-            iat: now.timestamp(),
+            exp: (now + SignedDuration::from_mins(15)).as_second(),
+            iat: now.as_second(),
         };
         let token = keys().sign(&claims).unwrap();
 

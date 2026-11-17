@@ -15,6 +15,7 @@ pub mod models;
 pub mod oauth_account_repository;
 pub mod password_reset_repository;
 pub mod refresh_token_repository;
+pub mod time;
 
 pub mod user_repository;
 

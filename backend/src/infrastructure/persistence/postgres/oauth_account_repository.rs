@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use super::time::{ToDb, ToDomain};
 use crate::application::ports::OAuthAccountRepository;
 use crate::domain::entities::{OAuthAccount, OAuthProvider};
 use crate::domain::errors::DomainError;
@@ -19,7 +20,7 @@ impl From<OAuthAccountRow> for OAuthAccount {
             row.provider.into(),
             row.provider_user_id,
             row.provider_email,
-            row.linked_at,
+            row.linked_at.to_domain(),
         )
     }
 }
@@ -91,7 +92,7 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
             DbOAuthProvider::from(account.provider()) as _,
             account.provider_user_id(),
             account.provider_email(),
-            account.linked_at(),
+            account.linked_at().to_db(),
         )
         .execute(self.db.pool())
         .await

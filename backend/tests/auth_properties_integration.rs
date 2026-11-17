@@ -384,7 +384,7 @@ async fn a_member_reaches_only_their_own_account(pool: PgPool) {
         body
     };
     let a_scheduled = || async {
-        sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+        sqlx::query_scalar::<_, Option<jiff_sqlx::Timestamp>>(
             "SELECT deletion_scheduled_at FROM users WHERE id = $1",
         )
         .bind(a_id)

@@ -10,7 +10,7 @@
 
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{ResetCodeId, UserId};
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 /// Claims for a signup/reset token (short-lived, specific purpose).
@@ -46,7 +46,7 @@ pub trait JwtService: Send + Sync {
     fn create_signup_token(
         &self,
         user_id: &UserId,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
     ) -> Result<String, DomainError>;
 
     /// Creates a password reset token bound to a specific reset-code row.
@@ -72,7 +72,7 @@ pub trait JwtService: Send + Sync {
         &self,
         user_id: &UserId,
         reset_code_id: &ResetCodeId,
-        expires_at: DateTime<Utc>,
+        expires_at: Timestamp,
     ) -> Result<String, DomainError>;
 
     /// Validates a signup token and extracts the user ID.

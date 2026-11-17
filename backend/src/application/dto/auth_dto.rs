@@ -4,7 +4,7 @@ use super::schema_enums::{OAuthProviderName, RoleName};
 use super::validation::validate_verification_code;
 use crate::domain::entities::User;
 use crate::domain::value_objects::PendingEmailChange;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
@@ -254,15 +254,15 @@ pub struct UserResponse {
     /// When the pending email change was requested.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
-    pub pending_email_requested_at: Option<DateTime<Utc>>,
+    pub pending_email_requested_at: Option<Timestamp>,
     /// When the account is scheduled for deletion (during 14-day grace period).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
-    pub deletion_scheduled_at: Option<DateTime<Utc>>,
+    pub deletion_scheduled_at: Option<Timestamp>,
     /// User's role ("user", "admin", or "`super_admin`").
     #[schema(value_type = RoleName)]
     pub role: String,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Timestamp,
 }
 
 impl UserResponse {
@@ -336,7 +336,7 @@ mod tests {
             pending_email_requested_at: None,
             deletion_scheduled_at: None,
             role: "user".to_string(),
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
         }
     }
 

@@ -5,7 +5,7 @@ use crate::domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{UserId, VerificationCodeId};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 /// Repository trait for email verification code persistence operations.
 ///
@@ -102,7 +102,7 @@ pub trait EmailVerificationRepository: Send + Sync {
         &self,
         user_id: &UserId,
         code_id: &VerificationCodeId,
-        last_sent_at: DateTime<Utc>,
+        last_sent_at: Timestamp,
     ) -> Result<(), DomainError>;
 
     /// Deletes all expired codes from the database.

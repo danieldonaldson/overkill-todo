@@ -208,14 +208,14 @@ fn session_authorization_is_current(
     issued_at: i64,
     current: Option<SessionAuthorizationState>,
 ) -> bool {
-    matches!(current, Some(state) if state.role == token_role && state.tokens_valid_after.is_none_or(|cutoff| issued_at > cutoff.timestamp()))
+    matches!(current, Some(state) if state.role == token_role && state.tokens_valid_after.is_none_or(|cutoff| issued_at > cutoff.as_second()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use axum::http::header::COOKIE;
-    use chrono::{TimeZone, Utc};
+    use jiff::Timestamp;
 
     #[test]
     fn changed_role_invalidates_session() {
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn token_from_cutoff_second_remains_revoked_after_role_cycle() {
-        let cutoff = Utc.timestamp_opt(100, 500_000_000).unwrap();
+        let cutoff = Timestamp::new(100, 500_000_000).unwrap();
         assert!(!session_authorization_is_current(
             UserRole::Admin,
             100,

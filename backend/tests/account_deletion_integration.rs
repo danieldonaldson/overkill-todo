@@ -9,7 +9,7 @@ mod common;
 
 use std::sync::Arc;
 
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -18,6 +18,7 @@ use overkill_todo::application::ports::{
 };
 use overkill_todo::domain::entities::{EmailVerificationCode, RefreshToken, User};
 use overkill_todo::domain::value_objects::Email;
+use overkill_todo::infrastructure::persistence::postgres::time::ToDb;
 use overkill_todo::infrastructure::persistence::postgres::{
     Database, PostgresEmailVerificationRepository, PostgresRefreshTokenRepository,
     PostgresUserRepository,
@@ -99,7 +100,7 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
             *user.id(),
             "token-hash".to_string(),
             "device-fp".to_string(),
-            Utc::now() + Duration::days(30),
+            Timestamp::now() + SignedDuration::from_hours(24 * 30),
         ))
         .await
         .expect("seed refresh token");
@@ -126,7 +127,7 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
         "INSERT INTO password_reset_codes (user_id, code_hash, expires_at) VALUES ($1, $2, $3)",
         user_id,
         "reset-hash",
-        Utc::now() + Duration::hours(1),
+        (Timestamp::now() + SignedDuration::from_hours(1)).to_db(),
     )
     .execute(&pool)
     .await
@@ -143,7 +144,7 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
     let mut anonymized = user.clone();
     let anon_email = Email::new(&format!("deleted-{user_id}@anonymized.local")).unwrap();
     anonymized
-        .anonymize(anon_email, chrono::Utc::now())
+        .anonymize(anon_email, jiff::Timestamp::now())
         .unwrap();
     let anonymized_now = user_repo
         .anonymize_account(&anonymized)
@@ -184,14 +185,14 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
 /// also be pending deletion, whichever code path tries to write it.
 #[sqlx::test(migrations = "./migrations")]
 async fn deleted_account_cannot_be_pending_deletion(pool: PgPool) {
-    let now = Utc::now();
+    let now = Timestamp::now();
     let err = sqlx::query!(
         r#"
         INSERT INTO users (email, deleted_at, deletion_scheduled_at)
         VALUES ('both@example.com', $1, $2)
         "#,
-        now,
-        now + Duration::days(14),
+        now.to_db(),
+        (now + SignedDuration::from_hours(24 * 14)).to_db(),
     )
     .execute(&pool)
     .await
@@ -227,7 +228,7 @@ async fn anonymize_skips_account_cancelled_after_the_scan(pool: PgPool) {
             *user.id(),
             "token-hash".to_string(),
             "device-fp".to_string(),
-            Utc::now() + Duration::days(30),
+            Timestamp::now() + SignedDuration::from_hours(24 * 30),
         ))
         .await
         .expect("seed refresh token");
@@ -255,7 +256,7 @@ async fn anonymize_skips_account_cancelled_after_the_scan(pool: PgPool) {
     anonymized
         .anonymize(
             Email::new(&format!("deleted-{user_id}@anonymized.local")).unwrap(),
-            chrono::Utc::now(),
+            jiff::Timestamp::now(),
         )
         .unwrap();
     let anonymized_now = user_repo

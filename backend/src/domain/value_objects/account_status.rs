@@ -1,6 +1,6 @@
 //! Where a user account is in its deletion lifecycle.
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 /// Where a user account is in its deletion lifecycle.
 ///
@@ -17,9 +17,9 @@ use chrono::{DateTime, Utc};
 ///
 /// Generic over the timestamp so the Kani proofs (`verification` below) can
 /// run the same transitions over integer times; the app uses the default,
-/// `DateTime<Utc>`.
+/// `Timestamp`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AccountStatus<T = DateTime<Utc>> {
+pub enum AccountStatus<T = Timestamp> {
     /// A normal, live account.
     #[default]
     Active,
@@ -238,9 +238,9 @@ mod tests {
 
     #[test]
     fn from_columns_maps_each_combination() {
-        let t = Utc::now();
+        let t = Timestamp::now();
         assert_eq!(
-            AccountStatus::<DateTime<Utc>>::from_columns(None, None),
+            AccountStatus::<Timestamp>::from_columns(None, None),
             AccountStatus::Active
         );
         assert_eq!(
@@ -255,8 +255,8 @@ mod tests {
 
     #[test]
     fn deleted_wins_over_a_stale_schedule() {
-        let deleted = Utc::now();
-        let scheduled = deleted + chrono::Duration::days(1);
+        let deleted = Timestamp::now();
+        let scheduled = deleted + jiff::SignedDuration::from_hours(24);
         let status = AccountStatus::from_columns(Some(deleted), Some(scheduled));
         assert_eq!(
             status,
@@ -269,7 +269,7 @@ mod tests {
 
     #[test]
     fn columns_round_trip() {
-        let t = Utc::now();
+        let t = Timestamp::now();
         for status in [
             AccountStatus::Active,
             AccountStatus::PendingDeletion { scheduled_for: t },

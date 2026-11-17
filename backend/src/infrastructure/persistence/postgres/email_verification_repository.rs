@@ -1,9 +1,10 @@
 //! `PostgreSQL` implementation of the email verification repository.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use std::sync::Arc;
 
+use super::time::{ToDb, ToDomain};
 use crate::application::ports::EmailVerificationRepository;
 use crate::domain::entities::EmailVerificationCode;
 use crate::domain::entities::attempt_lockout::{
@@ -31,12 +32,12 @@ impl PostgresEmailVerificationRepository {
             VerificationCodeId::from_uuid(row.id),
             UserId::from_uuid(row.user_id),
             row.code_hash,
-            row.expires_at,
+            row.expires_at.to_domain(),
             row.attempts,
-            row.last_sent_at,
-            row.created_at,
+            row.last_sent_at.to_domain(),
+            row.created_at.to_domain(),
             row.magic_token_hash,
-            row.magic_token_expires_at,
+            row.magic_token_expires_at.to_domain(),
         )
         .with_lockouts(row.lockouts)
     }
@@ -83,12 +84,12 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
             code.id().as_uuid(),
             code.user_id().as_uuid(),
             code.code_hash(),
-            code.expires_at(),
+            code.expires_at().to_db(),
             code.attempts(),
-            code.last_sent_at(),
-            code.created_at(),
+            code.last_sent_at().to_db(),
+            code.created_at().to_db(),
             code.magic_token_hash(),
-            code.magic_token_expires_at(),
+            code.magic_token_expires_at().to_db(),
             MAX_ATTEMPTS,
             &LOCK_WINDOWS_MINUTES[..],
             RESEND_COOLDOWN_MINUTES,
@@ -206,7 +207,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         &self,
         user_id: &UserId,
         code_id: &VerificationCodeId,
-        last_sent_at: DateTime<Utc>,
+        last_sent_at: Timestamp,
     ) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
@@ -215,7 +216,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
             WHERE user_id = $1 AND id = $3 AND attempts < $4
             "#,
             user_id.as_uuid(),
-            last_sent_at,
+            last_sent_at.to_db(),
             code_id.as_uuid(),
             MAX_ATTEMPTS,
         )
@@ -252,8 +253,8 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         // Give the magic link its own lifetime (decoupled from the 6-digit
         // code's expiry) derived from the single source of truth, so this path
         // can't silently diverge from the entity's `EXPIRY_HOURS`.
-        let magic_token_expires_at = Utc::now()
-            + chrono::Duration::hours(
+        let magic_token_expires_at = Timestamp::now()
+            + jiff::SignedDuration::from_hours(
                 crate::domain::entities::email_verification_code::EXPIRY_HOURS,
             );
         sqlx::query!(
@@ -265,7 +266,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
             "#,
             user_id.as_uuid(),
             magic_token_hash,
-            magic_token_expires_at,
+            magic_token_expires_at.to_db(),
         )
         .execute(self.db.pool())
         .await

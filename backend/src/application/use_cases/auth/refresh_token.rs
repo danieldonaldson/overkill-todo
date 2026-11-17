@@ -5,7 +5,7 @@ use crate::application::ports::{RefreshTokenRepository, TokenService};
 use crate::domain::entities::User;
 use crate::domain::entities::{RefreshToken, RefreshTokenStatus};
 use crate::domain::errors::DomainError;
-use chrono::{Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use std::sync::Arc;
 
 /// Result of a successful token refresh operation.
@@ -74,7 +74,7 @@ impl RefreshTokenUseCase {
             .await?
             .ok_or_else(|| DomainError::Authorization("Invalid refresh token".into()))?;
 
-        match refresh_token.status(Utc::now()) {
+        match refresh_token.status(Timestamp::now()) {
             RefreshTokenStatus::Active => {}
             // `status()` reports a revoked-and-expired token as `Revoked`, so a
             // stolen token replayed after its natural expiry still lands here
@@ -122,7 +122,7 @@ impl RefreshTokenUseCase {
         let new_token = self.token_service.generate_token();
         let new_hash = self.token_service.hash_token(&new_token);
         let expiration_days = self.token_service.refresh_token_expiration_days();
-        let new_expires = Utc::now() + Duration::days(expiration_days);
+        let new_expires = Timestamp::now() + SignedDuration::from_hours(24 * expiration_days);
 
         let new_refresh_token = RefreshToken::new(
             *user.id(),
@@ -155,8 +155,8 @@ impl RefreshTokenUseCase {
     ) -> Result<String, DomainError> {
         let token_plaintext = self.token_service.generate_token();
         let token_hash = self.token_service.hash_token(&token_plaintext);
-        let expires_at =
-            Utc::now() + Duration::days(self.token_service.refresh_token_expiration_days());
+        let expires_at = Timestamp::now()
+            + SignedDuration::from_hours(24 * self.token_service.refresh_token_expiration_days());
 
         let refresh_token = RefreshToken::new(
             *user_id,
@@ -196,7 +196,7 @@ mod tests {
             user_id,
             "stored-hash".to_string(),
             FINGERPRINT.to_string(),
-            Utc::now() + Duration::days(30),
+            Timestamp::now() + SignedDuration::from_hours(24 * 30),
         )
     }
 
@@ -207,9 +207,9 @@ mod tests {
             user_id,
             "stored-hash".to_string(),
             FINGERPRINT.to_string(),
-            Utc::now() - Duration::days(1),
-            Some(Utc::now() - Duration::hours(1)),
-            Utc::now() - Duration::days(31),
+            Timestamp::now() - SignedDuration::from_hours(24),
+            Some(Timestamp::now() - SignedDuration::from_hours(1)),
+            Timestamp::now() - SignedDuration::from_hours(24 * 31),
         )
     }
 
@@ -219,9 +219,9 @@ mod tests {
             user_id,
             "stored-hash".to_string(),
             FINGERPRINT.to_string(),
-            Utc::now() - Duration::hours(1),
+            Timestamp::now() - SignedDuration::from_hours(1),
             None,
-            Utc::now() - Duration::days(31),
+            Timestamp::now() - SignedDuration::from_hours(24 * 31),
         )
     }
 

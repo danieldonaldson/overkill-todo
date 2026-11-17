@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::{DateTime, Duration, Utc};
+use jiff::{SignedDuration, Timestamp};
 use overkill_todo::application::ports::{
     EmailVerificationRepository, PasswordResetRepository, RefreshTokenRepository, UserRepository,
 };
@@ -93,12 +93,12 @@ fn load<S: DeserializeOwned>(path: &Path) -> Vec<S> {
 }
 
 /// The real instant for model time `t` when the model's clock reads `now`.
-fn at(now: i64, t: i64) -> DateTime<Utc> {
-    Utc::now() - Duration::minutes(now - t)
+fn at(now: i64, t: i64) -> Timestamp {
+    Timestamp::now() - SignedDuration::from_mins(now - t)
 }
 
-fn assert_near(what: &str, actual: DateTime<Utc>, expected: DateTime<Utc>) {
-    let off = (actual - expected).num_seconds().abs();
+fn assert_near(what: &str, actual: Timestamp, expected: Timestamp) {
+    let off = (actual - expected).as_secs().abs();
     assert!(
         off <= CLOCK_SLACK_SECONDS,
         "{what}: stored {actual}, model implies {expected} ({off}s apart)"
@@ -217,8 +217,8 @@ struct Found {
     id: Uuid,
     attempts: i32,
     lockouts: i32,
-    sent: DateTime<Utc>,
-    expires: DateTime<Utc>,
+    sent: Timestamp,
+    expires: Timestamp,
     expired: bool,
     reissue_allowed: bool,
 }
@@ -241,7 +241,7 @@ impl Codes {
     }
 
     async fn find(&self, user: &UserId) -> Option<Found> {
-        let now = Utc::now();
+        let now = Timestamp::now();
         match self.kind {
             CodeKind::Email => self.email.find_by_user(user).await.unwrap().map(|c| Found {
                 id: *c.id().as_uuid(),
@@ -269,8 +269,8 @@ impl Codes {
         &self,
         user: UserId,
         attempts: i32,
-        sent: DateTime<Utc>,
-        expires: DateTime<Utc>,
+        sent: Timestamp,
+        expires: Timestamp,
     ) -> (Uuid, IssueOutcome) {
         match self.kind {
             CodeKind::Email => {
@@ -319,7 +319,7 @@ impl Codes {
 
     /// Registration's release of the cooldown after a failed email.
     async fn release_cooldown(&self, user: &UserId, id: Uuid) {
-        let released = Utc::now() - Duration::minutes(RESEND_COOLDOWN_MINUTES);
+        let released = Timestamp::now() - SignedDuration::from_mins(RESEND_COOLDOWN_MINUTES);
         match self.kind {
             CodeKind::Email => self
                 .email
@@ -781,7 +781,10 @@ impl TokenReplay<'_> {
                         .await
                         .unwrap();
                     let (pc, out) = (&after.refresh_pc[&who], &after.refresh_out[&who]);
-                    match found.as_ref().map(|token| token.status(chrono::Utc::now())) {
+                    match found
+                        .as_ref()
+                        .map(|token| token.status(jiff::Timestamp::now()))
+                    {
                         None => {
                             assert_eq!(out, "invalid", "{at_step}: unknown token");
                             coverage.unknown += 1;
@@ -805,7 +808,7 @@ impl TokenReplay<'_> {
                         user,
                         token_hash(n, before.next_id),
                         FINGERPRINT.to_string(),
-                        Utc::now() + Duration::minutes(TOKEN_TTL_MINUTES),
+                        Timestamp::now() + SignedDuration::from_mins(TOKEN_TTL_MINUTES),
                     );
                     let result = self.refreshes[&who]
                         .rotate(&read[&("refresh", who)], &successor)

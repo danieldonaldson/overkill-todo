@@ -1,0 +1,7 @@
+# sqlx macro configuration (read at compile time from this crate's directory).
+#
+# sqlx 0.9 has no jiff feature, so map Postgres TIMESTAMPTZ to jiff-sqlx's wrapper
+# for every query!/query_as! column and parameter. Convert to `jiff::Timestamp` at
+# the repository boundary (`.to_jiff()` / `.to_sqlx()`).
+[macros.type-overrides]
+'TIMESTAMPTZ' = "jiff_sqlx::Timestamp"

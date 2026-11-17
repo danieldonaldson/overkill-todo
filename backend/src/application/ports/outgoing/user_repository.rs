@@ -2,12 +2,12 @@ use crate::domain::entities::User;
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{UserId, UserRole};
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SessionAuthorizationState {
     pub role: UserRole,
-    pub tokens_valid_after: Option<DateTime<Utc>>,
+    pub tokens_valid_after: Option<Timestamp>,
 }
 
 /// Repository trait for user persistence operations.
@@ -70,6 +70,6 @@ pub trait UserRepository: Send + Sync {
     async fn revoke_sessions_issued_before(
         &self,
         id: &UserId,
-        cutoff: DateTime<Utc>,
+        cutoff: Timestamp,
     ) -> Result<(), DomainError>;
 }

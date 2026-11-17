@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use super::time::{ToDb, ToDomain};
 use crate::application::ports::PasswordResetRepository;
 use crate::domain::entities::PasswordResetCode;
 use crate::domain::entities::attempt_lockout::{
@@ -30,10 +31,10 @@ impl PostgresPasswordResetRepository {
             ResetCodeId::from_uuid(row.id),
             UserId::from_uuid(row.user_id),
             row.code_hash,
-            row.expires_at,
+            row.expires_at.to_domain(),
             row.attempts,
-            row.last_sent_at,
-            row.created_at,
+            row.last_sent_at.to_domain(),
+            row.created_at.to_domain(),
         )
         .with_lockouts(row.lockouts)
     }
@@ -74,10 +75,10 @@ impl PasswordResetRepository for PostgresPasswordResetRepository {
             code.id().as_uuid(),
             code.user_id().as_uuid(),
             code.code_hash(),
-            code.expires_at(),
+            code.expires_at().to_db(),
             code.attempts(),
-            code.last_sent_at(),
-            code.created_at(),
+            code.last_sent_at().to_db(),
+            code.created_at().to_db(),
             MAX_ATTEMPTS,
             &LOCK_WINDOWS_MINUTES[..],
             RESEND_COOLDOWN_MINUTES,
