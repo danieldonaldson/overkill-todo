@@ -115,9 +115,10 @@ next "claim_by_user breaks atMostFiveWrongGuessesPerCode, as it must" \
 next "lock_only_guard breaks noReissueInsideTheCooldown, as it must" \
   fails $ac lock_only_guard noReissueInsideTheCooldown
 
-# `quint run` fetches its evaluator from GitHub on first use. Several fetching
-# at once on a fresh machine (CI) all fail, so one runs alone first, alongside
-# the Apalache checks above, and the rest start once it has installed it.
+# `quint run` fetches its evaluator from GitHub on first use (CI installs it
+# beforehand, since the fetch is unauthenticated and rate-limited). On a fresh
+# machine one runs alone first, alongside the Apalache checks above, so it's
+# fetched once rather than by every run at once into the same directory.
 spawn "refresh_rotation keeps safety (quint run, 30 steps)" \
   quint run $rr --invariant safety --max-steps 30 --max-samples 10000 --verbosity 1
 wait "$!" || true

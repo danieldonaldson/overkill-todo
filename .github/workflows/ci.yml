@@ -338,6 +338,23 @@ jobs:
       - uses: jdx/mise-action@v5
         with:
           install_args: node java npm:@informalsystems/quint
+      # `quint run` downloads its evaluator from GitHub's API on first use, without
+      # a token, and shared runners often hit the anonymous rate limit ("Failed to
+      # fetch from GitHub"). Install the version this Quint expects with the job's
+      # token instead; Quint then finds it in ~/.quint and skips the download.
+      - name: Quint evaluator
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          manager=$(find "$(mise where npm:@informalsystems/quint)" -name binaryManager.js -path '*dist/src/rust/*' | head -1)
+          version=$(sed -n "s/.*QUINT_EVALUATOR_VERSION = '\(v[^']*\)'.*/\1/p" "$manager")
+          test -n "$version" || { echo "::error::Can't find Quint's evaluator version"; exit 1; }
+          dir="$HOME/.quint/rust-evaluator-$version"
+          asset=quint_evaluator-x86_64-unknown-linux-gnu.tar.gz
+          mkdir -p "$dir"
+          gh release download "evaluator/$version" --repo quint-co/quint --pattern "$asset" --dir "$dir" --clobber
+          tar -xzf "$dir/$asset" -C "$dir" && rm "$dir/$asset"
+          chmod +x "$dir/quint_evaluator"
       - name: Run migrations
         working-directory: backend
         run: cargo sqlx migrate run
