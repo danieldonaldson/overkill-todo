@@ -106,9 +106,42 @@ the group it's nested in (`path = "/login"` under `/auth` under `/api/v1`). Use 
   `#[schema(nullable = false)]`, because they're omitted, never `null`. A `String`
   with a fixed set of values gets `#[schema(value_type = …)]` with an enum from
   `application/dto/schema_enums.rs`.
+- **Security:** the description's security requirements come from the guards
+  too. `require_auth()` adds `session_cookie` and `require_csrf()` adds
+  `csrf_header` wherever it adds its 403. Only `/auth/refresh` names
+  `refresh_cookie`, and OAuth start names the session as optional (link mode),
+  both by hand. The session cookie is the only credential: an `Authorization`
+  header is ignored. `openapi.rs` tests fail if a route names an undefined
+  scheme, or if the CSRF requirement differs from where `csrf_middleware`
+  checks it. `PUBLIC_OPERATIONS` there lists the routes that need no session.
+- **Constraints:** a request field's `#[validate(...)]` rule is mirrored in
+  `#[schema(...)]` (`min_length`/`max_length`, `format = Email`, `pattern`), so
+  the fuzzer's "valid input is accepted" check holds. A rule that depends on
+  server state can't be described. The operation then skips that check, with
+  its reason, in `apifuzz/schemathesis.toml`.
+- **Fuzzed:** every described route is fuzzed against the description in
+  `just ci` (`just fuzz-api`, README "API fuzzing"). A new route is covered
+  automatically and must keep the run clean. A wrong method gets the JSON 405
+  from `error::method_not_allowed`.
 - **Committed outputs:** `just api-types` writes `backend/openapi.json` (from
   `examples/export_openapi.rs`) and the web types
   `apps/web/src/lib/api/schema.d.ts`. Commit both; CI fails if either is stale.
+
+### Dev-mode differences a client can see
+
+The fuzzer runs the backend with `DEV_MODE=true` (console email, no-op Turnstile
+and MX checks, the fixed code `123456` for `test-*` addresses). Only these
+responses differ from production:
+
+- 5xx messages carry the internal error text (`error.rs`). Any 5xx already
+  fails a fuzz run.
+- Cookies are set the same way. The `__Host-` cookies are `Secure` in both
+  modes, and plain-HTTP clients such as the fuzzer simply send them back.
+- The Swagger UI is served at `/docs` (only in builds with the `swagger-ui`
+  feature).
+
+4xx bodies are identical in both modes. A new `DEV_MODE` branch in API
+behaviour belongs on this list, because the fuzzer can't see past it.
 
 ## Adding a use case
 
@@ -248,6 +281,7 @@ and email proofs). It's in
   The proofs cover the domain's decisions, not the SQL around them. The
   concurrent writes are P-11, P-12 and P-14, modelled below; the
   last-Super-Admin guard and the purge job's due check are SQL, and tested.
+
 - **Time is an argument.** Policy that depends on the clock takes `now`, and
   callers pass `Timestamp::now()`, so a proof can cover every time.
 - **Prove integers, not jiff.** Kani can't get through jiff's timestamp

@@ -69,6 +69,7 @@ only (`deploy/secrets/README.md`).
 | `just bench-compare [base]`            | base vs working tree, per-bench change report                      |
 | `just api-types`                       | regenerate `backend/openapi.json` + web types                      |
 | `just api-types-check`                 | fail if either generated API file is stale                         |
+| `just fuzz-api [seed] [examples]`      | fuzz every API route against `openapi.json` on a throwaway DB      |
 | `just threat-model-check`              | every auth security property names a check that still exists       |
 | `just verify`                          | Kani proofs of the auth domain policy, every input within bounds   |
 | `just models`                          | Quint concurrency models of code entry and refresh, replayed on DB |
@@ -98,6 +99,42 @@ proven rules is tested, not proven, and the threat model lists each accepted
 gap and assumption (TLS, the browser, the edge). Tools and pins are in
 `.mise.toml`; details are in
 [backend/ARCHITECTURE.md](backend/ARCHITECTURE.md).
+
+### API fuzzing
+
+`just fuzz-api` (part of `just ci`, about 20 seconds) sends every described API
+operation generated requests, most of them malformed, and checks each response
+against `backend/openapi.json`. It uses [Schemathesis](https://schemathesis.io),
+pinned in `apifuzz/` (`uv`, from `.mise.toml`, installs it and its Python). It
+creates and migrates its own database `overkill_todo_fuzz_<pid>`, starts the
+backend in dev mode on `FUZZ_API_PORT` (4399), and drops both afterwards, even
+on Ctrl-C. Your dev database is never touched. There are three passes: as a
+Visitor, signed in (a Member, or a Super Admin on `/admin/*`), and a Member on
+admin routes. A run fails on any of these:
+
+- a 5xx;
+- a status, content type or body the description doesn't document;
+- malformed input not refused with the JSON 400;
+- valid input refused;
+- a protected route that serves a caller without credentials, or a missing
+  CSRF header that doesn't get 403;
+- an error body that isn't the standard shape or carries internal text.
+
+- **Reproducing:** a run prints its seed. `just fuzz-api <seed> <examples>`
+  (defaults `1 25`) sends the same requests again, and the input digest each
+  pass prints shows it. Each failure includes a `curl` command, and the logs
+  are in `apifuzz/out/`.
+- **CI:** CI's `api-fuzz` job runs the short run, and images need it to pass.
+  `fuzz-nightly.yml` runs a random seed with 500 examples every night (or by
+  hand, with your own seed). It gates nothing, and its job summary has the
+  command that reproduces it.
+- **Excluding an operation, or one check for an operation:** add an
+  `[[operations]]` entry with its reason to `apifuzz/schemathesis.toml`.
+  Today `GET /auth/oauth/{provider}/callback` is excluded, because it calls
+  Google. Six operations whose 400s depend on server state skip the
+  "valid input is accepted" check.
+- **The fuzzer's own checks** live in `apifuzz/hooks.py`, with unit tests in
+  `apifuzz/tests/` (`just fuzz-api-test`).
 
 ### Benchmarks
 
@@ -293,6 +330,7 @@ packages/           shared design tokens
 deploy/compose/     single-host production (Caddy TLS, digests, nightly dumps)
 deploy/k8s/         optional kustomize base (CNPG Postgres, Ingress)
 docs/security/      auth threat model: attackers, properties, and the check for each
+apifuzz/            API fuzzer (Schemathesis): config, sign-in hooks, run script
 scripts/            dev env generation, worktree create/remove
 .github/            CI and Dependabot
 ```

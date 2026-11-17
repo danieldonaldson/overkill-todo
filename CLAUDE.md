@@ -32,6 +32,10 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
   signature-verified webhooks go below it.
 - Extract input with `ValidatedJson` / `ApiJson` / `ApiQuery` / `ApiPath`, not
   bare axum `Json` / `Query` / `Path`, so malformed input gets the JSON 400.
+- Every described route is fuzzed in `just ci` (`just fuzz-api`); a new route
+  must keep it clean. Mirror `#[validate]` rules in `#[schema]`; an exclusion
+  goes in `apifuzz/schemathesis.toml` with its reason. Auth is the session
+  cookie only; security requirements come from the guards, never by hand.
 - Background jobs that must run once go under the leader lock in `main.rs`.
 - Errors: domain errors map to `AppError` in `infrastructure/api`; never leak
   internal error text to clients outside `DEV_MODE`.

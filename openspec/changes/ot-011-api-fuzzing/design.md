@@ -23,9 +23,10 @@ approach:
   secret and MX validation (`main.rs`). With `DEV_MODE=true` it uses console
   email, no-op Turnstile and MX checks, and gives `test-*` addresses the fixed
   code `123456`. OT-004's seeding already relies on this.
-- `DEV_MODE` changes three things a client can see: 5xx messages carry the
-  internal error text (`error.rs`), cookies lack `Secure`, and the Swagger UI is
-  served. 4xx bodies are identical in both modes.
+- `DEV_MODE` changes two things a client can see: 5xx messages carry the
+  internal error text (`error.rs`), and the Swagger UI is served. Cookies are
+  `Secure` in both modes (`__Host-` prefix, OT-010). 4xx bodies are identical
+  in both modes.
 - CI's backend job already has a Postgres service and a warm Rust cache.
   Commits go straight to `main`, and images are built only after a full CI run
   on `main` passes.
@@ -52,7 +53,7 @@ statuses, schema mismatches) rather than real defects. We also believe the
 doesn't express, can be avoided by leaving that check out and adding cheap
 constraints (`format: email`, `minLength`) where the description is simply
 incomplete. Slice 1 tests this locally: run once, then sort every distinct
-failure into *fix the description*, *fix the backend* or *tune the fuzzer*. We're
+failure into _fix the description_, _fix the backend_ or _tune the fuzzer_. We're
 right if the list is small enough to clear within slice 1, about 30 distinct
 failures or fewer. If it is much longer, we narrow the checks (for example,
 schema conformance only on 2xx at first). We record that and push the stricter
@@ -68,7 +69,7 @@ until the harness was fixed, and then found 3 more.
 
 - **Fix the backend (2):**
   - `POST /auth/oauth/device-fingerprint` gave a 500 that leaked `Internal
-    error: …` for a fingerprint with control characters. The value also went
+error: …` for a fingerprint with control characters. The value also went
     into `Set-Cookie` unchecked, so `;` could add cookie attributes. It is now
     validated as a 1–128 character token, gets a 400, and the schema says so.
   - Every described path answered other methods with axum's empty-bodied 405
@@ -100,7 +101,7 @@ Checks verified to fail (each on a scratch change, then reverted):
 - database error text in a 400 (`error_body`);
 - bare axum `Json` (415, `error_body`).
 
-Just removing `require_auth()` from a group does *not* fail. The handler
+Just removing `require_auth()` from a group does _not_ fail. The handler
 extractors (`AuthUser`, `AdminUser`) enforce the same rules, so nothing is
 exposed.
 
@@ -142,7 +143,7 @@ Hypothesis (the same property-testing model as proptest, including shrinking).
 It has built-in checks for most of the spec's failure conditions, and Python
 hooks for the rest.
 
-*Alternatives:* RESTler (heavier, stateful-first, .NET, weaker checks for
+_Alternatives:_ RESTler (heavier, stateful-first, .NET, weaker checks for
 response conformance); a hand-written proptest harness that drives the axum
 router in-process (fast, no new toolchain, but we would rebuild request
 generation from the schema ourselves); cargo-fuzz (wrong level, see the
@@ -155,7 +156,7 @@ proposal's Out of Scope).
 used for npm. The directory mirrors `loadtest/`: `run.sh`, `hooks.py` and a
 Schemathesis config file.
 
-*Alternative:* the Docker image pinned by digest, like `vmalert-tool`. It is
+_Alternative:_ the Docker image pinned by digest, like `vmalert-tool`. It is
 simpler to pin, but the hooks file needs mounting, it must use host networking
 to reach the backend, and it is awkward to run outside Docker. Either is fine.
 uv wins because the hooks are ordinary Python that tooling can type-check.
@@ -166,8 +167,8 @@ The backend can't start without its dev-mode no-op adapters unless real SMTP,
 Turnstile and DNS are wired in, and CI shouldn't depend on those. Dev mode is
 safe for the checks we need. It only changes 5xx text, and any 5xx already fails
 the run (the dev text even makes the failure easier to read). A leak in a 4xx
-message would look the same in production. Plain-HTTP cookies without `Secure`
-are what a local HTTP client needs anyway.
+message would look the same in production. The `Secure` cookies are no problem
+for a plain-HTTP client like the fuzzer: it sends them back regardless.
 
 `run.sh` creates `overkill_todo_fuzz_<pid>` on the existing Postgres, migrates
 it, starts the backend binary on its own port (`FUZZ_API_PORT`, default 4399),
@@ -176,7 +177,7 @@ drops the database from a `trap`, whatever the outcome. A start or readiness
 failure exits non-zero before any fuzzing. The fuzzer reads the committed
 `openapi.json`, not the served one, so it tests the contract clients are given.
 
-*Alternative:* add a `FUZZ_MODE` that is production in every other way, with
+_Alternative:_ add a `FUZZ_MODE` that is production in every other way, with
 only the adapters swapped. Rejected because it adds a production-adjacent
 switch for no extra coverage.
 
@@ -208,7 +209,7 @@ script can read. So `extract_token` reads only the session cookie, and
 Bearer token gets the same 401 `token_missing` as one that sends nothing. The
 integration tests send the session cookie instead.
 
-*Alternative:* describe Bearer as a second scheme. Rejected because it keeps an
+_Alternative:_ describe Bearer as a second scheme. Rejected because it keeps an
 unused way in, and the fuzzer would have to cover both.
 
 ### 5. Sign-in hook that recovers from lost sessions
@@ -224,7 +225,7 @@ unused way in, and the fuzzer would have to cover both.
 - **Lost sessions:** Schemathesis 4's own reactive re-auth does this, so no
   after-call hook is needed. Sessions are cached for the run. On a 401 from an
   authenticated case it drops the cached session, calls the provider again and
-  replays the request once. The provider signs in a *new* Member, because
+  replays the request once. The provider signs in a _new_ Member, because
   signing in the same Member again isn't enough: the fuzzer may have changed
   their password or scheduled their account for deletion. Sign-ups are capped
   per run (`FUZZ_MAX_SIGNUPS`), and Schemathesis stops re-authenticating on an
@@ -269,7 +270,7 @@ Added while implementing slice 1:
 
 - **`csrf_enforced`** (signed-in pass): when a state-changing request that
   needs the CSRF header succeeds, it is sent again without the header and must
-  get 403. `ignored_auth` drops *all* credentials at once, so it never tests a
+  get 403. `ignored_auth` drops _all_ credentials at once, so it never tests a
   valid session without the CSRF header.
 - **`admin_refused`** (Member-on-admin pass): every response to a request that
   carried the Member's session is 403.
@@ -336,7 +337,7 @@ coverage numbers and timings of the backend job clean.
 - **The deny list goes stale or matches too much** → it lives in one place in
   `hooks.py` with a unit test that has a sample of allowed and denied messages.
 - **Dev mode hides a production-only behaviour difference** → there are only
-  three known differences (Context). A new dev-mode branch in API behaviour
+  two known differences (Context). A new dev-mode branch in API behaviour
   would need an entry in Context. Noted in `backend/ARCHITECTURE.md`.
 - **A new toolchain (Python/uv) in a Rust/TS repo** → it is confined to
   `apifuzz/`, pinned and locked, and installed by `mise install`. Nothing in the
