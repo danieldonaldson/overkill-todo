@@ -288,6 +288,8 @@ jobs:
         with:
           kani-version: ${{ steps.pin.outputs.kani }}
           working-directory: backend
+          # Harnesses in parallel, as `just verify` does.
+          args: '-j --output-format=terse'
 
   # Quint concurrency models (`just models`, OT-010): Apalache's bounded checks, the old
   # code's counterexamples, then the exported traces replayed against Postgres. Node,

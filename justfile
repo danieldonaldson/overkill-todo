@@ -105,9 +105,11 @@ threat-model-check:
 
 # Kani proofs of the auth domain policy (OT-010): every harness, every input within
 # its stated bounds. Needs the pinned Kani from .mise.toml, then `cargo kani setup` once.
+# `-j` checks harnesses in parallel (Kani requires terse output for it), so this
+# takes about as long as the slowest one.
 verify:
     @cargo kani --version >/dev/null 2>&1 || { echo "Kani isn't installed: run 'mise install', then 'cargo kani setup' once" >&2; exit 1; }
-    cd {{backend}} && SQLX_OFFLINE=true cargo kani
+    cd {{backend}} && SQLX_OFFLINE=true cargo kani -j --output-format=terse
 
 # Quint concurrency models (OT-010): bounded checks of every invariant, the old
 # code's counterexamples, then traces replayed against Postgres. Quint + Java from .mise.toml.
@@ -333,8 +335,15 @@ deny:
 machete:
     cd {{backend}} && cargo machete
 
-# Everything CI gates on. Green here means green CI.
-ci: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check verify models protocols test test-integration db-prepare-check api-types-check test-web e2e
+# Everything CI gates on. Green here means green CI. The formal checks (Kani, Quint,
+# Tamarin) are independent of each other and of the rest, so they run alongside
+# `ci-checks` rather than after it; wall time is the slowest of the four, not the sum.
+# Their output interleaves; to read one stage's output, rerun it alone (`just models`).
+[parallel]
+ci: ci-checks verify models protocols
+
+# The rest of `ci`, in order: static checks first, then tests.
+ci-checks: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check test-web e2e
 
 # ── Load tests (OT-004) ──────────────────────────────────────────────────────────
 # Same release images as `just up`, pinned to cores and capped, with production

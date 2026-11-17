@@ -10,6 +10,12 @@
 #      exported as ITF and replayed against Postgres by
 #      backend/tests/model_conformance.rs.
 #
+# Steps 1-4 are independent, so they run concurrently (up to MODELS_JOBS at a
+# time, default: CPU count); only the replay waits for them. Each Apalache check
+# starts its own server on its own port, from MODELS_PORT_BASE (default 8840)
+# up, since `quint verify` otherwise shares one on 8822. Each job's output is
+# printed in a fixed order once all have finished; a failed job prints in full.
+#
 # Needs quint and java on PATH (pinned in .mise.toml), cargo-nextest, and a
 # migrated database at DATABASE_URL. Run from anywhere.
 set -euo pipefail
@@ -21,58 +27,109 @@ command -v quint >/dev/null && command -v java >/dev/null ||
 ac=models/attempt_claim.qnt
 rr=models/refresh_rotation.qnt
 traces=backend/target/model-traces
-
-holds() { # file module invariant
-  echo "models: $2 keeps $3 (quint verify, 8 steps)"
-  quint verify "$1" --main="$2" --invariant "$3" --max-steps 8 --verbosity 1
+max_jobs=${MODELS_JOBS:-$(nproc)}
+port=${MODELS_PORT_BASE:-8840}
+logs=$(mktemp -d)
+cleanup() { # stop any check still running (on failure or Ctrl-C), drop the logs
+  local pids
+  pids=$(jobs -p)
+  [[ -z $pids ]] || kill $pids 2>/dev/null || true
+  rm -rf "$logs"
 }
+trap cleanup EXIT
+
+job=0
+spawn() { # description command...: runs the command in the background
+  while (($(jobs -rp | wc -l) >= max_jobs)); do wait -n || true; done
+  local id
+  id=$(printf '%02d' "$job")
+  job=$((job + 1))
+  echo "$1" >"$logs/$id.what"
+  shift
+  ( "$@" >"$logs/$id.log" 2>&1 && rc=0 || rc=$?; echo "$rc" >"$logs/$id.rc" ) &
+}
+
+collect() { # waits for every job, prints them in order, fails if any failed
+  wait
+  local failed=0 what id rc
+  for what in "$logs"/*.what; do
+    id=${what%.what}
+    rc=$(cat "$id.rc" 2>/dev/null || echo "?")
+    if [[ $rc == 0 ]]; then
+      echo "models: $(<"$what"): $(grep -E '^\[(ok|violation)\]' "$id.log" | tail -1)"
+    else
+      cat "$id.log" >&2
+      echo "models: FAILED (exit $rc): $(<"$what")" >&2
+      failed=1
+    fi
+  done
+  ((failed == 0))
+}
+
+verify() { # file module invariant, on this job's own Apalache port
+  quint verify "$1" --main="$2" --invariant "$3" --max-steps 8 --verbosity 1 \
+    --server-endpoint "localhost:$port"
+}
+holds() { verify "$@"; }
 
 fails() { # file module invariant: the old code's variant must break it
   local out status
-  echo "models: $2 breaks $3, as it must (quint verify, 8 steps)"
-  out=$(quint verify "$1" --main="$2" --invariant "$3" --max-steps 8 --verbosity 1 2>&1) && status=0 || status=$?
+  out=$(verify "$@" 2>&1) && status=0 || status=$?
+  echo "$out"
   if ((status == 0)) || ! grep -q '^\[violation\]' <<<"$out"; then
-    echo "$out" >&2
-    echo "models: expected a counterexample to $3 in $2" >&2
-    exit 1
+    echo "models: expected a counterexample to $3 in $2"
+    return 1
   fi
 }
 
-holds $ac email_codes safety
-holds $ac reset_codes safety
-holds $rr refresh_rotation safety
-fails $ac unguarded_upsert lockIsNeverLiftedInsideItsWindow
-fails $ac claim_by_user atMostFiveWrongGuessesPerCode
-fails $ac lock_only_guard noReissueInsideTheCooldown
-
-for m in email_codes reset_codes; do
-  echo "models: $m keeps safety (quint run, 30 steps)"
-  quint run $ac --main=$m --invariant safety --max-steps 30 --max-samples 10000 --verbosity 1
-done
-echo "models: refresh_rotation keeps safety (quint run, 30 steps)"
-quint run $rr --invariant safety --max-steps 30 --max-samples 10000 --verbosity 1
-
-echo "models: exporting traces to $traces"
-rm -rf "$traces" && mkdir -p "$traces"
-for m in email_codes reset_codes; do
-  quint run $ac --main=$m --max-steps 20 --n-traces 300 --max-samples 300 \
-    --out-itf "$traces/${m}_{seq}.itf.json" --verbosity 0
+witnesses() { # module: traces that reach a refused issue
   # Random traces rarely reach a refused issue (the races task 4.1 fixed), so
   # add some that do: each is a counterexample to "no issue is refused". Any
-  # other failure (a Quint error, no trace written) stops the run.
+  # other failure (a Quint error, no trace written) fails the job.
+  local m=$1 n witness out status
   for n in 1 2 3; do
     witness="$traces/${m}_witness${n}_0.itf.json"
-    out=$(quint run $ac --main=$m --invariant noIssueIsRefused --max-steps 20 \
+    out=$(quint run $ac --main="$m" --invariant noIssueIsRefused --max-steps 20 \
       --out-itf "$traces/${m}_witness${n}_{seq}.itf.json" --verbosity 1 2>&1) && status=0 || status=$?
+    echo "$out"
     if ((status == 0)) || ! grep -q '^\[violation\]' <<<"$out" || [[ ! -s $witness ]]; then
-      echo "$out" >&2
-      echo "models: no witness trace in which $m refuses an issue" >&2
-      exit 1
+      echo "models: no witness trace in which $m refuses an issue"
+      return 1
     fi
   done
+}
+
+rm -rf "$traces" && mkdir -p "$traces"
+echo "models: running every check, up to $max_jobs at a time"
+
+# Longest first: the refresh_rotation check takes about as long as the others together.
+# Each job's subshell keeps the port it was spawned with.
+next() { port=$((port + 1)); spawn "$@"; }
+next "refresh_rotation keeps safety (quint verify, 8 steps)" holds $rr refresh_rotation safety
+next "email_codes keeps safety (quint verify, 8 steps)" holds $ac email_codes safety
+next "reset_codes keeps safety (quint verify, 8 steps)" holds $ac reset_codes safety
+next "unguarded_upsert breaks lockIsNeverLiftedInsideItsWindow, as it must" \
+  fails $ac unguarded_upsert lockIsNeverLiftedInsideItsWindow
+next "claim_by_user breaks atMostFiveWrongGuessesPerCode, as it must" \
+  fails $ac claim_by_user atMostFiveWrongGuessesPerCode
+next "lock_only_guard breaks noReissueInsideTheCooldown, as it must" \
+  fails $ac lock_only_guard noReissueInsideTheCooldown
+
+for m in email_codes reset_codes; do
+  spawn "$m keeps safety (quint run, 30 steps)" \
+    quint run $ac --main=$m --invariant safety --max-steps 30 --max-samples 10000 --verbosity 1
+  spawn "$m traces exported" \
+    quint run $ac --main=$m --max-steps 20 --n-traces 300 --max-samples 300 \
+    --out-itf "$traces/${m}_{seq}.itf.json" --verbosity 1
+  spawn "$m witness traces exported" witnesses $m
 done
-quint run $rr --max-steps 20 --n-traces 300 --max-samples 300 \
-  --out-itf "$traces/refresh_rotation_{seq}.itf.json" --verbosity 0
+spawn "refresh_rotation keeps safety (quint run, 30 steps)" \
+  quint run $rr --invariant safety --max-steps 30 --max-samples 10000 --verbosity 1
+spawn "refresh_rotation traces exported" \
+  quint run $rr --max-steps 20 --n-traces 300 --max-samples 300 \
+  --out-itf "$traces/refresh_rotation_{seq}.itf.json" --verbosity 1
+
+collect
 
 echo "models: replaying the traces against Postgres"
 cd backend

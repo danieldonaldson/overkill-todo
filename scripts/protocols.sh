@@ -15,9 +15,14 @@ command -v tamarin-prover >/dev/null && command -v maude >/dev/null ||
 
 model=models/auth_protocols.spthy
 limit=${PROTOCOLS_TIMEOUT:-600} # seconds per run
+# Tamarin's wellformedness derivation checks give up after 5 s by default and
+# report that as a warning, which fails the run below. They finish well inside
+# that alone, but not always while `just ci` runs Kani, Quint and the tests
+# alongside, so allow more. (0 would skip the checks, not wait for them.)
+derivcheck=${PROTOCOLS_DERIVCHECK_TIMEOUT:-60} # seconds
 
 prove() { # extra tamarin args...
-  timeout "$limit" tamarin-prover "$model" "$@" 2>&1 ||
+  timeout "$limit" tamarin-prover "$model" --derivcheck-timeout="$derivcheck" "$@" 2>&1 ||
     { echo "protocols: tamarin-prover failed or ran past ${limit}s" >&2; return 1; }
 }
 
