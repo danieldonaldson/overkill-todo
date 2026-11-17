@@ -1,0 +1,51 @@
+# Schemathesis config for `just fuzz-api` (OT-011). run.sh passes the schema,
+# base URL, seed, example count and pass; everything else is here.
+
+# One worker: requests share one backend and database, so concurrency would make
+# a run's order (and its result) depend on timing. A fixed seed then makes it
+# repeatable.
+workers = 1
+hooks = "hooks"
+request-timeout = 30
+
+[cache]
+# No state carried between runs (crash files replayed first would change what a
+# run sends). A failure is reproduced from its seed instead.
+enabled = false
+
+[generation]
+# No example database: what one run found must not change the next run's inputs.
+database = "none"
+# Credentials come from hooks.py (real sessions), never generated: generated
+# session cookies replaced the real one, so signed-in cases never reached a
+# handler. Missing and invalid credentials are still sent, by the Visitor pass
+# and by `ignored_auth`'s probes.
+with-security-parameters = false
+
+[phases.stateful]
+# Sequences (create, then read/update/delete) wait for the todo endpoints.
+enabled = false
+
+# Design Decision 6. On: not_a_server_error, status_code_conformance,
+# content_type_conformance, response_schema_conformance,
+# negative_data_rejection, ignored_auth, plus the custom checks in hooks.py.
+[checks]
+# Slice 2 reconsiders it: validation rules the description doesn't state
+# (password length, email format) make it noisy.
+positive_data_acceptance.enabled = false
+# Not in slice 1's scope.
+response_headers_conformance.enabled = false
+missing_required_header.enabled = false
+unsupported_method.enabled = false
+allow_header_conformance.enabled = false
+# Need stateful sequences or resource-owning identities.
+use_after_free.enabled = false
+ensure_resource_availability.enabled = false
+object_level_authorization.enabled = false
+
+# Excluded operations, each with its reason. Everything else is fuzzed.
+[[operations]]
+# Exchanges the authorization code with Google: a real network call to a third
+# party. `GET /auth/oauth/{provider}` (which only builds the redirect) is fuzzed.
+include-path = "/api/v1/auth/oauth/{provider}/callback"
+enabled = false

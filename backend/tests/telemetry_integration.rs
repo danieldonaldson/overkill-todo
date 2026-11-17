@@ -425,11 +425,13 @@ async fn auth_flows_leave_no_secrets_in_telemetry(pool: PgPool) {
         .uri("/api/v1/auth/refresh")
         .header(
             header::COOKIE,
-            format!("__Host-refresh_token={refresh_token}; __Host-csrf_token={csrf}"),
+            format!(
+                "__Host-auth_token={auth_token}; __Host-refresh_token={refresh_token}; \
+                 __Host-csrf_token={csrf}"
+            ),
         )
         .header("x-csrf-token", &csrf)
         .header("x-device-fingerprint", FINGERPRINT)
-        .header(header::AUTHORIZATION, format!("Bearer {auth_token}"))
         .body(Body::empty())
         .unwrap();
     let (resp, body) = send(&app, req).await;

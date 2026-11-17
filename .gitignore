@@ -44,3 +44,9 @@ loadtest/results/
 
 # Apalache run output from `quint verify` (`just models`).
 _apalache-out/
+
+# API fuzzer (OT-011): uv venv and caches
+apifuzz/.venv/
+__pycache__/
+.hypothesis/
+apifuzz/out/

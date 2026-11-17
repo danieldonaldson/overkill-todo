@@ -31,7 +31,7 @@ fn get_authed(uri: &str, token: &str) -> Request<Body> {
     Request::builder()
         .method("GET")
         .uri(uri)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::COOKIE, format!("__Host-auth_token={token}"))
         .body(Body::empty())
         .unwrap()
 }

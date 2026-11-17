@@ -7,10 +7,22 @@
 //! `backend/openapi.json` (`just api-spec`).
 
 use utoipa::OpenApi;
-use utoipa::openapi::{Content, Ref, RefOr, Response, path::Operation};
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityRequirement, SecurityScheme};
+use utoipa::openapi::{Components, Content, Ref, RefOr, Response, path::Operation};
 
 use crate::application::dto::OAuthMode;
+use crate::infrastructure::api::cookies::{AUTH_COOKIE, CSRF_COOKIE, REFRESH_COOKIE};
 use crate::infrastructure::api::error::ErrorResponse;
+use crate::infrastructure::api::middleware::csrf::CSRF_TOKEN_HEADER;
+
+/// Security scheme: the session cookie, set by sign-in. Required wherever
+/// `require_auth()` guards a route.
+pub(crate) const SESSION_COOKIE_SCHEME: &str = "session_cookie";
+/// Security scheme: the CSRF header. Required wherever `require_csrf()`
+/// checks a state-changing request.
+pub(crate) const CSRF_HEADER_SCHEME: &str = "csrf_header";
+/// Security scheme: the refresh cookie, read only by `/auth/refresh`.
+pub const REFRESH_COOKIE_SCHEME: &str = "refresh_cookie";
 
 #[derive(OpenApi)]
 #[openapi(
@@ -66,10 +78,56 @@ pub(crate) fn add_response_if_missing(op: &mut Operation, status: &str, descript
         .or_insert_with(|| RefOr::T(Response::new(description)));
 }
 
+/// Add `scheme` to every security requirement of `op`, so all of them need it
+/// (`OpenAPI` requirement objects are AND within, OR across).
+pub(crate) fn require_scheme(op: &mut Operation, scheme: &str) {
+    let existing = op.security.take().unwrap_or_default();
+    op.security = Some(if existing.is_empty() {
+        vec![SecurityRequirement::new(scheme, Vec::<String>::new())]
+    } else {
+        existing
+            .into_iter()
+            .map(|requirement| requirement.add(scheme, Vec::<String>::new()))
+            .collect()
+    });
+}
+
+/// The authentication schemes the backend accepts. Operations reference them
+/// through the route guards (`routes.rs`), never by hand, except
+/// [`REFRESH_COOKIE_SCHEME`] on `/auth/refresh`.
+fn add_security_schemes(components: &mut Components) {
+    let api_key = |key: ApiKey| SecurityScheme::ApiKey(key);
+    components.add_security_scheme(
+        SESSION_COOKIE_SCHEME,
+        api_key(ApiKey::Cookie(ApiKeyValue::with_description(
+            AUTH_COOKIE,
+            "Session token, set by sign-in. Sent automatically by the browser on `/api` paths.",
+        ))),
+    );
+    components.add_security_scheme(
+        CSRF_HEADER_SCHEME,
+        api_key(ApiKey::Header(ApiKeyValue::with_description(
+            CSRF_TOKEN_HEADER,
+            &format!(
+                "CSRF token for state-changing requests. Must equal the readable `{CSRF_COOKIE}` \
+                 cookie set at sign-in."
+            ),
+        ))),
+    );
+    components.add_security_scheme(
+        REFRESH_COOKIE_SCHEME,
+        api_key(ApiKey::Cookie(ApiKeyValue::with_description(
+            REFRESH_COOKIE,
+            "Refresh token, set by sign-in. Read only by `/auth/refresh`.",
+        ))),
+    );
+}
+
 /// Document-wide post-processing, applied to every published copy of the spec
 /// (the exported file and the dev-only Swagger UI).
 #[must_use]
 pub fn finalize(mut spec: utoipa::openapi::OpenApi) -> utoipa::openapi::OpenApi {
+    add_security_schemes(spec.components.get_or_insert_with(Components::default));
     for_each_operation(&mut spec, |_, _, op| {
         // Every body, query and path extractor rejects malformed input with 400
         // (`ValidatedJson`, `ApiJson`, `ApiQuery`, `ApiPath`).
@@ -442,6 +500,181 @@ mod tests {
         ] {
             assert!(!json.contains(leak), "spec contains {leak:?}");
         }
+    }
+
+    /// Each operation's security requirements as sets of scheme names
+    /// (`OpenAPI`: AND within a requirement, OR across them). `None` when the
+    /// operation lists none.
+    fn security_of(op: &serde_json::Value) -> Option<Vec<BTreeSet<String>>> {
+        op["security"].as_array().map(|reqs| {
+            reqs.iter()
+                .map(|r| r.as_object().unwrap().keys().cloned().collect())
+                .collect()
+        })
+    }
+
+    fn each_operation(mut f: impl FnMut(&str, &str, &serde_json::Value)) {
+        let spec = serde_json::to_value(openapi()).unwrap();
+        for (path, item) in spec["paths"].as_object().unwrap() {
+            for (method, op) in item.as_object().unwrap() {
+                f(&method.to_uppercase(), path, op);
+            }
+        }
+    }
+
+    fn requires(op: &serde_json::Value, scheme: &str) -> bool {
+        security_of(op)
+            .is_some_and(|reqs| !reqs.is_empty() && reqs.iter().all(|r| r.contains(scheme)))
+    }
+
+    /// No operation refers to a scheme the description doesn't define (the
+    /// `bearer_auth` drift OT-011 removed).
+    #[test]
+    fn every_security_requirement_names_a_defined_scheme() {
+        let spec = serde_json::to_value(openapi()).unwrap();
+        let defined: BTreeSet<String> = spec["components"]["securitySchemes"]
+            .as_object()
+            .map_or_else(BTreeSet::new, |s| s.keys().cloned().collect());
+        let mut undefined = Vec::new();
+        each_operation(|method, path, op| {
+            for scheme in security_of(op).unwrap_or_default().into_iter().flatten() {
+                if !defined.contains(&scheme) {
+                    undefined.push(format!("{method} {path} names undefined scheme {scheme:?}"));
+                }
+            }
+        });
+        assert!(undefined.is_empty(), "{undefined:#?}");
+    }
+
+    /// The schemes are the credentials the backend actually reads.
+    #[test]
+    fn security_schemes_name_the_real_credentials() {
+        use crate::infrastructure::api::cookies::{AUTH_COOKIE, REFRESH_COOKIE};
+        use crate::infrastructure::api::middleware::csrf::CSRF_TOKEN_HEADER;
+        let spec = serde_json::to_value(openapi()).unwrap();
+        let schemes = &spec["components"]["securitySchemes"];
+        for (name, location, key) in [
+            (super::SESSION_COOKIE_SCHEME, "cookie", AUTH_COOKIE),
+            (super::CSRF_HEADER_SCHEME, "header", CSRF_TOKEN_HEADER),
+            (super::REFRESH_COOKIE_SCHEME, "cookie", REFRESH_COOKIE),
+        ] {
+            assert_eq!(schemes[name]["type"], "apiKey", "{name}");
+            assert_eq!(schemes[name]["in"], location, "{name}");
+            assert_eq!(schemes[name]["name"], key, "{name}");
+        }
+        assert_eq!(schemes.as_object().unwrap().len(), 3, "no other schemes");
+    }
+
+    /// Operations a Visitor may call. Every other operation must require the
+    /// session cookie; a new route must either be guarded or be added here.
+    const PUBLIC_OPERATIONS: &[(&str, &str)] = &[
+        ("POST", "/api/v1/auth/register"),
+        ("POST", "/api/v1/auth/login"),
+        ("POST", "/api/v1/auth/logout"),
+        ("POST", "/api/v1/auth/refresh"),
+        ("POST", "/api/v1/auth/verify-email"),
+        ("GET", "/api/v1/auth/verify-magic"),
+        ("POST", "/api/v1/auth/verify-magic"),
+        ("POST", "/api/v1/auth/resend-verification"),
+        ("POST", "/api/v1/auth/forgot-password"),
+        ("POST", "/api/v1/auth/verify-reset-code"),
+        ("POST", "/api/v1/auth/reset-password"),
+        ("POST", "/api/v1/auth/complete-signup"),
+        ("POST", "/api/v1/auth/oauth/device-fingerprint"),
+        ("GET", "/api/v1/auth/oauth/{provider}"),
+        ("GET", "/api/v1/auth/oauth/{provider}/callback"),
+        ("GET", "/api/v1/health"),
+        ("GET", "/api/v1/health/ready"),
+    ];
+
+    /// Every guarded operation requires the session cookie, and every operation
+    /// that documents the guard's 401 is guarded.
+    #[test]
+    fn guarded_operations_require_the_session_cookie() {
+        let mut wrong = Vec::new();
+        each_operation(|method, path, op| {
+            let public = PUBLIC_OPERATIONS.contains(&(method, path));
+            if !public && !requires(op, super::SESSION_COOKIE_SCHEME) {
+                wrong.push(format!(
+                    "{method} {path} is guarded but doesn't require session_cookie"
+                ));
+            }
+            let guard_401 = op["responses"]["401"]["description"]
+                == "Not signed in, or the session has expired";
+            if guard_401 && public {
+                wrong.push(format!(
+                    "{method} {path} documents the auth guard's 401 but is public"
+                ));
+            }
+        });
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// `csrf_header` is required exactly where `csrf_middleware` checks it:
+    /// state-changing methods on paths it doesn't exclude.
+    #[test]
+    fn csrf_header_required_exactly_where_csrf_applies() {
+        use crate::infrastructure::api::middleware::csrf::is_excluded_path;
+        let mut wrong = Vec::new();
+        each_operation(|method, path, op| {
+            let checked =
+                matches!(method, "POST" | "PUT" | "PATCH" | "DELETE") && !is_excluded_path(path);
+            if checked != requires(op, super::CSRF_HEADER_SCHEME) {
+                wrong.push(format!("{method} {path}: CSRF checked = {checked}"));
+            }
+        });
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// Public routes require nothing, except the refresh cookie on refresh and
+    /// the optional session on OAuth start (link mode).
+    #[test]
+    fn public_operations_require_nothing() {
+        let mut wrong = Vec::new();
+        each_operation(|method, path, op| {
+            if !PUBLIC_OPERATIONS.contains(&(method, path)) {
+                return;
+            }
+            let found = security_of(op);
+            let expected: Option<Vec<BTreeSet<String>>> = match (method, path) {
+                ("POST", "/api/v1/auth/refresh") => Some(vec![BTreeSet::from([
+                    super::REFRESH_COOKIE_SCHEME.to_string(),
+                ])]),
+                ("GET", "/api/v1/auth/oauth/{provider}") => Some(vec![
+                    BTreeSet::new(),
+                    BTreeSet::from([super::SESSION_COOKIE_SCHEME.to_string()]),
+                ]),
+                _ => None,
+            };
+            if found != expected {
+                wrong.push(format!("{method} {path}: {found:?}, expected {expected:?}"));
+            }
+        });
+        assert!(wrong.is_empty(), "{wrong:#?}");
+    }
+
+    /// The spec scenarios: current user (cookie only), password change (cookie
+    /// and CSRF header), sign-in and health (nothing).
+    #[test]
+    fn spec_scenarios_security() {
+        let spec = serde_json::to_value(openapi()).unwrap();
+        let requirements = |method: &str, path: &str| security_of(&spec["paths"][path][method]);
+        let set = |names: &[&str]| {
+            names
+                .iter()
+                .map(|n| (*n).to_string())
+                .collect::<BTreeSet<_>>()
+        };
+        assert_eq!(
+            requirements("get", "/api/v1/auth/me"),
+            Some(vec![set(&["session_cookie"])])
+        );
+        assert_eq!(
+            requirements("post", "/api/v1/users/password/change"),
+            Some(vec![set(&["session_cookie", "csrf_header"])])
+        );
+        assert_eq!(requirements("post", "/api/v1/auth/login"), None);
+        assert_eq!(requirements("get", "/api/v1/health"), None);
     }
 
     #[test]

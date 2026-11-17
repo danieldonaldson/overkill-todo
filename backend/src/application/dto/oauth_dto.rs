@@ -22,6 +22,9 @@ pub struct OAuthStartQuery {
 /// Request body for storing the OAuth device binding cookie before redirecting.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct OAuthDeviceFingerprintRequest {
+    /// Opaque device ID, stored as a cookie value: 1–128 letters, digits, `-`
+    /// or `_` (the web app sends 64 hex digits).
+    #[schema(pattern = "^[A-Za-z0-9_-]{1,128}$", min_length = 1, max_length = 128)]
     pub device_fingerprint: String,
 }
 

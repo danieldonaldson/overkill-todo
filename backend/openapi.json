@@ -92,7 +92,7 @@
         },
         "security": [
           {
-            "bearer_auth": []
+            "session_cookie": []
           }
         ]
       }
@@ -190,7 +190,8 @@
         },
         "security": [
           {
-            "bearer_auth": []
+            "csrf_header": [],
+            "session_cookie": []
           }
         ]
       }
@@ -444,7 +445,7 @@
         },
         "security": [
           {
-            "bearer_auth": []
+            "session_cookie": []
           }
         ]
       }
@@ -455,7 +456,7 @@
           "OAuth"
         ],
         "summary": "Store the browser-generated OAuth device binding in an `HttpOnly` scoped cookie.\n# Errors",
-        "description": "Returns an error if the fingerprint contains invalid cookie characters.",
+        "description": "Returns a validation error (400) if the fingerprint is blank or isn't a\ncookie-safe token.",
         "operationId": "oauth_store_device_fingerprint",
         "requestBody": {
           "content": {
@@ -506,10 +507,10 @@
           {
             "name": "provider",
             "in": "path",
-            "description": "OAuth provider (google, apple)",
+            "description": "OAuth provider",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/OAuthProviderName"
             }
           },
           {
@@ -523,8 +524,8 @@
           }
         ],
         "responses": {
-          "302": {
-            "description": "Redirect to OAuth provider"
+          "307": {
+            "description": "Redirect to the OAuth provider"
           },
           "400": {
             "description": "Invalid provider",
@@ -556,7 +557,13 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {},
+          {
+            "session_cookie": []
+          }
+        ]
       }
     },
     "/api/v1/auth/oauth/{provider}/callback": {
@@ -574,7 +581,7 @@
             "description": "OAuth provider",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/OAuthProviderName"
             }
           },
           {
@@ -644,10 +651,10 @@
           {
             "name": "provider",
             "in": "path",
-            "description": "OAuth provider to unlink (google, apple)",
+            "description": "OAuth provider to unlink",
             "required": true,
             "schema": {
-              "type": "string"
+              "$ref": "#/components/schemas/OAuthProviderName"
             }
           }
         ],
@@ -708,7 +715,8 @@
         },
         "security": [
           {
-            "bearer_auth": []
+            "csrf_header": [],
+            "session_cookie": []
           }
         ]
       }
@@ -728,6 +736,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AuthResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing `X-Device-Fingerprint` header",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -752,7 +770,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "refresh_cookie": []
+          }
+        ]
       }
     },
     "/api/v1/auth/register": {
@@ -1298,7 +1321,8 @@
         },
         "security": [
           {
-            "bearer_auth": []
+            "csrf_header": [],
+            "session_cookie": []
           }
         ]
       }
@@ -1375,7 +1399,8 @@
         },
         "security": [
           {
-            "bearer_auth": []
+            "csrf_header": [],
+            "session_cookie": []
           }
         ]
       }
@@ -1442,7 +1467,7 @@
         },
         "security": [
           {
-            "bearer_auth": []
+            "session_cookie": []
           }
         ]
       }
@@ -1522,7 +1547,8 @@
         },
         "security": [
           {
-            "bearer_auth": []
+            "csrf_header": [],
+            "session_cookie": []
           }
         ]
       }
@@ -1602,7 +1628,8 @@
         },
         "security": [
           {
-            "bearer_auth": []
+            "csrf_header": [],
+            "session_cookie": []
           }
         ]
       }
@@ -1789,11 +1816,14 @@
         "properties": {
           "current_password": {
             "type": "string",
-            "description": "Current password for verification."
+            "description": "Current password for verification.",
+            "maxLength": 256
           },
           "new_password": {
             "type": "string",
-            "description": "New password (8-256 characters)."
+            "description": "New password (8-256 characters).",
+            "maxLength": 256,
+            "minLength": 8
           }
         }
       },
@@ -1808,10 +1838,13 @@
         "properties": {
           "email": {
             "type": "string",
+            "format": "email",
             "description": "Email address (for password manager autofill, verified against token)."
           },
           "password": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 8
           },
           "signup_token": {
             "type": "string",
@@ -1845,7 +1878,8 @@
         ],
         "properties": {
           "email": {
-            "type": "string"
+            "type": "string",
+            "format": "email"
           },
           "turnstile_token": {
             "type": [
@@ -1880,7 +1914,8 @@
         ],
         "properties": {
           "email": {
-            "type": "string"
+            "type": "string",
+            "format": "email"
           },
           "turnstile_token": {
             "type": [
@@ -1939,10 +1974,12 @@
         ],
         "properties": {
           "email": {
-            "type": "string"
+            "type": "string",
+            "format": "email"
           },
           "password": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 256
           },
           "turnstile_token": {
             "type": [
@@ -1973,7 +2010,11 @@
         ],
         "properties": {
           "device_fingerprint": {
-            "type": "string"
+            "type": "string",
+            "description": "Opaque device ID, stored as a cookie value: 1–128 letters, digits, `-`\nor `_` (the web app sends 64 hex digits).",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_-]{1,128}$"
           }
         }
       },
@@ -2009,7 +2050,8 @@
               "string",
               "null"
             ],
-            "description": "Password for re-authentication (required for password users)."
+            "description": "Password for re-authentication (required for password users).",
+            "maxLength": 256
           }
         }
       },
@@ -2021,7 +2063,8 @@
         ],
         "properties": {
           "email": {
-            "type": "string"
+            "type": "string",
+            "format": "email"
           },
           "turnstile_token": {
             "type": [
@@ -2063,7 +2106,9 @@
         ],
         "properties": {
           "new_password": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 8
           },
           "reset_token": {
             "type": "string",
@@ -2089,7 +2134,9 @@
         "properties": {
           "new_password": {
             "type": "string",
-            "description": "New password (8-256 characters)."
+            "description": "New password (8-256 characters).",
+            "maxLength": 256,
+            "minLength": 8
           }
         }
       },
@@ -2235,10 +2282,12 @@
         ],
         "properties": {
           "code": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 32
           },
           "email": {
-            "type": "string"
+            "type": "string",
+            "format": "email"
           }
         }
       },
@@ -2273,7 +2322,9 @@
         "properties": {
           "token": {
             "type": "string",
-            "description": "The magic link token from the email."
+            "description": "The magic link token from the email.",
+            "maxLength": 256,
+            "minLength": 1
           }
         }
       },
@@ -2286,10 +2337,12 @@
         ],
         "properties": {
           "code": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 32
           },
           "email": {
-            "type": "string"
+            "type": "string",
+            "format": "email"
           }
         }
       },
@@ -2305,6 +2358,26 @@
             "description": "Short-lived JWT token for password reset (5 min expiry)."
           }
         }
+      }
+    },
+    "securitySchemes": {
+      "csrf_header": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-csrf-token",
+        "description": "CSRF token for state-changing requests. Must equal the readable `__Host-csrf_token` cookie set at sign-in."
+      },
+      "refresh_cookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-refresh_token",
+        "description": "Refresh token, set by sign-in. Read only by `/auth/refresh`."
+      },
+      "session_cookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-auth_token",
+        "description": "Session token, set by sign-in. Sent automatically by the browser on `/api` paths."
       }
     }
   },

@@ -151,10 +151,10 @@ struct Started {
     nonce: String,
 }
 
-async fn start(app: &Router, provider: &str, mode: &str, bearer: Option<&str>) -> Started {
+async fn start(app: &Router, provider: &str, mode: &str, session: Option<&str>) -> Started {
     let mut req = Request::builder().uri(format!("/api/v1/auth/oauth/{provider}?mode={mode}"));
-    if let Some(token) = bearer {
-        req = req.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    if let Some(token) = session {
+        req = req.header(header::COOKIE, format!("__Host-auth_token={token}"));
     }
     let resp = app
         .clone()
@@ -222,7 +222,7 @@ async fn me(app: &Router, token: &str) -> Value {
         .oneshot(
             Request::builder()
                 .uri("/api/v1/auth/me")
-                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::COOKIE, format!("__Host-auth_token={token}"))
                 .body(Body::empty())
                 .unwrap(),
         )

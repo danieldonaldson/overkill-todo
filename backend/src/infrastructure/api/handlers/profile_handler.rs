@@ -44,8 +44,7 @@ pub struct ProfileHandlerDeps {
         (status = 204, description = "Password changed successfully"),
         (status = 401, description = "Not authenticated or wrong current password"),
         (status = 404, description = "User not found")
-    ),
-    security(("bearer_auth" = []))
+    )
 )]
 /// # Errors
 ///
@@ -84,8 +83,7 @@ pub async fn change_password(
         (status = 400, description = "User already has password"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "User not found")
-    ),
-    security(("bearer_auth" = []))
+    )
 )]
 /// # Errors
 ///
@@ -147,8 +145,7 @@ fn build_export(
         (status = 200, description = "Machine-readable export of the user's data", body = AccountExportResponse),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "User not found")
-    ),
-    security(("bearer_auth" = []))
+    )
 )]
 /// # Errors
 ///
@@ -176,8 +173,7 @@ pub async fn export_data(
         (status = 400, description = "Missing confirmation or password"),
         (status = 401, description = "Not authenticated or wrong password"),
         (status = 404, description = "User not found")
-    ),
-    security(("bearer_auth" = []))
+    )
 )]
 /// # Errors
 ///
@@ -217,8 +213,7 @@ pub async fn request_deletion(
         (status = 400, description = "Account already deleted"),
         (status = 401, description = "Not authenticated"),
         (status = 404, description = "User not found")
-    ),
-    security(("bearer_auth" = []))
+    )
 )]
 /// # Errors
 ///

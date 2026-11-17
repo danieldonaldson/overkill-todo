@@ -25,7 +25,7 @@ async fn body_json(body: Body) -> Value {
     serde_json::from_slice(&bytes).unwrap_or(Value::Null)
 }
 
-/// Authenticated session for a test user: the JWT (sent as a Bearer token) and
+/// Authenticated session for a test user: the JWT (sent as the session cookie) and
 /// the user-bound CSRF token (sent as cookie + header on mutating requests).
 struct Session {
     token: String,
@@ -47,8 +47,13 @@ fn post_authed(uri: &str, s: &Session, body: &Value) -> Request<Body> {
         .method("POST")
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
-        .header(header::AUTHORIZATION, format!("Bearer {}", s.token))
-        .header(header::COOKIE, format!("__Host-csrf_token={}", s.csrf))
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-auth_token={}; __Host-csrf_token={}",
+                s.token, s.csrf
+            ),
+        )
         .header("x-csrf-token", &s.csrf)
         .body(Body::from(serde_json::to_vec(body).unwrap()))
         .unwrap()
@@ -58,7 +63,7 @@ fn get_authed(uri: &str, s: &Session) -> Request<Body> {
     Request::builder()
         .method("GET")
         .uri(uri)
-        .header(header::AUTHORIZATION, format!("Bearer {}", s.token))
+        .header(header::COOKIE, format!("__Host-auth_token={}", s.token))
         .body(Body::empty())
         .unwrap()
 }
@@ -68,8 +73,13 @@ fn delete_authed(uri: &str, s: &Session, body: &Value) -> Request<Body> {
         .method("DELETE")
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
-        .header(header::AUTHORIZATION, format!("Bearer {}", s.token))
-        .header(header::COOKIE, format!("__Host-csrf_token={}", s.csrf))
+        .header(
+            header::COOKIE,
+            format!(
+                "__Host-auth_token={}; __Host-csrf_token={}",
+                s.token, s.csrf
+            ),
+        )
         .header("x-csrf-token", &s.csrf)
         .body(Body::from(serde_json::to_vec(body).unwrap()))
         .unwrap()
@@ -384,6 +394,40 @@ async fn oauth_store_device_fingerprint_sets_scoped_cookie(pool: PgPool) {
     assert_eq!(cookie.as_deref(), Some("browser-fp-xyz"));
 }
 
+/// The fingerprint goes into `Set-Cookie`, so anything but a plain token is a
+/// 400 (found by the API fuzzer, OT-011: it used to be a 500 that leaked the
+/// internal message, and `;` could add cookie attributes).
+#[sqlx::test(migrations = "./migrations")]
+async fn oauth_store_device_fingerprint_rejects_unsafe_values(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    let too_long = "a".repeat(129);
+    for value in [
+        "\u{2}9",
+        "fp; Max-Age=999999999",
+        "fp, other=1",
+        "f p",
+        "f\"p",
+        "é",
+        too_long.as_str(),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(post_json(
+                "/api/v1/auth/oauth/device-fingerprint",
+                &json!({ "device_fingerprint": value }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "{value:?}");
+        assert!(
+            resp.headers().get(header::SET_COOKIE).is_none(),
+            "{value:?} set a cookie"
+        );
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["code"], "validation_error", "{value:?}");
+    }
+}
+
 #[sqlx::test(migrations = "./migrations")]
 async fn oauth_store_device_fingerprint_blank_returns_400(pool: PgPool) {
     let app = common::create_test_app(pool);
@@ -582,7 +626,7 @@ async fn me_with_garbage_token_returns_401(pool: PgPool) {
         .oneshot(
             Request::builder()
                 .uri("/api/v1/auth/me")
-                .header(header::AUTHORIZATION, "Bearer not.a.jwt")
+                .header(header::COOKIE, "__Host-auth_token=not.a.jwt")
                 .body(Body::empty())
                 .unwrap(),
         )

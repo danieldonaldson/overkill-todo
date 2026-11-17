@@ -208,7 +208,7 @@ async fn csrf_token_bound_to_other_user_rejected(pool: PgPool) {
 // auth — expired / tampered JWT
 // ---------------------------------------------------------------------------
 
-/// An expired session JWT presented as a bearer token is rejected with 401.
+/// An expired session JWT presented as the session cookie is rejected with 401.
 #[sqlx::test(migrations = "./migrations")]
 async fn expired_jwt_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
@@ -221,13 +221,57 @@ async fn expired_jwt_is_rejected(pool: PgPool) {
             Request::builder()
                 .method("GET")
                 .uri("/api/v1/auth/me")
-                .header(header::AUTHORIZATION, format!("Bearer {expired}"))
+                .header(header::COOKIE, format!("__Host-auth_token={expired}"))
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+/// The session cookie is the only credential: a valid session JWT sent as an
+/// `Authorization: Bearer` header gets 401 `token_missing`, exactly as if no
+/// session were sent, while the same JWT as the cookie succeeds (OT-011).
+#[sqlx::test(migrations = "./migrations")]
+async fn bearer_token_is_not_accepted(pool: PgPool) {
+    let id = sqlx::query!(
+        "INSERT INTO users (email, role, email_verified) VALUES ($1, 'user', true) RETURNING id",
+        "bearer-only@example.com"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .id;
+    let app = common::create_test_app(pool);
+    let token = common::mint_session_jwt(id, true, "user", 15);
+
+    let me = |credential: (header::HeaderName, String)| {
+        Request::builder()
+            .method("GET")
+            .uri("/api/v1/auth/me")
+            .header(credential.0, credential.1)
+            .body(Body::empty())
+            .unwrap()
+    };
+
+    let resp = app
+        .clone()
+        .oneshot(me((header::AUTHORIZATION, format!("Bearer {token}"))))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(body_json(resp.into_body()).await["code"], "token_missing");
+
+    let resp = app
+        .oneshot(me((header::COOKIE, format!("__Host-auth_token={token}"))))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "same token as the cookie works"
+    );
 }
 
 /// A JWT whose signature has been corrupted is rejected with 401.
@@ -250,7 +294,7 @@ async fn tampered_jwt_signature_is_rejected(pool: PgPool) {
             Request::builder()
                 .method("GET")
                 .uri("/api/v1/auth/me")
-                .header(header::AUTHORIZATION, format!("Bearer {tampered}"))
+                .header(header::COOKIE, format!("__Host-auth_token={tampered}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -391,7 +435,7 @@ async fn unverified_session_blocked_by_verification_gate(pool: PgPool) {
             Request::builder()
                 .method("GET")
                 .uri("/api/v1/users/me/export")
-                .header(header::AUTHORIZATION, format!("Bearer {unverified}"))
+                .header(header::COOKIE, format!("__Host-auth_token={unverified}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -400,4 +444,45 @@ async fn unverified_session_blocked_by_verification_gate(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     let body = body_json(resp.into_body()).await;
     assert_eq!(body["code"], "email_not_verified");
+}
+
+// ---------------------------------------------------------------------------
+// wrong method — the standard error body, not axum's empty 405
+// ---------------------------------------------------------------------------
+
+/// A described path requested with a method it doesn't serve gets a 405 with
+/// the standard JSON error body (found by the API fuzzer, OT-011).
+#[sqlx::test(migrations = "./migrations")]
+async fn wrong_method_gets_json_405(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    for (method, uri) in [
+        ("TRACE", "/api/v1/auth/login"),
+        ("GET", "/api/v1/auth/login"),
+        ("DELETE", "/api/v1/health"),
+        ("PATCH", "/api/v1/admin/users"),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(uri)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{method} {uri}"
+        );
+        assert_eq!(
+            resp.headers()[header::CONTENT_TYPE],
+            "application/json",
+            "{method} {uri}"
+        );
+        let body = body_json(resp.into_body()).await;
+        assert_eq!(body["code"], "method_not_allowed", "{method} {uri}");
+    }
 }

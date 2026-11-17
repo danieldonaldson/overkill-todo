@@ -37,8 +37,7 @@ pub struct AdminHandlerDeps {
     responses(
         (status = 200, description = "A page of users", body = AdminUserListResponse),
         (status = 403, description = "Not an admin")
-    ),
-    security(("bearer_auth" = []))
+    )
 )]
 /// # Errors
 /// Returns an error if the user store is unreachable.
@@ -71,8 +70,7 @@ pub async fn list_users(
         (status = 400, description = "Invalid role"),
         (status = 403, description = "Not a super-admin / insufficient authority"),
         (status = 404, description = "User not found")
-    ),
-    security(("bearer_auth" = []))
+    )
 )]
 /// # Errors
 /// Returns an error on an invalid role, insufficient authority, or a missing user.

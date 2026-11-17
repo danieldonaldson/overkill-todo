@@ -689,7 +689,7 @@ async fn export_status(app: &axum::Router, session: &str) -> StatusCode {
             Request::builder()
                 .method("GET")
                 .uri("/api/v1/users/me/export")
-                .header(header::AUTHORIZATION, format!("Bearer {session}"))
+                .header(header::COOKIE, format!("__Host-auth_token={session}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -991,7 +991,7 @@ async fn verification_gate_blocks_then_allows(pool: PgPool) {
             Request::builder()
                 .method("GET")
                 .uri("/api/v1/users/me/export")
-                .header(header::AUTHORIZATION, format!("Bearer {jwt}"))
+                .header(header::COOKIE, format!("__Host-auth_token={jwt}"))
                 .body(Body::empty())
                 .unwrap(),
         )

@@ -11,8 +11,11 @@ approach:
   `Guarded` methods in `routes.rs` already add the 401/403 responses to every
   operation they protect, through `document()`.
 - Eight handlers declare `security(("bearer_auth" = []))` by hand. No
-  `securitySchemes` entry exists, and the backend never reads an
-  `Authorization` header: it reads the session cookie (path `/api`), checks
+  `securitySchemes` entry exists. The auth middleware still accepts
+  `Authorization: Bearer <jwt>` before the session cookie (`extract_token`),
+  but no client uses it: the web app sends only cookies, and only the backend
+  integration tests send Bearer (Decision 4a removes it). Otherwise the
+  backend reads the session cookie (path `/api`), checks
   `X-CSRF-Token` against the CSRF cookie on state-changing requests (except
   `EXCLUDED_PATHS` in `middleware/csrf.rs`), and reads a refresh cookie on
   `/auth/refresh`.
@@ -54,6 +57,58 @@ right if the list is small enough to clear within slice 1, about 30 distinct
 failures or fewer. If it is much longer, we narrow the checks (for example,
 schema conformance only on 2xx at first). We record that and push the stricter
 checks to slice 2 instead of growing the appetite.
+
+### Outcome (slice 1, first runs, 2026-11-17)
+
+Confirmed: the list was short, about 6 distinct failures, well under 30, and it
+cleared within the slice. The noise came from the harness, not from validation
+rules the description doesn't state. The first run (seed 1, 25 examples) had 17
+failures from 3 causes in the Visitor pass. The signed-in pass couldn't run
+until the harness was fixed, and then found 3 more.
+
+- **Fix the backend (2):**
+  - `POST /auth/oauth/device-fingerprint` gave a 500 that leaked `Internal
+    error: …` for a fingerprint with control characters. The value also went
+    into `Set-Cookie` unchecked, so `;` could add cookie attributes. It is now
+    validated as a 1–128 character token, gets a 400, and the schema says so.
+  - Every described path answered other methods with axum's empty-bodied 405
+    (15 of the 17 first-run failures). The router now has a JSON 405 fallback.
+- **Fix the description (3):**
+  - `POST /auth/refresh` didn't document its 400 for a missing
+    `X-Device-Fingerprint`.
+  - `GET /auth/oauth/{provider}` documented 302, but it sends 307.
+  - `{provider}` path parameters were plain strings, so the fuzzer never
+    reached a success path. They are now the `google | apple` enum.
+- **Tune the fuzzer (≈7, all harness bugs):** credentials sent to public
+  operations, so a sign-in 401 looked like a lost session. Sessions not cached
+  (`refresh_interval = None` means "never cache"). A cached `None` shared with
+  the Member key. Generated session cookies overriding the real one. Custom
+  checks judging CORS preflights. Echoed input matching the deny list. Run-
+  and server-specific values (pid-based emails, server UUIDs) varying the
+  inputs between runs.
+
+Before the harness fixes, the signed-in pass "passed" while its Member
+operations only ever saw 401s. The per-operation 2xx counts in
+`request_report` caught that. `positive_data_acceptance` stayed off as
+planned. Slice 2 reconsiders it.
+
+Checks verified to fail (each on a scratch change, then reverted):
+
+- a description claiming a public route needs a session (Visitor pass,
+  `ignored_auth`);
+- the admin list with no role check (Member-on-admin pass, `admin_refused`);
+- database error text in a 400 (`error_body`);
+- bare axum `Json` (415, `error_body`).
+
+Just removing `require_auth()` from a group does *not* fail. The handler
+extractors (`AuthUser`, `AdminUser`) enforce the same rules, so nothing is
+exposed.
+
+Session recovery was verified by invalidating every session in the fuzz
+database 4 times during a signed-in run. The run signed up 4 more Members and
+stayed clean, and `/auth/me` kept returning 200. The fuzzer itself rarely ends
+its session, because it can't guess the current password that deletion and
+password change need.
 
 ## Decisions
 
@@ -119,6 +174,20 @@ This also gives Schemathesis what its `ignored_auth` check needs: it knows which
 operations need credentials, and it sends them without credentials to confirm
 they're refused.
 
+### 4a. The backend stops accepting Bearer tokens
+
+The description must not describe a method the backend doesn't accept, and the
+backend shouldn't accept one the description doesn't state. Bearer is unused by
+any client and is weaker than the cookie: the cookie is `__Host-`-prefixed,
+`HttpOnly` and bound to the CSRF token, while a Bearer token is whatever a
+script can read. So `extract_token` reads only the session cookie, and
+`authorization` leaves the CORS allowed headers. A request that sends only a
+Bearer token gets the same 401 `token_missing` as one that sends nothing. The
+integration tests send the session cookie instead.
+
+*Alternative:* describe Bearer as a second scheme. Rejected because it keeps an
+unused way in, and the fuzzer would have to cover both.
+
 ### 5. Sign-in hook that recovers from lost sessions
 
 `hooks.py` defines a Schemathesis auth provider:
@@ -129,15 +198,31 @@ they're refused.
 - **Admin:** the same, then promoted with the same parameterised `UPDATE` that
   `just grant-admin` uses, against the fuzz database. It is used only for
   `/admin/*` operations.
-- **Lost sessions:** an after-call hook marks the credentials stale on any 401
-  from an authenticated case. The next case signs in a *new* Member. Signing in
-  the same Member again isn't enough, because the fuzzer may have changed their
-  password or scheduled their account for deletion.
+- **Lost sessions:** Schemathesis 4's own reactive re-auth does this, so no
+  after-call hook is needed. Sessions are cached for the run. On a 401 from an
+  authenticated case it drops the cached session, calls the provider again and
+  replays the request once. The provider signs in a *new* Member, because
+  signing in the same Member again isn't enough: the fuzzer may have changed
+  their password or scheduled their account for deletion. Sign-ups are capped
+  per run (`FUZZ_MAX_SIGNUPS`), and Schemathesis stops re-authenticating on an
+  operation whose 401 survives a fresh session (a wrong current password).
+- **Only protected operations get credentials.** The provider returns none for
+  operations whose security doesn't name `session_cookie`. Otherwise a public
+  route's own 401 (a wrong password at sign-in) looks like a lost session.
+  Public operations get their own cache key, because Schemathesis caches the
+  `None` per key.
+- **Credentials are never generated** (`with-security-parameters = false`).
+  Generated session cookies replaced the real one, so signed-in cases never
+  reached a handler. Missing and invalid credentials are still sent, by the
+  Visitor pass and by `ignored_auth`'s probes.
+- Test Members are named per pass, not per run (`test-fuzz-<pass>-<n>`). The
+  database is new every run, and Schemathesis reuses values it saw in
+  responses, so a varying email would vary the requests (Decision 8).
 
-Passes: **Visitor** (no auth provider, all operations) and **signed-in** (auth
-provider, all operations, Admin credentials on admin routes). The Member-on-admin
-case is covered by also running `/admin/*` with Member credentials and expecting
-403.
+Passes, each its own Schemathesis run: **Visitor** (no auth provider, all
+operations), **signed-in** (auth provider, all operations, Admin credentials on
+admin routes) and **Member on admin** (Member credentials on `/admin/*`, where
+every response must be 403).
 
 ### 6. Checks
 
@@ -155,6 +240,22 @@ case is covered by also running `/admin/*` with Member credentials and expecting
     `src/…​.rs:`, `RUST_BACKTRACE`, `Internal error:`, `Database error:`.
   - Serde's descriptions of the client's own malformed JSON ("invalid type …
     at line 1 column 9") are allowed. They describe the request, not the server.
+
+Added while implementing slice 1:
+
+- **`csrf_enforced`** (signed-in pass): when a state-changing request that
+  needs the CSRF header succeeds, it is sent again without the header and must
+  get 403. `ignored_auth` drops *all* credentials at once, so it never tests a
+  valid session without the CSRF header.
+- **`admin_refused`** (Member-on-admin pass): every response to a request that
+  carried the Member's session is 403.
+- **`request_report`**: prints the requests (and 2xx/3xx responses) per
+  operation, and a digest of the generated inputs, so two runs can be compared.
+- The custom auth checks judge only the operation's own method. The coverage
+  phase also sends other methods. OPTIONS is answered by the CORS layer, and
+  the rest get the JSON 405, which `error_body` still checks.
+- `error_body` ignores a deny-list match that is the client's own input echoed
+  back ("Unknown provider: SQLSTATE" for the path `/oauth/SQLSTATE/unlink`).
 
 ### 7. Excluded operations
 
@@ -177,6 +278,19 @@ exemption list.
   - GitHub's failed-scheduled-workflow email is the notification. Nothing else
     is needed for a solo project.
   - `just fuzz-api seed=<n> examples=<n>` reproduces a run locally.
+
+What makes a run repeatable (verified: two runs on the same commit print the
+same input digest for every pass):
+
+- a fixed seed;
+- one worker;
+- no example database;
+- fixed test-Member names;
+- a digest that masks server-assigned UUIDs, which Schemathesis learns from
+  responses (a real user's ID in a role change) and which differ on every
+  fresh database.
+
+Measured locally: about 20 s for all three passes, including the backend start.
 
 In `ci.yml`, the fuzz run is a separate `api-fuzz` job gated on the existing
 `changes.outputs.backend` filter, which already includes `openapi.json`. It

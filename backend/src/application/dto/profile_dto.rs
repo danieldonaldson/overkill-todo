@@ -12,11 +12,13 @@ use validator::Validate;
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct UpdateProfileRequest {
     /// New first name (if provided). Must be 1-100 characters if set.
+    #[schema(min_length = 1, max_length = 100)]
     #[validate(length(min = 1, max = 100, message = "First name must be 1-100 characters"))]
     #[serde(default)]
     pub first_name: Option<String>,
 
     /// New last name (if provided). Must be 1-100 characters if set.
+    #[schema(min_length = 1, max_length = 100)]
     #[validate(length(min = 1, max = 100, message = "Last name must be 1-100 characters"))]
     #[serde(default)]
     pub last_name: Option<String>,
@@ -33,10 +35,12 @@ pub struct ProfileResponse {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ChangePasswordRequest {
     /// Current password for verification.
+    #[schema(max_length = 256)]
     #[validate(length(max = 256, message = "Password too long"))]
     pub current_password: String,
 
     /// New password (8-256 characters).
+    #[schema(min_length = 8, max_length = 256)]
     #[validate(length(min = 8, max = 256, message = "Password must be 8-256 characters"))]
     pub new_password: String,
 }
@@ -45,6 +49,7 @@ pub struct ChangePasswordRequest {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct SetPasswordRequest {
     /// New password (8-256 characters).
+    #[schema(min_length = 8, max_length = 256)]
     #[validate(length(min = 8, max = 256, message = "Password must be 8-256 characters"))]
     pub new_password: String,
 }
@@ -53,10 +58,12 @@ pub struct SetPasswordRequest {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RequestEmailChangeRequest {
     /// Current password for verification.
+    #[schema(max_length = 256)]
     #[validate(length(max = 256, message = "Password too long"))]
     pub current_password: String,
 
     /// New email address.
+    #[schema(format = Email)]
     #[validate(email(message = "Invalid email format"))]
     pub new_email: String,
 }
@@ -65,6 +72,8 @@ pub struct RequestEmailChangeRequest {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ConfirmEmailChangeRequest {
     /// 6-digit verification code sent to new email.
+    // Separators are stripped before the 6-digit check, so no pattern here.
+    #[schema(max_length = 32)] // validation::MAX_FORMATTED_CODE_LEN
     #[validate(custom(function = "validate_verification_code"))]
     pub code: String,
 }
@@ -73,6 +82,7 @@ pub struct ConfirmEmailChangeRequest {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RequestDeletionRequest {
     /// Password for re-authentication (required for password users).
+    #[schema(max_length = 256)]
     #[validate(length(max = 256, message = "Password too long"))]
     #[serde(default)]
     pub password: Option<String>,

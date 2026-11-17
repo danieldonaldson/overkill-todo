@@ -1,0 +1,23 @@
+# API fuzzing (OT-011): Schemathesis against the committed backend/openapi.json.
+# Run with `just fuzz-api`; see run.sh. Not a package: `uv run --project apifuzz`
+# installs these into apifuzz/.venv from the hash-locked uv.lock.
+[project]
+name = "apifuzz"
+version = "0.0.0"
+requires-python = "==3.13.*"
+dependencies = [
+  "schemathesis==4.33.4",
+  # The Admin auth provider promotes its Member on the throwaway fuzz database.
+  "psycopg[binary]==3.3.9",
+]
+
+[dependency-groups]
+dev = ["pytest==9.2.0"]
+
+[tool.uv]
+package = false
+# Same supply-chain rule as pnpm's minimumReleaseAge: nothing younger than a day.
+exclude-newer = "1 day"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

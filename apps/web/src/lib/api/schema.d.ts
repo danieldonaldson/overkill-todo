@@ -167,7 +167,8 @@ export interface paths {
         /**
          * Store the browser-generated OAuth device binding in an `HttpOnly` scoped cookie.
          *     # Errors
-         * @description Returns an error if the fingerprint contains invalid cookie characters.
+         * @description Returns a validation error (400) if the fingerprint is blank or isn't a
+         *     cookie-safe token.
          */
         post: operations["oauth_store_device_fingerprint"];
         delete?: never;
@@ -645,7 +646,10 @@ export interface components {
          *     This is step 3 of signup: user sets password after verifying email.
          */
         CompleteRegistrationRequest: {
-            /** @description Email address (for password manager autofill, verified against token). */
+            /**
+             * Format: email
+             * @description Email address (for password manager autofill, verified against token).
+             */
             email: string;
             password: string;
             /** @description The signup completion token from verify-email endpoint (30 min expiry). */
@@ -666,6 +670,7 @@ export interface components {
         };
         /** @description Request body for forgot password. */
         ForgotPasswordRequest: {
+            /** Format: email */
             email: string;
             /** @description Cloudflare Turnstile token for bot protection. */
             turnstile_token?: string | null;
@@ -686,6 +691,7 @@ export interface components {
          *     Email validation: frontend does regex check, backend does MX record check.
          */
         InitiateRegistrationRequest: {
+            /** Format: email */
             email: string;
             /** @description Cloudflare Turnstile token for bot protection. */
             turnstile_token?: string | null;
@@ -709,6 +715,7 @@ export interface components {
         };
         /** @description Request body for user login. */
         LoginRequest: {
+            /** Format: email */
             email: string;
             password: string;
             /** @description Cloudflare Turnstile token for bot protection. */
@@ -720,6 +727,10 @@ export interface components {
         };
         /** @description Request body for storing the OAuth device binding cookie before redirecting. */
         OAuthDeviceFingerprintRequest: {
+            /**
+             * @description Opaque device ID, stored as a cookie value: 1–128 letters, digits, `-`
+             *     or `_` (the web app sends 64 hex digits).
+             */
             device_fingerprint: string;
         };
         /**
@@ -741,6 +752,7 @@ export interface components {
         };
         /** @description Request body for resending verification code. */
         ResendVerificationRequest: {
+            /** Format: email */
             email: string;
             /** @description Cloudflare Turnstile token for bot protection. */
             turnstile_token?: string | null;
@@ -837,6 +849,7 @@ export interface components {
         /** @description Request body for email verification. */
         VerifyEmailRequest: {
             code: string;
+            /** Format: email */
             email: string;
         };
         /**
@@ -870,6 +883,7 @@ export interface components {
         /** @description Request body for verifying reset code. */
         VerifyResetCodeRequest: {
             code: string;
+            /** Format: email */
             email: string;
         };
         /** @description Response body for verify reset code. */
@@ -1278,15 +1292,15 @@ export interface operations {
             };
             header?: never;
             path: {
-                /** @description OAuth provider (google, apple) */
-                provider: string;
+                /** @description OAuth provider */
+                provider: components["schemas"]["OAuthProviderName"];
             };
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description Redirect to OAuth provider */
-            302: {
+            /** @description Redirect to the OAuth provider */
+            307: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1334,7 +1348,7 @@ export interface operations {
             header?: never;
             path: {
                 /** @description OAuth provider */
-                provider: string;
+                provider: components["schemas"]["OAuthProviderName"];
             };
             cookie?: never;
         };
@@ -1372,8 +1386,8 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description OAuth provider to unlink (google, apple) */
-                provider: string;
+                /** @description OAuth provider to unlink */
+                provider: components["schemas"]["OAuthProviderName"];
             };
             cookie?: never;
         };
@@ -1449,6 +1463,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AuthResponse"];
+                };
+            };
+            /** @description Missing `X-Device-Fingerprint` header */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Invalid or expired refresh token */

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Extension,
     extract::{FromRequestParts, Request},
-    http::{HeaderMap, header::AUTHORIZATION, request::Parts},
+    http::{HeaderMap, request::Parts},
     middleware::Next,
     response::Response,
 };
@@ -83,21 +83,14 @@ where
     }
 }
 
-/// Extract the session token from the `Authorization: Bearer` header, falling
-/// back to the `auth_token` cookie.
+/// Extract the session token from the session cookie. An `Authorization`
+/// header is ignored: the cookie is the only credential the API accepts and
+/// describes (`openapi::SESSION_COOKIE_SCHEME`).
 fn extract_token(headers: &HeaderMap) -> Option<String> {
-    // First, try Authorization header (Bearer token)
-    if let Some(auth_header) = headers.get(AUTHORIZATION).and_then(|h| h.to_str().ok())
-        && let Some(token) = auth_header.strip_prefix("Bearer ")
-    {
-        return Some(token.to_string());
-    }
-
-    // Fallback: try auth_token cookie
     extract_cookie(headers, AUTH_COOKIE)
 }
 
-/// Verify a request's session token (Bearer or `auth_token` cookie) and build
+/// Verify a request's session token (the `auth_token` cookie) and build
 /// the [`AuthUser`], preserving the specific failure: `token_missing` when no
 /// token is present, or the `verify_jwt` error (invalid/expired) otherwise.
 ///
@@ -214,7 +207,7 @@ fn session_authorization_is_current(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::http::header::COOKIE;
+    use axum::http::header::{AUTHORIZATION, COOKIE};
     use jiff::Timestamp;
 
     #[test]
@@ -255,14 +248,14 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_token_from_bearer_header() {
+    fn test_extract_token_ignores_bearer_header() {
         let req = Request::builder()
             .header(AUTHORIZATION, "Bearer test-jwt-token-123")
             .body(())
             .unwrap();
 
         let token = extract_token(req.map(|()| axum::body::Body::empty()).headers());
-        assert_eq!(token, Some("test-jwt-token-123".to_string()));
+        assert!(token.is_none());
     }
 
     #[test]
@@ -277,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_token_prefers_bearer_over_cookie() {
+    fn test_extract_token_uses_cookie_even_with_bearer_header() {
         let req = Request::builder()
             .header(AUTHORIZATION, "Bearer bearer-token")
             .header(COOKIE, "__Host-auth_token=cookie-token")
@@ -285,8 +278,7 @@ mod tests {
             .unwrap();
 
         let token = extract_token(req.map(|()| axum::body::Body::empty()).headers());
-        // Bearer header should take precedence
-        assert_eq!(token, Some("bearer-token".to_string()));
+        assert_eq!(token, Some("cookie-token".to_string()));
     }
 
     #[test]

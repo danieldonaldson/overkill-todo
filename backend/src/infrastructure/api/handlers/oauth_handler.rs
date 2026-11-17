@@ -13,7 +13,8 @@ use crate::application::dto::OAuthCallbackQuery;
 #[cfg(debug_assertions)]
 use crate::application::dto::OAuthTestBypassQuery;
 use crate::application::dto::{
-    OAuthDeviceFingerprintRequest, OAuthMode, OAuthStartQuery, OAuthStateClaims, OAuthUserInfo,
+    OAuthDeviceFingerprintRequest, OAuthMode, OAuthProviderName, OAuthStartQuery, OAuthStateClaims,
+    OAuthUserInfo,
 };
 use crate::application::ports::OAuthProviderClient;
 use crate::application::use_cases::{
@@ -123,6 +124,18 @@ async fn run_real_oauth_flow(
     Ok((user_info, state_claims))
 }
 
+/// Longest device fingerprint stored in the OAuth binding cookie.
+const MAX_DEVICE_FINGERPRINT_LEN: usize = 128;
+
+/// 1 to [`MAX_DEVICE_FINGERPRINT_LEN`] ASCII letters, digits, `-` or `_`: safe
+/// to place in a cookie value unquoted. Matches the DTO's schema `pattern`.
+fn is_cookie_safe_token(value: &str) -> bool {
+    (1..=MAX_DEVICE_FINGERPRINT_LEN).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
 /// Store the browser-generated OAuth device binding in an `HttpOnly` scoped cookie.
 #[utoipa::path(
     post,
@@ -136,7 +149,8 @@ async fn run_real_oauth_flow(
 )]
 /// # Errors
 ///
-/// Returns an error if the fingerprint contains invalid cookie characters.
+/// Returns a validation error (400) if the fingerprint is blank or isn't a
+/// cookie-safe token.
 pub async fn oauth_store_device_fingerprint(
     ApiJson(request): ApiJson<OAuthDeviceFingerprintRequest>,
 ) -> Result<(HeaderMap, StatusCode), AppError> {
@@ -146,12 +160,19 @@ pub async fn oauth_store_device_fingerprint(
             "Device fingerprint is required".to_string(),
         ));
     }
+    // The value goes into `Set-Cookie` verbatim, so anything beyond a plain
+    // token (`;`, `,`, spaces, controls) could add cookie attributes.
+    if !is_cookie_safe_token(fingerprint) {
+        return Err(AppError::Validation(format!(
+            "Device fingerprint must be 1-{MAX_DEVICE_FINGERPRINT_LEN} letters, digits, '-' or '_'"
+        )));
+    }
 
     let mut headers = HeaderMap::new();
     headers.insert(
         header::SET_COOKIE,
         create_oauth_device_fingerprint_cookie(fingerprint).ok_or_else(|| {
-            AppError::Internal("Invalid OAuth device fingerprint characters".into())
+            AppError::Internal("a validated device fingerprint is a valid header value".into())
         })?,
     );
 
@@ -170,14 +191,17 @@ fn parse_provider(provider: &str) -> Result<OAuthProvider, AppError> {
     path = "/oauth/{provider}",
     tag = "OAuth",
     params(
-        ("provider" = String, Path, description = "OAuth provider (google, apple)"),
+        ("provider" = OAuthProviderName, Path, description = "OAuth provider"),
         ("mode" = OAuthMode, Query, description = "Flow mode (login or link)")
     ),
     responses(
-        (status = 302, description = "Redirect to OAuth provider"),
+        (status = 307, description = "Redirect to the OAuth provider"),
         (status = 400, description = "Invalid provider"),
         (status = 401, description = "Auth required for link mode")
-    )
+    ),
+    // Sign-in mode needs no session; link mode needs the session cookie
+    // (`openapi::SESSION_COOKIE_SCHEME`).
+    security((), ("session_cookie" = []))
 )]
 /// # Errors
 ///
@@ -240,7 +264,7 @@ pub async fn oauth_start(
     path = "/oauth/{provider}/callback",
     tag = "OAuth",
     params(
-        ("provider" = String, Path, description = "OAuth provider"),
+        ("provider" = OAuthProviderName, Path, description = "OAuth provider"),
         ("code" = Option<String>, Query, description = "Authorization code"),
         ("state" = Option<String>, Query, description = "State parameter"),
         ("error" = Option<String>, Query, description = "Error reported by the provider, e.g. access_denied")
@@ -438,14 +462,13 @@ fn default_test_claims(provider: &str) -> OAuthStateClaims {
     path = "/oauth/{provider}/unlink",
     tag = "OAuth",
     params(
-        ("provider" = String, Path, description = "OAuth provider to unlink (google, apple)")
+        ("provider" = OAuthProviderName, Path, description = "OAuth provider to unlink")
     ),
     responses(
         (status = 200, description = "Provider unlinked"),
         (status = 400, description = "Cannot unlink last auth method"),
         (status = 404, description = "Provider not linked")
-    ),
-    security(("bearer_auth" = []))
+    )
 )]
 /// # Errors
 ///

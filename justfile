@@ -343,7 +343,20 @@ machete:
 ci: ci-checks verify models protocols
 
 # The rest of `ci`, in order: static checks first, then tests.
-ci-checks: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check test-web e2e
+ci-checks: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web e2e
+
+# ── API fuzzing (OT-011) ──────────────────────────────────────────────────────────
+# Schemathesis against the committed backend/openapi.json, on a throwaway database
+# and a dev-mode backend on FUZZ_API_PORT (4399): Visitor, signed-in and
+# Member-on-admin passes. Same seed, same requests. See apifuzz/run.sh.
+
+# Fuzz the API against its description (part of `just ci`); a failure prints its seed.
+fuzz-api seed="1" examples="25": db-up
+    ./apifuzz/run.sh {{ quote(seed) }} {{ quote(examples) }}
+
+# Unit tests for the fuzz checks (deny list, error-body rules).
+fuzz-api-test:
+    uv run --project apifuzz --frozen pytest -q apifuzz/tests
 
 # ── Load tests (OT-004) ──────────────────────────────────────────────────────────
 # Same release images as `just up`, pinned to cores and capped, with production

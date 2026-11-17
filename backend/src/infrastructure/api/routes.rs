@@ -46,7 +46,10 @@ use super::{
         auth_middleware, csrf_middleware, require_fresh_session, require_verified_email,
         security_headers_middleware, trace_id_middleware,
     },
-    openapi::{add_response_if_missing, for_each_operation},
+    openapi::{
+        CSRF_HEADER_SCHEME, SESSION_COOKIE_SCHEME, add_response_if_missing, for_each_operation,
+        require_scheme,
+    },
     state::AppState,
 };
 use crate::application::ports::outgoing::UserRepository;
@@ -99,7 +102,6 @@ fn build_cors(frontend_origin: &str) -> CorsLayer {
         ])
         .allow_headers([
             HeaderName::from_static("content-type"),
-            HeaderName::from_static("authorization"),
             HeaderName::from_static("x-csrf-token"),
             HeaderName::from_static("x-device-fingerprint"),
             HeaderName::from_static("x-request-id"),
@@ -108,8 +110,10 @@ fn build_cors(frontend_origin: &str) -> CorsLayer {
 }
 
 /// Route-group guards. Each applies a middleware `route_layer` *and* documents
-/// the status that middleware can return on every operation it covers, so the
-/// description can't miss a protection or describe one that isn't there. Call
+/// the status that middleware can return on every operation it covers (and, for
+/// `require_auth` and `require_csrf`, the credential it checks as a security
+/// requirement), so the description can't miss a protection or describe one
+/// that isn't there. Call
 /// them in the same order the `route_layer`s were applied before (the last call
 /// runs first).
 trait Guarded: Sized {
@@ -131,15 +135,25 @@ trait Guarded: Sized {
     fn require_csrf(self) -> Self;
 }
 
+/// What a guard adds to each operation it covers: the status it can return,
+/// and the security scheme it checks, if it checks a credential.
+struct Guard<'a> {
+    status: &'a str,
+    description: &'a str,
+    scheme: Option<&'a str>,
+}
+
 fn document<S: Clone + Send + Sync + 'static>(
     mut router: OpenApiRouter<S>,
     applies: impl Fn(&str, &str) -> bool,
-    status: &str,
-    description: &str,
+    guard: &Guard<'_>,
 ) -> OpenApiRouter<S> {
     for_each_operation(router.get_openapi_mut(), |method, path, op| {
         if applies(method, path) {
-            add_response_if_missing(op, status, description);
+            add_response_if_missing(op, guard.status, guard.description);
+            if let Some(scheme) = guard.scheme {
+                require_scheme(op, scheme);
+            }
         }
     });
     router
@@ -150,8 +164,11 @@ impl<S: Clone + Send + Sync + 'static> Guarded for OpenApiRouter<S> {
         document(
             self.route_layer(middleware::from_fn(auth_middleware)),
             |_, _| true,
-            "401",
-            "Not signed in, or the session has expired",
+            &Guard {
+                status: "401",
+                description: "Not signed in, or the session has expired",
+                scheme: Some(SESSION_COOKIE_SCHEME),
+            },
         )
     }
 
@@ -159,8 +176,11 @@ impl<S: Clone + Send + Sync + 'static> Guarded for OpenApiRouter<S> {
         document(
             self.route_layer(middleware::from_fn(require_verified_email)),
             |_, _| true,
-            "403",
-            "Email address not verified (`email_not_verified`)",
+            &Guard {
+                status: "403",
+                description: "Email address not verified (`email_not_verified`)",
+                scheme: None,
+            },
         )
     }
 
@@ -168,8 +188,11 @@ impl<S: Clone + Send + Sync + 'static> Guarded for OpenApiRouter<S> {
         document(
             self.route_layer(middleware::from_fn(require_fresh_session)),
             |_, _| true,
-            "401",
-            "Session superseded by a password reset, account purge or role change; sign in again",
+            &Guard {
+                status: "401",
+                description: "Session superseded by a password reset, account purge or role change; sign in again",
+                scheme: None,
+            },
         )
     }
 
@@ -177,8 +200,11 @@ impl<S: Clone + Send + Sync + 'static> Guarded for OpenApiRouter<S> {
         document(
             self.route_layer(middleware::from_extractor::<AdminUser>()),
             |_, _| true,
-            "403",
-            "Not an admin (`access_denied`)",
+            &Guard {
+                status: "403",
+                description: "Not an admin (`access_denied`)",
+                scheme: None,
+            },
         )
     }
 
@@ -186,8 +212,11 @@ impl<S: Clone + Send + Sync + 'static> Guarded for OpenApiRouter<S> {
         document(
             self.route_layer(middleware::from_extractor::<SuperAdminUser>()),
             |_, _| true,
-            "403",
-            "Not a super admin (`access_denied`)",
+            &Guard {
+                status: "403",
+                description: "Not a super admin (`access_denied`)",
+                scheme: None,
+            },
         )
     }
 
@@ -197,8 +226,11 @@ impl<S: Clone + Send + Sync + 'static> Guarded for OpenApiRouter<S> {
             |method, path| {
                 matches!(method, "POST" | "PUT" | "PATCH" | "DELETE") && !is_excluded_path(path)
             },
-            "403",
-            "Missing or invalid CSRF token (`csrf_invalid`)",
+            &Guard {
+                status: "403",
+                description: "Missing or invalid CSRF token (`csrf_invalid`)",
+                scheme: Some(CSRF_HEADER_SCHEME),
+            },
         )
     }
 }
@@ -373,9 +405,12 @@ pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
         db: deps.db,
     };
 
+    // The JSON 405 goes on after every route is merged: it applies to the
+    // method routers registered so far.
     let router = Router::new()
         .merge(root_health)
-        .merge(api.with_state(state));
+        .merge(api.with_state(state))
+        .method_not_allowed_fallback(super::error::method_not_allowed);
 
     // Swagger UI exposes the full API surface; only mount it in dev mode. Release images
     // build without the `swagger-ui` feature, so the bundle isn't even in the binary.

@@ -17,6 +17,7 @@ use validator::Validate;
 /// Email validation: frontend does regex check, backend does MX record check.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct InitiateRegistrationRequest {
+    #[schema(format = Email)]
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
 
@@ -34,9 +35,11 @@ pub struct CompleteRegistrationRequest {
     pub signup_token: String,
 
     /// Email address (for password manager autofill, verified against token).
+    #[schema(format = Email)]
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
 
+    #[schema(min_length = 8, max_length = 256)]
     #[validate(length(min = 8, max = 256, message = "Password must be 8-256 characters"))]
     pub password: String,
 }
@@ -65,8 +68,10 @@ pub struct ForgotPasswordResponse {
 /// Request body for user login.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct LoginRequest {
+    #[schema(format = Email)]
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
+    #[schema(max_length = 256)]
     #[validate(length(max = 256, message = "Password too long"))]
     pub password: String,
 
@@ -78,9 +83,12 @@ pub struct LoginRequest {
 /// Request body for email verification.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct VerifyEmailRequest {
+    #[schema(format = Email)]
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
 
+    // Separators are stripped before the 6-digit check, so no pattern here.
+    #[schema(max_length = 32)] // validation::MAX_FORMATTED_CODE_LEN
     #[validate(custom(function = "validate_verification_code"))]
     pub code: String,
 }
@@ -88,6 +96,7 @@ pub struct VerifyEmailRequest {
 /// Request body for resending verification code.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ResendVerificationRequest {
+    #[schema(format = Email)]
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
 
@@ -99,6 +108,7 @@ pub struct ResendVerificationRequest {
 /// Request body for forgot password.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ForgotPasswordRequest {
+    #[schema(format = Email)]
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
 
@@ -110,9 +120,12 @@ pub struct ForgotPasswordRequest {
 /// Request body for verifying reset code.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct VerifyResetCodeRequest {
+    #[schema(format = Email)]
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
 
+    // Separators are stripped before the 6-digit check, so no pattern here.
+    #[schema(max_length = 32)] // validation::MAX_FORMATTED_CODE_LEN
     #[validate(custom(function = "validate_verification_code"))]
     pub code: String,
 }
@@ -230,6 +243,7 @@ pub struct ResetPasswordRequest {
     /// The reset token from verify-reset-code endpoint.
     pub reset_token: String,
 
+    #[schema(min_length = 8, max_length = 256)]
     #[validate(length(min = 8, max = 256, message = "Password must be 8-256 characters"))]
     pub new_password: String,
 }
@@ -401,6 +415,7 @@ pub struct VerifyMagicLinkQuery {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct VerifyMagicLinkRequest {
     /// The magic link token from the email.
+    #[schema(min_length = 1, max_length = 256)]
     #[validate(length(min = 1, max = 256, message = "Invalid magic link token"))]
     pub token: String,
 }

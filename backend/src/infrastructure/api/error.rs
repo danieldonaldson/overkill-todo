@@ -25,6 +25,20 @@ pub struct ErrorResponse {
     pub message: String,
 }
 
+/// The JSON `405` for a described path requested with a method it doesn't serve.
+///
+/// Without it axum answers with an empty body, and every error the API returns
+/// must carry the standard [`ErrorResponse`] (found by the API fuzzer, OT-011).
+pub async fn method_not_allowed() -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(ErrorResponse {
+            code: "method_not_allowed".to_string(),
+            message: "Method not allowed".to_string(),
+        }),
+    )
+}
+
 /// A `400` from a verification route: either the structured verification error
 /// (wrong, expired or locked code) or, for a malformed request, the standard
 /// [`ErrorResponse`].

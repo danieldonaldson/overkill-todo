@@ -194,8 +194,11 @@ pub async fn login(
     tag = "Authentication",
     responses(
         (status = 200, description = "Token refreshed successfully", body = AuthResponse),
+        (status = 400, description = "Missing `X-Device-Fingerprint` header"),
         (status = 401, description = "Invalid or expired refresh token")
-    )
+    ),
+    // `openapi::REFRESH_COOKIE_SCHEME`; the only operation that reads it.
+    security(("refresh_cookie" = []))
 )]
 /// # Errors
 ///
@@ -276,9 +279,6 @@ pub async fn logout(
     responses(
         (status = 200, description = "Current user info", body = UserResponse),
         (status = 401, description = "Not authenticated")
-    ),
-    security(
-        ("bearer_auth" = [])
     )
 )]
 /// # Errors

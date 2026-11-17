@@ -14,6 +14,11 @@ accept. It SHALL NOT refer to an authentication scheme it doesn't define.
 - **THEN** it says that the caller is identified by the session cookie
 - **AND** it does not offer bearer-token authentication
 
+#### Scenario: Session token sent as a bearer token
+
+- **WHEN** a client sends a valid session token only in an `Authorization: Bearer` header to the current-user route
+- **THEN** it gets the documented 401, as if it had sent no session
+
 #### Scenario: State-changing protected route
 
 - **WHEN** a client reads the description of the password-change route

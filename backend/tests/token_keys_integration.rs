@@ -120,7 +120,7 @@ async fn signed_in(app: &Router, email: &str) -> Session {
 async fn me(app: &Router, auth: &str) -> (StatusCode, Value) {
     let req = Request::builder()
         .uri("/api/v1/auth/me")
-        .header(header::AUTHORIZATION, format!("Bearer {auth}"))
+        .header(header::COOKIE, format!("__Host-auth_token={auth}"))
         .body(Body::empty())
         .unwrap();
     let (resp, body) = send(app, req).await;
@@ -136,13 +136,12 @@ async fn refresh(app: &Router, s: &Session) -> axum::http::Response<Body> {
         .header(
             header::COOKIE,
             format!(
-                "__Host-refresh_token={}; __Host-csrf_token={}",
-                s.refresh, s.csrf
+                "__Host-auth_token={}; __Host-refresh_token={}; __Host-csrf_token={}",
+                s.auth, s.refresh, s.csrf
             ),
         )
         .header("x-csrf-token", &s.csrf)
         .header("x-device-fingerprint", FINGERPRINT)
-        .header(header::AUTHORIZATION, format!("Bearer {}", s.auth))
         .body(Body::empty())
         .unwrap();
     let (resp, body) = send(app, req).await;
