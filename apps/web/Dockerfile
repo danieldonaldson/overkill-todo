@@ -42,7 +42,7 @@ CMD ["node_modules/.bin/astro","dev","--host","0.0.0.0","--port","8080"]
 # Under the pod's `capabilities: drop [ALL]` + `allowPrivilegeEscalation: false`, exec'ing a
 # binary whose file caps exceed the bounding set fails with EPERM, so strip it: we listen
 # on 8080 and need no capabilities at all. Only the binary is taken from this image.
-FROM caddy:2.11.9-alpine@sha256:0bbb055bda6793c999bde78b1b5ce3e89f829fb031af2cf50056ea1246559fee AS caddy
+FROM caddy:2.11.9-alpine@sha256:003a97808e781aa9f7e75cc2f43d34d461099031faf5e20faefb9f61126836f0 AS caddy
 RUN setcap -r /usr/bin/caddy
 
 # ---- serve ----
