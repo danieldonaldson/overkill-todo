@@ -1,6 +1,6 @@
 //! Email verification code entity.
 
-use crate::domain::entities::attempt_lockout::{AttemptLockout, Reissue};
+use crate::domain::entities::attempt_lockout::{self, AttemptLockout, Reissue};
 use crate::domain::value_objects::{UserId, VerificationCodeId};
 use chrono::{DateTime, Duration, Utc};
 
@@ -39,10 +39,10 @@ impl MagicToken {
         self.expires_at
     }
 
-    /// Whether the link has expired.
+    /// Whether the link has expired as of `now`.
     #[must_use]
-    pub fn is_expired(&self) -> bool {
-        self.expires_at <= Utc::now()
+    pub const fn is_expired(&self, now: DateTime<Utc>) -> bool {
+        attempt_lockout::expired(self.expires_at, now)
     }
 }
 
@@ -235,14 +235,14 @@ impl EmailVerificationCode {
     /// Checks whether the magic link can no longer be redeemed: it has expired,
     /// or there is none.
     #[must_use]
-    pub fn is_magic_token_expired(&self) -> bool {
-        self.magic_token.as_ref().is_none_or(MagicToken::is_expired)
+    pub fn is_magic_token_expired(&self, now: DateTime<Utc>) -> bool {
+        attempt_lockout::magic_link_expired(self.magic_token_expires_at(), now)
     }
 
     /// Checks if this code has expired.
     #[must_use]
-    pub fn is_expired(&self) -> bool {
-        self.expires_at <= Utc::now()
+    pub const fn is_expired(&self, now: DateTime<Utc>) -> bool {
+        attempt_lockout::expired(self.expires_at, now)
     }
 
     /// Brute-force lockout/cooldown view over this code's `attempts` and
@@ -280,8 +280,8 @@ impl EmailVerificationCode {
 
     /// Checks if this code is valid (not expired and not locked).
     #[must_use]
-    pub fn is_valid(&self) -> bool {
-        !self.is_expired() && !self.is_locked()
+    pub const fn is_valid(&self, now: DateTime<Utc>) -> bool {
+        !self.is_expired(now) && !self.is_locked()
     }
 }
 
@@ -311,8 +311,8 @@ mod tests {
     #[test]
     fn test_new_code_is_valid() {
         let code = create_valid_code();
-        assert!(code.is_valid());
-        assert!(!code.is_expired());
+        assert!(code.is_valid(Utc::now()));
+        assert!(!code.is_expired(Utc::now()));
         assert!(!code.is_locked());
     }
 
@@ -354,8 +354,8 @@ mod tests {
             None,
         );
 
-        assert!(code.is_expired());
-        assert!(!code.is_valid());
+        assert!(code.is_expired(Utc::now()));
+        assert!(!code.is_valid(Utc::now()));
     }
 
     #[test]
@@ -383,7 +383,7 @@ mod tests {
         assert_eq!(code.user_id(), &user_id);
         assert_eq!(code.code_hash(), &code_hash);
         assert_eq!(code.attempts(), 2);
-        assert!(code.is_valid());
+        assert!(code.is_valid(Utc::now()));
     }
 
     #[test]
@@ -448,12 +448,12 @@ mod tests {
         };
 
         // Future expiry → not expired.
-        assert!(!make(Some(Utc::now() + Duration::hours(1))).is_magic_token_expired());
+        assert!(!make(Some(Utc::now() + Duration::hours(1))).is_magic_token_expired(Utc::now()));
         // Past expiry → expired.
-        assert!(make(Some(Utc::now() - Duration::hours(1))).is_magic_token_expired());
+        assert!(make(Some(Utc::now() - Duration::hours(1))).is_magic_token_expired(Utc::now()));
         // No recorded expiry → no usable token, so treated as expired.
         let no_expiry = make(None);
         assert!(no_expiry.magic_token().is_none());
-        assert!(no_expiry.is_magic_token_expired());
+        assert!(no_expiry.is_magic_token_expired(Utc::now()));
     }
 }

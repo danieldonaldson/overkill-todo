@@ -1,6 +1,6 @@
 //! Password reset code entity.
 
-use crate::domain::entities::attempt_lockout::{AttemptLockout, Reissue};
+use crate::domain::entities::attempt_lockout::{self, AttemptLockout, Reissue};
 use crate::domain::value_objects::{ResetCodeId, UserId};
 use chrono::{DateTime, Duration, Utc};
 
@@ -142,8 +142,8 @@ impl PasswordResetCode {
 
     /// Checks if this code has expired.
     #[must_use]
-    pub fn is_expired(&self) -> bool {
-        self.expires_at <= Utc::now()
+    pub const fn is_expired(&self, now: DateTime<Utc>) -> bool {
+        attempt_lockout::expired(self.expires_at, now)
     }
 
     /// Brute-force lockout/cooldown view over this code's `attempts` and
@@ -181,8 +181,8 @@ impl PasswordResetCode {
 
     /// Checks if this code is valid (not expired and not locked).
     #[must_use]
-    pub fn is_valid(&self) -> bool {
-        !self.is_expired() && !self.is_locked()
+    pub const fn is_valid(&self, now: DateTime<Utc>) -> bool {
+        !self.is_expired(now) && !self.is_locked()
     }
 }
 
@@ -210,8 +210,8 @@ mod tests {
     #[test]
     fn test_new_code_is_valid() {
         let code = create_valid_code();
-        assert!(code.is_valid());
-        assert!(!code.is_expired());
+        assert!(code.is_valid(Utc::now()));
+        assert!(!code.is_expired(Utc::now()));
         assert!(!code.is_locked());
     }
 
@@ -242,8 +242,8 @@ mod tests {
             Utc::now() - Duration::minutes(16),
         );
 
-        assert!(code.is_expired());
-        assert!(!code.is_valid());
+        assert!(code.is_expired(Utc::now()));
+        assert!(!code.is_valid(Utc::now()));
     }
 
     #[test]
@@ -268,7 +268,7 @@ mod tests {
         assert_eq!(code.user_id(), &user_id);
         assert_eq!(code.code_hash(), &code_hash);
         assert_eq!(code.attempts(), 2);
-        assert!(code.is_valid());
+        assert!(code.is_valid(Utc::now()));
     }
 
     #[test]

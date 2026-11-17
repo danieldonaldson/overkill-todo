@@ -122,7 +122,7 @@ mod tests {
         let mut mock_repo = MockRefreshTokenRepository::new();
         mock_repo.expect_find_by_hash().times(1).returning(|_| {
             let mut token = create_valid_refresh_token();
-            token.revoke();
+            token.revoke(Utc::now());
             Ok(Some(token))
         });
         // revoke should NOT be called since already revoked

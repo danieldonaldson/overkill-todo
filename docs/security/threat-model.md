@@ -191,8 +191,11 @@ role are checked. A Super Admin can't demote themselves or the last Super
 Admin. An unknown stored role is rejected rather than defaulted.
 
 - Attackers: A2
-- Strength: tested, property-tested
+- Strength: proven, tested, property-tested
 - Checks:
+  - `backend/src/domain/value_objects/user_role.rs::role_changes_never_escalate`
+  - `backend/src/domain/value_objects/user_role.rs::a_super_admin_never_removes_their_own_role`
+  - `backend/src/domain/value_objects/user_role.rs::only_exact_role_names_are_accepted`
   - `backend/src/domain/value_objects/user_role.rs::prop_user_manages_none`
   - `backend/src/domain/value_objects/user_role.rs::prop_super_admin_manages_all`
   - `backend/src/domain/value_objects/user_role.rs::prop_invalid_db_str_returns_none`
@@ -201,7 +204,21 @@ Admin. An unknown stored role is rejected rather than defaulted.
   - `backend/src/application/use_cases/admin/manage_users.rs::set_user_role_forbids_self_demotion`
   - `backend/src/application/use_cases/admin/manage_users.rs::set_user_role_forbids_demoting_last_super_admin`
   - `backend/tests/admin_integration.rs::role_change_forbidden_for_admin`
-- Gap: Sampled, not proven for every role pair. Kani proof planned (OT-010).
+
+**Proven** (Kani, `just verify`) for every actor role, current role, new role
+and whether the actor is changing their own account:
+
+- a Member changes no role, and an Admin only sets a Member to Member
+- only a Super Admin changes an Admin or Super Admin, or makes anyone one
+- a Super Admin never removes their own Super Admin role
+
+and, for every ASCII string of up to 12 bytes (the longest role name is 11),
+only the three exact role names are read as a role; anything else is
+rejected, not defaulted. Non-ASCII strings are left out because they can't
+equal an ASCII name. `SetUserRoleUseCase` calls the proven decision
+(`UserRole::may_change_role`). Refusing to demote the last Super Admin needs
+the other accounts, so the repository enforces it in SQL, and it's tested
+(`set_user_role_forbids_demoting_last_super_admin`), not proven.
 
 ### P-09: A Member can reach only their own account
 
@@ -380,12 +397,14 @@ Logins aren't modelled: they mint unrelated tokens.
 ### P-15: Presenting a revoked refresh token revokes every session of that Member, even if it has also expired
 
 - Attackers: A3
-- Strength: modelled, tested
+- Strength: proven, modelled, tested
 - Checks:
   - `models/refresh_rotation.qnt::reuseAfterRotationIsDetected`
   - `models/refresh_rotation.qnt::reuseRevokesEverySession`
   - `backend/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
   - `backend/src/application/use_cases/auth/refresh_token.rs::revoked_reuse_revokes_all_even_when_also_expired`
+  - `backend/src/domain/entities/refresh_token.rs::a_revoked_token_is_never_accepted`
+  - `backend/src/domain/entities/refresh_token.rs::revoking_twice_keeps_the_first_time`
   - `backend/src/domain/entities/refresh_token.rs::test_status_revoked_outranks_expired`
   - `backend/src/domain/entities/refresh_token.rs::test_revoke_is_idempotent`
   - `backend/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session`
@@ -393,6 +412,12 @@ Logins aren't modelled: they mint unrelated tokens.
   - `just models`
   - `just protocols`
 - Gap: Accepted (2026-11-16). This holds only while the token is still stored. Once it has expired and the cleanup job has deleted it, presenting it is refused as an unknown token, not treated as reuse, so the Member's later sessions are not revoked. It can't yield a session either way. The model shows this (`everyReplayOfARotatedTokenIsDetected`, not part of `safety`). Keeping revoked tokens past expiry would close it. It's accepted because the stolen token can't produce a session, and the replay window it gives up only opens after the token's 30-day expiry.
+
+**Proven** (Kani, `just verify`) for every expiry and current time from 2000
+to 2200, to the microsecond: a revoked token reads as revoked whether or not
+it has also expired, an unrevoked one is active exactly before its expiry,
+and revoking again keeps the first revocation time. This is the token's own
+status rule, which the refresh use case acts on.
 
 **Modelled** with the P-14 bounds: a request that presents an already rotated
 token, while it's stored, is treated as reuse, and once reuse is detected no
@@ -472,13 +497,27 @@ channel.
 ### P-19: One-time codes and magic links are accepted only before they expire and while unlocked
 
 - Attackers: A1, A3
-- Strength: tested
+- Strength: proven, tested
 - Checks:
+  - `backend/src/domain/entities/attempt_lockout.rs::a_code_is_refused_from_its_expiry_instant`
+  - `backend/src/domain/entities/attempt_lockout.rs::a_magic_link_is_live_only_before_its_own_expiry`
   - `backend/tests/verification_integration.rs::verify_email_expired_code_returns_code_expired`
+  - `backend/src/application/use_cases/auth/verify_email.rs::code_expiring_during_the_check_is_refused`
+  - `backend/src/application/use_cases/auth/validate_reset_code.rs::code_expiring_during_the_check_is_refused`
   - `backend/tests/verification_integration.rs::magic_link_expired_token_is_rejected`
   - `backend/src/domain/entities/password_reset_code.rs::test_expired_code`
   - `backend/src/domain/entities/email_verification_code.rs::test_is_magic_token_expired`
-- Gap: Sampled, not proven. Kani proof planned (OT-010).
+
+**Proven** (Kani, `just verify`) for every expiry and current time from 2000
+to 2200, to the microsecond: a code is expired exactly from its expiry instant
+on, whatever its attempts, and a magic link is live exactly before its own
+expiry, with a missing link counting as expired. Every entry path checks
+these first (`is_expired`, `is_magic_token_expired`), and the two code paths
+check `is_expired` again after the slow Argon2 comparison, so a code that
+expires during it is refused (found by OT-010's slice 6 review, tested). A
+resend moves the
+code's expiry, never the link's. The attempt cap is P-10's rule, and on entry
+it's the SQL attempt claim, modelled in P-12.
 
 ### Cross-site
 
@@ -638,15 +677,34 @@ dump.
 ### P-28: A deleted account stays deleted, and a pending deletion is purged only after its date
 
 - Attackers: A2
-- Strength: tested
+- Strength: proven, tested
 - Checks:
+  - `backend/src/domain/value_objects/account_status.rs::a_deleted_account_stays_deleted`
+  - `backend/src/domain/value_objects/account_status.rs::rescheduling_keeps_the_original_date`
+  - `backend/src/domain/value_objects/account_status.rs::a_pending_deletion_is_not_purged_early`
+  - `backend/src/domain/value_objects/account_status.rs::the_columns_round_trip_and_deleted_wins`
   - `backend/src/domain/entities/user.rs::test_deleted_is_terminal`
   - `backend/src/domain/entities/user.rs::test_schedule_deletion_is_idempotent`
   - `backend/src/domain/entities/user.rs::test_schedule_deletion_sets_future_timestamp`
   - `backend/src/domain/entities/user.rs::test_is_ready_for_deletion_when_scheduled_in_past`
   - `backend/tests/account_deletion_integration.rs::deleted_account_cannot_be_pending_deletion`
   - `backend/tests/account_deletion_integration.rs::anonymize_skips_account_cancelled_after_the_scan`
-- Gap: Sampled, not proven for every state and time. Kani proof planned (OT-010).
+
+**Proven** (Kani, `just verify`) for every status and every time, in any
+order (the transitions only copy and compare times, so the proofs run them
+over any `i64`):
+
+- from deleted, scheduling, cancelling and anonymising are each refused, and
+  the status and deletion time don't change
+- scheduling while pending keeps the existing date
+- a pending deletion is ready to purge exactly when its time has come
+- a stored record with a deletion time reads as deleted, whatever its
+  schedule, and every status reads back as itself from its columns
+
+`User` delegates every transition to `AccountStatus`, the code proven. The
+purge job picks due accounts and guards its write with the same rule in SQL
+(`deletion_scheduled_at <= NOW()`); that SQL is tested
+(`anonymize_skips_account_cancelled_after_the_scan`), not proven.
 
 ### P-29: Deleting an account needs the current password
 
@@ -659,11 +717,24 @@ dump.
 ### P-30: Addresses differing only in case or surrounding whitespace are one identity
 
 - Attackers: A1
-- Strength: property-tested
+- Strength: proven, property-tested
 - Checks:
+  - `backend/src/domain/value_objects/email.rs::normalising_twice_changes_nothing`
+  - `backend/src/domain/value_objects/email.rs::case_and_whitespace_variants_are_one_identity`
+  - `backend/src/domain/value_objects/email.rs::prop_ascii_normalize_matches_trim_to_lowercase`
   - `backend/src/domain/value_objects/email.rs::prop_email_normalized_to_lowercase`
   - `backend/src/domain/value_objects/email.rs::prop_email_whitespace_trimmed`
-- Gap: Idempotence isn't checked. Kani proof for short ASCII planned (OT-010).
+- Gap: Proven for ASCII addresses of up to 8 bytes only (design D7). Longer and Unicode addresses are property-tested, not proven.
+
+**Proven** (Kani, `just verify`) for every ASCII input of up to 8 bytes, and
+every variant of it with any letters' case changed and a whitespace character
+added at either end: both normalise to the same address, and normalising the
+result again changes nothing. `Email::new` validates the normalised string, so
+inputs with the same normalisation always get the same result; the proofs
+cover the normalisation, over the ASCII path `Email::new` takes for ASCII
+input. A proptest checks that path gives exactly `trim().to_lowercase()`.
+Unicode lowercasing and building an `Email` didn't finish in 20 minutes, so
+they're left to the proptests.
 
 ### Robustness
 

@@ -38,7 +38,7 @@ impl Email {
     /// - The email is empty after trimming
     /// - The email doesn't contain `@` or `.`
     pub fn new(value: &str) -> Result<Self, DomainError> {
-        let value = value.trim().to_lowercase();
+        let value = normalize(value);
 
         if value.is_empty() {
             return Err(DomainError::Validation("Email cannot be empty".into()));
@@ -64,6 +64,37 @@ impl Email {
     }
 }
 
+/// Trims surrounding whitespace and lowercases (threat model P-30).
+///
+/// ASCII input, which is nearly every address, takes a byte-wise path that
+/// gives exactly what `trim().to_lowercase()` gives (a proptest checks this).
+/// It's there so the Kani proofs finish: the solver can't get through Unicode
+/// lowercasing (design D7).
+fn normalize(value: &str) -> String {
+    if !value.is_ascii() {
+        return value.trim().to_lowercase();
+    }
+    let (start, end) = ascii_trim_range(value.as_bytes());
+    value[start..end].to_ascii_lowercase()
+}
+
+/// The range `str::trim` keeps of an ASCII string. `str::trim` strips
+/// `char::is_whitespace`, which for ASCII is tab, line feed, vertical tab,
+/// form feed, carriage return and space (`u8::is_ascii_whitespace` leaves out
+/// the vertical tab).
+fn ascii_trim_range(bytes: &[u8]) -> (usize, usize) {
+    let is_space = |b: &u8| matches!(b, b'\t' | b'\n' | 0x0b | 0x0c | b'\r' | b' ');
+    let start = bytes
+        .iter()
+        .position(|b| !is_space(b))
+        .unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|b| !is_space(b))
+        .map_or(start, |i| i + 1);
+    (start, end)
+}
+
 /// Allows conversion from [`String`] to [`Email`].
 ///
 /// # Examples
@@ -84,6 +115,90 @@ impl TryFrom<String> for Email {
 impl fmt::Display for Email {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+/// Kani proofs (OT-010, threat model P-30, design D7). Run with `just verify`.
+///
+/// `Email::new` validates the normalised string, so two inputs with the same
+/// normalisation always get the same result; the proofs cover the
+/// normalisation. Inputs are ASCII strings of up to 8 bytes, over the ASCII
+/// path (`ascii_trim_range`, then lowercasing each byte, which is what
+/// `str::to_ascii_lowercase` does). Unicode lowercasing and building an
+/// `Email` are intractable for the solver; the proptests cover Unicode, and
+/// one checks the ASCII path equals `trim().to_lowercase()`.
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    const MAX_LEN: usize = 8;
+    /// Room for an input plus one whitespace byte at each end.
+    const CAP: usize = MAX_LEN + 2;
+
+    /// Any ASCII string of up to 8 bytes, as bytes and a length.
+    fn any_ascii() -> ([u8; CAP], usize) {
+        let bytes: [u8; CAP] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= MAX_LEN);
+        kani::assume(bytes.iter().all(u8::is_ascii));
+        (bytes, len)
+    }
+
+    /// The ASCII normalisation of `input`, as bytes and a length.
+    fn normalized(input: &[u8]) -> ([u8; CAP], usize) {
+        let (start, end) = ascii_trim_range(input);
+        let mut out = [0u8; CAP];
+        for (slot, b) in out.iter_mut().zip(&input[start..end]) {
+            *slot = b.to_ascii_lowercase();
+        }
+        (out, end - start)
+    }
+
+    fn same(a: ([u8; CAP], usize), b: ([u8; CAP], usize)) -> bool {
+        a.1 == b.1 && a.0[..a.1] == b.0[..b.1]
+    }
+
+    /// For every ASCII input of up to 8 bytes: normalising the normalised
+    /// form changes nothing.
+    #[kani::proof]
+    #[kani::unwind(12)]
+    fn normalising_twice_changes_nothing() {
+        let (bytes, len) = any_ascii();
+        let once = normalized(&bytes[..len]);
+        assert!(same(normalized(&once.0[..once.1]), once));
+    }
+
+    /// For every ASCII input of up to 8 bytes, and every variant of it with
+    /// any letters' case flipped and any whitespace byte added at either end:
+    /// both normalise to the same address.
+    #[kani::proof]
+    #[kani::unwind(12)]
+    fn case_and_whitespace_variants_are_one_identity() {
+        let (bytes, len) = any_ascii();
+        let pad = || -> Option<u8> {
+            let b: u8 = kani::any();
+            kani::assume(matches!(b, 0 | b'\t' | b'\n' | 0x0b | 0x0c | b'\r' | b' '));
+            (b != 0).then_some(b)
+        };
+        let mut variant = [0u8; CAP];
+        let mut n = 0;
+        if let Some(b) = pad() {
+            variant[n] = b;
+            n += 1;
+        }
+        for &b in &bytes[..len] {
+            variant[n] = if kani::any() {
+                b.to_ascii_uppercase()
+            } else {
+                b
+            };
+            n += 1;
+        }
+        if let Some(b) = pad() {
+            variant[n] = b;
+            n += 1;
+        }
+        assert!(same(normalized(&bytes[..len]), normalized(&variant[..n])));
     }
 }
 
@@ -180,7 +295,21 @@ mod tests {
 
     // ==================== Property-Based Tests ====================
 
+    #[test]
+    fn ascii_normalize_trims_every_whitespace_trim_does() {
+        let input = "\t\n\x0b\x0c\r A@B.C \x0b";
+        assert_eq!(normalize(input), input.trim().to_lowercase());
+        assert_eq!(normalize(input), "a@b.c");
+    }
+
     proptest! {
+        // The ASCII fast path is exactly `trim().to_lowercase()`, which the
+        // Kani proofs rely on (design D7). Any ASCII, all whitespace kinds.
+        #[test]
+        fn prop_ascii_normalize_matches_trim_to_lowercase(input in "[\\x00-\\x7f]{0,24}") {
+            prop_assert_eq!(normalize(&input), input.trim().to_lowercase());
+        }
+
         // Valid email format: local@domain.tld
         #[test]
         fn prop_valid_email_format_accepted(

@@ -43,7 +43,7 @@ impl CancelAccountDeletionUseCase {
         }
 
         // Refuses an already-deleted account.
-        user.cancel_deletion()?;
+        user.cancel_deletion(chrono::Utc::now())?;
         self.user_repository.save(&user).await?;
 
         tracing::info!(user_id = %user_id, "Scheduled account deletion cancelled");

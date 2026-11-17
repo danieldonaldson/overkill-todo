@@ -116,6 +116,18 @@ Web analytics (OT-005) on the first deploy, after the app is up (details in
    `analytics_retention_last_success_timestamp_seconds` has a value (it shows
    up about a minute after the push).
 
+Security (OT-010), before launch:
+
+1. Add sign-in rate limiting at the edge (Traefik), per address and per
+   account. Until then, threat model P-03 is an accepted gap: bot protection
+   and Argon2 cost are the only brakes on password guessing.
+2. Commission an external penetration test of the deployed app, scoped by
+   [`docs/security/threat-model.md`](../../docs/security/threat-model.md): its
+   attackers, its numbered properties, and above all its accepted gaps and
+   stated assumptions (TLS, the modelled browser, the edge), which no proof
+   here covers. Record the findings against property numbers, and add a
+   property for anything the catalogue missed.
+
 The backend runs its embedded migrations at startup (`run_migrations` in
 `main.rs`). Postgres serialises concurrent `sqlx` migrators with an advisory
 lock, so this stays safe if you later run more than one replica.

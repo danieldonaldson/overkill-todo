@@ -15,8 +15,8 @@ pub mod pending_email_change;
 
 pub mod user_role;
 
-pub use account_status::AccountStatus;
+pub use account_status::{AccountStatus, AlreadyDeleted};
 pub use email::Email;
 pub use pending_email_change::PendingEmailChange;
 
-pub use user_role::UserRole;
+pub use user_role::{RoleChangeRefusal, UserRole};

@@ -73,7 +73,7 @@ impl RequestAccountDeletionUseCase {
         }
 
         // Refuses an already-deleted account.
-        let scheduled_at = user.schedule_deletion()?;
+        let scheduled_at = user.schedule_deletion(Utc::now())?;
         self.user_repository.save(&user).await?;
 
         tracing::info!(user_id = %user_id, %scheduled_at, "Account deletion scheduled");
@@ -91,7 +91,7 @@ mod tests {
     fn make_user(password_hash: Option<&str>, scheduled: bool) -> User {
         let mut user = UserBuilder::new().password_hash(password_hash).build();
         if scheduled {
-            user.schedule_deletion().unwrap();
+            user.schedule_deletion(Utc::now()).unwrap();
         }
         user
     }

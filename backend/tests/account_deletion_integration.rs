@@ -142,7 +142,9 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
     // --- Act: anonymize (the data-scrub half of account deletion).
     let mut anonymized = user.clone();
     let anon_email = Email::new(&format!("deleted-{user_id}@anonymized.local")).unwrap();
-    anonymized.anonymize(anon_email).unwrap();
+    anonymized
+        .anonymize(anon_email, chrono::Utc::now())
+        .unwrap();
     let anonymized_now = user_repo
         .anonymize_account(&anonymized)
         .await
@@ -251,7 +253,10 @@ async fn anonymize_skips_account_cancelled_after_the_scan(pool: PgPool) {
 
     let mut anonymized = listed;
     anonymized
-        .anonymize(Email::new(&format!("deleted-{user_id}@anonymized.local")).unwrap())
+        .anonymize(
+            Email::new(&format!("deleted-{user_id}@anonymized.local")).unwrap(),
+            chrono::Utc::now(),
+        )
         .unwrap();
     let anonymized_now = user_repo
         .anonymize_account(&anonymized)

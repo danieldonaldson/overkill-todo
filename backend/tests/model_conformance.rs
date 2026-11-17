@@ -249,7 +249,7 @@ impl Codes {
                 lockouts: c.lockouts(),
                 sent: c.last_sent_at(),
                 expires: c.expires_at(),
-                expired: c.is_expired(),
+                expired: c.is_expired(now),
                 reissue_allowed: c.reissue(now).is_allowed(),
             }),
             CodeKind::Reset => self.reset.find_by_user(user).await.unwrap().map(|c| Found {
@@ -258,7 +258,7 @@ impl Codes {
                 lockouts: c.lockouts(),
                 sent: c.last_sent_at(),
                 expires: c.expires_at(),
-                expired: c.is_expired(),
+                expired: c.is_expired(now),
                 reissue_allowed: c.reissue(now).is_allowed(),
             }),
         }
@@ -781,7 +781,7 @@ impl TokenReplay<'_> {
                         .await
                         .unwrap();
                     let (pc, out) = (&after.refresh_pc[&who], &after.refresh_out[&who]);
-                    match found.as_ref().map(RefreshToken::status) {
+                    match found.as_ref().map(|token| token.status(chrono::Utc::now())) {
                         None => {
                             assert_eq!(out, "invalid", "{at_step}: unknown token");
                             coverage.unknown += 1;

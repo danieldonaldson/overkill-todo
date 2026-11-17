@@ -1,5 +1,6 @@
 //! Refresh token entity for JWT token rotation.
 
+use crate::domain::entities::attempt_lockout::expired_at;
 use crate::domain::value_objects::{RefreshTokenId, UserId};
 use chrono::{DateTime, Utc};
 
@@ -139,26 +140,24 @@ impl RefreshToken {
     ///
     /// [`Revoked`]: RefreshTokenStatus::Revoked
     #[must_use]
-    pub fn status(&self) -> RefreshTokenStatus {
-        if self.revoked_at.is_some() {
-            RefreshTokenStatus::Revoked
-        } else if self.expires_at <= Utc::now() {
-            RefreshTokenStatus::Expired
-        } else {
-            RefreshTokenStatus::Active
-        }
+    pub const fn status(&self, now: DateTime<Utc>) -> RefreshTokenStatus {
+        status_at(
+            self.revoked_at.is_some(),
+            self.expires_at.timestamp_micros(),
+            now.timestamp_micros(),
+        )
     }
 
-    /// Checks if this token is valid (not expired and not revoked).
+    /// Checks if this token is valid (not expired and not revoked) as of `now`.
     #[must_use]
-    pub fn is_valid(&self) -> bool {
-        self.status() == RefreshTokenStatus::Active
+    pub fn is_valid(&self, now: DateTime<Utc>) -> bool {
+        self.status(now) == RefreshTokenStatus::Active
     }
 
-    /// Checks if this token has expired.
+    /// Checks if this token has expired as of `now`.
     #[must_use]
-    pub fn is_expired(&self) -> bool {
-        self.expires_at <= Utc::now()
+    pub const fn is_expired(&self, now: DateTime<Utc>) -> bool {
+        expired_at(self.expires_at.timestamp_micros(), now.timestamp_micros())
     }
 
     /// Checks if this token has been revoked.
@@ -167,13 +166,12 @@ impl RefreshToken {
         self.revoked_at.is_some()
     }
 
-    /// Revokes this token.
+    /// Revokes this token as of `now`.
     ///
-    /// If the token is already revoked, this is a no-op.
-    pub fn revoke(&mut self) {
-        if self.revoked_at.is_none() {
-            self.revoked_at = Some(Utc::now());
-        }
+    /// If the token is already revoked, this is a no-op: the first revocation
+    /// time is kept.
+    pub const fn revoke(&mut self, now: DateTime<Utc>) {
+        self.revoked_at = Some(first_revocation(self.revoked_at, now));
     }
 
     /// Validates the device fingerprint matches.
@@ -182,6 +180,63 @@ impl RefreshToken {
     #[must_use]
     pub fn validate_fingerprint(&self, fingerprint: &str) -> bool {
         self.device_fingerprint == fingerprint
+    }
+}
+
+// The status rule over microseconds since the Unix epoch, so the Kani proofs
+// below cover it for every time (design D5, as in `attempt_lockout`).
+
+/// Revoked wins over expired, so a replayed revoked token is always seen as
+/// possible theft (threat model P-15).
+const fn status_at(revoked: bool, expires_us: i64, now_us: i64) -> RefreshTokenStatus {
+    if revoked {
+        RefreshTokenStatus::Revoked
+    } else if expired_at(expires_us, now_us) {
+        RefreshTokenStatus::Expired
+    } else {
+        RefreshTokenStatus::Active
+    }
+}
+
+/// The revocation time after revoking at `now`: an earlier revocation stands.
+const fn first_revocation<T: Copy>(revoked_at: Option<T>, now: T) -> T {
+    match revoked_at {
+        Some(at) => at,
+        None => now,
+    }
+}
+
+/// Kani proofs (OT-010, threat model P-15). Run with `just verify`.
+#[cfg(kani)]
+mod verification {
+    use super::*;
+    use crate::domain::entities::attempt_lockout::verification::any_time;
+
+    /// For every expiry and current time: a revoked token reports `Revoked`,
+    /// before or after its expiry, and an unrevoked one is `Active` exactly
+    /// before its expiry and `Expired` from it on.
+    #[kani::proof]
+    fn a_revoked_token_is_never_accepted() {
+        let (revoked, expires, now): (bool, i64, i64) = (kani::any(), any_time(), any_time());
+        let status = status_at(revoked, expires, now);
+        if revoked {
+            assert_eq!(status, RefreshTokenStatus::Revoked);
+        } else if now < expires {
+            assert_eq!(status, RefreshTokenStatus::Active);
+        } else {
+            assert_eq!(status, RefreshTokenStatus::Expired);
+        }
+    }
+
+    /// For every earlier revocation (or none) and every revoking time:
+    /// revoking keeps an existing revocation time and otherwise records now.
+    #[kani::proof]
+    fn revoking_twice_keeps_the_first_time() {
+        let earlier: Option<i64> = if kani::any() { Some(any_time()) } else { None };
+        let now = any_time();
+        let after = first_revocation(earlier, now);
+        assert_eq!(after, earlier.unwrap_or(now));
+        assert_eq!(first_revocation(Some(after), any_time()), after);
     }
 }
 
@@ -211,37 +266,37 @@ mod tests {
     #[test]
     fn test_status_revoked_outranks_expired() {
         let mut token = create_expired_token();
-        assert_eq!(token.status(), RefreshTokenStatus::Expired);
+        assert_eq!(token.status(Utc::now()), RefreshTokenStatus::Expired);
 
-        token.revoke();
+        token.revoke(Utc::now());
 
-        assert_eq!(token.status(), RefreshTokenStatus::Revoked);
+        assert_eq!(token.status(Utc::now()), RefreshTokenStatus::Revoked);
     }
 
     #[test]
     fn test_new_token_is_valid() {
         let token = create_valid_token();
-        assert!(token.is_valid());
-        assert!(!token.is_expired());
+        assert!(token.is_valid(Utc::now()));
+        assert!(!token.is_expired(Utc::now()));
         assert!(!token.is_revoked());
     }
 
     #[test]
     fn test_expired_token_is_not_valid() {
         let token = create_expired_token();
-        assert!(!token.is_valid());
-        assert!(token.is_expired());
+        assert!(!token.is_valid(Utc::now()));
+        assert!(token.is_expired(Utc::now()));
         assert!(!token.is_revoked());
     }
 
     #[test]
     fn test_revoke_token() {
         let mut token = create_valid_token();
-        assert!(token.is_valid());
+        assert!(token.is_valid(Utc::now()));
 
-        token.revoke();
+        token.revoke(Utc::now());
 
-        assert!(!token.is_valid());
+        assert!(!token.is_valid(Utc::now()));
         assert!(token.is_revoked());
         assert!(token.revoked_at().is_some());
     }
@@ -249,11 +304,11 @@ mod tests {
     #[test]
     fn test_revoke_is_idempotent() {
         let mut token = create_valid_token();
-        token.revoke();
+        token.revoke(Utc::now());
         let first_revoked_at = token.revoked_at();
 
         std::thread::sleep(std::time::Duration::from_millis(10));
-        token.revoke();
+        token.revoke(Utc::now());
 
         assert_eq!(token.revoked_at(), first_revoked_at);
     }
@@ -293,6 +348,6 @@ mod tests {
         assert_eq!(token.user_id(), &user_id);
         assert_eq!(token.token_hash(), &token_hash);
         assert_eq!(token.device_fingerprint(), &fingerprint);
-        assert!(token.is_valid());
+        assert!(token.is_valid(Utc::now()));
     }
 }

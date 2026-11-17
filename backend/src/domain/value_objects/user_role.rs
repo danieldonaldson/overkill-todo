@@ -74,6 +74,122 @@ impl UserRole {
             _ => false,
         }
     }
+
+    /// Whether this role may change an account's role from `current` to `new`
+    /// (threat model P-08). The actor must be able to manage both the current
+    /// and the new role, and a Super Admin can't remove their own Super Admin
+    /// role (`acting_on_self`). Guarding the last Super Admin needs the other
+    /// accounts, so the repository enforces it.
+    ///
+    /// # Errors
+    /// The [`RoleChangeRefusal`] that applies; authority is checked first.
+    pub const fn may_change_role(
+        self,
+        acting_on_self: bool,
+        current: Self,
+        new: Self,
+    ) -> Result<(), RoleChangeRefusal> {
+        if !self.can_manage(&current) || !self.can_manage(&new) {
+            return Err(RoleChangeRefusal::NoAuthority);
+        }
+        if Self::removes_super_admin(current, new) && acting_on_self {
+            return Err(RoleChangeRefusal::OwnSuperAdminRole);
+        }
+        Ok(())
+    }
+
+    /// Whether changing a role from `current` to `new` takes a Super Admin
+    /// away: the change that can lock everyone out of role management.
+    #[must_use]
+    pub const fn removes_super_admin(current: Self, new: Self) -> bool {
+        matches!(current, Self::SuperAdmin) && !matches!(new, Self::SuperAdmin)
+    }
+}
+
+/// Why [`UserRole::may_change_role`] refuses a role change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoleChangeRefusal {
+    /// The actor can't manage the account's current role or the new one.
+    NoAuthority,
+    /// A Super Admin tried to remove their own Super Admin role.
+    OwnSuperAdminRole,
+}
+
+/// Kani proofs (OT-010, threat model P-08). Run with `just verify`.
+#[cfg(kani)]
+mod verification {
+    use super::*;
+
+    /// Any of the three roles.
+    fn any_role() -> UserRole {
+        match kani::any::<u8>() {
+            0 => UserRole::User,
+            1 => UserRole::Admin,
+            _ => UserRole::SuperAdmin,
+        }
+    }
+
+    /// For every actor, current role, new role and self flag: a Member
+    /// changes no role, an Admin only sets a Member to Member, and only a
+    /// Super Admin touches an Admin or Super Admin, as the current role or the
+    /// new one. Written out per role rather than through `can_manage`, so a
+    /// change to `can_manage` fails here.
+    #[kani::proof]
+    fn role_changes_never_escalate() {
+        let (actor, current, new) = (any_role(), any_role(), any_role());
+        let allowed = actor.may_change_role(kani::any(), current, new).is_ok();
+        match actor {
+            UserRole::User => assert!(!allowed, "a Member changed a role"),
+            UserRole::Admin => assert_eq!(
+                allowed,
+                current == UserRole::User && new == UserRole::User,
+                "an Admin went beyond Member to Member"
+            ),
+            UserRole::SuperAdmin => {}
+        }
+        if allowed && (current != UserRole::User || new != UserRole::User) {
+            assert_eq!(actor, UserRole::SuperAdmin);
+        }
+    }
+
+    /// For every current and new role: a Super Admin may make any change to
+    /// someone else, and never removes their own Super Admin role.
+    #[kani::proof]
+    fn a_super_admin_never_removes_their_own_role() {
+        let (current, new) = (any_role(), any_role());
+        let acting_on_self: bool = kani::any();
+        let result = UserRole::SuperAdmin.may_change_role(acting_on_self, current, new);
+        let removes = current == UserRole::SuperAdmin && new != UserRole::SuperAdmin;
+        if acting_on_self && removes {
+            assert_eq!(result, Err(RoleChangeRefusal::OwnSuperAdminRole));
+        } else {
+            assert_eq!(result, Ok(()));
+        }
+    }
+
+    /// For every ASCII string of up to 12 bytes (the longest role name is 11):
+    /// only the three exact role names are accepted, so an unknown stored role
+    /// is rejected rather than defaulted, and each role reads back as itself.
+    /// Non-ASCII strings are left out: they can't equal an ASCII name, and
+    /// symbolic UTF-8 decoding multiplies the proof time.
+    #[kani::proof]
+    #[kani::unwind(13)]
+    fn only_exact_role_names_are_accepted() {
+        let bytes: [u8; 12] = kani::any();
+        let len: usize = kani::any();
+        kani::assume(len <= bytes.len());
+        kani::assume(bytes.iter().all(u8::is_ascii));
+        let Ok(s) = core::str::from_utf8(&bytes[..len]) else {
+            unreachable!("ASCII is valid UTF-8");
+        };
+        match UserRole::from_db_str(s) {
+            Some(role) => {
+                assert!(matches!(s, "user" | "admin" | "super_admin"));
+                assert_eq!(role.to_db_str(), s);
+            }
+            None => assert!(!matches!(s, "user" | "admin" | "super_admin")),
+        }
+    }
 }
 
 impl fmt::Display for UserRole {

@@ -71,7 +71,7 @@ impl PurgeScheduledAccountsUseCase {
 
         let anonymous_email = Email::new(&format!("deleted-{user_id}@anonymized.local"))?;
         let mut anonymized = user.clone();
-        anonymized.anonymize(anonymous_email)?;
+        anonymized.anonymize(anonymous_email, chrono::Utc::now())?;
         if !self.lifecycle.anonymize_account(&anonymized).await? {
             return Ok(false);
         }

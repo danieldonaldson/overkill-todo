@@ -32,6 +32,7 @@ default:
 # One-time: tools, deps, browsers, backend/.env, database.
 setup:
     mise install
+    cargo kani setup   # Kani's own toolchain for `just verify`; a no-op once done
     {{pnpm}} install
     {{pnpm}} --filter {{web}} exec playwright install chromium
     ./scripts/gen-dev-env.sh

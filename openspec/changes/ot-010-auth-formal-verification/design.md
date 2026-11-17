@@ -327,6 +327,46 @@ _What slice 5 showed._
   `// Checks:` blocks, and a CI filter on auth code that can't change the
   model's result (narrowed to the model and its script).
 
+_What slice 6 showed._ At closing, the catalogue still said "Kani proof
+planned (OT-010)" on P-08, P-19, P-28 and P-30, and P-15's status rule was
+tested only. The user chose to finish them in this change rather than move
+them out. All 21 harnesses pass, and every new one fails on a scratch break of
+its rule. The proofs found no defect; the code review found one (below).
+The rest is about tractability:
+
+- **Plain comparisons are cheap; strings aren't.** The role, code, token and
+  deletion proofs each take well under a second. The role-name proof takes
+  about 76 s over 12 ASCII bytes (109 s with symbolic UTF-8, which was
+  dropped since no non-ASCII string can equal an ASCII name). `just verify`
+  went from about 15 s to about 2 minutes.
+- **No integer kernel was needed for deletion.** `AccountStatus` became
+  generic over its timestamp (default `DateTime<Utc>`), so the proofs run the
+  real transitions over `i64` with no copy. That works because the
+  transitions only copy and compare times; the grace-period arithmetic stays
+  in `User` and is tested. It's a cheaper pattern than D5's kernel wherever no
+  arithmetic is involved.
+- **Building an `Email` is intractable, even for ASCII.** `trim` plus
+  `to_lowercase` on 8 symbolic bytes didn't finish in 15 minutes, and a
+  version with an ASCII fast path didn't finish in 20, because of the
+  `String` and the validation's search. D7 is now: `Email::new` takes a
+  byte-wise ASCII path that a proptest shows equals `trim().to_lowercase()`,
+  and the proofs cover that normalisation over fixed arrays (23 s and 13 s).
+  Since `Email::new` validates the normalised string, equal normalisations
+  give equal results.
+- **Review found a defect next to a proof.** A verification or reset code
+  was checked for expiry when read, then compared with Argon2, which takes
+  about 100 ms, and accepted without a second look. A code live at the read
+  could be accepted after expiring. Both flows now re-check `is_expired`
+  after the comparison. The proof of the expiry rule couldn't catch this,
+  because the rule was right and the gap was in when it was applied. The
+  review also caught that the first P-19 proof covered `accepts_entry`, a
+  combination no request path called; it now proves the rules the paths do
+  call.
+- **Two proven rules aren't what the code acts on.** Readiness to purge and
+  the last-Super-Admin guard are decided in SQL, not by the domain methods.
+  The threat model says so in P-28 and P-08, rather than claiming the proofs
+  cover the purge or the guard.
+
 ## Decisions
 
 ### D1: The threat model is a Markdown file the gate can parse
@@ -470,6 +510,11 @@ attempt claim.
 
 Unicode lowercasing is intractable for the solver. Harnesses bound input to 8
 ASCII bytes. The existing proptests keep covering Unicode.
+
+_Decided in slice 6:_ the proofs cover the ASCII normalisation path
+(`ascii_trim_range`, then per-byte lowercasing) over fixed arrays, not
+`Email::new` itself, which didn't finish. A proptest ties that path to
+`trim().to_lowercase()`.
 
 ### D8: Quint for concurrency, with ITF traces as conformance tests
 

@@ -77,7 +77,7 @@ impl ValidateResetCodeUseCase {
             })?;
 
         // Check if expired
-        if reset_code.is_expired() {
+        if reset_code.is_expired(Utc::now()) {
             return Err(DomainError::Validation(
                 "Reset code has expired. Please request a new one.".into(),
             ));
@@ -114,6 +114,16 @@ impl ValidateResetCodeUseCase {
 
         if !is_valid {
             return Err(DomainError::Validation("Invalid reset code.".into()));
+        }
+
+        // The code was live when read, but the Argon2 check takes time: refuse
+        // it if it expired meanwhile, so no code is accepted from its expiry
+        // instant on (P-19). The claim is by code id and a resend makes a new
+        // one, so the expiry loaded above is still this code's.
+        if reset_code.is_expired(Utc::now()) {
+            return Err(DomainError::Validation(
+                "Reset code has expired. Please request a new one.".into(),
+            ));
         }
 
         // Correct code: release the slot we claimed so a correct guess never
@@ -214,6 +224,55 @@ mod tests {
         let result = use_case.execute("test@example.com", "123456").await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "reset_token");
+    }
+
+    /// A code that expires while its Argon2 check runs is refused as expired,
+    /// even though it was live when read and the guess was right (P-19).
+    #[tokio::test]
+    async fn code_expiring_during_the_check_is_refused() {
+        let user = create_test_user();
+        let user_id = *user.id();
+        let reset_code = PasswordResetCode::from_persistence(
+            ResetCodeId::new(),
+            user_id,
+            "hashed_code".to_string(),
+            Utc::now() + Duration::milliseconds(50),
+            0,
+            Utc::now(),
+            Utc::now(),
+        );
+
+        let mut mock_user_repo = MockUserRepository::new();
+        mock_user_repo
+            .expect_find_by_email()
+            .returning(move |_| Ok(Some(user.clone())));
+        let mut mock_reset_repo = MockPasswordResetRepository::new();
+        mock_reset_repo
+            .expect_find_by_user()
+            .returning(move |_| Ok(Some(reset_code.clone())));
+        mock_reset_repo
+            .expect_register_attempt()
+            .returning(|_, _, _| Ok(AttemptOutcome::Claimed(1)));
+        mock_reset_repo.expect_release_attempt().never();
+        let mut mock_hasher = MockPasswordHasher::new();
+        mock_hasher.expect_verify().returning(|_, _| {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            Ok(true)
+        });
+        let mut mock_jwt = MockJwtService::new();
+        mock_jwt.expect_create_reset_token().never();
+
+        let use_case = ValidateResetCodeUseCase::new(
+            Arc::new(mock_user_repo),
+            Arc::new(mock_reset_repo),
+            Arc::new(mock_hasher),
+            Arc::new(mock_jwt),
+        );
+        let err = use_case
+            .execute("test@example.com", "123456")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("expired"), "{err}");
     }
 
     #[tokio::test]

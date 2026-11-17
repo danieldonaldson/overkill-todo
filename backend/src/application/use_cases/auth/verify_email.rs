@@ -108,7 +108,7 @@ impl VerifyEmailUseCase {
             .ok_or(VerifyEmailError::CodeExpired)?;
 
         // Check if expired
-        if verification_code.is_expired() {
+        if verification_code.is_expired(chrono::Utc::now()) {
             return Err(VerifyEmailError::CodeExpired);
         }
 
@@ -142,6 +142,14 @@ impl VerifyEmailUseCase {
             let attempts_remaining = MAX_ATTEMPTS - attempts_after;
 
             return Err(VerifyEmailError::CodeInvalid { attempts_remaining });
+        }
+
+        // The code was live when read, but the Argon2 check takes time: refuse
+        // it if it expired meanwhile, so no code is accepted from its expiry
+        // instant on (P-19). The claim is by code id and a resend makes a new
+        // one, so the expiry loaded above is still this code's.
+        if verification_code.is_expired(chrono::Utc::now()) {
+            return Err(VerifyEmailError::CodeExpired);
         }
 
         // Correct code: release the attempt slot we claimed above so a correct
@@ -395,6 +403,48 @@ mod tests {
             }
             other => panic!("expected CodeInvalid, got {other:?}"),
         }
+    }
+
+    /// A code that expires while its Argon2 check runs is refused as expired,
+    /// even though it was live when read and the guess was right (P-19).
+    #[tokio::test]
+    async fn code_expiring_during_the_check_is_refused() {
+        let user_id = UserId::new();
+        let mut repo = MockUserRepository::new();
+        repo.expect_find_by_email()
+            .returning(move |_| Ok(Some(user(user_id, false))));
+        repo.expect_mark_email_verified().never();
+
+        let expires_at = Utc::now() + Duration::milliseconds(50);
+        let mut codes = MockEmailVerificationRepository::new();
+        codes.expect_find_by_user().returning(move |_| {
+            Ok(Some(EmailVerificationCode::from_persistence(
+                VerificationCodeId::new(),
+                user_id,
+                "code-hash".to_string(),
+                expires_at,
+                0,
+                Utc::now(),
+                Utc::now(),
+                None,
+                None,
+            )))
+        });
+        codes
+            .expect_register_attempt()
+            .returning(|_, _, _| Ok(AttemptOutcome::Claimed(1)));
+        codes.expect_release_attempt().never();
+        codes.expect_delete_for_user().never();
+
+        let mut hasher = MockPasswordHasher::new();
+        hasher.expect_verify().returning(|_, _| {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            Ok(true)
+        });
+
+        let uc = VerifyEmailUseCase::new(Arc::new(repo), Arc::new(codes), Arc::new(hasher));
+        let err = uc.execute(EMAIL, "123456").await.unwrap_err();
+        assert!(matches!(err, VerifyEmailError::CodeExpired), "{err:?}");
     }
 
     #[tokio::test]

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::application::ports::outgoing::UserRepository;
 use crate::domain::entities::User;
 use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{UserId, UserRole};
+use crate::domain::value_objects::{RoleChangeRefusal, UserId, UserRole};
 
 /// One page of users plus the total across all pages.
 #[derive(Debug)]
@@ -78,27 +78,27 @@ impl SetUserRoleUseCase {
             .await?
             .ok_or_else(|| DomainError::NotFound("User not found".into()))?;
 
-        // The actor must outrank both the current and the requested role, so an
-        // admin can't (e.g.) demote a super_admin or promote anyone to admin.
-        if !actor_role.can_manage(&user.role()) || !actor_role.can_manage(&new_role) {
-            return Err(DomainError::Forbidden(
-                "You do not have authority to set this role".into(),
-            ));
-        }
+        // The actor must outrank both the current and the requested role, and a
+        // super-admin can't strip their own role (proven in the domain, P-08).
+        actor_role
+            .may_change_role(actor_id == target, user.role(), new_role)
+            .map_err(|refusal| {
+                DomainError::Forbidden(
+                    match refusal {
+                        RoleChangeRefusal::NoAuthority => {
+                            "You do not have authority to set this role"
+                        }
+                        RoleChangeRefusal::OwnSuperAdminRole => {
+                            "You cannot remove your own super-admin role"
+                        }
+                    }
+                    .into(),
+                )
+            })?;
 
-        // Demoting a super-admin is the only role change that can brick role
-        // management, so it carries two extra guards.
-        let removing_super_admin =
-            user.role() == UserRole::SuperAdmin && new_role != UserRole::SuperAdmin;
-        if removing_super_admin {
-            // Self-lockout guard: a super-admin can't strip their own role; a
-            // second super-admin must do it for them.
-            if actor_id == target {
-                return Err(DomainError::Forbidden(
-                    "You cannot remove your own super-admin role".into(),
-                ));
-            }
-        }
+        // Demoting the last super-admin would brick role management; the
+        // repository refuses it in the same statement as the write.
+        let removing_super_admin = UserRole::removes_super_admin(user.role(), new_role);
 
         let role_changed = user.role() != new_role;
         user.set_role(new_role);

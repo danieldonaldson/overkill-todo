@@ -133,6 +133,41 @@ const fn at_cap(attempts: i32) -> bool {
     attempts >= MAX_ATTEMPTS
 }
 
+/// Whether a one-time code with expiry `expires_at` has expired as of `now`.
+///
+/// At its expiry instant it no longer works (threat model P-19). Both code
+/// entities call it, and refresh tokens share `expired_at`. Times compare to
+/// the microsecond, Postgres's precision.
+#[must_use]
+pub const fn expired(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    expired_at(expires_at.timestamp_micros(), now.timestamp_micros())
+}
+
+/// Whether a magic link with expiry `expires_at` can't be redeemed at `now`.
+///
+/// There is none, or it has expired. Only the link's own expiry counts, so a
+/// resend, which moves the code's expiry, never revives it.
+#[must_use]
+pub const fn magic_link_expired(expires_at: Option<DateTime<Utc>>, now: DateTime<Utc>) -> bool {
+    let expires_us = match expires_at {
+        Some(at) => Some(at.timestamp_micros()),
+        None => None,
+    };
+    magic_link_expired_at(expires_us, now.timestamp_micros())
+}
+
+/// The expiry rule over microseconds: expired from the expiry instant on.
+pub(crate) const fn expired_at(expires_us: i64, now_us: i64) -> bool {
+    now_us >= expires_us
+}
+
+const fn magic_link_expired_at(expires_us: Option<i64>, now_us: i64) -> bool {
+    match expires_us {
+        Some(expires_us) => expired_at(expires_us, now_us),
+        None => true,
+    }
+}
+
 const MICROS_PER_SECOND: i64 = 1_000_000;
 const MICROS_PER_MINUTE: i64 = 60 * MICROS_PER_SECOND;
 
@@ -289,7 +324,7 @@ pub enum IssueOutcome {
 
 /// Kani proofs (OT-010, threat model P-10 / P-13). Run with `just verify`.
 #[cfg(kani)]
-mod verification {
+pub(crate) mod verification {
     use super::*;
 
     /// The lock window for a lockout count, in minutes. `last_sent_at` and
@@ -317,7 +352,7 @@ mod verification {
     const UNTIL_US: i64 = 7_258_118_400 * MICROS_PER_SECOND;
 
     /// A symbolic timestamp in [2000, 2200), to the microsecond.
-    fn any_time() -> i64 {
+    pub(crate) fn any_time() -> i64 {
         let us: i64 = kani::any();
         kani::assume((FROM_US..UNTIL_US).contains(&us));
         us
@@ -414,6 +449,33 @@ mod verification {
         let last = LOCK_WINDOWS_MINUTES.len() - 1;
         let index = usize::try_from(lockouts.max(0)).map_or(last, |i| i.min(last));
         assert_eq!(LOCK_WINDOWS_MINUTES[index], lock_window_minutes(lockouts));
+    }
+
+    /// P-19, for every expiry and current time in [2000, 2200), to the
+    /// microsecond: a code is expired exactly from its expiry instant on,
+    /// whatever its attempts (`expired` takes none). Both code entities'
+    /// `is_expired`, which every entry path checks first, call this rule.
+    #[kani::proof]
+    fn a_code_is_refused_from_its_expiry_instant() {
+        let (expires, now) = (any_time(), any_time());
+        assert_eq!(expired_at(expires, now), now >= expires);
+        if now < expires {
+            assert!(!expired_at(expires, now), "refused before expiry");
+        }
+    }
+
+    /// P-19, for every link expiry (or none) and current time in [2000,
+    /// 2200): a missing link counts as expired, and a link is live exactly
+    /// before its own expiry.
+    #[kani::proof]
+    fn a_magic_link_is_live_only_before_its_own_expiry() {
+        let expires: Option<i64> = if kani::any() { Some(any_time()) } else { None };
+        let now = any_time();
+        let expired = magic_link_expired_at(expires, now);
+        match expires {
+            None => assert!(expired, "a missing link was live"),
+            Some(at) => assert_eq!(expired, now >= at),
+        }
     }
 
     /// For every pair `a <= b` of `i32` lockout counts: more earlier lockouts

@@ -74,7 +74,7 @@ impl RefreshTokenUseCase {
             .await?
             .ok_or_else(|| DomainError::Authorization("Invalid refresh token".into()))?;
 
-        match refresh_token.status() {
+        match refresh_token.status(Utc::now()) {
             RefreshTokenStatus::Active => {}
             // `status()` reports a revoked-and-expired token as `Revoked`, so a
             // stolen token replayed after its natural expiry still lands here

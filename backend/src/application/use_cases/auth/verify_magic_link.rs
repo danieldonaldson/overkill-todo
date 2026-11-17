@@ -98,7 +98,7 @@ impl VerifyMagicLinkUseCase {
         // Check if the magic link is expired. Uses the token's own expiry, not
         // the 6-digit code's `expires_at`, so resending a code never extends or
         // revives a previously-issued link.
-        if verification_code.is_magic_token_expired() {
+        if verification_code.is_magic_token_expired(chrono::Utc::now()) {
             return Err(VerifyMagicLinkError::TokenExpired);
         }
 

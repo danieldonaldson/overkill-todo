@@ -222,17 +222,32 @@ Some properties are proven with [Kani](https://model-checking.github.io/kani/),
 a bounded model checker, for every input within stated bounds rather than for
 sampled ones. The harnesses sit in a `#[cfg(kani)] mod verification` next to
 the code they prove, and each has a doc comment stating its bounds.
-`just verify` runs them all (about 15 s warm, a minute cold). It's in
+`just verify` runs them all (about 2 minutes warm, most of it the role-name
+and email proofs). It's in
 `just ci`, and CI runs it as its own job.
 
 - **Setup:** `mise install` installs the pinned `kani-verifier` (`.mise.toml`).
   Run `cargo kani setup` once to fetch Kani's own nightly toolchain, which
   doesn't touch the pinned Rust. CI reads the same pin.
-- **What's proven:** the code-entry lockout decision (the exact window schedule,
-  never reissued while locked or in the cooldown, reissued once both waits pass,
-  no negative waits), and that the domain's attempt counter can't wrap (threat
-  model P-10, P-13). The proofs cover the decision, not the database writes
-  around it. Those are P-11 and P-12, modelled below.
+- **What's proven:**
+  - the code-entry lockout decision: the exact window schedule, never
+    reissued while locked or in the cooldown, reissued once both waits pass, no
+    negative waits (P-10, P-13)
+  - one-time codes and magic links accepted only before their expiry and
+    under the attempt cap (P-19)
+  - a refresh token's status, where revoked wins over expired, and revoking
+    keeps the first time (P-15)
+  - role changes: no escalation for any actor, current and new role, no
+    Super Admin removing their own role, and only exact role names read
+    back (P-08)
+  - the deletion lifecycle: deleted is terminal, rescheduling keeps the date,
+    no purge before the date, and the two columns round-trip (P-28)
+  - email normalisation for short ASCII: case and surrounding whitespace
+    don't change the identity, and normalising twice changes nothing (P-30)
+
+  The proofs cover the domain's decisions, not the SQL around them. The
+  concurrent writes are P-11, P-12 and P-14, modelled below; the
+  last-Super-Admin guard and the purge job's due check are SQL, and tested.
 - **Time is an argument.** Policy that depends on the clock takes `now`, and
   callers pass `Utc::now()`, so a proof can cover every time.
 - **Prove integers, not chrono.** Kani can't get through chrono's calendar

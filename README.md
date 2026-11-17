@@ -38,7 +38,7 @@ mise's tools, so a system Rust or Node on `PATH` doesn't matter.
 
 ```bash
 mise trust && mise install   # once: just, node, pnpm, Rust, cargo tools
-just setup   # once: deps, browsers, backend/.env, database
+just setup   # once: deps, browsers, Kani, backend/.env, database
 just dev     # backend :4322 + web :4321 (open this one; it proxies /api)
 just         # list every recipe
 just ci      # everything CI checks, locally
@@ -70,12 +70,34 @@ only (`deploy/secrets/README.md`).
 | `just api-types`                       | regenerate `backend/openapi.json` + web types                      |
 | `just api-types-check`                 | fail if either generated API file is stale                         |
 | `just threat-model-check`              | every auth security property names a check that still exists       |
-| `just verify`                          | Kani proofs of the auth lockout policy, every input within bounds  |
+| `just verify`                          | Kani proofs of the auth domain policy, every input within bounds   |
 | `just models`                          | Quint concurrency models of code entry and refresh, replayed on DB |
 | `just protocols`                       | Tamarin proofs of the sign-in protocols against a network attacker |
 | `just load <scenario>`                 | k6 load scenario against the capped stack                          |
 | `just obs-up` / `just obs-down`        | traces, logs, metrics, alerts and Grafana                          |
 | `just analytics-up` / `analytics-down` | Umami web analytics on :3001                                       |
+
+### What's proven about auth
+
+[`docs/security/threat-model.md`](docs/security/threat-model.md) lists every
+auth security property, the attackers it holds against, and the check behind
+it; `just threat-model-check` keeps that list honest. The strongest checks:
+
+- **`just verify`** (Kani, about 2 minutes) proves the domain rules for every
+  input within stated bounds: the code-entry lockout, code and magic-link
+  expiry, refresh-token status, role changes, the deletion lifecycle, and
+  email normalisation (ASCII up to 8 bytes).
+- **`just models`** (Quint, about 4 minutes) checks races between concurrent
+  requests over every interleaving of up to 8 steps, and replays the models'
+  traces against Postgres.
+- **`just protocols`** (Tamarin, about a minute) proves sign-in, refresh, Google
+  sign-in and CSRF against an attacker who controls the network.
+
+They cover the rules and protocols as modelled, not everything: SQL around the
+proven rules is tested, not proven, and the threat model lists each accepted
+gap and assumption (TLS, the browser, the edge). Tools and pins are in
+`.mise.toml`; details are in
+[backend/ARCHITECTURE.md](backend/ARCHITECTURE.md).
 
 ### Benchmarks
 
