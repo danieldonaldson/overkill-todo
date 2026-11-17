@@ -72,8 +72,8 @@ pub struct RequestEmailChangeRequest {
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct ConfirmEmailChangeRequest {
     /// 6-digit verification code sent to new email.
-    // Separators are stripped before the 6-digit check, so no pattern here.
-    #[schema(max_length = 32)] // validation::MAX_FORMATTED_CODE_LEN
+    // Exactly 6 ASCII digits once separators are stripped (validation.rs).
+    #[schema(max_length = 32, pattern = "^[^0-9]*([0-9][^0-9]*){6}$")] // MAX_FORMATTED_CODE_LEN
     #[validate(custom(function = "validate_verification_code"))]
     pub code: String,
 }
@@ -87,7 +87,10 @@ pub struct RequestDeletionRequest {
     #[serde(default)]
     pub password: Option<String>,
 
-    /// Confirmation text - must be "DELETE" to proceed.
+    /// Confirmation text - must be "DELETE" to proceed. Required: a request
+    /// without it is refused with 400 (deserialised as optional only so that
+    /// refusal carries the specific message).
+    #[schema(required = true, value_type = String, pattern = "^DELETE$")]
     #[serde(default)]
     pub confirmation: Option<String>,
 }

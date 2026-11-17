@@ -30,9 +30,9 @@ enabled = false
 # content_type_conformance, response_schema_conformance,
 # negative_data_rejection, ignored_auth, plus the custom checks in hooks.py.
 [checks]
-# Slice 2 reconsiders it: validation rules the description doesn't state
-# (password length, email format) make it noisy.
-positive_data_acceptance.enabled = false
+# positive_data_acceptance is on (slice 2): a request the description says is
+# valid must not get a 400. It is off only for the operations listed at the end,
+# whose 400s depend on server state, not on the request's shape.
 # Not in slice 1's scope.
 response_headers_conformance.enabled = false
 missing_required_header.enabled = false
@@ -49,3 +49,39 @@ object_level_authorization.enabled = false
 # party. `GET /auth/oauth/{provider}` (which only builds the redirect) is fuzzed.
 include-path = "/api/v1/auth/oauth/{provider}/callback"
 enabled = false
+
+# positive_data_acceptance off: these refuse well-formed requests with 400 by
+# design, depending on server state or configuration, which a schema can't say.
+[[operations]]
+# A well-formed code that is wrong, expired or locked is a 400 with error_code.
+include-path = "/api/v1/auth/verify-email"
+checks.positive_data_acceptance.enabled = false
+
+[[operations]]
+# Same, for password-reset codes ("No reset code found", "Invalid reset code").
+include-path = "/api/v1/auth/verify-reset-code"
+checks.positive_data_acceptance.enabled = false
+
+[[operations]]
+# A well-formed magic-link token that is unknown or used is a 400 with error_code.
+include-path = "/api/v1/auth/verify-magic"
+include-method = "POST"
+checks.positive_data_acceptance.enabled = false
+
+[[operations]]
+# Whether a password is required depends on whether the account has one.
+include-path = "/api/v1/users/me"
+include-method = "DELETE"
+checks.positive_data_acceptance.enabled = false
+
+[[operations]]
+# Only for accounts without a password (OAuth-only); the fuzz Member has one.
+include-path = "/api/v1/users/password/set"
+checks.positive_data_acceptance.enabled = false
+
+[[operations]]
+# Which providers work depends on configuration: the enum lists every provider
+# the domain knows, and only Google is configured.
+include-path = "/api/v1/auth/oauth/{provider}"
+include-method = "GET"
+checks.positive_data_acceptance.enabled = false

@@ -2,8 +2,8 @@
 
 This change is dev tooling plus small backend fixes, with nothing to deploy. A
 slice ships when it's on `main` with `just ci` green. Slice 2 (the CI job, the
-nightly workflow and reconsidering `positive_data_acceptance`) is added after
-slice 1 ships and `design.md` Hypothesis records what the first triage showed.
+nightly workflow and reconsidering `positive_data_acceptance`) was added after
+slice 1 shipped and `design.md` Hypothesis recorded what the first triage showed.
 
 ## 1. Slice 1 (first slice): accurate security description, and a local fuzz run that's clean and part of `just ci`
 
@@ -46,7 +46,21 @@ This slice delivers these scenarios from `specs/api/spec.md`:
 - [x] 1.13 Fix the description and backend findings. Add `format`, `minLength`, `maxLength` and `pattern` constraints to DTOs where the validator enforces them. Fix any handler that returns a 5xx or a non-standard error. Add a unit or `#[sqlx::test]` test for each backend defect. Split anything larger than about a day into its own task or change, and leave it out of the run with a reason that references it. Verify: `just test`, `just test-integration` and `just api-types-check` pass, and `just fuzz-api` exits 0.
 - [x] 1.14 Add `fuzz-api` to the `ci` recipe and record the short run's duration. Verify: `just ci` is green, and the fuzz step adds less than about 3 minutes.
 
-## 2. Feature done
+## 2. Slice 2: fuzzing in CI and nightly, and the stricter check reconsidered
 
-- [ ] 2.1 Document `just fuzz-api` (what it checks, how to reproduce a failure with a seed, how to add an exclusion) in `README.md`. Add the "dev-mode differences a client can see" note to `backend/ARCHITECTURE.md`. Mention in CLAUDE.md that a new route is fuzzed automatically and must stay clean. Verify: the docs list the same command, defaults and exclusions as `apifuzz/`.
-- [ ] 2.2 Archive the change (`/opsx:archive`), syncing the `api` spec delta. Verify: `openspec validate --specs` passes, and `openspec/specs/api/spec.md` contains the three new requirements.
+This slice delivers these scenarios from `specs/api/spec.md`:
+- **Fuzzing runs in the gate**: change to the backend, pull request that only
+  changes the frontend, nightly finding.
+
+Slice 1 showed (design Hypothesis outcome) that the noise came from the harness,
+not from validation rules, so `positive_data_acceptance` is tried again here.
+
+- [x] 2.1 Make `run.sh` CI-ready: keep each pass's output in `apifuzz/out/<pass>.log`, and when `GITHUB_STEP_SUMMARY` is set, append the seed, the result of each pass, its failures and the `just fuzz-api seed=… examples=…` command that reproduces them. Verify: a local run with `GITHUB_STEP_SUMMARY=/tmp/summary.md` writes a summary that names a failure planted on a scratch change, and a clean run writes a clean one.
+- [ ] 2.2 Add the `api-fuzz` job to `ci.yml`: gated on `changes.outputs.backend` (add `apifuzz/**` to that filter), Postgres service, rust-cache, sqlx-cli, uv from `.mise.toml` through mise, `just`-free (`./apifuzz/run.sh`), the hooks unit tests first, logs uploaded on failure. Add it to the `images` job's `needs`. Verify: `actionlint` passes, and the job is green on the push to `main`.
+- [ ] 2.3 Add `.github/workflows/fuzz-nightly.yml` (cron plus `workflow_dispatch` with optional `seed` and `examples` inputs; defaults: a random seed and 500 examples). It prints the seed and the reproducing command in the job summary and uploads the logs. It shares no concurrency group with CI and gates nothing. Verify: `actionlint` passes, and a manual dispatch on `main` completes and shows its seed in the summary.
+- [x] 2.4 Reconsider `positive_data_acceptance`: run with it on, sort every distinct failure as in 1.12, and either fix the description or backend so it can stay on, or leave it off with the reason in the config and design. Record the outcome in design.md Hypothesis. Verify: `just fuzz-api` and `just ci` are green, and the config states the decision.
+
+## 3. Feature done
+
+- [ ] 3.1 Document `just fuzz-api` (what it checks, how to reproduce a failure with a seed, how to add an exclusion) in `README.md`. Add the "dev-mode differences a client can see" note to `backend/ARCHITECTURE.md`. Mention in CLAUDE.md that a new route is fuzzed automatically and must stay clean. Verify: the docs list the same command, defaults and exclusions as `apifuzz/`.
+- [ ] 3.2 Archive the change (`/opsx:archive`), syncing the `api` spec delta. Verify: `openspec validate --specs` passes, and `openspec/specs/api/spec.md` contains the three new requirements.

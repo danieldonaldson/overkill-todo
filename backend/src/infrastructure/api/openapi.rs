@@ -346,7 +346,9 @@ mod tests {
         }
         let deletion = schema("RequestDeletionRequest");
         assert!(!is_required(&deletion, "password"));
-        assert!(!is_required(&deletion, "confirmation"));
+        // Optional to serde, but every request without it is refused with 400,
+        // so the description makes it required (OT-011).
+        assert!(is_required(&deletion, "confirmation"));
     }
 
     /// Response fields omitted when empty are optional; always-sent fields are

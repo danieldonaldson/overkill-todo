@@ -745,8 +745,12 @@ export interface components {
         OAuthProviderName: "google" | "apple";
         /** @description Request to delete account. */
         RequestDeletionRequest: {
-            /** @description Confirmation text - must be "DELETE" to proceed. */
-            confirmation?: string | null;
+            /**
+             * @description Confirmation text - must be "DELETE" to proceed. Required: a request
+             *     without it is refused with 400 (deserialised as optional only so that
+             *     refusal carries the specific message).
+             */
+            confirmation: string;
             /** @description Password for re-authentication (required for password users). */
             password?: string | null;
         };
@@ -1036,7 +1040,10 @@ export interface operations {
     complete_signup: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Opaque ID of this device; the refresh token is bound to it */
+                "X-Device-Fingerprint": string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1129,7 +1136,10 @@ export interface operations {
     login: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Opaque ID of this device; the refresh token is bound to it */
+                "X-Device-Fingerprint": string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1450,7 +1460,10 @@ export interface operations {
     refresh: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Opaque ID of this device; the refresh token is bound to it */
+                "X-Device-Fingerprint": string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -1590,7 +1603,10 @@ export interface operations {
     reset_password: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                /** @description Opaque ID of this device; the refresh token is bound to it */
+                "X-Device-Fingerprint": string;
+            };
             path?: never;
             cookie?: never;
         };

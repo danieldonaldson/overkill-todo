@@ -140,6 +140,9 @@ pub async fn register(
     path = "/login",
     tag = "Authentication",
     request_body = LoginRequest,
+    params(
+        ("X-Device-Fingerprint" = String, Header, description = "Opaque ID of this device; the refresh token is bound to it")
+    ),
     responses(
         (status = 200, description = "Login successful", body = AuthResponse),
         (status = 401, description = "Invalid credentials")
@@ -192,6 +195,9 @@ pub async fn login(
     post,
     path = "/refresh",
     tag = "Authentication",
+    params(
+        ("X-Device-Fingerprint" = String, Header, description = "Opaque ID of this device; the refresh token is bound to it")
+    ),
     responses(
         (status = 200, description = "Token refreshed successfully", body = AuthResponse),
         (status = 400, description = "Missing `X-Device-Fingerprint` header"),

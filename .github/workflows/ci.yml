@@ -46,6 +46,7 @@ jobs:
             backend:
               - *shared
               - backend/**
+              - apifuzz/**
               - models/*.qnt
               - scripts/check-rust-pin.sh
               - scripts/models.sh
@@ -360,6 +361,61 @@ jobs:
         run: cargo sqlx migrate run
       - run: ./scripts/models.sh
 
+  # API fuzzing (OT-011): Schemathesis against the committed openapi.json, on a
+  # throwaway database and a dev-mode backend, in three passes (Visitor, signed
+  # in, Member on admin routes). Fixed seed, so a red run reproduces locally with
+  # the command in the job summary. A separate job keeps the backend job's
+  # timings and coverage clean.
+  api-fuzz:
+    name: API fuzzing
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: overkill_todo
+          POSTGRES_PASSWORD: overkill_todo
+          POSTGRES_DB: overkill_todo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://overkill_todo:overkill_todo@localhost/overkill_todo
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Toolchain
+        working-directory: backend
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: sqlx-cli
+      # uv from .mise.toml; it installs the Python apifuzz/.python-version names.
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: uv
+      - name: Fuzz check unit tests
+        run: uv run --project apifuzz --frozen pytest -q apifuzz/tests
+      - name: Fuzz the API
+        run: ./apifuzz/run.sh 1 25
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: api-fuzz-logs
+          path: apifuzz/out/
+          retention-days: 14
+
   # Tamarin protocol model (OT-010 design D9): every sign-in lemma proven against
   # an active network attacker, and each broken variant still attacked. About a
   # minute; runs when the model or its script changes.
@@ -391,7 +447,7 @@ jobs:
   images:
     name: Build ${{ matrix.component }} image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [backend, verify, models, protocols, web, web-e2e, observability, secrets, threat-model]
+    needs: [backend, api-fuzz, verify, models, protocols, web, web-e2e, observability, secrets, threat-model]
     runs-on: ubuntu-24.04
     permissions:
       contents: read

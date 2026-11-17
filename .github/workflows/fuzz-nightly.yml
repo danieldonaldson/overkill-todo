@@ -1,0 +1,92 @@
+name: API fuzzing (nightly)
+
+# The longer API fuzz run (OT-011 design Decision 8): a fresh seed and many more
+# examples per operation than CI's short run, against main. A failure here fails
+# only this workflow (GitHub emails on a failed scheduled run); it gates nothing.
+# The job summary has the seed and the command that reproduces the run locally.
+on:
+  schedule:
+    - cron: '30 3 * * *' # daily, 03:30 UTC
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Seed (empty for a random one)
+        required: false
+        default: ''
+      examples:
+        description: Examples per operation
+        required: false
+        default: '500'
+
+permissions:
+  contents: read
+
+# Its own group: never cancels or waits on CI, and a second nightly queues.
+concurrency:
+  group: fuzz-nightly
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: API fuzzing (long run)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: overkill_todo
+          POSTGRES_PASSWORD: overkill_todo
+          POSTGRES_DB: overkill_todo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://overkill_todo:overkill_todo@localhost/overkill_todo
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+      - name: Toolchain
+        working-directory: backend
+        run: rustup toolchain install
+      # Restores CI's main cache; never saves its own.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+          save-if: false
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: sqlx-cli
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: uv
+      - name: Seed
+        id: seed
+        env:
+          INPUT_SEED: ${{ inputs.seed }}
+          INPUT_EXAMPLES: ${{ inputs.examples }}
+        run: |
+          seed=${INPUT_SEED:-$(shuf -i 1-4294967295 -n 1)}
+          examples=${INPUT_EXAMPLES:-500}
+          [[ $seed =~ ^[0-9]+$ && $examples =~ ^[1-9][0-9]*$ ]] ||
+            { echo "::error::seed and examples must be numbers"; exit 1; }
+          echo "seed=$seed" >>"$GITHUB_OUTPUT"
+          echo "examples=$examples" >>"$GITHUB_OUTPUT"
+          echo "Seed $seed, $examples examples per operation"
+      - name: Fuzz the API
+        env:
+          SEED: ${{ steps.seed.outputs.seed }}
+          EXAMPLES: ${{ steps.seed.outputs.examples }}
+        run: ./apifuzz/run.sh "$SEED" "$EXAMPLES"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: api-fuzz-nightly-logs
+          path: apifuzz/out/
+          retention-days: 30

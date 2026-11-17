@@ -87,8 +87,8 @@ pub struct VerifyEmailRequest {
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
 
-    // Separators are stripped before the 6-digit check, so no pattern here.
-    #[schema(max_length = 32)] // validation::MAX_FORMATTED_CODE_LEN
+    // Exactly 6 ASCII digits once separators are stripped (validation.rs).
+    #[schema(max_length = 32, pattern = "^[^0-9]*([0-9][^0-9]*){6}$")] // MAX_FORMATTED_CODE_LEN
     #[validate(custom(function = "validate_verification_code"))]
     pub code: String,
 }
@@ -124,8 +124,8 @@ pub struct VerifyResetCodeRequest {
     #[validate(email(message = "Invalid email format"))]
     pub email: String,
 
-    // Separators are stripped before the 6-digit check, so no pattern here.
-    #[schema(max_length = 32)] // validation::MAX_FORMATTED_CODE_LEN
+    // Exactly 6 ASCII digits once separators are stripped (validation.rs).
+    #[schema(max_length = 32, pattern = "^[^0-9]*([0-9][^0-9]*){6}$")] // MAX_FORMATTED_CODE_LEN
     #[validate(custom(function = "validate_verification_code"))]
     pub code: String,
 }

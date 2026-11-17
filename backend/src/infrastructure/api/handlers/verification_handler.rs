@@ -354,6 +354,9 @@ pub async fn verify_reset_code(
     path = "/reset-password",
     tag = "Authentication",
     request_body = ResetPasswordRequest,
+    params(
+        ("X-Device-Fingerprint" = String, Header, description = "Opaque ID of this device; the refresh token is bound to it")
+    ),
     responses(
         (status = 200, description = "Password reset successfully with auto-login", body = AuthResponse),
         (status = 400, description = "Invalid or expired token"),
@@ -419,6 +422,9 @@ pub async fn reset_password(
     path = "/complete-signup",
     tag = "Authentication",
     request_body = CompleteRegistrationRequest,
+    params(
+        ("X-Device-Fingerprint" = String, Header, description = "Opaque ID of this device; the refresh token is bound to it")
+    ),
     responses(
         (status = 200, description = "Signup completed, user logged in", body = AuthResponse),
         (status = 400, description = "Invalid request or password already set"),

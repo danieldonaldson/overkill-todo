@@ -204,6 +204,17 @@
         "summary": "Complete signup by setting password",
         "description": "Validates the signup token (from email verification) and sets the user's password.\nReturns auth tokens for auto-login.\n\n# Errors\n\nReturns an error if:\n- The signup token is invalid or expired\n- The email doesn't match the token\n- The user already has a password\n- Password hashing fails",
         "operationId": "complete_signup",
+        "parameters": [
+          {
+            "name": "X-Device-Fingerprint",
+            "in": "header",
+            "description": "Opaque ID of this device; the refresh token is bound to it",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -318,6 +329,17 @@
         "summary": "Login with email and password\n# Errors",
         "description": "Returns an error if login fails due to invalid credentials, validation errors, or service errors.",
         "operationId": "login",
+        "parameters": [
+          {
+            "name": "X-Device-Fingerprint",
+            "in": "header",
+            "description": "Opaque ID of this device; the refresh token is bound to it",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -729,6 +751,17 @@
         "summary": "Refresh the JWT access token using a refresh token\n# Errors",
         "description": "Returns an error if the refresh token is missing, invalid, expired, or service errors occur.",
         "operationId": "refresh",
+        "parameters": [
+          {
+            "name": "X-Device-Fingerprint",
+            "in": "header",
+            "description": "Opaque ID of this device; the refresh token is bound to it",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Token refreshed successfully",
@@ -899,6 +932,17 @@
         "summary": "Reset password with token",
         "description": "Returns auth tokens for auto-login if device fingerprint is provided.\n# Errors\n\nReturns an error if the reset token is invalid, expired, missing device fingerprint, or service errors occur.",
         "operationId": "reset_password",
+        "parameters": [
+          {
+            "name": "X-Device-Fingerprint",
+            "in": "header",
+            "description": "Opaque ID of this device; the refresh token is bound to it",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "requestBody": {
           "content": {
             "application/json": {
@@ -2037,13 +2081,14 @@
       "RequestDeletionRequest": {
         "type": "object",
         "description": "Request to delete account.",
+        "required": [
+          "confirmation"
+        ],
         "properties": {
           "confirmation": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Confirmation text - must be \"DELETE\" to proceed."
+            "type": "string",
+            "description": "Confirmation text - must be \"DELETE\" to proceed. Required: a request\nwithout it is refused with 400 (deserialised as optional only so that\nrefusal carries the specific message).",
+            "pattern": "^DELETE$"
           },
           "password": {
             "type": [
@@ -2283,7 +2328,8 @@
         "properties": {
           "code": {
             "type": "string",
-            "maxLength": 32
+            "maxLength": 32,
+            "pattern": "^[^0-9]*([0-9][^0-9]*){6}$"
           },
           "email": {
             "type": "string",
@@ -2338,7 +2384,8 @@
         "properties": {
           "code": {
             "type": "string",
-            "maxLength": 32
+            "maxLength": 32,
+            "pattern": "^[^0-9]*([0-9][^0-9]*){6}$"
           },
           "email": {
             "type": "string",

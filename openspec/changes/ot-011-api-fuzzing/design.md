@@ -110,6 +110,29 @@ stayed clean, and `/auth/me` kept returning 200. The fuzzer itself rarely ends
 its session, because it can't guess the current password that deletion and
 password change need.
 
+### Outcome (slice 2: `positive_data_acceptance`, 2026-11-17)
+
+Turned on, it failed on 7 operations (seed 1, 25 examples).
+
+- **Fix the description (3):**
+  - `X-Device-Fingerprint` is now a required header on login, refresh,
+    complete-signup and reset-password.
+  - Verification codes have the pattern the server applies: six ASCII digits
+    once separators are stripped, at most 32 characters.
+  - Deletion's `confirmation` is required and must be `DELETE`. Every request
+    without it was already refused.
+- **400 by design, depending on state or configuration (6 operations):**
+  - a well-formed but wrong, unknown or used code or token (verify-email,
+    verify-reset-code, POST verify-magic);
+  - a password requirement that depends on the account (delete, set-password);
+  - providers that aren't configured (`apple` on OAuth start).
+
+  A schema can't express these. The check stays **on** for every other
+  operation, and is off for those six, each with its reason in
+  `apifuzz/schemathesis.toml`.
+
+Clean afterwards with seed 1 (25 examples) and seed 7 (150 examples).
+
 ## Decisions
 
 ### 1. Schemathesis, from the OpenAPI description
@@ -230,7 +253,8 @@ every response must be 403).
   `content_type_conformance`, `response_schema_conformance`,
   `negative_data_rejection`, `ignored_auth`.
 - **Not in slice 1:** `positive_data_acceptance`. It's the main source of the
-  noise named as the riskiest unknown. Slice 2 reconsiders it.
+  noise named as the riskiest unknown. Slice 2 turned it on, except for six
+  operations whose 400s depend on server state (see Hypothesis outcome, slice 2).
 - **Custom `error_body` check:**
   - Every response with status ≥ 400 must be JSON in the standard shape (`code`
     and `message`, both strings) or the verification error shape.
