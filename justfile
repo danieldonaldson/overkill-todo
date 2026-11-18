@@ -17,19 +17,23 @@ backend := "backend"
 web := "@overkill-todo/web"
 # Refuse npm releases younger than 24h, even if someone bypasses pnpm-workspace.yaml.
 pnpm := "env PNPM_CONFIG_MINIMUM_RELEASE_AGE=1440 pnpm"
-# Host-side DB access for sqlx / tests / psql. Matches compose.yaml.
 # Rule unit-test runner; same release as the vmalert image in compose.yaml.
 vmalert_tool := "victoriametrics/vmalert-tool:v1.156.0@sha256:5db1f962282311fe37212711fce72d55983a49a627c632feb38b318d949920fa"
+# Host-side DB access for sqlx / tests / psql. Matches compose.yaml.
 db_url := "postgres://overkill_todo:overkill_todo@localhost:" + env("DB_PORT", "5432") + "/overkill_todo"
 # Compose project: "overkill-todo" in the main checkout, per-worktree otherwise.
 project := env("COMPOSE_PROJECT_NAME", "overkill-todo")
+load_compose := "docker compose -f compose.yaml -f loadtest/compose.load.yaml --profile full"
 
+# Every recipe has a [group]; `just` lists them by group, in this file's order.
+[private]
 default:
     @just --list --unsorted
 
 # ── Setup ────────────────────────────────────────────────────────────────────────
 
 # One-time: tools, deps, browsers, backend/.env, database.
+[group('setup')]
 setup:
     mise install
     cargo kani setup   # Kani's own toolchain for `just verify`; a no-op once done
@@ -43,6 +47,7 @@ setup:
 # (.bench/), proptest seeds, load-test results and Docker volumes. DEPS=1 also
 # deletes node_modules and the fuzzer's venv (`just setup` restores them).
 # Free disk: delete build and test output (DEPS=1 also deletes installed deps).
+[group('setup')]
 clean:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -71,6 +76,8 @@ clean:
 # Each half runs in its own process group (setsid), and the trap kills both
 # groups, so Ctrl-C leaves nothing behind holding the ports. Astro runs directly:
 # `pnpm --filter … dev` moves it into a group of its own, out of reach of the trap.
+[group('dev')]
+[doc('Backend (auto-reload) + web dev server. Web :4321 proxies /api to :4322 (WEB_PORT/API_PORT in a worktree).')]
 dev: db-up
     #!/usr/bin/env bash
     set -euo pipefail
@@ -89,23 +96,29 @@ dev: db-up
     wait -n
 
 # Prod-like stack in Docker: real images behind a Caddy edge on :8080 (EDGE_PORT).
+[group('dev')]
 up:
     docker compose --profile full up --build
 
+# Stop the `just up` stack.
+[group('dev')]
 down:
     docker compose --profile full down
 
 # ── Worktrees ────────────────────────────────────────────────────────────────────
 
 # Parallel checkout at ../overkill-todo-<branch>: own database, ports, backend/.env.
+[group('worktrees')]
 wt-new branch base="HEAD":
     ./scripts/worktree-new.sh {{ quote(branch) }} {{ quote(base) }}
 
 # Remove a wt-new checkout and its database (keeps the branch; FORCE=1 if dirty).
+[group('worktrees')]
 wt-rm branch:
     ./scripts/worktree-rm.sh {{ quote(branch) }}
 
 # Every checkout with its ports.
+[group('worktrees')]
 wt-list:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -118,79 +131,297 @@ wt-list:
       printf '%-50s %s\n' "$p" "$ports"
     done
 
-# ── Secrets ──────────────────────────────────────────────────────────────────────
-# SOPS + age. Policy: deploy/secrets/access.yaml. See deploy/secrets/README.md.
+# ── Database ─────────────────────────────────────────────────────────────────────
 
-# Policy valid, .sops.yaml generated from it, every secret encrypted to exactly its readers. No keys needed.
-secrets-check:
-    ./scripts/secrets.sh check
+# Start the local Postgres and wait until it's healthy.
+[group('database')]
+db-up:
+    docker compose up -d --wait db
 
-# ── Security ─────────────────────────────────────────────────────────────────────
-# Every property in docs/security/threat-model.md names a check (or a gap) that still exists.
-threat-model-check:
-    ./scripts/threat-model-check.sh
+# Apply pending migrations to the local database.
+[group('database')]
+db-migrate:
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx migrate run
+
+# Regenerate the committed offline query cache. Run after changing any query!.
+[group('database')]
+db-prepare: db-migrate
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx prepare -- --all-targets
+
+# Fail if the committed offline query cache is stale.
+[group('database')]
+db-prepare-check:
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx prepare --check -- --all-targets
+
+# Drop the local database volume and recreate it. Local only.
+[group('database')]
+db-reset:
+    docker compose rm -sfv db
+    docker volume rm -f {{project}}_db-data
+    just db-up db-migrate
+
+# psql shell on the local database.
+[group('database')]
+db-psql:
+    docker compose exec db psql -U overkill_todo -d overkill_todo
+
+# Promote a local user to super_admin (bootstrap the first admin).
+[group('database')]
+grant-admin email:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Bound as a psql variable and quoted by psql (:'em'), never interpolated into SQL.
+    out=$(printf '%s\n' "UPDATE users SET role = 'super_admin' WHERE email = :'em' RETURNING email, role;" \
+      | docker compose exec -T db psql -U overkill_todo -d overkill_todo -v ON_ERROR_STOP=1 -v em={{ quote(email) }})
+    echo "$out"
+    if grep -q '^UPDATE 0$' <<<"$out"; then echo "no user matched" >&2; exit 1; fi
+
+# ── API contract ─────────────────────────────────────────────────────────────────
+# backend/openapi.json is generated from the route tree; the web types are generated
+# from it. Run `just api-types` after changing a DTO, handler annotation or route,
+# and commit both files. Never edit either by hand.
+
+# Write the OpenAPI description to backend/openapi.json. No database needed.
+[group('api')]
+api-spec:
+    cd {{backend}} && SQLX_OFFLINE=true cargo run --quiet --example export_openapi > openapi.json.tmp && mv openapi.json.tmp openapi.json
+
+# Fail if backend/openapi.json is stale.
+[group('api')]
+api-spec-check: api-spec
+    git diff --exit-code -- {{backend}}/openapi.json || { echo "backend/openapi.json is stale. Run: just api-types" >&2; exit 1; }
+
+# Generate the web API types from backend/openapi.json.
+[group('api')]
+api-ts:
+    {{pnpm}} --filter {{web}} exec openapi-typescript ../../backend/openapi.json -o src/lib/api/schema.d.ts
+
+# Fail if the web API types are stale.
+[group('api')]
+api-ts-check: api-ts
+    git diff --exit-code -- apps/web/src/lib/api/schema.d.ts || { echo "apps/web/src/lib/api/schema.d.ts is stale. Run: just api-types" >&2; exit 1; }
+
+# Regenerate the OpenAPI description and the web API types.
+[group('api')]
+api-types: api-spec api-ts
+
+# Fail if either generated API file is stale.
+[group('api')]
+api-types-check: api-spec-check api-ts-check
+
+# ── Format & lint ────────────────────────────────────────────────────────────────
+
+# Format the backend (cargo fmt) and the whole repo (prettier).
+[group('format & lint')]
+fmt:
+    cd {{backend}} && cargo fmt
+    {{pnpm}} format
+
+# Fail if the backend isn't cargo-fmt clean.
+[group('format & lint')]
+fmt-check:
+    cd {{backend}} && cargo fmt --check
+
+# Clippy, pedantic + nursery, warnings denied.
+[group('format & lint')]
+lint:
+    cd {{backend}} && SQLX_OFFLINE=true cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -D clippy::allow_attributes_without_reason
+
+# Frontend lint.
+[group('format & lint')]
+lint-js:
+    {{pnpm}} lint
+
+# .mise.toml and backend/rust-toolchain.toml must pin the same Rust.
+[group('format & lint')]
+toolchain-check:
+    ./scripts/check-rust-pin.sh
+
+# ── Tests ────────────────────────────────────────────────────────────────────────
+
+# Backend unit tests: reach nothing (no DB).
+[group('test')]
+test:
+    cd {{backend}} && SQLX_OFFLINE=true cargo nextest run --lib
+
+# Backend integration tests: each #[sqlx::test] gets a fresh database.
+[group('test')]
+test-integration: db-up db-migrate
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo nextest run --tests
+
+# Frontend type check (astro check) and component tests (Vitest).
+[group('test')]
+test-web:
+    {{pnpm}} --filter {{web}} exec astro check
+    {{pnpm}} --filter {{web}} exec vitest run
+
+# Browser e2e against the built site with the API mocked.
+[group('test')]
+e2e:
+    {{pnpm}} --filter {{web}} build
+    {{pnpm}} --filter {{web}} test:e2e
+
+# Real-stack e2e (signup against the live backend). Needs `just dev` running.
+[group('test')]
+e2e-integration:
+    {{pnpm}} --filter {{web}} test:e2e:integration
+
+# Read-only checks against a deployed environment, e.g. just smoke https://app.example.com
+# (for https, first checks the edge negotiates post-quantum key exchange).
+[group('test')]
+[doc('Read-only checks against a deployed env, e.g. `just smoke https://app.example.com` (https: checks PQ key exchange first).')]
+smoke url:
+    ./scripts/smoke-tls.sh {{url}}
+    SMOKE_BASE_URL={{url}} {{pnpm}} --filter {{web}} test:e2e:smoke
+
+# ── API fuzzing (OT-011) ──────────────────────────────────────────────────────────
+# Schemathesis against the committed backend/openapi.json, on a throwaway database
+# and a dev-mode backend on FUZZ_API_PORT (4399): Visitor, signed-in and
+# Member-on-admin passes. Same seed, same requests. See apifuzz/run.sh.
+
+# Fuzz the API against its description (part of `just ci`); a failure prints its seed.
+[group('test')]
+fuzz-api seed="1" examples="25": db-up
+    ./apifuzz/run.sh {{ quote(seed) }} {{ quote(examples) }}
+
+# Unit tests for the fuzz checks (deny list, error-body rules).
+[group('test')]
+fuzz-api-test:
+    uv run --project apifuzz --frozen pytest -q apifuzz/tests
+
+# ── Coverage & benchmarks ────────────────────────────────────────────────────────
+# Regression workflow: `just bench --save-baseline main` on main, then on your
+# branch `just bench --baseline main` (criterion prints the change per bench).
+# Same machine, same power state; HTML reports land in backend/target/criterion.
+
+# Backend coverage over unit + integration tests. HTML report: backend/target/llvm-cov/html.
+[group('coverage & bench')]
+coverage: db-up db-migrate
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo llvm-cov nextest --tests --html
+    cd {{backend}} && cargo llvm-cov report --summary-only
+
+# Frontend component-test coverage. HTML report: apps/web/coverage/index.html.
+[group('coverage & bench')]
+coverage-web:
+    {{pnpm}} --filter {{web}} test:coverage
+
+# Backend benches that need no DB (crypto, domain, middleware). Args go to criterion.
+[group('coverage & bench')]
+bench *args:
+    cd {{backend}} && SQLX_OFFLINE=true cargo bench --bench crypto --bench domain --bench middleware -- {{args}}
+
+# Full-router benches against Postgres. Recreates an `overkill_todo_bench` database each run.
+[group('coverage & bench')]
+bench-db *args: db-up
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo bench --bench http -- {{args}}
+
+# Frontend benches (Vitest bench in Chromium). Compare against a base ref: `just bench-compare --web`.
+[group('coverage & bench')]
+bench-web *args:
+    {{pnpm}} --filter {{web}} exec vitest bench --run {{args}}
+
+# What CI runs on PRs (.github/workflows/bench.yml), here.
+# Benchmark a base ref (default main) vs the working tree. Flags: --backend, --web.
+[group('coverage & bench')]
+bench-compare *args:
+    ./scripts/bench-compare.sh {{args}}
+
+# ── Dependencies ─────────────────────────────────────────────────────────────────
+
+# RustSec advisory scan (the advisory part of `just deny`).
+[group('dependencies')]
+audit:
+    cd {{backend}} && cargo deny check advisories
+
+# cargo-deny: advisories, licenses, bans and sources.
+[group('dependencies')]
+deny:
+    cd {{backend}} && cargo deny check
+
+# Unused dependencies. False positives go in [package.metadata.cargo-machete].
+[group('dependencies')]
+machete:
+    cd {{backend}} && cargo machete
+
+# ── Formal verification (OT-010) ─────────────────────────────────────────────────
 
 # Kani proofs of the auth domain policy (OT-010): every harness, every input within
 # its stated bounds. Needs the pinned Kani from .mise.toml, then `cargo kani setup` once.
 # `-j` checks harnesses in parallel (Kani requires terse output for it), so this
 # takes about as long as the slowest one.
+[group('formal')]
+[doc('Kani proofs of the auth domain policy: every harness, every input within its bounds.')]
 verify:
     @cargo kani --version >/dev/null 2>&1 || { echo "Kani isn't installed: run 'mise install', then 'cargo kani setup' once" >&2; exit 1; }
     cd {{backend}} && SQLX_OFFLINE=true cargo kani -j --output-format=terse
 
 # Quint concurrency models (OT-010): bounded checks of every invariant, the old
 # code's counterexamples, then traces replayed against Postgres. Quint + Java from .mise.toml.
+[group('formal')]
+[doc('Quint concurrency models: invariants, old counterexamples, traces replayed against Postgres.')]
 models: db-up db-migrate
     DATABASE_URL={{db_url}} ./scripts/models.sh
 
 # Tamarin protocol model (OT-010): every sign-in lemma proven against an active
 # network attacker, and each broken variant still attacked. Tamarin + Maude from .mise.toml.
+[group('formal')]
+[doc('Tamarin protocol model: sign-in lemmas proven against an active network attacker.')]
 protocols:
     ./scripts/protocols.sh
 
+# ── Secrets & security ───────────────────────────────────────────────────────────
+# SOPS + age. Policy: deploy/secrets/access.yaml. See deploy/secrets/README.md.
+
+# Policy valid, .sops.yaml generated from it, every secret encrypted to exactly its readers. No keys needed.
+[group('secrets & security')]
+secrets-check:
+    ./scripts/secrets.sh check
+
 # After editing access.yaml: regenerate .sops.yaml and re-key the secrets you can read.
+[group('secrets & security')]
 secrets-sync:
     ./scripts/secrets.sh sync
 
-# Print a new token key (`<kid>:<secret>`) for JWT_SIGNING_KEY / JWT_TRUSTED_KEYS; kid defaults to today.
-jwt-keygen kid="":
-    ./scripts/jwt-keygen.sh {{kid}}
-
 # Encrypt stdin into a new secret, e.g. `openssl rand -base64 32 | just secrets-new deploy/secrets/prod/x.sops`.
+[group('secrets & security')]
 secrets-new path:
     ./scripts/secrets.sh new {{path}}
 
 # On a host: decrypt one environment's secrets into deploy/compose/.secrets/.
+[group('secrets & security')]
 secrets-decrypt env:
     ./scripts/secrets.sh decrypt {{env}}
 
-# ── Database ─────────────────────────────────────────────────────────────────────
+# Print a new token key (`<kid>:<secret>`) for JWT_SIGNING_KEY / JWT_TRUSTED_KEYS; kid defaults to today.
+[group('secrets & security')]
+jwt-keygen kid="":
+    ./scripts/jwt-keygen.sh {{kid}}
+
+# Every property in docs/security/threat-model.md names a check (or a gap) that still exists.
+[group('secrets & security')]
+threat-model-check:
+    ./scripts/threat-model-check.sh
+
+# ── Observability & analytics ────────────────────────────────────────────────────
 
 # Observability stack (collector, Tempo, VictoriaLogs, VictoriaMetrics, vmalert,
 # Alertmanager on :9093, Grafana on :3000). With `just dev`, export
 # OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318, and start the stack with
 # BACKEND_READY_URL=http://host.docker.internal:4322/health/ready for the probe.
+[group('observability')]
+[doc('Start the observability stack (Grafana :3000, Alertmanager :9093). See the justfile for use with `just dev`.')]
 obs-up:
     docker compose --profile observability up -d
 
+# Stop the observability stack.
+[group('observability')]
 obs-down:
     docker compose --profile observability down
 
-# Umami web analytics (OT-005) on http://localhost:3001. Reports are local-only;
-# the edge exposes just /stats/script.js and /stats/api/send. See README.
-analytics-up:
-    docker compose --profile analytics up -d --wait
-
-analytics-down:
-    docker compose --profile analytics down
-
-# Check the 90-day retention SQL against a seeded copy of the live Umami schema.
-# Needs `just analytics-up`. Re-run after upgrading Umami.
-analytics-retention-check:
-    ./scripts/check-analytics-retention.sh
-
 # Delete all stored traces, logs and metrics (Grafana and Alertmanager state is
 # kept). Restarts the stores if the stack was running. Local only.
+[group('observability')]
+[doc('Delete all stored traces, logs and metrics (Grafana and Alertmanager state kept). Local only.')]
 obs-wipe:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -204,6 +435,8 @@ obs-wipe:
 
 # Check the observability config with the pinned images (part of `just ci`):
 # collector config, alert rule unit tests, and both Alertmanager configs.
+[group('observability')]
+[doc('Check collector config, alert rule unit tests and both Alertmanager configs with the pinned images.')]
 obs-check:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -215,184 +448,32 @@ obs-check:
       docker run --rm --entrypoint amtool -v "$obs/alertmanager:/am:ro" "$(grep alertmanager <<<"$images")" check-config "/am/$f"
     done
 
-db-up:
-    docker compose up -d --wait db
+# Umami web analytics (OT-005) on http://localhost:3001. Reports are local-only;
+# the edge exposes just /stats/script.js and /stats/api/send. See README.
+[group('observability')]
+[doc('Start Umami web analytics on http://localhost:3001 (reports are local-only).')]
+analytics-up:
+    docker compose --profile analytics up -d --wait
 
-db-migrate:
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx migrate run
+# Stop Umami.
+[group('observability')]
+analytics-down:
+    docker compose --profile analytics down
 
-# Regenerate the committed offline query cache. Run after changing any query!.
-db-prepare: db-migrate
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx prepare -- --all-targets
-
-db-prepare-check:
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx prepare --check -- --all-targets
-
-# ── API contract ─────────────────────────────────────────────────────────────────
-# backend/openapi.json is generated from the route tree; the web types are generated
-# from it. Run `just api-types` after changing a DTO, handler annotation or route,
-# and commit both files. Never edit either by hand.
-
-# Write the OpenAPI description to backend/openapi.json. No database needed.
-api-spec:
-    cd {{backend}} && SQLX_OFFLINE=true cargo run --quiet --example export_openapi > openapi.json.tmp && mv openapi.json.tmp openapi.json
-
-# Fail if backend/openapi.json is stale.
-api-spec-check: api-spec
-    git diff --exit-code -- {{backend}}/openapi.json || { echo "backend/openapi.json is stale. Run: just api-types" >&2; exit 1; }
-
-# Generate the web API types from backend/openapi.json.
-api-ts:
-    {{pnpm}} --filter {{web}} exec openapi-typescript ../../backend/openapi.json -o src/lib/api/schema.d.ts
-
-# Fail if the web API types are stale.
-api-ts-check: api-ts
-    git diff --exit-code -- apps/web/src/lib/api/schema.d.ts || { echo "apps/web/src/lib/api/schema.d.ts is stale. Run: just api-types" >&2; exit 1; }
-
-# Regenerate the OpenAPI description and the web API types.
-api-types: api-spec api-ts
-
-# Fail if either generated API file is stale.
-api-types-check: api-spec-check api-ts-check
-
-# Drop the local database volume and recreate it. Local only.
-db-reset:
-    docker compose rm -sfv db
-    docker volume rm -f {{project}}_db-data
-    just db-up db-migrate
-
-db-psql:
-    docker compose exec db psql -U overkill_todo -d overkill_todo
-
-# Promote a local user to super_admin (bootstrap the first admin).
-grant-admin email:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Bound as a psql variable and quoted by psql (:'em'), never interpolated into SQL.
-    out=$(printf '%s\n' "UPDATE users SET role = 'super_admin' WHERE email = :'em' RETURNING email, role;" \
-      | docker compose exec -T db psql -U overkill_todo -d overkill_todo -v ON_ERROR_STOP=1 -v em={{ quote(email) }})
-    echo "$out"
-    if grep -q '^UPDATE 0$' <<<"$out"; then echo "no user matched" >&2; exit 1; fi
-
-# ── Checks ───────────────────────────────────────────────────────────────────────
-
-fmt:
-    cd {{backend}} && cargo fmt
-    {{pnpm}} format
-
-# .mise.toml and backend/rust-toolchain.toml must pin the same Rust.
-toolchain-check:
-    ./scripts/check-rust-pin.sh
-
-fmt-check:
-    cd {{backend}} && cargo fmt --check
-
-lint:
-    cd {{backend}} && SQLX_OFFLINE=true cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -D clippy::allow_attributes_without_reason
-
-lint-js:
-    {{pnpm}} lint
-
-# Backend unit tests: reach nothing (no DB).
-test:
-    cd {{backend}} && SQLX_OFFLINE=true cargo nextest run --lib
-
-# Backend integration tests: each #[sqlx::test] gets a fresh database.
-test-integration: db-up db-migrate
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo nextest run --tests
-
-test-web:
-    {{pnpm}} --filter {{web}} exec astro check
-    {{pnpm}} --filter {{web}} exec vitest run
-
-# Browser e2e against the built site with the API mocked.
-e2e:
-    {{pnpm}} --filter {{web}} build
-    {{pnpm}} --filter {{web}} test:e2e
-
-# Real-stack e2e (signup against the live backend). Needs `just dev` running.
-e2e-integration:
-    {{pnpm}} --filter {{web}} test:e2e:integration
-
-# Read-only checks against a deployed environment, e.g. just smoke https://app.example.com
-# (for https, first checks the edge negotiates post-quantum key exchange).
-smoke url:
-    ./scripts/smoke-tls.sh {{url}}
-    SMOKE_BASE_URL={{url}} {{pnpm}} --filter {{web}} test:e2e:smoke
-
-# Backend coverage over unit + integration tests. HTML report: backend/target/llvm-cov/html.
-coverage: db-up db-migrate
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo llvm-cov nextest --tests --html
-    cd {{backend}} && cargo llvm-cov report --summary-only
-
-# ── Benchmarks ───────────────────────────────────────────────────────────────────
-# Regression workflow: `just bench --save-baseline main` on main, then on your
-# branch `just bench --baseline main` (criterion prints the change per bench).
-# Same machine, same power state; HTML reports land in backend/target/criterion.
-
-# Backend benches that need no DB (crypto, domain, middleware). Args go to criterion.
-bench *args:
-    cd {{backend}} && SQLX_OFFLINE=true cargo bench --bench crypto --bench domain --bench middleware -- {{args}}
-
-# Full-router benches against Postgres. Recreates an `overkill_todo_bench` database each run.
-bench-db *args: db-up
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo bench --bench http -- {{args}}
-
-# Frontend benches (Vitest bench in Chromium). Compare against a base ref: `just bench-compare --web`.
-bench-web *args:
-    {{pnpm}} --filter {{web}} exec vitest bench --run {{args}}
-
-# What CI runs on PRs (.github/workflows/bench.yml), here.
-# Benchmark a base ref (default main) vs the working tree. Flags: --backend, --web.
-bench-compare *args:
-    ./scripts/bench-compare.sh {{args}}
-
-# Frontend component-test coverage. HTML report: apps/web/coverage/index.html.
-coverage-web:
-    {{pnpm}} --filter {{web}} test:coverage
-
-# RustSec advisory scan (the advisory part of `just deny`).
-audit:
-    cd {{backend}} && cargo deny check advisories
-
-deny:
-    cd {{backend}} && cargo deny check
-
-# Unused dependencies. False positives go in [package.metadata.cargo-machete].
-machete:
-    cd {{backend}} && cargo machete
-
-# Everything CI gates on. Green here means green CI. The formal checks (Kani, Quint,
-# Tamarin) are independent of each other and of the rest, so they run alongside
-# `ci-checks` rather than after it; wall time is the slowest of the four, not the sum.
-# Their output interleaves; to read one stage's output, rerun it alone (`just models`).
-[parallel]
-ci: ci-checks verify models protocols
-
-# The rest of `ci`, in order: static checks first, then tests.
-ci-checks: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web e2e
-
-# ── API fuzzing (OT-011) ──────────────────────────────────────────────────────────
-# Schemathesis against the committed backend/openapi.json, on a throwaway database
-# and a dev-mode backend on FUZZ_API_PORT (4399): Visitor, signed-in and
-# Member-on-admin passes. Same seed, same requests. See apifuzz/run.sh.
-
-# Fuzz the API against its description (part of `just ci`); a failure prints its seed.
-fuzz-api seed="1" examples="25": db-up
-    ./apifuzz/run.sh {{ quote(seed) }} {{ quote(examples) }}
-
-# Unit tests for the fuzz checks (deny list, error-body rules).
-fuzz-api-test:
-    uv run --project apifuzz --frozen pytest -q apifuzz/tests
+# Check the 90-day retention SQL against a seeded copy of the live Umami schema.
+# Needs `just analytics-up`. Re-run after upgrading Umami.
+[group('observability')]
+[doc('Check the 90-day Umami retention SQL against a seeded copy of the schema. Needs `just analytics-up`.')]
+analytics-retention-check:
+    ./scripts/check-analytics-retention.sh
 
 # ── Load tests (OT-004) ──────────────────────────────────────────────────────────
 # Same release images as `just up`, pinned to cores and capped, with production
 # hashing cost (loadtest/compose.load.yaml). Results are relative to this
 # machine. See README "Load tests".
 
-load_compose := "docker compose -f compose.yaml -f loadtest/compose.load.yaml --profile full"
-
 # Build and start the capped stack in the background; returns once the edge says ready.
+[group('load test')]
 load-up:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -401,22 +482,28 @@ load-up:
     for _ in $(seq 60); do curl -fsS -o /dev/null --max-time 2 "$url" && { echo "ready: $url"; exit 0; }; sleep 1; done
     echo "the stack didn't become ready at $url" >&2; exit 1
 
+# Stop the load-test stack.
+[group('load test')]
 load-down:
     {{load_compose}} --profile loadtest down
 
 # Create n verified test Members (test-load-<i>@example.test) through the real sign-up flow. Safe to repeat.
+[group('load test')]
 load-seed n="500":
     ./loadtest/run.sh --seed {{n}}
 
 # Run a scenario (smoke, auth-mix, ...); fails if a limit is exceeded. `just load` lists them.
+[group('load test')]
 load scenario="":
     ./loadtest/run.sh {{ quote(scenario) }}
 
 # Make the latest complete run of a scenario its baseline (commit loadtest/baselines/ afterwards).
+[group('load test')]
 load-baseline scenario:
     node loadtest/report.mjs --set-baseline {{ quote(scenario) }}
 
 # Delete every seeded test Member (and, by cascade, their sessions). Local only.
+[group('load test')]
 load-reset:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -425,6 +512,23 @@ load-reset:
 
 # ── Images ───────────────────────────────────────────────────────────────────────
 
+# Build the backend and web images locally.
+[group('images')]
 docker-build:
     docker build -t overkill-todo-backend {{backend}}
     docker build -t overkill-todo-web -f apps/web/Dockerfile .
+
+# ── CI ───────────────────────────────────────────────────────────────────────────
+
+# Everything CI gates on. Green here means green CI. The formal checks (Kani, Quint,
+# Tamarin) are independent of each other and of the rest, so they run alongside
+# `ci-checks` rather than after it; wall time is the slowest of the four, not the sum.
+# Their output interleaves; to read one stage's output, rerun it alone (`just models`).
+[group('ci')]
+[parallel]
+[doc('Everything CI gates on; green here means green CI. Formal checks run alongside ci-checks.')]
+ci: ci-checks verify models protocols
+
+# The rest of `ci`, in order: static checks first, then tests.
+[group('ci')]
+ci-checks: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web e2e
