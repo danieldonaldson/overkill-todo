@@ -42,6 +42,7 @@ use overkill_todo::{
 use sqlx::PgPool;
 
 use overkill_todo::infrastructure::crypto::Crypto;
+use overkill_todo::infrastructure::telemetry::metrics::AuthMetrics;
 
 static TEST_CRYPTO: OnceLock<Arc<Crypto>> = OnceLock::new();
 
@@ -168,6 +169,7 @@ pub fn create_test_app(pool: PgPool) -> Router {
         console_email(),
         HashMap::new(),
         no_op_turnstile(),
+        AuthMetrics::from_global(),
     )
 }
 
@@ -184,6 +186,7 @@ pub fn create_test_app_with_crypto(pool: PgPool, crypto: Arc<Crypto>) -> Router 
         console_email(),
         HashMap::new(),
         no_op_turnstile(),
+        AuthMetrics::from_global(),
     )
 }
 
@@ -203,6 +206,24 @@ pub fn create_test_app_with_oauth(
         console_email(),
         oauth_clients,
         no_op_turnstile(),
+        AuthMetrics::from_global(),
+    )
+}
+
+/// Build the test app recording auth outcomes on `auth_metrics`, e.g.
+/// instruments on a meter backed by an in-memory exporter.
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; only the auth metrics binary uses this"
+)]
+pub fn create_test_app_with_auth_metrics(pool: PgPool, auth_metrics: AuthMetrics) -> Router {
+    create_test_app_full(
+        pool,
+        test_crypto(),
+        console_email(),
+        HashMap::new(),
+        no_op_turnstile(),
+        auth_metrics,
     )
 }
 
@@ -227,6 +248,7 @@ pub fn create_test_app_with_turnstile(
         console_email(),
         HashMap::new(),
         turnstile_service,
+        AuthMetrics::from_global(),
     )
 }
 
@@ -324,6 +346,7 @@ pub fn create_test_app_with_email_service(
         email_service,
         HashMap::new(),
         no_op_turnstile(),
+        AuthMetrics::from_global(),
     )
 }
 
@@ -337,6 +360,7 @@ fn create_test_app_full(
     email_service: Arc<dyn EmailService>,
     oauth_clients: HashMap<OAuthProvider, Arc<dyn OAuthProviderClient>>,
     turnstile_service: Arc<dyn TurnstileService>,
+    auth_metrics: AuthMetrics,
 ) -> Router {
     let code_generator = Arc::new(RandomCodeGenerator::development());
     let jwt_service = Arc::new(CryptoJwtService::new(crypto.clone()));
@@ -459,6 +483,7 @@ fn create_test_app_full(
         send_verification_code_use_case: send_verification_uc,
         turnstile_service: turnstile_service.clone(),
         crypto: crypto.clone(),
+        auth_metrics: auth_metrics.clone(),
     });
 
     let verification_deps = Arc::new(VerificationHandlerDeps {
@@ -473,6 +498,7 @@ fn create_test_app_full(
         turnstile_service,
         frontend_base_url: "http://localhost:4321".to_string(),
         crypto: crypto.clone(),
+        auth_metrics,
     });
 
     let oauth_deps = Arc::new(OAuthHandlerDeps {

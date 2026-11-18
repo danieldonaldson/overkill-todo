@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::infrastructure::persistence::DatabaseHealth;
 use opentelemetry::{
     KeyValue,
-    metrics::{Histogram, Meter},
+    metrics::{Counter, Histogram, Meter},
 };
 use opentelemetry_sdk::metrics::{PeriodicReader, SdkMeterProvider, exporter::PushMetricExporter};
 
@@ -84,6 +84,126 @@ impl HttpMetrics {
                 KeyValue::new("status_class", status_class(status)),
             ],
         );
+    }
+}
+
+/// Which credential or code check an [`AuthMetrics`] measurement is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthFlow {
+    PasswordSignIn,
+    EmailCode,
+    ResetCode,
+    MagicLink,
+}
+
+impl AuthFlow {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PasswordSignIn => "password_sign_in",
+            Self::EmailCode => "email_code",
+            Self::ResetCode => "reset_code",
+            Self::MagicLink => "magic_link",
+        }
+    }
+}
+
+/// How a credential or code check ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthOutcome {
+    /// The credential or code was accepted.
+    Success,
+    /// A wrong credential or code (including the guess that locks the code).
+    Failure,
+    /// Refused without checking, because the code is locked.
+    Locked,
+    /// The code had expired.
+    Expired,
+}
+
+impl AuthOutcome {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::Locked => "locked",
+            Self::Expired => "expired",
+        }
+    }
+}
+
+/// Code flows that have an attempt cap, for `auth.code.lockouts`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockableCode {
+    EmailCode,
+    ResetCode,
+}
+
+impl LockableCode {
+    #[must_use]
+    pub const fn flow(self) -> AuthFlow {
+        match self {
+            Self::EmailCode => AuthFlow::EmailCode,
+            Self::ResetCode => AuthFlow::ResetCode,
+        }
+    }
+}
+
+/// Authentication outcome counters (OT-007 D3), recorded by the auth and
+/// verification handlers once the use case has returned.
+///
+/// Every label value comes from a closed enum above, never from the request,
+/// so no measurement can carry an email, user ID, code or token, and the
+/// number of series is fixed.
+#[derive(Clone)]
+pub struct AuthMetrics {
+    attempts: Counter<u64>,
+    lockouts: Counter<u64>,
+}
+
+impl AuthMetrics {
+    #[must_use]
+    pub fn new(meter: &Meter) -> Self {
+        Self {
+            attempts: meter
+                .u64_counter("auth.attempts")
+                .with_unit("{attempt}")
+                .with_description("Credential and code checks, by flow and outcome")
+                .build(),
+            lockouts: meter
+                .u64_counter("auth.code.lockouts")
+                .with_unit("{lockout}")
+                .with_description("Codes that became locked by reaching the attempt cap")
+                .build(),
+        }
+    }
+
+    /// Instruments on the global meter.
+    #[must_use]
+    pub fn from_global() -> Self {
+        Self::new(&global_meter())
+    }
+
+    /// Count one check of `flow` that ended in `outcome`.
+    pub fn attempt(&self, flow: AuthFlow, outcome: AuthOutcome) {
+        self.attempts.add(
+            1,
+            &[
+                KeyValue::new("flow", flow.as_str()),
+                KeyValue::new("outcome", outcome.as_str()),
+            ],
+        );
+    }
+
+    /// Count a wrong code guess. The guess is a `failure`; if it left no
+    /// attempts it also locked the code, which is counted once here.
+    pub fn code_failure(&self, code: LockableCode, attempts_remaining: i32) {
+        self.attempt(code.flow(), AuthOutcome::Failure);
+        if attempts_remaining <= 0 {
+            self.lockouts
+                .add(1, &[KeyValue::new("flow", code.flow().as_str())]);
+        }
     }
 }
 
@@ -198,13 +318,29 @@ pub(crate) mod testing {
         })
         .unwrap_or_default()
     }
+
+    /// `(attributes, value)` for each data point of the `u64` sum `name`,
+    /// sorted by attributes.
+    pub fn u64_sum_points(exporter: &InMemoryMetricExporter, name: &str) -> Vec<(Attrs, u64)> {
+        let mut points = with_metric(exporter, name, |m| {
+            let AggregatedMetrics::U64(MetricData::Sum(sum)) = m.data() else {
+                panic!("{name} is not a u64 sum");
+            };
+            sum.data_points()
+                .map(|dp| (sorted_attrs(dp.attributes()), dp.value()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+        points.sort();
+        points
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use opentelemetry::metrics::MeterProvider as _;
 
-    use super::testing::{f64_histogram_points, in_memory, unit};
+    use super::testing::{Attrs, f64_histogram_points, in_memory, u64_sum_points, unit};
     use super::*;
 
     #[test]
@@ -250,5 +386,101 @@ mod tests {
             meter_provider::<opentelemetry_sdk::metrics::InMemoryMetricExporter>(&service, None);
         HttpMetrics::new(&provider.meter(METER_NAME)).record("/x", "GET", 200, 0.001);
         provider.shutdown().unwrap();
+    }
+
+    fn attrs(pairs: &[(&str, &str)]) -> Attrs {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn auth_attempts_are_counted_by_flow_and_outcome() {
+        let (provider, exporter) = in_memory();
+        let metrics = AuthMetrics::new(&provider.meter(METER_NAME));
+        metrics.attempt(AuthFlow::PasswordSignIn, AuthOutcome::Failure);
+        metrics.attempt(AuthFlow::PasswordSignIn, AuthOutcome::Failure);
+        metrics.attempt(AuthFlow::PasswordSignIn, AuthOutcome::Success);
+        metrics.attempt(AuthFlow::ResetCode, AuthOutcome::Expired);
+        provider.force_flush().unwrap();
+
+        assert_eq!(
+            unit(&exporter, "auth.attempts").as_deref(),
+            Some("{attempt}")
+        );
+        assert_eq!(
+            u64_sum_points(&exporter, "auth.attempts"),
+            vec![
+                (
+                    attrs(&[("flow", "password_sign_in"), ("outcome", "failure")]),
+                    2
+                ),
+                (
+                    attrs(&[("flow", "password_sign_in"), ("outcome", "success")]),
+                    1
+                ),
+                (attrs(&[("flow", "reset_code"), ("outcome", "expired")]), 1),
+            ]
+        );
+    }
+
+    /// Only the guess that leaves no attempts counts as a lockout; every wrong
+    /// guess is a failure.
+    #[test]
+    fn the_locking_guess_is_counted_once() {
+        let (provider, exporter) = in_memory();
+        let metrics = AuthMetrics::new(&provider.meter(METER_NAME));
+        for remaining in (0..5).rev() {
+            metrics.code_failure(LockableCode::EmailCode, remaining);
+        }
+        provider.force_flush().unwrap();
+
+        assert_eq!(
+            u64_sum_points(&exporter, "auth.attempts"),
+            vec![(attrs(&[("flow", "email_code"), ("outcome", "failure")]), 5)]
+        );
+        assert_eq!(
+            unit(&exporter, "auth.code.lockouts").as_deref(),
+            Some("{lockout}")
+        );
+        assert_eq!(
+            u64_sum_points(&exporter, "auth.code.lockouts"),
+            vec![(attrs(&[("flow", "email_code")]), 1)]
+        );
+    }
+
+    /// The series count is fixed by the label enums: many calls with every
+    /// combination never yield more than 4 × 4 attempt series and 2 lockout
+    /// series.
+    #[test]
+    fn series_do_not_grow_with_calls() {
+        let (provider, exporter) = in_memory();
+        let metrics = AuthMetrics::new(&provider.meter(METER_NAME));
+        let flows = [
+            AuthFlow::PasswordSignIn,
+            AuthFlow::EmailCode,
+            AuthFlow::ResetCode,
+            AuthFlow::MagicLink,
+        ];
+        let outcomes = [
+            AuthOutcome::Success,
+            AuthOutcome::Failure,
+            AuthOutcome::Locked,
+            AuthOutcome::Expired,
+        ];
+        for i in 0..1_000 {
+            metrics.attempt(flows[i % 4], outcomes[(i / 4) % 4]);
+            let code = if i % 2 == 0 {
+                LockableCode::EmailCode
+            } else {
+                LockableCode::ResetCode
+            };
+            metrics.code_failure(code, 0);
+        }
+        provider.force_flush().unwrap();
+
+        assert_eq!(u64_sum_points(&exporter, "auth.attempts").len(), 16);
+        assert_eq!(u64_sum_points(&exporter, "auth.code.lockouts").len(), 2);
     }
 }

@@ -49,6 +49,27 @@ exact boundaries. We'll know the real answer only after the first deploy:
 record each alert that fires in its first month and whether it was real, then
 revise D5.
 
+**Slice 1 results (2026-11-17, local capped stack, `DEV_MODE`):**
+
+- `just load auth-abuse` (40 wrong passwords in 2 minutes, 6 email codes
+  guessed until locked) fired both alerts within a minute:
+  `AuthSignInFailuresHigh` and `AuthCodeLockoutsHigh` ("6 codes locked in the
+  last hour"), each linking to its dashboard panel. Alertmanager's local route
+  is the null receiver, so no email was sent. The sign-in alert resolved once
+  the 15-minute window passed.
+- `just load auth-mix` recorded only `password_sign_in/success` (1,968 in the
+  run window), with no failures or lockouts, and fired no auth alert.
+- Caveat on that run: `auth-mix` itself fails today, unrelated to this change.
+  Since OT-010 slice 5 the session cookies are `__Host-` (Secure), and k6 talks
+  plain HTTP to the edge, so `/me` and `/refresh` get no cookie and return 401.
+  Sign-in, the only flow measured in slice 1, is unaffected. Re-check `auth-mix`
+  once the load harness is fixed, before slice 2 counts session anomalies.
+- Separately, the backend was OOM-killed (1 GB cap) early in an `auth-mix` run
+  that started right after two `auth-abuse` runs. A fresh backend held a steady
+  ~195 MB through a full `auth-mix`, so this looks like the production-cost
+  Argon2 burst (registers and code checks at 64 MiB each), not a leak. Not
+  investigated further here.
+
 ## Decisions
 
 ### D1. Record in the API handlers, from typed use-case results (infrastructure)
@@ -129,13 +150,11 @@ anomalies. Each alert's threshold is drawn as a line on its panel. Alert
 
 - `for: 0m`, because the window is already in the range. A `for` on top of
   that would delay a burst by another window.
-- `increase()` on sparse counters extrapolates. Unit tests pin values just
-  either side of each threshold. If extrapolation makes the boundary fuzzy,
-  switch to `sum(rate(...[w])) * w_seconds` with `round()`, decided in the
-  slice.
-- A counter that appears for the first time (first failure since start)
-  starts at 1, and `increase()` misses that first increment. Accepted: these
-  thresholds are about bursts, not single events.
+- Decided in slice 1: plain `increase()` stays. VictoriaMetrics' `increase()`
+  doesn't extrapolate, and it counts a new series' first sample as an increase
+  from 0, so a counter that first appears at 1 isn't missed. The vmalert unit
+  tests show exact counts: 30 failures in 15 minutes stay quiet, 31 fire, and 5
+  lockouts in an hour stay quiet, 6 fire.
 - `severity: warning` vs the existing `page`: Alertmanager routes everything
   to email today, so the label changes nothing yet. It lets a later change
   route security alerts differently.

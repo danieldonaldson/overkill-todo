@@ -322,3 +322,110 @@ tests:
           - exp_labels: { severity: page, job: analytics_retention }
             exp_annotations:
               summary: 'Analytics retention job (analytics_retention) has not succeeded for 2d 0h 16m 0s'
+
+  # --- auth (OT-007) -------------------------------------------------------
+  # OTel counters appear on their first increment, so a series starts at the
+  # first minute's count, not 0. VictoriaMetrics' increase() counts that first
+  # sample and doesn't extrapolate, so these counts are exact.
+
+  # Spec "Credential stuffing burst": 40 wrong passwords in 10 minutes (4 a
+  # minute) fire, then resolve once the 15-minute count drops to 30 or below.
+  - name: credential stuffing burst fires and resolves
+    interval: 1m
+    input_series:
+      - series: 'auth_attempts_total{flow="password_sign_in",outcome="failure"}'
+        values: '4+4x9 40x30'
+      - series: 'auth_attempts_total{flow="password_sign_in",outcome="success"}'
+        values: '1+1x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AuthSignInFailuresHigh
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AuthSignInFailuresHigh
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: '40 failed password sign-ins in the last 15 minutes (threshold 30)'
+              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-1'
+      - eval_time: 30m
+        alertname: AuthSignInFailuresHigh
+        exp_alerts: []
+
+  # Exactly 30 in the window stays quiet; 31 fires.
+  - name: sign-in failures at the threshold do not fire
+    interval: 1m
+    input_series:
+      - series: 'auth_attempts_total{flow="password_sign_in",outcome="failure"}'
+        values: '3+3x9 30x10'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: AuthSignInFailuresHigh
+        exp_alerts: []
+  - name: sign-in failures just over the threshold fire
+    interval: 1m
+    input_series:
+      - series: 'auth_attempts_total{flow="password_sign_in",outcome="failure"}'
+        values: '3+3x9 31x10'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: AuthSignInFailuresHigh
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: '31 failed password sign-ins in the last 15 minutes (threshold 30)'
+              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-1'
+
+  # Spec "A forgetful Member does not alert": 6 wrong passwords, then a reset
+  # code is used and the new password works.
+  - name: forgetful member does not alert
+    interval: 1m
+    input_series:
+      - series: 'auth_attempts_total{flow="password_sign_in",outcome="failure"}'
+        values: '1 2 3 4 5 6x20'
+      - series: 'auth_attempts_total{flow="reset_code",outcome="success"}'
+        values: '_x7 1x20'
+      - series: 'auth_attempts_total{flow="password_sign_in",outcome="success"}'
+        values: '_x9 1x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AuthSignInFailuresHigh
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AuthCodeLockoutsHigh
+        exp_alerts: []
+
+  # Spec "Code guessing across many accounts": 6 codes locked within an hour,
+  # across both flows, fire; the alert resolves once they leave the window.
+  - name: code lockouts across many accounts fire and resolve
+    interval: 5m
+    input_series:
+      - series: 'auth_code_lockouts_total{flow="email_code"}'
+        values: '1 2 3 4 4x30'
+      - series: 'auth_code_lockouts_total{flow="reset_code"}'
+        values: '_ _ 1 2 2x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AuthCodeLockoutsHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: AuthCodeLockoutsHigh
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: '6 codes locked in the last hour (threshold 5)'
+              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-4'
+      - eval_time: 90m
+        alertname: AuthCodeLockoutsHigh
+        exp_alerts: []
+
+  # Exactly 5 lockouts in an hour stays quiet.
+  - name: code lockouts at the threshold do not fire
+    interval: 5m
+    input_series:
+      - series: 'auth_code_lockouts_total{flow="email_code"}'
+        values: '1 2 3 4 5x20'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AuthCodeLockoutsHigh
+        exp_alerts: []

@@ -14,8 +14,8 @@ use crate::{
         },
         ports::TurnstileService,
         use_cases::{
-            GetCurrentUserUseCase, LoginUserUseCase, RefreshTokenUseCase, RegisterOutcome,
-            RegisterUserUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
+            GetCurrentUserUseCase, LoginError, LoginUserUseCase, RefreshTokenUseCase,
+            RegisterOutcome, RegisterUserUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
         },
     },
     domain::errors::DomainError,
@@ -30,6 +30,7 @@ use crate::{
         middleware::AuthUser,
     },
     infrastructure::crypto::Crypto,
+    infrastructure::telemetry::metrics::{AuthFlow, AuthMetrics, AuthOutcome},
 };
 
 /// How long registration will wait for the verification email to be handed to
@@ -52,6 +53,7 @@ pub struct AuthHandlerDeps {
     pub send_verification_code_use_case: Arc<SendVerificationCodeUseCase>,
     pub turnstile_service: Arc<dyn TurnstileService>,
     pub crypto: Arc<Crypto>,
+    pub auth_metrics: AuthMetrics,
 }
 
 /// Initiate user registration (email-only step)
@@ -167,11 +169,23 @@ pub async fn login(
     // Extract device fingerprint
     let device_fingerprint = require_device_fingerprint(&headers)?;
 
-    // Verify credentials (timing-equalized across all failure cases).
-    let user = deps
+    // Verify credentials (timing-equalized across all failure cases). The
+    // outcome is counted after the check, so it can't change the timing; an
+    // unknown email is a failure like a wrong password (OT-007 D3).
+    let result = deps
         .login_use_case
         .execute(&request.email, &request.password)
-        .await?;
+        .await;
+    match &result {
+        Ok(_) => deps
+            .auth_metrics
+            .attempt(AuthFlow::PasswordSignIn, AuthOutcome::Success),
+        Err(LoginError::InvalidCredentials) => deps
+            .auth_metrics
+            .attempt(AuthFlow::PasswordSignIn, AuthOutcome::Failure),
+        Err(LoginError::Domain(_)) => {}
+    }
+    let user = result?;
 
     // Create refresh token, then issue the session (JWT + CSRF + cookies).
     let refresh_token = deps

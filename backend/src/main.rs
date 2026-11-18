@@ -325,6 +325,9 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         }
     }
 
+    // Auth outcome counters (OT-007), shared by the sign-in and code handlers.
+    let auth_metrics = telemetry::metrics::AuthMetrics::from_global();
+
     let auth_deps = Arc::new(AuthHandlerDeps {
         register_use_case: register_uc,
         login_use_case: login_uc,
@@ -334,6 +337,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         send_verification_code_use_case: send_verification_uc.clone(),
         turnstile_service: turnstile_service.clone(),
         crypto: crypto.clone(),
+        auth_metrics: auth_metrics.clone(),
     });
 
     let verification_deps = Arc::new(VerificationHandlerDeps {
@@ -348,6 +352,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         turnstile_service,
         frontend_base_url: settings.server.frontend_base_url.clone(),
         crypto: crypto.clone(),
+        auth_metrics,
     });
 
     let oauth_deps = Arc::new(OAuthHandlerDeps {

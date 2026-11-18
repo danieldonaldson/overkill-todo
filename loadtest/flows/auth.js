@@ -65,3 +65,35 @@ export function requireSeeded(client) {
     ? null
     : `Test Member ${last} can't sign in (HTTP ${res.status}). Run \`just load-seed ${USERS}\` first.`
 }
+
+// ── Abuse (OT-007) ──────────────────────────────────────────────────────────────
+// What an attacker does, for checking the auth alerts end to end. Not part of
+// any normal-use scenario.
+
+/** Sign in as a seeded Member with a wrong password (credential stuffing). */
+export function wrongSignIn(client, email = memberForVu()) {
+  const res = client.request('POST', '/auth/login', {
+    body: { email, password: 'not-the-password-1' },
+    fingerprint: true,
+    expect: [401],
+  })
+  client.reset()
+  return res
+}
+
+/**
+ * Register a fresh signup and guess its email code wrongly until it locks
+ * (`attempts` wrong guesses), then once more to be refused as locked. The
+ * address starts `test-load-` so `just load-reset` removes it.
+ */
+export function guessCodeUntilLocked(client, email, attempts = 5) {
+  client.request('POST', '/auth/register', { body: { email } })
+  // The dev code for `test-*` addresses is 123456, so this is always wrong.
+  for (let i = 0; i < attempts + 1; i++) {
+    client.request('POST', '/auth/verify-email', {
+      body: { email, code: '000000' },
+      expect: [400],
+    })
+  }
+  client.reset()
+}

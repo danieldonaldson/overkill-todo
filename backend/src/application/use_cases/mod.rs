@@ -12,9 +12,10 @@ pub use auth::{
     CompleteSignupUseCase, GetCurrentUserUseCase, LoginError, LoginUserUseCase, OAuthCallbackMode,
     OAuthCallbackResult, OAuthCallbackUseCase, OAuthUnlinkUseCase, RefreshResult,
     RefreshTokenUseCase, RegisterOutcome, RegisterUserUseCase, RequestPasswordResetUseCase,
-    ResendResult, ResendVerificationError, ResendVerificationUseCase, ResetPasswordUseCase,
-    RevokeTokenUseCase, SendVerificationCodeUseCase, ValidateResetCodeUseCase, VerifyEmailError,
-    VerifyEmailUseCase, VerifyMagicLinkError, VerifyMagicLinkUseCase,
+    ResendResult, ResendVerificationError, ResendVerificationUseCase, ResetCodeError,
+    ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
+    ValidateResetCodeUseCase, VerifyEmailError, VerifyEmailUseCase, VerifyMagicLinkError,
+    VerifyMagicLinkUseCase,
 };
 
 pub use user::{

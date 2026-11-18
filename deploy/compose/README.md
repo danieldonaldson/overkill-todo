@@ -116,6 +116,14 @@ Web analytics (OT-005) on the first deploy, after the app is up (details in
    `analytics_retention_last_success_timestamp_seconds` has a value (it shows
    up about a minute after the push).
 
+Auth anomaly metrics (OT-007) on the first deploy: the alert rules and the
+"Auth security" dashboard are config, so restart them before rolling the
+backend (`dc restart vmalert grafana`). Rules over metrics that don't exist yet
+stay quiet. Then roll the backend digest, `just smoke https://<domain>`, sign
+in once, and check that the dashboard's successful sign-ins rise by one within a
+minute. Record each auth alert that fires in the first month, and whether it
+was a real attack, in the OT-007 design's Hypothesis.
+
 Security (OT-010), before launch:
 
 1. Add sign-in rate limiting at the edge (Traefik), per address and per

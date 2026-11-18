@@ -21,12 +21,12 @@ use crate::{
         ports::TurnstileService,
         use_cases::auth::{
             CompleteSignupUseCase, RefreshTokenUseCase, RequestPasswordResetUseCase,
-            ResendVerificationError, ResendVerificationUseCase, ResetPasswordUseCase,
-            ValidateResetCodeUseCase, VerifyEmailError, VerifyEmailUseCase, VerifyMagicLinkError,
-            VerifyMagicLinkUseCase,
+            ResendVerificationError, ResendVerificationUseCase, ResetCodeError,
+            ResetPasswordUseCase, ValidateResetCodeUseCase, VerifyEmailError, VerifyEmailUseCase,
+            VerifyMagicLinkError, VerifyMagicLinkUseCase,
         },
     },
-    domain::entities::attempt_lockout::RESEND_COOLDOWN_MINUTES,
+    domain::{entities::attempt_lockout::RESEND_COOLDOWN_MINUTES, errors::DomainError},
     infrastructure::api::{
         error::{AppError, VerificationOrStandardError},
         extractors::{ApiQuery, ValidatedJson},
@@ -39,6 +39,7 @@ use crate::{
         },
     },
     infrastructure::crypto::Crypto,
+    infrastructure::telemetry::metrics::{AuthFlow, AuthMetrics, AuthOutcome, LockableCode},
 };
 
 /// Dependencies for verification-related handlers.
@@ -55,6 +56,7 @@ pub struct VerificationHandlerDeps {
     /// Frontend base URL for redirects (e.g., `http://localhost:4321` or `https://app.example.com`)
     pub frontend_base_url: String,
     pub crypto: Arc<Crypto>,
+    pub auth_metrics: AuthMetrics,
 }
 
 /// Verify email with code
@@ -81,11 +83,13 @@ pub async fn verify_email(
     // Strip non-digits from the code (handles copy-paste with spaces)
     let code = sanitize_verification_code(&request.code);
 
-    match deps
+    let result = deps
         .verify_email_use_case
         .execute(&request.email, &code)
-        .await
-    {
+        .await;
+    record_email_code_outcome(&deps.auth_metrics, &result);
+
+    match result {
         Ok(user) => {
             // Success - email verified
             issue_tokens_or_signup_token(&deps, &headers, user).await
@@ -132,6 +136,41 @@ pub async fn verify_email(
             let app_error: AppError = VerifyEmailError::Internal(msg).into();
             app_error.into_response()
         }
+    }
+}
+
+/// Count an email-code check (OT-007 D3). An unknown or already verified
+/// email is not a guess at a code, and an internal error is not an outcome,
+/// so neither is counted.
+fn record_email_code_outcome<T>(metrics: &AuthMetrics, result: &Result<T, VerifyEmailError>) {
+    let flow = AuthFlow::EmailCode;
+    match result {
+        Ok(_) => metrics.attempt(flow, AuthOutcome::Success),
+        Err(VerifyEmailError::CodeExpired) => metrics.attempt(flow, AuthOutcome::Expired),
+        Err(VerifyEmailError::CodeLocked) => metrics.attempt(flow, AuthOutcome::Locked),
+        Err(VerifyEmailError::CodeInvalid { attempts_remaining }) => {
+            metrics.code_failure(LockableCode::EmailCode, *attempts_remaining);
+        }
+        Err(
+            VerifyEmailError::NotFound(_)
+            | VerifyEmailError::AlreadyVerified(_)
+            | VerifyEmailError::Internal(_),
+        ) => {}
+    }
+}
+
+/// Count a reset-code check (OT-007 D3). "No code" (which includes an
+/// unknown email) is not a guess, and an internal error is not an outcome.
+fn record_reset_code_outcome<T>(metrics: &AuthMetrics, result: &Result<T, ResetCodeError>) {
+    let flow = AuthFlow::ResetCode;
+    match result {
+        Ok(_) => metrics.attempt(flow, AuthOutcome::Success),
+        Err(ResetCodeError::Expired) => metrics.attempt(flow, AuthOutcome::Expired),
+        Err(ResetCodeError::Locked) => metrics.attempt(flow, AuthOutcome::Locked),
+        Err(ResetCodeError::Invalid { attempts_remaining }) => {
+            metrics.code_failure(LockableCode::ResetCode, *attempts_remaining);
+        }
+        Err(ResetCodeError::NoCode | ResetCodeError::Domain(_)) => {}
     }
 }
 
@@ -338,10 +377,12 @@ pub async fn verify_reset_code(
 ) -> Result<Json<VerifyResetCodeResponse>, AppError> {
     let code = sanitize_verification_code(&request.code);
 
-    let reset_token = deps
+    let result = deps
         .validate_reset_code_use_case
         .execute(&request.email, &code)
-        .await?;
+        .await;
+    record_reset_code_outcome(&deps.auth_metrics, &result);
+    let reset_token = result.map_err(DomainError::from)?;
 
     Ok(Json(VerifyResetCodeResponse { reset_token }))
 }

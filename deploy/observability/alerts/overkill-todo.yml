@@ -146,3 +146,31 @@ groups:
           job: analytics_retention
         annotations:
           summary: 'Analytics retention job (analytics_retention) has not succeeded for {{ $value | humanizeDuration }}'
+
+  # Authentication abuse (OT-007, design D5). Thresholds are absolute counts,
+  # not ratios: at this site's traffic a ratio fires on 2 failed sign-ins out of
+  # 3 at night. They are a first guess, revisited after the first month in
+  # production. No `for`: the window is already in the range, and a `for` would
+  # delay a burst by another window. `severity: warning` routes the same as
+  # `page` today; it lets a later change route security alerts differently.
+  - name: auth
+    rules:
+      - alert: AuthSignInFailuresHigh
+        expr: |
+          sum(increase(auth_attempts_total{flow="password_sign_in",outcome="failure"}[15m])) > 30
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $value | humanize }} failed password sign-ins in the last 15 minutes (threshold 30)'
+          dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-1'
+
+      # Counted once per code, on the guess that uses the last attempt; guesses
+      # refused while it stays locked are not lockouts.
+      - alert: AuthCodeLockoutsHigh
+        expr: |
+          sum(increase(auth_code_lockouts_total[1h])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $value | humanize }} codes locked in the last hour (threshold 5)'
+          dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-4'

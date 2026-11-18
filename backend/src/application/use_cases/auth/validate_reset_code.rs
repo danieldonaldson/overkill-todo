@@ -11,6 +11,50 @@ use std::sync::Arc;
 /// Duration in minutes for reset token validity.
 const RESET_TOKEN_EXPIRY_MINUTES: i64 = 5;
 
+/// Why a reset code was not accepted.
+///
+/// The handler records the outcome from these variants; the response comes
+/// from the [`DomainError`] each one maps to, which is the same message the
+/// endpoint has always returned.
+#[derive(Debug)]
+pub enum ResetCodeError {
+    /// Unknown email, or no pending code. Deliberately one variant: the
+    /// endpoint must not reveal whether an account exists.
+    NoCode,
+    /// The code has expired.
+    Expired,
+    /// The attempt cap is reached; the code was not checked.
+    Locked,
+    /// Wrong code. `attempts_remaining` is 0 for the guess that locks it.
+    Invalid { attempts_remaining: i32 },
+    /// Infrastructure failure.
+    Domain(DomainError),
+}
+
+impl From<DomainError> for ResetCodeError {
+    fn from(error: DomainError) -> Self {
+        Self::Domain(error)
+    }
+}
+
+impl From<ResetCodeError> for DomainError {
+    fn from(error: ResetCodeError) -> Self {
+        match error {
+            ResetCodeError::NoCode => {
+                Self::Validation("No reset code found. Please request a new one.".into())
+            }
+            ResetCodeError::Expired => {
+                Self::Validation("Reset code has expired. Please request a new one.".into())
+            }
+            ResetCodeError::Locked => {
+                Self::Validation("Too many failed attempts. Please request a new code.".into())
+            }
+            ResetCodeError::Invalid { .. } => Self::Validation("Invalid reset code.".into()),
+            ResetCodeError::Domain(e) => e,
+        }
+    }
+}
+
 /// Use case for validating a password reset code.
 ///
 /// After the user enters their 6-digit code, this validates it and returns
@@ -51,20 +95,21 @@ impl ValidateResetCodeUseCase {
     ///
     /// # Errors
     ///
-    /// - `Validation` if the code is invalid, expired, locked, or the email has no
-    ///   pending reset code (an unknown email is reported identically to a known
-    ///   email with no code, to avoid an account-enumeration oracle)
+    /// - [`ResetCodeError::NoCode`] for an unknown email or a known email with
+    ///   no pending code (reported identically, to avoid an
+    ///   account-enumeration oracle)
+    /// - [`ResetCodeError::Expired`], [`ResetCodeError::Locked`] or
+    ///   [`ResetCodeError::Invalid`] for a code that can't be accepted
+    /// - [`ResetCodeError::Domain`] for infrastructure failures
     #[tracing::instrument(name = "usecase.validate_reset_code", skip_all)]
-    pub async fn execute(&self, email: &str, code: &str) -> Result<String, DomainError> {
+    pub async fn execute(&self, email: &str, code: &str) -> Result<String, ResetCodeError> {
         // Find the user by email. An unknown email returns the SAME generic
         // "no reset code" error as a known email without a valid code: the
         // request endpoint (`request_password_reset`) deliberately doesn't reveal
         // whether an account exists, and this endpoint must not undo that by
         // handing back a distinguishable NotFound for unknown emails.
         let Some(user) = self.user_repo.find_by_email(email).await? else {
-            return Err(DomainError::Validation(
-                "No reset code found. Please request a new one.".into(),
-            ));
+            return Err(ResetCodeError::NoCode);
         };
 
         // Find the reset code for this user
@@ -72,15 +117,11 @@ impl ValidateResetCodeUseCase {
             .password_reset_repo
             .find_by_user(user.id())
             .await?
-            .ok_or_else(|| {
-                DomainError::Validation("No reset code found. Please request a new one.".into())
-            })?;
+            .ok_or(ResetCodeError::NoCode)?;
 
         // Check if expired
         if reset_code.is_expired(Timestamp::now()) {
-            return Err(DomainError::Validation(
-                "Reset code has expired. Please request a new one.".into(),
-            ));
+            return Err(ResetCodeError::Expired);
         }
 
         // Atomically claim an attempt slot *before* the expensive code
@@ -88,23 +129,15 @@ impl ValidateResetCodeUseCase {
         // under concurrency (mirrors verify_email). `Locked` means the cap is
         // reached; `NotFound` means the row was deleted/expired between the load
         // above and here, which is a no-code case — not a lockout.
-        match self
+        let attempts_after = match self
             .password_reset_repo
             .register_attempt(user.id(), reset_code.id(), MAX_ATTEMPTS)
             .await?
         {
-            AttemptOutcome::Claimed(_) => {}
-            AttemptOutcome::Locked => {
-                return Err(DomainError::Validation(
-                    "Too many failed attempts. Please request a new code.".into(),
-                ));
-            }
-            AttemptOutcome::NotFound => {
-                return Err(DomainError::Validation(
-                    "No reset code found. Please request a new one.".into(),
-                ));
-            }
-        }
+            AttemptOutcome::Claimed(attempts) => attempts,
+            AttemptOutcome::Locked => return Err(ResetCodeError::Locked),
+            AttemptOutcome::NotFound => return Err(ResetCodeError::NoCode),
+        };
 
         // Verify the code using the password hasher
         let is_valid = self
@@ -113,7 +146,11 @@ impl ValidateResetCodeUseCase {
             .await?;
 
         if !is_valid {
-            return Err(DomainError::Validation("Invalid reset code.".into()));
+            // `Claimed` is only returned after incrementing while below the cap,
+            // so this is in `0..MAX_ATTEMPTS`.
+            return Err(ResetCodeError::Invalid {
+                attempts_remaining: MAX_ATTEMPTS - attempts_after,
+            });
         }
 
         // The code was live when read, but the Argon2 check takes time: refuse
@@ -121,9 +158,7 @@ impl ValidateResetCodeUseCase {
         // instant on (P-19). The claim is by code id and a resend makes a new
         // one, so the expiry loaded above is still this code's.
         if reset_code.is_expired(Timestamp::now()) {
-            return Err(DomainError::Validation(
-                "Reset code has expired. Please request a new one.".into(),
-            ));
+            return Err(ResetCodeError::Expired);
         }
 
         // Correct code: release the slot we claimed so a correct guess never
@@ -272,7 +307,7 @@ mod tests {
             .execute("test@example.com", "123456")
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("expired"), "{err}");
+        assert!(matches!(err, ResetCodeError::Expired), "{err:?}");
     }
 
     #[tokio::test]
@@ -318,10 +353,11 @@ mod tests {
         );
 
         let result = use_case.execute("test@example.com", "wrong!").await;
-        assert!(result.is_err());
         match result {
-            Err(DomainError::Validation(msg)) => assert!(msg.contains("Invalid")),
-            _ => panic!("Expected Validation error"),
+            Err(ResetCodeError::Invalid { attempts_remaining }) => {
+                assert_eq!(attempts_remaining, MAX_ATTEMPTS - 1);
+            }
+            other => panic!("Expected Invalid, got {other:?}"),
         }
     }
 
@@ -370,10 +406,10 @@ mod tests {
         );
 
         let result = use_case.execute("test@example.com", "123456").await;
-        match result {
-            Err(DomainError::Validation(msg)) => assert!(msg.contains("Too many")),
-            _ => panic!("Expected Validation (locked) error"),
-        }
+        assert!(
+            matches!(result, Err(ResetCodeError::Locked)),
+            "Expected Locked, got {result:?}"
+        );
     }
 
     /// Finding #2: when the code row is deleted between the load and the atomic
@@ -422,16 +458,10 @@ mod tests {
         );
 
         let result = use_case.execute("test@example.com", "123456").await;
-        match result {
-            Err(DomainError::Validation(msg)) => {
-                assert!(msg.contains("No reset code"), "got: {msg}");
-                assert!(
-                    !msg.contains("Too many"),
-                    "must not report a lockout: {msg}"
-                );
-            }
-            other => panic!("Expected Validation (no-code) error, got {other:?}"),
-        }
+        assert!(
+            matches!(result, Err(ResetCodeError::NoCode)),
+            "Expected NoCode (not a lockout), got {result:?}"
+        );
     }
 
     /// An unknown email must be indistinguishable from a known email with no
@@ -457,12 +487,10 @@ mod tests {
         );
 
         let result = use_case.execute("nobody@example.com", "123456").await;
-        match result {
-            Err(DomainError::Validation(msg)) => {
-                assert!(msg.contains("No reset code"), "got: {msg}");
-            }
-            other => panic!("Expected generic Validation error, got {other:?}"),
-        }
+        assert!(
+            matches!(result, Err(ResetCodeError::NoCode)),
+            "Expected the generic NoCode, got {result:?}"
+        );
     }
 
     #[tokio::test]
@@ -501,10 +529,99 @@ mod tests {
         );
 
         let result = use_case.execute("test@example.com", "123456").await;
-        assert!(result.is_err());
-        match result {
-            Err(DomainError::Validation(msg)) => assert!(msg.contains("expired")),
-            _ => panic!("Expected Validation error"),
+        assert!(
+            matches!(result, Err(ResetCodeError::Expired)),
+            "Expected Expired, got {result:?}"
+        );
+    }
+
+    /// The guess that uses the last attempt reports none remaining, which is
+    /// how the handler tells a lockout from an ordinary wrong guess.
+    #[tokio::test]
+    async fn the_locking_guess_reports_no_attempts_remaining() {
+        let user = create_test_user();
+        let user_id = *user.id();
+        let reset_code = PasswordResetCode::from_persistence(
+            ResetCodeId::new(),
+            user_id,
+            "hashed_code".to_string(),
+            Timestamp::now() + SignedDuration::from_mins(15),
+            MAX_ATTEMPTS - 1,
+            Timestamp::now(),
+            Timestamp::now(),
+        );
+
+        let mut mock_user_repo = MockUserRepository::new();
+        mock_user_repo
+            .expect_find_by_email()
+            .returning(move |_| Ok(Some(user.clone())));
+        let mut mock_reset_repo = MockPasswordResetRepository::new();
+        mock_reset_repo
+            .expect_find_by_user()
+            .returning(move |_| Ok(Some(reset_code.clone())));
+        mock_reset_repo
+            .expect_register_attempt()
+            .returning(|_, _, _| Ok(AttemptOutcome::Claimed(MAX_ATTEMPTS)));
+        let mut mock_hasher = MockPasswordHasher::new();
+        mock_hasher.expect_verify().returning(|_, _| Ok(false));
+
+        let use_case = ValidateResetCodeUseCase::new(
+            Arc::new(mock_user_repo),
+            Arc::new(mock_reset_repo),
+            Arc::new(mock_hasher),
+            Arc::new(MockJwtService::new()),
+        );
+        let result = use_case.execute("test@example.com", "000000").await;
+        assert!(
+            matches!(
+                result,
+                Err(ResetCodeError::Invalid {
+                    attempts_remaining: 0
+                })
+            ),
+            "{result:?}"
+        );
+    }
+
+    /// Each variant maps to exactly the message the endpoint returned before
+    /// the error was typed, so responses don't change.
+    #[test]
+    fn errors_map_to_the_original_messages() {
+        let cases = [
+            (
+                ResetCodeError::NoCode,
+                "No reset code found. Please request a new one.",
+            ),
+            (
+                ResetCodeError::Expired,
+                "Reset code has expired. Please request a new one.",
+            ),
+            (
+                ResetCodeError::Locked,
+                "Too many failed attempts. Please request a new code.",
+            ),
+            (
+                ResetCodeError::Invalid {
+                    attempts_remaining: 3,
+                },
+                "Invalid reset code.",
+            ),
+            (
+                ResetCodeError::Invalid {
+                    attempts_remaining: 0,
+                },
+                "Invalid reset code.",
+            ),
+        ];
+        for (error, message) in cases {
+            match DomainError::from(error) {
+                DomainError::Validation(msg) => assert_eq!(msg, message),
+                other => panic!("expected Validation, got {other:?}"),
+            }
         }
+        assert!(matches!(
+            DomainError::from(ResetCodeError::Domain(DomainError::Persistence("x".into()))),
+            DomainError::Persistence(_)
+        ));
     }
 }

@@ -53,6 +53,6 @@ pub use resend_verification::{ResendResult, ResendVerificationError, ResendVerif
 pub use reset_password::{PasswordReset, ResetPasswordUseCase};
 pub use revoke_token::RevokeTokenUseCase;
 pub use send_verification_code::SendVerificationCodeUseCase;
-pub use validate_reset_code::ValidateResetCodeUseCase;
+pub use validate_reset_code::{ResetCodeError, ValidateResetCodeUseCase};
 pub use verify_email::{VerifyEmailError, VerifyEmailUseCase};
 pub use verify_magic_link::{VerifyMagicLinkError, VerifyMagicLinkUseCase};
