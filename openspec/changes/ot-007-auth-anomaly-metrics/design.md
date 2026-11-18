@@ -64,6 +64,8 @@ revise D5.
   plain HTTP to the edge, so `/me` and `/refresh` get no cookie and return 401.
   Sign-in, the only flow measured in slice 1, is unaffected. Re-check `auth-mix`
   once the load harness is fixed, before slice 2 counts session anomalies.
+  **Fixed 2026-11-18:** the k6 client now keeps the session cookies itself and
+  sends them explicitly. `auth-mix` passes every limit with 0% errors.
 - Separately, the backend was OOM-killed (1 GB cap) early in an `auth-mix` run
   that started right after two `auth-abuse` runs. A fresh backend held a steady
   ~195 MB through a full `auth-mix`, so this looks like the production-cost

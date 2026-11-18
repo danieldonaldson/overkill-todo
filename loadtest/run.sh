@@ -45,6 +45,10 @@ if [[ -z ${LOAD_BASE_URL:-} ]]; then
   benv() { docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$backend" | sed -n "s/^$1=//p"; }
   db=$("${compose[@]}" ps -q db)
   read -r db_cpuset db_memory < <(docker inspect -f '{{.HostConfig.CpusetCpus}} {{.HostConfig.Memory}}' "$db")
+  # A db restarted without the overlay floats onto the backend's cores and
+  # stretches the sign-in tail (2026-11-18: login p99 1.1 s instead of ~120 ms).
+  [[ -n $db_cpuset && $db_memory != 0 ]] ||
+    die "the db isn't resource-capped (restarted without the load overlay?). Run \`just load-up\`."
 
   k6_env+=(
     -e "LOAD_META_BACKEND_CPUSET=$cpuset"
