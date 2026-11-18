@@ -175,6 +175,44 @@ anomalies. Each alert's threshold is drawn as a line on its panel. Alert
   dashboard counts and the vmalert unit tests prove the rules. Running the
   real 1-hour window locally isn't required.
 
+### D7. Investigation events in the logs (slice 2)
+
+Metrics say how many, logs say which. Events are written with `tracing` in the
+use cases, where the user is already loaded, so the error enums are unchanged
+and `NoCode` still doesn't reveal whether an account exists. They reach
+VictoriaLogs through the existing OTLP log pipeline and carry the span's
+`trace_id`.
+
+| `event` | Level | Where | Fields |
+|---|---|---|---|
+| `auth.code.locked` | warn | `VerifyEmailUseCase`, `ValidateResetCodeUseCase`: the guess that leaves `attempts_remaining == 0` | `flow`, `user_id` |
+| `auth.code.refused_locked` | info | same: `register_attempt` returns `Locked` | `flow`, `user_id` |
+| `auth.sign_in.failed` | info | `LoginUserUseCase`: wrong password or password-less account (split from the `_ =>` arm, same response) | `user_id` |
+
+- `flow` uses the same strings as the metric labels, written as literals
+  because the label enums live in infrastructure. Slice 3 adds
+  `auth.code.refused_locked` for magic links.
+- `user_id` is allowed in logs: the logging rule bans secrets, tokens, codes
+  and emails, and the auth logs already carry it. It stays out of metrics
+  because it would multiply the series.
+- **Rejected: a hashed client address in the events.** It reverses the
+  Non-Goal, and a hash of an IPv4 address can be reversed by trying every
+  address. Edge access logs plus a request ID will answer "from where" later.
+- **Rejected: a hash of the email for unknown-email failures.** It can be
+  reversed by trying candidate emails, and it is personal data. These failures
+  are counted only.
+- Dashboard panels (VictoriaLogs datasource), under the matching metric panels:
+  - "Recent lockouts": a logs panel on `event:"auth.code.locked"`, each entry
+    linking to its trace.
+  - "Lockouts per account": a table, `event:"auth.code.locked" | stats by (user_id, flow) count()`.
+  - "Refused checks per account": the same table for `auth.code.refused_locked`.
+  - "Failed sign-ins per account": the same table for `auth.sign_in.failed`.
+
+  `AuthCodeLockoutsHigh` links to "Recent lockouts" and
+  `AuthSignInFailuresHigh` to "Failed sign-ins per account".
+- 30-day log retention is enough to investigate an alert. A long-lived record
+  is OT-008's job, and that change excludes sign-ins.
+
 ## Risks / Trade-offs
 
 - [Thresholds are guesses with no production traffic] → Hypothesis records
@@ -191,6 +229,12 @@ anomalies. Each alert's threshold is drawn as a line on its panel. Alert
 - [Benign token reuse (a retried refresh on a flaky network) looks like
   theft] → The threshold is 3 per hour, not 1. The web client already shares
   one rotation across tabs.
+
+- [One log line per failed attempt; a large stuffing run produces many lines]
+  → They are info level and bounded by the attack. Accepted.
+- [The per-account panels show which accounts exist] → Logs and Grafana are
+  operator-only, and auth logs already carry `user_id`. The collector's email
+  redaction is the second line of defence if a field ever leaks one.
 
 ## Migration Plan
 

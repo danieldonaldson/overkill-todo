@@ -22,8 +22,21 @@ email.
 - [x] 1.10 `just api-types-check` shows no diff, `just ci` is green. Note for the first deploy: restart vmalert and Grafana for the rules and dashboard, then roll the backend digest and `just smoke <url>`.
   - _Done without a deploy: there is no production instance yet._ `just ci` green on 2026-11-17, with no OpenAPI or schema diff (`api-types-check`). The first-deploy steps are in `deploy/compose/README.md` (First deploy).
 
-## 2. Feature done
+## 2. Slice 2: investigation context for alerts
 
-- [ ] 2.1 After slice 1 ships, revise design.md with what it showed, then add the remaining slice to this file: magic-link outcomes, bot-check rejections, session anomalies (typed `RefreshError`), and their alerts and panels.
-- [ ] 2.2 Document the auth metrics, the dashboard and the alert thresholds in `deploy/compose/README.md` (Observability), including the manual Turnstile always-fail check. Fix the `login_user.rs` doc comment and the README so they no longer say Traefik rate limiting exists (it is planned for the production edge, not built).
-- [ ] 2.3 Archive the change. Thresholds are revisited after the first month in production (recorded in Hypothesis).
+Delivers these scenarios: Lockout names the account; Targeted guessing is
+visible; Stuffing versus brute force; Unknown email names no account;
+Investigation logs hold no secrets; Alerts link to the investigation.
+
+- [ ] 2.1 Emit `auth.code.locked` (warn) on the locking guess and `auth.code.refused_locked` (info) on a `Locked` claim, in `VerifyEmailUseCase` and `ValidateResetCodeUseCase`, with `flow` and `user_id` (D7). Use-case tests capture the tracing output: 5 wrong guesses then 3 more give exactly 1 locked and 3 refused events, with their fields. Verify with `just test`.
+- [ ] 2.2 Emit `auth.sign_in.failed` (info) with `user_id` in `LoginUserUseCase` for a wrong password and for a password-less account, and nothing for an unknown email. Tests cover all three and check the error is still `InvalidCredentials`.
+- [ ] 2.3 Extend the 1.4 no-personal-data test to capture the log events from the same runs. Assert that none contains an email, code, token or password, and that each carries a `trace_id`.
+- [ ] 2.4 Add the four VictoriaLogs panels to `auth-security.json` and repoint both alerts' `dashboard` annotations (D7). Run `just obs-check`, then `just obs-up` on a fresh stack and confirm the panels show "no data", not errors.
+- [ ] 2.5 Run `just load auth-abuse`. From each alert's link, confirm the panels list the affected accounts and an entry opens its trace in Tempo. Record the result in design.md Hypothesis.
+- [ ] 2.6 `just api-types-check` shows no diff and `just ci` is green.
+
+## 3. Feature done
+
+- [ ] 3.1 After slice 2 ships, revise design.md with what slices 1 and 2 showed, then add the remaining slice (slice 3) to this file: magic-link outcomes (with its refused-locked event), bot-check rejections, session anomalies (typed `RefreshError`), and their alerts and panels.
+- [ ] 3.2 Document the auth metrics, the investigation log events, the dashboard and the alert thresholds in `deploy/compose/README.md` (Observability), including the manual Turnstile always-fail check. Fix the `login_user.rs` doc comment and the README so they no longer say Traefik rate limiting exists (it is planned for the production edge, not built).
+- [ ] 3.3 Archive the change. Thresholds are revisited after the first month in production (recorded in Hypothesis).

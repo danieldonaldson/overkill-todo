@@ -26,6 +26,12 @@ email alerts. This change points them at authentication.
   from a different device than the one the session was issued to.
 - None of these measurements carries an email address, user ID, client
   address or code. They are totals per flow and outcome only.
+- So an alert can be investigated, the backend also writes a log event when a
+  code locks, when a check is refused because the code is locked, and when a
+  sign-in fails for an existing account. Each event names the flow and the
+  account (user ID) and links to its request trace. None carries an email
+  address, code, token or client address. The Auth security dashboard lists
+  recent lockouts and failures per account, and the alert emails link there.
 - A new "Auth security" dashboard shows these over time.
 - The operator is emailed when failed sign-ins, code lockouts, bot-check
   rejections or session anomalies go above fixed thresholds, and gets a
@@ -53,6 +59,9 @@ One week.
 - Blocking or throttling anything. This change only measures and alerts.
 - The audit log of privileged actions (role changes, account deletion, email
   changes). That is a separate change with its own retention.
+- Client addresses in backend logs. Where attempts come from will be answered
+  by the edge's access logs, joined to backend logs by a request ID once the
+  production edge exists.
 - OAuth sign-in failures. They are mostly provider errors, which the existing
   error-rate metrics already show.
 - Tuning thresholds against real traffic. There is no production yet, so the
@@ -81,6 +90,7 @@ One week.
 
 `backend/src/infrastructure/telemetry` (new auth instruments), the auth and
 verification handlers, typed errors in the reset-code and refresh-token use
-cases (same responses as today), `deploy/observability/alerts` (rules and
-their unit tests), a new Grafana dashboard, a load-test scenario, and the
-observability docs.
+cases (same responses as today), log events in the login, verify-email and
+reset-code use cases, `deploy/observability/alerts` (rules and their unit
+tests), a new Grafana dashboard with VictoriaLogs panels, a load-test
+scenario, and the observability docs.

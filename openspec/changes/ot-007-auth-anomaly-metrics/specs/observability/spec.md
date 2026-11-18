@@ -92,3 +92,38 @@ holds, and SHALL send a resolved notice when it clears:
 #### Scenario: Local development never sends email
 - **WHEN** an authentication alert condition is met in the local observability stack
 - **THEN** the alert is visible in the local alert view and no email is sent
+
+### Requirement: Authentication abuse can be investigated
+The system SHALL write a log event, linked to its request trace, each time a
+code becomes locked, each time a code check is refused because the code is
+locked, and each time a password sign-in fails for an email that belongs to
+an account. Each event SHALL name its flow and the account's user ID, and
+SHALL carry no email address, code, token, password or client address. A
+sign-in for an email with no account SHALL write no event naming an account.
+The operator SHALL see recent lockouts, and lockouts and failed sign-ins per
+account, on the Auth security dashboard, and the authentication alerts SHALL
+link there. Events are kept for the log retention period (30 days).
+
+#### Scenario: Lockout names the account
+- **WHEN** a Visitor guesses an email code wrongly until it locks
+- **THEN** within 1 minute the dashboard's recent lockouts show one entry with the email-code flow, the account's user ID and a link to the request trace
+
+#### Scenario: Targeted guessing is visible
+- **WHEN** one account's code is guessed until locked and then tried 10 more times
+- **THEN** the dashboard shows one lockout and 10 refused checks for that account
+
+#### Scenario: Stuffing versus brute force
+- **WHEN** 40 wrong-password sign-ins arrive, spread over 20 accounts
+- **THEN** failed sign-ins per account shows 20 accounts with 2 each
+
+#### Scenario: Unknown email names no account
+- **WHEN** a sign-in fails for an email with no account
+- **THEN** it is counted as before and no log event names an account
+
+#### Scenario: Investigation logs hold no secrets
+- **WHEN** the operator searches the logs after failed sign-ins and code guesses by several Members
+- **THEN** no authentication event contains an email address, code, token, password or client address
+
+#### Scenario: Alerts link to the investigation
+- **WHEN** the code lockouts alert or the failed sign-ins alert fires
+- **THEN** its email links to that alert's per-account panel
