@@ -38,6 +38,33 @@ setup:
     ./scripts/gen-dev-env.sh
     just db-up
 
+# The Rust target/, web build, coverage, test reports, model-checker and fuzzer
+# output all come back on the next build or run. Keeps env files, bench baselines
+# (.bench/), proptest seeds, load-test results and Docker volumes. DEPS=1 also
+# deletes node_modules and the fuzzer's venv (`just setup` restores them).
+# Free disk: delete build and test output (DEPS=1 also deletes installed deps).
+clean:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    paths=(
+      {{backend}}/target {{backend}}/openapi.json.tmp
+      apps/web/dist apps/web/.astro apps/web/coverage apps/web/test-results
+      apps/web/playwright-report apps/web/.vitest-attachments
+      apps/web/src/components/dashboard/__screenshots__
+      _apalache-out apifuzz/out .hypothesis .pytest_cache apifuzz/.pytest_cache
+    )
+    if [[ ${DEPS:-} == 1 ]]; then
+      paths+=(node_modules apps/web/node_modules packages/*/node_modules apifuzz/.venv)
+    fi
+    existing=()
+    for p in "${paths[@]}"; do [[ -e $p ]] && existing+=("$p"); done
+    if (( ${#existing[@]} == 0 )); then echo "nothing to clean"; exit 0; fi
+    du -shc "${existing[@]}" | tail -1 | sed 's/total$/to free/'
+    rm -rf -- "${existing[@]}"
+    find . \( -path ./node_modules -o -path ./{{backend}}/target -o -path ./apifuzz/.venv \) -prune -o \
+      -type d -name __pycache__ -prune -exec rm -rf {} +
+    echo "cleaned"
+
 # ── Local dev ────────────────────────────────────────────────────────────────────
 
 # Backend (auto-reload) + web dev server. Web :4321 proxies /api to :4322 (WEB_PORT/API_PORT in a worktree).
