@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TelemetryBoundary from '$lib/telemetry/TelemetryBoundary.svelte'
   import AuthTabs from './AuthTabs.svelte'
   import GuestGuard from './GuestGuard.svelte'
 
@@ -13,6 +14,8 @@
   let { initial = 'login' }: Props = $props()
 </script>
 
-<GuestGuard>
-  <AuthTabs {initial} />
-</GuestGuard>
+<TelemetryBoundary name="AuthScreen">
+  <GuestGuard>
+    <AuthTabs {initial} />
+  </GuestGuard>
+</TelemetryBoundary>

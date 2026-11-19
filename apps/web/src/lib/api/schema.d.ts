@@ -671,6 +671,11 @@ export interface components {
              * @description How many times this error happened in the page load.
              */
             count: number;
+            /**
+             * @description For `boundary` errors: the island whose boundary caught it. Mapped to
+             *     the island allowlist on the server; anything unknown is `other`.
+             */
+            island?: string | null;
             kind: components["schemas"]["ClientErrorKind"];
             /** @description The error message, scrubbed in the browser and again on the server. */
             message: string;
@@ -696,9 +701,12 @@ export interface components {
          */
         ClientErrorKind: "error" | "unhandledrejection" | "boundary" | "api";
         /** @description One browser report. */
-        ClientEvent: components["schemas"]["ClientErrorEvent"] & {
+        ClientEvent: (components["schemas"]["ClientErrorEvent"] & {
             /** @enum {string} */
             type: "error";
+        }) | {
+            /** @enum {string} */
+            type: "page_load";
         };
         /** @description One batch of browser reports from one page load. */
         ClientReportBatch: {

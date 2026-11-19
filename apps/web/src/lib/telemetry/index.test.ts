@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { fromErrorEvent, fromRejection } from './index'
+import { fromApiFailure, fromErrorEvent, fromRejection, watchPageLoads } from './index'
 
 describe('error capture', () => {
   it('reads an uncaught error', () => {
@@ -44,5 +44,49 @@ describe('error capture', () => {
         new PromiseRejectionEvent('unhandledrejection', { promise: Promise.resolve(), reason: 42 })
       ).message
     ).toBe('Non-error value: 42')
+  })
+})
+
+describe('watchPageLoads', () => {
+  it('counts the full load once and each in-site navigation once', () => {
+    const target = new EventTarget()
+    const count = vi.fn()
+    watchPageLoads(target, count)
+    expect(count).toHaveBeenCalledTimes(1)
+
+    // Astro's own first page-load event for the full load: already counted.
+    target.dispatchEvent(new Event('astro:page-load'))
+    expect(count).toHaveBeenCalledTimes(1)
+
+    for (let i = 0; i < 2; i++) {
+      target.dispatchEvent(new Event('astro:after-swap'))
+      expect(count).toHaveBeenCalledTimes(1 + i)
+      target.dispatchEvent(new Event('astro:page-load'))
+      expect(count).toHaveBeenCalledTimes(2 + i)
+    }
+  })
+})
+
+describe('fromApiFailure', () => {
+  it('describes a 5xx with its trace ID, and a network failure without one', () => {
+    const trace = 'abcdef0123456789abcdef0123456789'
+    expect(
+      fromApiFailure({ method: 'PATCH', route: '/users/me', status: 500, traceId: trace })
+    ).toEqual({
+      kind: 'api',
+      message: 'PATCH /users/me failed: status 500',
+      apiRoute: '/users/me',
+      status: 500,
+      networkFailed: undefined,
+      traceId: trace,
+    })
+    expect(
+      fromApiFailure({ method: 'POST', route: '/auth/register', networkFailed: true })
+    ).toMatchObject({
+      message: 'POST /auth/register failed: network error',
+      networkFailed: true,
+      status: undefined,
+      traceId: undefined,
+    })
   })
 })

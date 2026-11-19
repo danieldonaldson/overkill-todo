@@ -1949,6 +1949,14 @@
             "maximum": 10000,
             "minimum": 1
           },
+          "island": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `boundary` errors: the island whose boundary caught it. Mapped to\nthe island allowlist on the server; anything unknown is `other`.",
+            "maxLength": 100
+          },
           "kind": {
             "$ref": "#/components/schemas/ClientErrorKind"
           },
@@ -2036,6 +2044,21 @@
               }
             ],
             "description": "A script error, unhandled rejection, boundary error or failed API call."
+          },
+          {
+            "type": "object",
+            "description": "The page finished loading, by a full load or an in-site navigation: the\ndenominator of the error rate. Never sampled.",
+            "required": [
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "page_load"
+                ]
+              }
+            }
           }
         ],
         "description": "One browser report."

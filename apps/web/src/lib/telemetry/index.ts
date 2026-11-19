@@ -3,7 +3,8 @@
 // blocks paint. Errors thrown before it loads aren't captured; islands hydrate
 // after it.
 
-import { session } from '../auth/session.svelte'
+import { getTokenExpiry } from '../auth/token'
+import { type ApiFailure, setApiFailureHandlers } from './api-failures'
 import { type CapturedError, Reporter, beaconSend } from './reporter'
 
 let reporter: Reporter | null = null
@@ -46,6 +47,50 @@ export function fromRejection(event: PromiseRejectionEvent): CapturedError {
   return { kind: 'unhandledrejection', ...describe(event.reason) }
 }
 
+/**
+ * Report an error a `TelemetryBoundary` caught (`kind: boundary`). A no-op
+ * until `installTelemetry()` has run, and it never throws.
+ */
+export function reportBoundaryError(island: string, error: unknown): void {
+  try {
+    reporter?.capture({ kind: 'boundary', island, ...describe(error) })
+  } catch {
+    // Never let reporting break the page.
+  }
+}
+
+/** An API failure as a captured `kind: api` error. */
+export function fromApiFailure(failure: ApiFailure): CapturedError {
+  const outcome = failure.networkFailed ? 'network error' : `status ${failure.status ?? 'unknown'}`
+  return {
+    kind: 'api',
+    message: `${failure.method} ${failure.route} failed: ${outcome}`,
+    apiRoute: failure.route,
+    status: failure.networkFailed ? undefined : failure.status,
+    networkFailed: failure.networkFailed || undefined,
+    traceId: failure.networkFailed ? undefined : (failure.traceId ?? undefined),
+  }
+}
+
+/**
+ * Call `count` for the full load now, then once per in-site navigation when its
+ * new page has loaded. A navigation counts only after `astro:after-swap`, so
+ * the first `astro:page-load` (the full load, already counted) is never counted
+ * twice, whichever script runs first.
+ */
+export function watchPageLoads(target: EventTarget, count: () => void): void {
+  count()
+  let swapped = false
+  target.addEventListener('astro:after-swap', () => {
+    swapped = true
+  })
+  target.addEventListener('astro:page-load', () => {
+    if (!swapped) return
+    swapped = false
+    count()
+  })
+}
+
 /** Start reporting for this document. Safe to call more than once. */
 export function installTelemetry(): Reporter | null {
   if (reporter || typeof window === 'undefined') return reporter
@@ -53,7 +98,10 @@ export function installTelemetry(): Reporter | null {
     const r = new Reporter({
       release: RELEASE,
       pathname: () => location.pathname,
-      isSignedIn: () => session.user !== null,
+      // The session hint, not the session store: signing in sets it and
+      // signing out (or an expired session) clears it, while the store's
+      // background `/auth/me` check filling in the user changes nothing.
+      isSignedIn: () => getTokenExpiry() !== null,
       send: beaconSend,
     })
     window.addEventListener('error', (e) => {
@@ -69,6 +117,14 @@ export function installTelemetry(): Reporter | null {
       } catch {
         // Never let reporting break the page.
       }
+    })
+    watchPageLoads(document, () => r.pageLoad())
+    setApiFailureHandlers({
+      failure: (failure) => {
+        if (failure.networkFailed) r.markOffline()
+        r.capture(fromApiFailure(failure))
+      },
+      reachable: () => r.markOnline(),
     })
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') r.flush()

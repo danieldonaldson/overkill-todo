@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TelemetryBoundary from '$lib/telemetry/TelemetryBoundary.svelte'
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert'
   import CircleCheckIcon from '@lucide/svelte/icons/circle-check'
   import MailIcon from '@lucide/svelte/icons/mail'
@@ -191,289 +192,291 @@
   }
 </script>
 
-<section class="mx-auto flex w-full max-w-2xl flex-col gap-6">
-  <div>
-    <h1 class="font-display text-2xl font-semibold tracking-tight">Settings</h1>
-    <p class="mt-1 text-sm text-muted-foreground">Manage your dashboard account.</p>
-  </div>
+<TelemetryBoundary name="SettingsPanel">
+  <section class="mx-auto flex w-full max-w-2xl flex-col gap-6">
+    <div>
+      <h1 class="font-display text-2xl font-semibold tracking-tight">Settings</h1>
+      <p class="mt-1 text-sm text-muted-foreground">Manage your dashboard account.</p>
+    </div>
 
-  {#if error}
-    <Alert variant="destructive" role="alert">
-      <CircleAlertIcon class="size-4" />
-      <AlertDescription>{error}</AlertDescription>
-    </Alert>
-  {/if}
+    {#if error}
+      <Alert variant="destructive" role="alert">
+        <CircleAlertIcon class="size-4" />
+        <AlertDescription>{error}</AlertDescription>
+      </Alert>
+    {/if}
 
-  {#if message}
-    <Alert variant="success" role="status" aria-live="polite">
-      <CircleCheckIcon class="size-4" />
-      <AlertDescription>{message}</AlertDescription>
-    </Alert>
-  {/if}
+    {#if message}
+      <Alert variant="success" role="status" aria-live="polite">
+        <CircleCheckIcon class="size-4" />
+        <AlertDescription>{message}</AlertDescription>
+      </Alert>
+    {/if}
 
-  {#if user}
-    <!-- Account -->
-    <section
-      aria-labelledby="settings-account"
-      class="overflow-hidden rounded-[var(--radius)] border border-border bg-card"
-    >
-      <h2
-        id="settings-account"
-        class="border-b border-border px-5 py-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+    {#if user}
+      <!-- Account -->
+      <section
+        aria-labelledby="settings-account"
+        class="overflow-hidden rounded-[var(--radius)] border border-border bg-card"
       >
-        Account
-      </h2>
-      <div class="flex items-center gap-3 px-5 py-4">
-        <span
-          class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
-          aria-hidden="true"
+        <h2
+          id="settings-account"
+          class="border-b border-border px-5 py-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
         >
-          <MailIcon class="size-4" />
-        </span>
-        <div class="min-w-0">
-          <p class="text-sm font-medium">Email</p>
-          <p class="truncate text-sm text-muted-foreground">{user.email}</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- Security -->
-    <section
-      aria-labelledby="settings-security"
-      class="overflow-hidden rounded-[var(--radius)] border border-border bg-card"
-    >
-      <h2
-        id="settings-security"
-        class="border-b border-border px-5 py-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
-      >
-        Security
-      </h2>
-
-      <div class="flex flex-col gap-4 border-b border-border px-5 py-4">
-        <div class="flex items-center gap-3">
+          Account
+        </h2>
+        <div class="flex items-center gap-3 px-5 py-4">
           <span
             class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
             aria-hidden="true"
           >
-            <KeyRoundIcon class="size-4" />
+            <MailIcon class="size-4" />
           </span>
-          <p class="text-sm font-medium">
-            {user.has_password ? 'Change password' : 'Set a password'}
-          </p>
-        </div>
-        <form class="flex max-w-md flex-col gap-4" onsubmit={handlePasswordSubmit}>
-          {#if user.has_password}
-            <FormInput
-              type="password"
-              name="currentPassword"
-              label="Current password"
-              bind:value={currentPassword}
-              error={currentPasswordError}
-              required
-              autocomplete="current-password"
-              showPasswordToggle
-            />
-          {/if}
-
-          <FormInput
-            type="password"
-            name="newPassword"
-            label="New password"
-            bind:value={newPassword}
-            error={newPasswordError}
-            required
-            autocomplete="new-password"
-            showPasswordToggle
-          />
-
-          <Button type="submit" loading={savingPassword} class="w-fit">
-            {user.has_password ? 'Change password' : 'Set password'}
-          </Button>
-        </form>
-      </div>
-
-      <div class="flex items-center justify-between gap-4 px-5 py-4">
-        <div class="flex items-center gap-3">
-          <span
-            class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
-            aria-hidden="true"
-          >
-            <LinkIcon class="size-4" />
-          </span>
-          <div>
-            <p class="text-sm font-medium">Google</p>
-            <p class="text-sm text-muted-foreground">{googleLinked ? 'Linked' : 'Not linked'}</p>
+          <div class="min-w-0">
+            <p class="text-sm font-medium">Email</p>
+            <p class="truncate text-sm text-muted-foreground">{user.email}</p>
           </div>
         </div>
-        {#if googleLinked}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            loading={unlinkingGoogle}
-            onclick={handleUnlinkGoogle}
-          >
-            Unlink Google
-          </Button>
-        {:else}
-          <Button type="button" variant="outline" size="sm" onclick={handleLinkGoogle}>
-            Link Google
-          </Button>
-        {/if}
-      </div>
-    </section>
+      </section>
 
-    <!-- Privacy & data -->
-    <section
-      aria-labelledby="settings-data"
-      class="overflow-hidden rounded-[var(--radius)] border border-border bg-card"
-    >
-      <h2
-        id="settings-data"
-        class="border-b border-border px-5 py-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+      <!-- Security -->
+      <section
+        aria-labelledby="settings-security"
+        class="overflow-hidden rounded-[var(--radius)] border border-border bg-card"
       >
-        Privacy &amp; data
-      </h2>
-      <div class="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
-        <div class="flex items-center gap-3">
-          <span
-            class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
-            aria-hidden="true"
-          >
-            <DownloadIcon class="size-4" />
-          </span>
-          <div>
-            <p class="text-sm font-medium">Export my data</p>
-            <p class="text-sm text-muted-foreground">
-              A machine-readable copy of your account data.
+        <h2
+          id="settings-security"
+          class="border-b border-border px-5 py-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+        >
+          Security
+        </h2>
+
+        <div class="flex flex-col gap-4 border-b border-border px-5 py-4">
+          <div class="flex items-center gap-3">
+            <span
+              class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
+              aria-hidden="true"
+            >
+              <KeyRoundIcon class="size-4" />
+            </span>
+            <p class="text-sm font-medium">
+              {user.has_password ? 'Change password' : 'Set a password'}
             </p>
           </div>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          loading={exporting}
-          onclick={handleExportData}
-        >
-          {exporting ? 'Preparing export…' : 'Export my data'}
-        </Button>
-      </div>
-
-      <div class="flex flex-col gap-4 px-5 py-4">
-        <div class="flex items-center gap-3">
-          <span
-            class="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
-            aria-hidden="true"
-          >
-            <Trash2Icon class="size-4" />
-          </span>
-          <p class="text-sm font-semibold text-destructive">Delete account</p>
-        </div>
-        {#if deletionScheduledAt}
-          <p class="text-sm text-muted-foreground">
-            Your account is scheduled for deletion on
-            <span class="font-medium">{formatDateTime(deletionScheduledAt)}</span>. You can cancel
-            any time before then.
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            class="w-fit"
-            loading={cancelingDeletion}
-            onclick={handleCancelDeletion}
-          >
-            {cancelingDeletion ? 'Cancelling…' : 'Cancel deletion'}
-          </Button>
-        {:else}
-          <p class="text-sm text-muted-foreground">
-            This schedules permanent deletion of your account and all associated data after a 14-day
-            grace period.
-          </p>
-          <div class="flex max-w-md flex-col gap-4">
+          <form class="flex max-w-md flex-col gap-4" onsubmit={handlePasswordSubmit}>
             {#if user.has_password}
               <FormInput
                 type="password"
-                name="deletePassword"
-                label="Confirm your password"
-                bind:value={deletePassword}
+                name="currentPassword"
+                label="Current password"
+                bind:value={currentPassword}
+                error={currentPasswordError}
+                required
                 autocomplete="current-password"
                 showPasswordToggle
               />
             {/if}
+
             <FormInput
-              type="text"
-              name="deleteConfirmation"
-              label="Type DELETE to confirm"
-              bind:value={deleteConfirmation}
+              type="password"
+              name="newPassword"
+              label="New password"
+              bind:value={newPassword}
+              error={newPasswordError}
+              required
+              autocomplete="new-password"
+              showPasswordToggle
             />
+
+            <Button type="submit" loading={savingPassword} class="w-fit">
+              {user.has_password ? 'Change password' : 'Set password'}
+            </Button>
+          </form>
+        </div>
+
+        <div class="flex items-center justify-between gap-4 px-5 py-4">
+          <div class="flex items-center gap-3">
+            <span
+              class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
+              aria-hidden="true"
+            >
+              <LinkIcon class="size-4" />
+            </span>
+            <div>
+              <p class="text-sm font-medium">Google</p>
+              <p class="text-sm text-muted-foreground">{googleLinked ? 'Linked' : 'Not linked'}</p>
+            </div>
+          </div>
+          {#if googleLinked}
             <Button
               type="button"
-              variant="destructive"
-              class="w-fit"
-              loading={requestingDeletion}
-              disabled={deleteConfirmation !== 'DELETE'}
-              onclick={handleRequestDeletion}
+              variant="outline"
+              size="sm"
+              loading={unlinkingGoogle}
+              onclick={handleUnlinkGoogle}
             >
-              {requestingDeletion ? 'Scheduling…' : 'Delete my account'}
+              Unlink Google
             </Button>
-          </div>
-        {/if}
-      </div>
-    </section>
+          {:else}
+            <Button type="button" variant="outline" size="sm" onclick={handleLinkGoogle}>
+              Link Google
+            </Button>
+          {/if}
+        </div>
+      </section>
 
-    <!-- Session -->
-    <section
-      aria-labelledby="settings-session"
-      class="overflow-hidden rounded-[var(--radius)] border border-border bg-card"
-    >
-      <h2
-        id="settings-session"
-        class="border-b border-border px-5 py-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+      <!-- Privacy & data -->
+      <section
+        aria-labelledby="settings-data"
+        class="overflow-hidden rounded-[var(--radius)] border border-border bg-card"
       >
-        Session
-      </h2>
-      <div class="flex items-center justify-between gap-4 px-5 py-4">
-        <div class="flex items-center gap-3">
-          <span
-            class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
-            aria-hidden="true"
-          >
-            <LogOutIcon class="size-4" />
-          </span>
-          <p class="text-sm font-medium">Sign out of this device</p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          loading={signingOut}
-          onclick={handleLogout}
+        <h2
+          id="settings-data"
+          class="border-b border-border px-5 py-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
         >
-          Log out
-        </Button>
-      </div>
-    </section>
-  {:else}
-    <!-- Account details unknown until the background check answers (D4). -->
-    <div class="flex flex-col gap-6" aria-hidden="true" data-testid="settings-skeleton">
-      {#each [1, 2, 2, 1] as rows, index (index)}
-        <div class="overflow-hidden rounded-[var(--radius)] border border-border bg-card">
-          <div class="border-b border-border px-5 py-3">
-            <div class="h-3 w-20 animate-pulse rounded bg-muted"></div>
-          </div>
-          {#each Array.from({ length: rows }, (_, i) => i) as row (row)}
-            <div class="flex items-center gap-3 border-b border-border px-5 py-4 last:border-b-0">
-              <div class="size-9 shrink-0 animate-pulse rounded-full bg-muted"></div>
-              <div class="flex flex-1 flex-col gap-2">
-                <div class="h-3.5 w-32 animate-pulse rounded bg-muted"></div>
-                <div class="h-3.5 w-48 animate-pulse rounded bg-muted"></div>
-              </div>
+          Privacy &amp; data
+        </h2>
+        <div class="flex items-center justify-between gap-4 border-b border-border px-5 py-4">
+          <div class="flex items-center gap-3">
+            <span
+              class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
+              aria-hidden="true"
+            >
+              <DownloadIcon class="size-4" />
+            </span>
+            <div>
+              <p class="text-sm font-medium">Export my data</p>
+              <p class="text-sm text-muted-foreground">
+                A machine-readable copy of your account data.
+              </p>
             </div>
-          {/each}
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            loading={exporting}
+            onclick={handleExportData}
+          >
+            {exporting ? 'Preparing export…' : 'Export my data'}
+          </Button>
         </div>
-      {/each}
-    </div>
-  {/if}
-</section>
+
+        <div class="flex flex-col gap-4 px-5 py-4">
+          <div class="flex items-center gap-3">
+            <span
+              class="flex size-9 shrink-0 items-center justify-center rounded-full bg-destructive/10 text-destructive"
+              aria-hidden="true"
+            >
+              <Trash2Icon class="size-4" />
+            </span>
+            <p class="text-sm font-semibold text-destructive">Delete account</p>
+          </div>
+          {#if deletionScheduledAt}
+            <p class="text-sm text-muted-foreground">
+              Your account is scheduled for deletion on
+              <span class="font-medium">{formatDateTime(deletionScheduledAt)}</span>. You can cancel
+              any time before then.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              class="w-fit"
+              loading={cancelingDeletion}
+              onclick={handleCancelDeletion}
+            >
+              {cancelingDeletion ? 'Cancelling…' : 'Cancel deletion'}
+            </Button>
+          {:else}
+            <p class="text-sm text-muted-foreground">
+              This schedules permanent deletion of your account and all associated data after a
+              14-day grace period.
+            </p>
+            <div class="flex max-w-md flex-col gap-4">
+              {#if user.has_password}
+                <FormInput
+                  type="password"
+                  name="deletePassword"
+                  label="Confirm your password"
+                  bind:value={deletePassword}
+                  autocomplete="current-password"
+                  showPasswordToggle
+                />
+              {/if}
+              <FormInput
+                type="text"
+                name="deleteConfirmation"
+                label="Type DELETE to confirm"
+                bind:value={deleteConfirmation}
+              />
+              <Button
+                type="button"
+                variant="destructive"
+                class="w-fit"
+                loading={requestingDeletion}
+                disabled={deleteConfirmation !== 'DELETE'}
+                onclick={handleRequestDeletion}
+              >
+                {requestingDeletion ? 'Scheduling…' : 'Delete my account'}
+              </Button>
+            </div>
+          {/if}
+        </div>
+      </section>
+
+      <!-- Session -->
+      <section
+        aria-labelledby="settings-session"
+        class="overflow-hidden rounded-[var(--radius)] border border-border bg-card"
+      >
+        <h2
+          id="settings-session"
+          class="border-b border-border px-5 py-3 text-xs font-semibold tracking-wide text-muted-foreground uppercase"
+        >
+          Session
+        </h2>
+        <div class="flex items-center justify-between gap-4 px-5 py-4">
+          <div class="flex items-center gap-3">
+            <span
+              class="flex size-9 shrink-0 items-center justify-center rounded-full bg-cloud-2 text-muted-foreground"
+              aria-hidden="true"
+            >
+              <LogOutIcon class="size-4" />
+            </span>
+            <p class="text-sm font-medium">Sign out of this device</p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            loading={signingOut}
+            onclick={handleLogout}
+          >
+            Log out
+          </Button>
+        </div>
+      </section>
+    {:else}
+      <!-- Account details unknown until the background check answers (D4). -->
+      <div class="flex flex-col gap-6" aria-hidden="true" data-testid="settings-skeleton">
+        {#each [1, 2, 2, 1] as rows, index (index)}
+          <div class="overflow-hidden rounded-[var(--radius)] border border-border bg-card">
+            <div class="border-b border-border px-5 py-3">
+              <div class="h-3 w-20 animate-pulse rounded bg-muted"></div>
+            </div>
+            {#each Array.from({ length: rows }, (_, i) => i) as row (row)}
+              <div class="flex items-center gap-3 border-b border-border px-5 py-4 last:border-b-0">
+                <div class="size-9 shrink-0 animate-pulse rounded-full bg-muted"></div>
+                <div class="flex flex-1 flex-col gap-2">
+                  <div class="h-3.5 w-32 animate-pulse rounded bg-muted"></div>
+                  <div class="h-3.5 w-48 animate-pulse rounded bg-muted"></div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </section>
+</TelemetryBoundary>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TelemetryBoundary from '$lib/telemetry/TelemetryBoundary.svelte'
   import { onMount } from 'svelte'
   import CheckIcon from '@lucide/svelte/icons/check'
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert'
@@ -94,64 +95,75 @@
   }
 </script>
 
-<form class="flex flex-col gap-4" method="post" onsubmit={handleSubmit}>
-  {#if formError}
-    <Alert variant="destructive">
-      <CircleAlertIcon class="size-4" />
-      <AlertDescription>{formError}</AlertDescription>
-    </Alert>
-  {/if}
-
-  <p class="text-center text-sm text-muted-foreground">Create a password to secure your account.</p>
-
-  <FormInput type="email" name="email" label="Email" value={email} disabled autocomplete="email" />
-
-  <div class="flex flex-col gap-1">
-    <FormInput
-      type="password"
-      name="password"
-      label="Password"
-      placeholder="At least 8 characters"
-      bind:value={password}
-      error={passwordError}
-      required
-      autocomplete="new-password"
-      showPasswordToggle
-      onblur={validatePassword}
-    />
-    <PasswordStrength {password} />
-  </div>
-
-  <div class="flex flex-col gap-1">
-    <FormInput
-      type="password"
-      name="confirmPassword"
-      label="Confirm password"
-      placeholder="Confirm your password"
-      bind:value={confirmPassword}
-      error={confirmPasswordError}
-      required
-      autocomplete="new-password"
-      showPasswordToggle
-      onblur={validateConfirmPassword}
-    />
-    {#if passwordsMatch}
-      <div class="flex items-center gap-2 text-sm text-primary">
-        <CheckIcon class="size-4" />
-        <span>Passwords match</span>
-      </div>
+<TelemetryBoundary name="SetPasswordForm">
+  <form class="flex flex-col gap-4" method="post" onsubmit={handleSubmit}>
+    {#if formError}
+      <Alert variant="destructive">
+        <CircleAlertIcon class="size-4" />
+        <AlertDescription>{formError}</AlertDescription>
+      </Alert>
     {/if}
-  </div>
 
-  <Button type="submit" disabled={loading} class="w-full">
-    {#if loading}
-      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-      ></span>
-    {/if}
-    {loading ? 'Creating account...' : 'Create account'}
-  </Button>
+    <p class="text-center text-sm text-muted-foreground">
+      Create a password to secure your account.
+    </p>
 
-  <p class="text-center text-sm text-muted-foreground">
-    <a href="/register" class="font-medium text-primary hover:underline">Start over</a>
-  </p>
-</form>
+    <FormInput
+      type="email"
+      name="email"
+      label="Email"
+      value={email}
+      disabled
+      autocomplete="email"
+    />
+
+    <div class="flex flex-col gap-1">
+      <FormInput
+        type="password"
+        name="password"
+        label="Password"
+        placeholder="At least 8 characters"
+        bind:value={password}
+        error={passwordError}
+        required
+        autocomplete="new-password"
+        showPasswordToggle
+        onblur={validatePassword}
+      />
+      <PasswordStrength {password} />
+    </div>
+
+    <div class="flex flex-col gap-1">
+      <FormInput
+        type="password"
+        name="confirmPassword"
+        label="Confirm password"
+        placeholder="Confirm your password"
+        bind:value={confirmPassword}
+        error={confirmPasswordError}
+        required
+        autocomplete="new-password"
+        showPasswordToggle
+        onblur={validateConfirmPassword}
+      />
+      {#if passwordsMatch}
+        <div class="flex items-center gap-2 text-sm text-primary">
+          <CheckIcon class="size-4" />
+          <span>Passwords match</span>
+        </div>
+      {/if}
+    </div>
+
+    <Button type="submit" disabled={loading} class="w-full">
+      {#if loading}
+        <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+        ></span>
+      {/if}
+      {loading ? 'Creating account...' : 'Create account'}
+    </Button>
+
+    <p class="text-center text-sm text-muted-foreground">
+      <a href="/register" class="font-medium text-primary hover:underline">Start over</a>
+    </p>
+  </form>
+</TelemetryBoundary>

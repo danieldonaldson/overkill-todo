@@ -1,7 +1,8 @@
 //! Record browser reports (OT-006 Decision 2): the rules between the validated
 //! request and the sink.
 //!
-//! 1. Map `page` onto the site's page templates, or `other`.
+//! 1. Map `page` onto the site's page templates, `island` onto the islands,
+//!    and `release` onto this replica's release labels, each with `other`.
 //! 2. Derive the browser family and device class from the `User-Agent`.
 //! 3. Re-scrub every text field ([`super::scrub`]).
 //! 4. Fingerprint each error for grouping.
@@ -15,6 +16,7 @@ use super::scrub::scrub;
 use crate::application::dto::client_telemetry_dto::{MAX_MESSAGE_CHARS, MAX_STACK_CHARS};
 use crate::application::dto::{ClientErrorEvent, ClientEvent, ClientReportBatch};
 use crate::application::ports::incoming::RecordClientTelemetry;
+use crate::application::ports::outgoing::ClientPageLoadReport;
 use crate::application::ports::outgoing::{ClientErrorReport, ClientReportSink};
 use crate::domain::value_objects::UserId;
 use crate::shared::fingerprint::generate_error_fingerprint;
@@ -25,6 +27,9 @@ pub const DEFAULT_MAX_EVENTS_PER_SEC: u32 = 200;
 /// Longest `source` and `api_route` kept, in characters (the DTO's limits).
 const MAX_SOURCE_CHARS: usize = 500;
 const MAX_API_ROUTE_CHARS: usize = 200;
+
+/// The `source` the browser sends for an error from another origin.
+const EXTERNAL_SOURCE: &str = "external";
 
 /// The site's page templates (Decision 5): every `apps/web/src/pages/**/*.astro`
 /// route. A test checks this list against that directory.
@@ -40,6 +45,27 @@ pub const PAGE_TEMPLATES: &[&str] = &[
     "/dashboard/settings",
     "/dashboard/admin",
 ];
+
+/// The site's islands (Decision 6b): the `name` of every `TelemetryBoundary`.
+///
+/// A test checks this list against `tests/fixtures/client_islands.json`, which
+/// the web guard test checks against the islands themselves.
+pub const ISLAND_TEMPLATES: &[&str] = &[
+    "AdminPanel",
+    "AuthScreen",
+    "DashboardHeader",
+    "ForgotPasswordForm",
+    "HomePanel",
+    "ModeWatcher",
+    "ResetPasswordForm",
+    "SetPasswordForm",
+    "SettingsPanel",
+    "VerifyEmailForm",
+    "VerifyMagicForm",
+];
+
+/// Distinct releases one replica labels in metrics; later ones are `other`.
+pub const MAX_RELEASE_LABELS: usize = 5;
 
 /// Page label for anything not in [`PAGE_TEMPLATES`].
 pub const OTHER_PAGE: &str = "other";
@@ -57,6 +83,41 @@ pub fn page_template(path: &str) -> &'static str {
         .find(|template| **template == path)
         .copied()
         .unwrap_or(OTHER_PAGE)
+}
+
+/// The island name from [`ISLAND_TEMPLATES`], or [`OTHER_PAGE`] (`other`).
+#[must_use]
+pub fn island_template(name: &str) -> &'static str {
+    ISLAND_TEMPLATES
+        .iter()
+        .find(|island| **island == name)
+        .copied()
+        .unwrap_or(OTHER_PAGE)
+}
+
+/// The releases this replica uses as metric labels (Decision 7): its own
+/// release, then the first ones reports name, up to [`MAX_RELEASE_LABELS`].
+/// The client chooses `release`, so without a cap it could mint series.
+#[derive(Debug)]
+struct ReleaseLabels(Mutex<Vec<String>>);
+
+impl ReleaseLabels {
+    fn new(own: Option<&str>) -> Self {
+        Self(Mutex::new(own.map(str::to_string).into_iter().collect()))
+    }
+
+    fn label(&self, release: &str) -> String {
+        let mut labels = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if labels.iter().any(|l| l == release) {
+            return release.to_string();
+        }
+        if labels.len() < MAX_RELEASE_LABELS {
+            labels.push(release.to_string());
+            return release.to_string();
+        }
+        drop(labels);
+        OTHER_PAGE.to_string()
+    }
 }
 
 /// `mobile`, `tablet` or `desktop`, from substrings every major browser puts in
@@ -151,6 +212,7 @@ impl Budget {
 pub struct RecordClientTelemetryUseCase {
     sink: Arc<dyn ClientReportSink>,
     budget: Budget,
+    releases: ReleaseLabels,
 }
 
 impl RecordClientTelemetryUseCase {
@@ -160,7 +222,17 @@ impl RecordClientTelemetryUseCase {
         Self {
             sink,
             budget: Budget::new(max_events_per_sec, Instant::now()),
+            releases: ReleaseLabels::new(None),
         }
+    }
+
+    /// Reserve a release label for `release`, this replica's own build
+    /// (`APP_VERSION`), so reports from it are always labelled however many
+    /// other releases arrive first.
+    #[must_use]
+    pub fn with_own_release(mut self, release: &str) -> Self {
+        self.releases = ReleaseLabels::new(Some(release));
+        self
     }
 
     fn record_at(
@@ -176,15 +248,20 @@ impl RecordClientTelemetryUseCase {
         let page = page_template(&batch.page);
         let browser_family = browser_family(user_agent);
         let device_class = device_class(user_agent);
+        let mut release_label = None;
 
         for event in batch.events.into_iter().take(granted) {
             match event {
                 ClientEvent::Error(error) => {
+                    let release_label = release_label
+                        .get_or_insert_with(|| self.releases.label(&batch.release))
+                        .as_str();
                     let report = error_report(
                         error,
                         ReportContext {
                             page,
                             release: &batch.release,
+                            release_label,
                             page_load_id: &batch.page_load_id,
                             browser_family,
                             device_class,
@@ -193,6 +270,11 @@ impl RecordClientTelemetryUseCase {
                     );
                     self.sink.error(&report);
                 }
+                ClientEvent::PageLoad => self.sink.page_load(&ClientPageLoadReport {
+                    page,
+                    device_class,
+                    authenticated: user.is_some(),
+                }),
             }
         }
         if dropped > 0 {
@@ -206,6 +288,7 @@ impl RecordClientTelemetryUseCase {
 struct ReportContext<'a> {
     page: &'static str,
     release: &'a str,
+    release_label: &'a str,
     page_load_id: &'a str,
     browser_family: &'static str,
     device_class: &'static str,
@@ -219,6 +302,7 @@ fn error_report(error: ClientErrorEvent, cx: ReportContext<'_>) -> ClientErrorRe
     ClientErrorReport {
         page: cx.page,
         release: cx.release.to_string(),
+        release_label: cx.release_label.to_string(),
         kind: error.kind,
         fingerprint: generate_error_fingerprint(
             &format!("client:{}", error.kind.as_str()),
@@ -227,7 +311,9 @@ fn error_report(error: ClientErrorEvent, cx: ReportContext<'_>) -> ClientErrorRe
         count: error.count,
         message,
         stack,
+        external: error.source.as_deref() == Some(EXTERNAL_SOURCE),
         source: error.source.map(|s| scrub(&s, MAX_SOURCE_CHARS)),
+        island: error.island.as_deref().map(island_template),
         api_route: error.api_route.map(|s| scrub(&s, MAX_API_ROUTE_CHARS)),
         status: error.status,
         network_failed: error.network_failed,
@@ -261,12 +347,16 @@ mod tests {
     #[derive(Default)]
     struct RecordingSink {
         errors: Mutex<Vec<ClientErrorReport>>,
+        page_loads: Mutex<Vec<ClientPageLoadReport>>,
         dropped: Mutex<Vec<u64>>,
     }
 
     impl ClientReportSink for RecordingSink {
         fn error(&self, report: &ClientErrorReport) {
             self.errors.lock().unwrap().push(report.clone());
+        }
+        fn page_load(&self, report: &ClientPageLoadReport) {
+            self.page_loads.lock().unwrap().push(*report);
         }
         fn dropped(&self, n: u64) {
             self.dropped.lock().unwrap().push(n);
@@ -295,6 +385,7 @@ mod tests {
                 "Error: {message}\n    at render (https://overkill.example/_astro/index.js:1:2)"
             )),
             source: None,
+            island: None,
             api_route: None,
             status: None,
             network_failed: None,
@@ -439,6 +530,7 @@ mod tests {
                     "Error\n    at f (https://overkill.example/verify-magic#token=abc:1:2)".into(),
                 ),
                 source: Some("https://overkill.example/_astro/a.js?token=abc".into()),
+                island: None,
                 api_route: Some("/auth/reset?token=abc".into()),
                 status: Some(500),
                 network_failed: None,
@@ -482,7 +574,9 @@ mod tests {
         assert_ne!(a, c);
         // The same message from another frame is another error.
         let mut other_frame = event("x is undefined");
-        let ClientEvent::Error(e) = &mut other_frame;
+        let ClientEvent::Error(e) = &mut other_frame else {
+            unreachable!()
+        };
         e.stack = Some("Error\n    at other (https://overkill.example/_astro/b.js:9:9)".into());
         assert_ne!(a, record_one("/login", other_frame, None).fingerprint);
         // Emails differ per user but the error is the same.
@@ -535,6 +629,136 @@ mod tests {
         assert_eq!(budget.take(10, start + Duration::from_millis(500)), 5);
         // A long quiet spell refills to the rate, not more.
         assert_eq!(budget.take(100, start + Duration::from_secs(60)), 10);
+    }
+
+    fn with_error(message: &str, edit: impl FnOnce(&mut ClientErrorEvent)) -> ClientEvent {
+        let mut e = event(message);
+        let ClientEvent::Error(inner) = &mut e else {
+            unreachable!()
+        };
+        edit(inner);
+        e
+    }
+
+    #[test]
+    fn a_page_load_is_counted_with_the_page_device_and_session() {
+        let (uc, sink) = use_case(DEFAULT_MAX_EVENTS_PER_SEC);
+        uc.record(
+            batch("/dashboard/settings/", vec![ClientEvent::PageLoad]),
+            Some(UserId::new()),
+            SAFARI_IPHONE,
+        );
+        uc.record(
+            batch("/wp-admin", vec![ClientEvent::PageLoad]),
+            None,
+            CHROME_DESKTOP,
+        );
+        assert_eq!(
+            *sink.page_loads.lock().unwrap(),
+            [
+                ClientPageLoadReport {
+                    page: "/dashboard/settings",
+                    device_class: "mobile",
+                    authenticated: true,
+                },
+                ClientPageLoadReport {
+                    page: OTHER_PAGE,
+                    device_class: "desktop",
+                    authenticated: false,
+                },
+            ]
+        );
+        assert_eq!(sink.errors(), Vec::new());
+    }
+
+    #[test]
+    fn page_loads_share_the_budget() {
+        let (uc, sink) = use_case(2);
+        let events = vec![ClientEvent::PageLoad, event("a"), ClientEvent::PageLoad];
+        uc.record_at(
+            batch("/login", events),
+            None,
+            CHROME_DESKTOP,
+            Instant::now(),
+        );
+        assert_eq!(sink.page_loads.lock().unwrap().len(), 1);
+        assert_eq!(sink.errors().len(), 1);
+        assert_eq!(sink.dropped_total(), 1);
+    }
+
+    #[test]
+    fn known_islands_keep_their_name_and_others_become_other() {
+        let island = |name: &str| {
+            record_one(
+                "/dashboard",
+                with_error("x", |e| {
+                    e.kind = ClientErrorKind::Boundary;
+                    e.island = Some(name.into());
+                }),
+                None,
+            )
+            .island
+        };
+        assert_eq!(island("SettingsPanel"), Some("SettingsPanel"));
+        assert_eq!(island("settingspanel"), Some(OTHER_PAGE));
+        assert_eq!(island("<script>"), Some(OTHER_PAGE));
+        assert_eq!(record_one("/login", event("x"), None).island, None);
+    }
+
+    /// Decision 6b: the allowlist is the shared fixture the web guard reads.
+    #[test]
+    fn island_templates_match_the_shared_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../tests/fixtures/client_islands.json"
+        ))
+        .unwrap();
+        let listed: BTreeSet<&str> = fixture["islands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            listed,
+            ISLAND_TEMPLATES.iter().copied().collect::<BTreeSet<_>>(),
+            "update ISLAND_TEMPLATES to match tests/fixtures/client_islands.json"
+        );
+    }
+
+    #[test]
+    fn only_errors_from_another_origin_are_external() {
+        let external = |source: Option<&str>| {
+            record_one(
+                "/login",
+                with_error("x", |e| e.source = source.map(str::to_string)),
+                None,
+            )
+            .external
+        };
+        assert!(external(Some("external")));
+        assert!(!external(Some("https://overkill.example/_astro/a.js")));
+        assert!(!external(None));
+    }
+
+    #[test]
+    fn release_labels_are_capped_per_replica_but_logs_keep_the_release() {
+        let sink = Arc::new(RecordingSink::default());
+        let uc = RecordClientTelemetryUseCase::new(sink.clone(), DEFAULT_MAX_EVENTS_PER_SEC)
+            .with_own_release("own");
+        let send = |release: &str| {
+            let mut b = batch("/login", vec![event("x")]);
+            b.release = release.into();
+            uc.record(b, None, CHROME_DESKTOP);
+            let r = sink.errors().pop().unwrap();
+            (r.release, r.release_label)
+        };
+        for release in ["r1", "r2", "r3", "r4"] {
+            assert_eq!(send(release), (release.into(), release.into()));
+        }
+        // Own release plus four: the sixth distinct release is `other`.
+        assert_eq!(send("r5"), ("r5".into(), OTHER_PAGE.into()));
+        assert_eq!(send("own"), ("own".into(), "own".into()));
+        assert_eq!(send("r1"), ("r1".into(), "r1".into()));
     }
 
     #[test]

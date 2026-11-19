@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TelemetryBoundary from '$lib/telemetry/TelemetryBoundary.svelte'
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert'
   import { Alert, AlertDescription } from '$lib/components/ui/alert'
   import { Button } from '$lib/components/ui/button'
@@ -49,41 +50,43 @@
   }
 </script>
 
-<form class="flex flex-col gap-4" method="post" onsubmit={handleSubmit}>
-  {#if formError}
-    <Alert variant="destructive">
-      <CircleAlertIcon class="size-4" />
-      <AlertDescription>{formError}</AlertDescription>
-    </Alert>
-  {/if}
-
-  <p class="text-center text-sm text-muted-foreground">
-    Enter your email address and we'll send you a code to reset your password.
-  </p>
-
-  <FormInput
-    type="email"
-    name="email"
-    label="Email"
-    placeholder="you@example.com"
-    bind:value={emailValue}
-    error={emailError}
-    required
-    autocomplete="email"
-    onblur={validateEmail}
-  />
-
-  <Turnstile bind:this={turnstileRef} onVerify={handleTurnstileVerify} />
-
-  <Button type="submit" disabled={loading} class="w-full">
-    {#if loading}
-      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-      ></span>
+<TelemetryBoundary name="ForgotPasswordForm">
+  <form class="flex flex-col gap-4" method="post" onsubmit={handleSubmit}>
+    {#if formError}
+      <Alert variant="destructive">
+        <CircleAlertIcon class="size-4" />
+        <AlertDescription>{formError}</AlertDescription>
+      </Alert>
     {/if}
-    Send reset code
-  </Button>
 
-  <p class="text-center text-sm text-muted-foreground">
-    <a href="/login" class="font-medium text-primary hover:underline">Back to sign in</a>
-  </p>
-</form>
+    <p class="text-center text-sm text-muted-foreground">
+      Enter your email address and we'll send you a code to reset your password.
+    </p>
+
+    <FormInput
+      type="email"
+      name="email"
+      label="Email"
+      placeholder="you@example.com"
+      bind:value={emailValue}
+      error={emailError}
+      required
+      autocomplete="email"
+      onblur={validateEmail}
+    />
+
+    <Turnstile bind:this={turnstileRef} onVerify={handleTurnstileVerify} />
+
+    <Button type="submit" disabled={loading} class="w-full">
+      {#if loading}
+        <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+        ></span>
+      {/if}
+      Send reset code
+    </Button>
+
+    <p class="text-center text-sm text-muted-foreground">
+      <a href="/login" class="font-medium text-primary hover:underline">Back to sign in</a>
+    </p>
+  </form>
+</TelemetryBoundary>

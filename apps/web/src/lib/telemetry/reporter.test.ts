@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type Batch,
   ENDPOINT,
+  type ErrorEventBody,
   FLUSH_INTERVAL_MS,
   MAX_BATCH_BYTES,
   MAX_DISTINCT_ERRORS,
@@ -15,6 +16,8 @@ import {
 
 function setup(overrides: Partial<ReporterOptions> = {}) {
   const sent: Batch[] = []
+  /** `anonymous` for each batch sent, in order. */
+  const anonymous: boolean[] = []
   let signedIn = false
   let ids = 0
   const timers: Array<() => void> = []
@@ -22,7 +25,10 @@ function setup(overrides: Partial<ReporterOptions> = {}) {
     release: 'abc123',
     pathname: () => '/login',
     isSignedIn: () => signedIn,
-    send: (body) => sent.push(JSON.parse(body) as Batch),
+    send: (body, options) => {
+      sent.push(JSON.parse(body) as Batch)
+      anonymous.push(options.anonymous)
+    },
     newPageLoadId: () => String(++ids).padStart(32, '0'),
     setTimer: (fn) => timers.push(fn),
     clearTimer: () => {},
@@ -31,11 +37,17 @@ function setup(overrides: Partial<ReporterOptions> = {}) {
   return {
     reporter,
     sent,
+    anonymous,
     timers,
     signIn: (value: boolean) => {
       signedIn = value
     },
-    events: () => sent.flatMap((b) => b.events),
+    /** The error events sent, in order. */
+    events: () =>
+      sent.flatMap((b) => b.events).filter((e): e is ErrorEventBody => e.type === 'error'),
+    /** `page` of each page load sent, in order. */
+    loads: () =>
+      sent.flatMap((b) => b.events.filter((e) => e.type === 'page_load').map(() => b.page)),
   }
 }
 
@@ -78,6 +90,103 @@ describe('Reporter', () => {
     reporter.flush()
     expect(events().map((e) => e.message)).toContain('Error: e3')
     expect(events().map((e) => e.message)).not.toContain('Error: new')
+  })
+
+  it('sends a page load for each call, on the page it happened, never merged', () => {
+    let path = '/dashboard'
+    const { reporter, loads, events } = setup({ pathname: () => path })
+    reporter.pageLoad()
+    path = '/dashboard/settings/'
+    reporter.pageLoad()
+    reporter.pageLoad()
+    reporter.flush()
+    expect(loads()).toEqual(['/dashboard', '/dashboard/settings', '/dashboard/settings'])
+    expect(events()).toEqual([])
+  })
+
+  it('does not count page loads against the distinct error cap', () => {
+    const { reporter, events, loads } = setup()
+    for (let i = 0; i < 40; i++) reporter.pageLoad()
+    for (let i = 0; i < MAX_DISTINCT_ERRORS; i++) reporter.capture(boom(`TypeError: e${i}`))
+    reporter.flush()
+    expect(loads()).toHaveLength(40)
+    expect(events()).toHaveLength(MAX_DISTINCT_ERRORS)
+  })
+
+  it('schedules a flush for a page load and stays silent if the page throws', () => {
+    const { reporter, timers, sent } = setup({
+      pathname: () => {
+        throw new Error('no location')
+      },
+    })
+    expect(() => reporter.pageLoad()).not.toThrow()
+    expect(timers).toHaveLength(0)
+    const ok = setup()
+    ok.reporter.pageLoad()
+    expect(ok.timers).toHaveLength(1)
+    ok.timers[0]()
+    expect(ok.loads()).toEqual(['/login'])
+    expect(sent).toEqual([])
+  })
+
+  it('sends an API failure with its route, status and a well-formed trace ID only', () => {
+    const { reporter, events } = setup()
+    const trace = 'abcdef0123456789abcdef0123456789'
+    reporter.capture({
+      kind: 'api',
+      message: 'PATCH /users/me failed: status 500',
+      apiRoute: '/users/me?email=a@b.c',
+      status: 500,
+      traceId: trace,
+    })
+    reporter.capture({
+      kind: 'api',
+      message: 'GET /x failed: status 502',
+      apiRoute: '/x',
+      status: 502,
+      traceId: 'not-a-trace-id',
+    })
+    reporter.flush()
+    expect(events()[0]).toMatchObject({ api_route: '/users/me', status: 500, trace_id: trace })
+    expect(events()[1]).not.toHaveProperty('trace_id')
+  })
+
+  it('holds timed flushes while the server is unreachable, then sends on its return', () => {
+    const { reporter, timers, events } = setup()
+    reporter.markOffline()
+    reporter.capture({
+      kind: 'api',
+      message: 'POST /auth/register failed: network error',
+      apiRoute: '/auth/register',
+      networkFailed: true,
+    })
+    timers.shift()?.()
+    expect(events()).toEqual([])
+    expect(timers).toHaveLength(1) // rescheduled, not dropped
+    reporter.markOnline()
+    expect(events()).toHaveLength(1)
+    expect(events()[0]).toMatchObject({ network_failed: true, api_route: '/auth/register' })
+    expect(events()[0]).not.toHaveProperty('status')
+  })
+
+  it('still sends held reports when the page is hidden', () => {
+    const { reporter, events } = setup()
+    reporter.markOffline()
+    reporter.capture(boom())
+    reporter.flush() // visibilitychange: hidden, pagehide
+    expect(events()).toHaveLength(1)
+  })
+
+  it('sends the island of a boundary error, and keeps islands apart', () => {
+    const { reporter, events } = setup()
+    reporter.capture({ ...boom(), kind: 'boundary', island: 'SettingsPanel' })
+    reporter.capture({ ...boom(), kind: 'boundary', island: 'SettingsPanel' })
+    reporter.capture({ ...boom(), kind: 'boundary', island: 'DashboardHeader' })
+    reporter.flush()
+    expect(events().map((e) => [e.island, e.count])).toEqual([
+      ['SettingsPanel', 2],
+      ['DashboardHeader', 1],
+    ])
   })
 
   it('scrubs before queueing', () => {
@@ -151,9 +260,9 @@ describe('Reporter', () => {
         MAX_BATCH_BYTES
       )
     }
-    expect(batches.flatMap((b) => b.events.map((e) => e.message))).toEqual(
-      big.map((e) => e.message)
-    )
+    expect(
+      batches.flatMap((b) => b.events.map((e) => (e.type === 'error' ? e.message : e.type)))
+    ).toEqual(big.map((e) => e.message))
   })
 
   it('flushes on a timer once something is queued', () => {
@@ -184,6 +293,31 @@ describe('Reporter', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('sends what was collected while signed out without cookies, even after signing in', () => {
+    let path = '/register'
+    const { reporter, sent, anonymous, signIn } = setup({ pathname: () => path })
+    reporter.pageLoad()
+    reporter.capture(boom('TypeError: before sign-in'))
+    signIn(true) // e.g. signup completed on /set-password
+    path = '/dashboard'
+    reporter.pageLoad()
+    reporter.capture(boom('TypeError: after sign-in'))
+    reporter.flush()
+    expect(sent.map((b) => b.page)).toEqual(['/register', '/dashboard'])
+    expect(anonymous).toEqual([true, false])
+    expect(sent[0].page_load_id).not.toBe(sent[1].page_load_id)
+  })
+
+  it('sends what was collected while signed in with cookies, also after signing out', () => {
+    const { reporter, anonymous, signIn } = setup()
+    signIn(true)
+    reporter.capture(boom('TypeError: signed in'))
+    signIn(false)
+    reporter.capture(boom('TypeError: signed out'))
+    reporter.flush()
+    expect(anonymous).toEqual([false, true])
   })
 
   it('stays silent when sending, the session or the page throws', () => {
@@ -246,6 +380,17 @@ describe('beaconSend', () => {
     expect((blob as Blob).type).toBe('application/json')
     expect(await (blob as Blob).text()).toBe('{"a":1}')
     expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('sends an anonymous batch by fetch without cookies, never by beacon', () => {
+    const beacon = vi.spyOn(navigator, 'sendBeacon').mockReturnValue(true)
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(null))
+    beaconSend('{}', { anonymous: true })
+    expect(beacon).not.toHaveBeenCalled()
+    expect(fetchSpy).toHaveBeenCalledWith(
+      ENDPOINT,
+      expect.objectContaining({ method: 'POST', keepalive: true, credentials: 'omit' })
+    )
   })
 
   it('falls back to a keepalive fetch when the beacon is refused', () => {

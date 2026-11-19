@@ -18,6 +18,7 @@ vi.mock('../auth/token', () => ({
 }))
 
 import { getApiBaseUrl, getLastTraceId, HttpClient } from './client'
+import { setApiFailureHandlers } from '../telemetry/api-failures'
 import { ApiErrorException, isApiStatus } from './errors'
 import { clearTokenExpiry, ensureValidToken, getTokenExpiry, setTokenExpiry } from '../auth/token'
 import { clearSessionUser } from '../auth/session'
@@ -333,5 +334,100 @@ describe('HttpClient.requestWithFingerprint', () => {
 
     const headers = mockFetch.mock.calls[0][1].headers as Record<string, string>
     expect(headers['X-Device-Fingerprint']).toBe('test-fingerprint')
+  })
+})
+
+describe('HttpClient API failure reports (OT-006)', () => {
+  const failure = vi.fn()
+  const reachable = vi.fn()
+  const TRACE = 'abcdef0123456789abcdef0123456789'
+
+  beforeEach(() => {
+    setApiFailureHandlers({ failure, reachable })
+    // A CSRF cookie, so mutating calls don't refresh first.
+    document.cookie = '__Host-csrf_token=csrf-abc; path=/; secure'
+  })
+  afterEach(() => {
+    setApiFailureHandlers(null)
+  })
+
+  it('reports a 5xx with the route, status and trace ID, and still throws', async () => {
+    mockFetch.mockResolvedValueOnce(fakeResponse({ status: 500, body: {}, traceId: TRACE }))
+    await expect(
+      new HttpClient().request('/users/me', { method: 'PATCH', body: '{}' })
+    ).rejects.toBeInstanceOf(ApiErrorException)
+    expect(failure).toHaveBeenCalledExactlyOnceWith({
+      method: 'PATCH',
+      route: '/users/me',
+      status: 500,
+      traceId: TRACE,
+    })
+    expect(reachable).toHaveBeenCalledOnce()
+  })
+
+  it("reports the caller's route template, never the raw path", async () => {
+    mockFetch.mockResolvedValueOnce(fakeResponse({ status: 503 }))
+    await expect(
+      new HttpClient().request('/admin/users/1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed/role', {
+        method: 'PUT',
+        route: '/admin/users/{id}/role',
+      })
+    ).rejects.toThrow()
+    expect(failure.mock.calls[0][0].route).toBe('/admin/users/{id}/role')
+    // The route never reaches fetch.
+    expect(mockFetch.mock.calls[0][1]).not.toHaveProperty('route')
+  })
+
+  it('falls back to a template without query or IDs', async () => {
+    mockFetch.mockResolvedValueOnce(fakeResponse({ status: 502 }))
+    await expect(
+      new HttpClient().request('/things/1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed/parts/42?email=a@b.c')
+    ).rejects.toThrow()
+    expect(failure.mock.calls[0][0].route).toBe('/things/{id}/parts/{id}')
+  })
+
+  it('reports a network failure with no status or trace ID, and rethrows it', async () => {
+    const offline = new TypeError('Failed to fetch')
+    mockFetch.mockRejectedValueOnce(offline)
+    await expect(
+      new HttpClient().request('/auth/register', { method: 'POST', body: '{}' })
+    ).rejects.toBe(offline)
+    expect(failure).toHaveBeenCalledExactlyOnceWith({
+      method: 'POST',
+      route: '/auth/register',
+      networkFailed: true,
+    })
+    expect(reachable).not.toHaveBeenCalled()
+  })
+
+  it('does not report an aborted request', async () => {
+    mockFetch.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'))
+    await expect(new HttpClient().request('/users/me')).rejects.toThrow()
+    expect(failure).not.toHaveBeenCalled()
+  })
+
+  it.each([400, 401, 403, 404, 409, 422, 429])('never reports a %i', async (status) => {
+    mockFetch.mockResolvedValue(fakeResponse({ status, body: { message: 'nope' } }))
+    // Login: a 401 there is a wrong password, not a session to refresh.
+    await expect(
+      new HttpClient().request('/auth/login', { method: 'POST', body: '{}' })
+    ).rejects.toThrow()
+    expect(failure).not.toHaveBeenCalled()
+    expect(reachable).toHaveBeenCalled()
+  })
+
+  it('returns the same result when the reporter throws', async () => {
+    setApiFailureHandlers({
+      failure: () => {
+        throw new Error('reporter broke')
+      },
+      reachable: () => {
+        throw new Error('reporter broke')
+      },
+    })
+    mockFetch.mockResolvedValueOnce(fakeResponse({ body: { id: 'ok' } }))
+    await expect(new HttpClient().request('/items')).resolves.toEqual({ id: 'ok' })
+    mockFetch.mockResolvedValueOnce(fakeResponse({ status: 500, body: { message: 'boom' } }))
+    await expect(new HttpClient().request('/items')).rejects.toBeInstanceOf(ApiErrorException)
   })
 })

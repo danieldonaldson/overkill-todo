@@ -51,6 +51,7 @@ export function createOAuthApi(
     unlink: (provider: OAuthProvider): Promise<void> =>
       client.request(`/auth/oauth/${provider}/unlink`, {
         method: 'DELETE',
+        route: '/auth/oauth/{provider}/unlink',
       }),
   }
 }

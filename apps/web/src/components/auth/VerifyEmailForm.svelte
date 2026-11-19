@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TelemetryBoundary from '$lib/telemetry/TelemetryBoundary.svelte'
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert'
   import CircleCheckIcon from '@lucide/svelte/icons/circle-check'
   import { Alert, AlertDescription } from '$lib/components/ui/alert'
@@ -140,61 +141,63 @@
   }
 </script>
 
-<form class="flex flex-col gap-4" method="post" onsubmit={handleSubmit}>
-  {#if formError}
-    <Alert variant="destructive">
-      <CircleAlertIcon class="size-4" />
-      <AlertDescription>{formError}</AlertDescription>
-    </Alert>
-  {/if}
-
-  {#if successMessage}
-    <Alert variant="success">
-      <CircleCheckIcon class="size-4" />
-      <AlertDescription>{successMessage}</AlertDescription>
-    </Alert>
-  {/if}
-
-  <p class="text-center text-sm text-muted-foreground">
-    Enter the 6-digit code sent to <strong class="text-foreground">{email}</strong>
-  </p>
-
-  <CodeInput
-    bind:value={code}
-    disabled={pending !== null}
-    error={codeError}
-    oncomplete={handleCodeComplete}
-  />
-
-  <Button type="submit" disabled={pending !== null || code.length !== 6} class="w-full">
-    {#if pending === 'verify'}
-      <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-      ></span>
+<TelemetryBoundary name="VerifyEmailForm">
+  <form class="flex flex-col gap-4" method="post" onsubmit={handleSubmit}>
+    {#if formError}
+      <Alert variant="destructive">
+        <CircleAlertIcon class="size-4" />
+        <AlertDescription>{formError}</AlertDescription>
+      </Alert>
     {/if}
-    {pending === 'verify' ? 'Verifying...' : 'Verify email'}
-  </Button>
 
-  <div class="my-2 h-px bg-border"></div>
-
-  <div class="flex flex-col gap-3">
-    {#if cooldownSeconds > 0}
-      <CountdownTimer seconds={cooldownSeconds} oncomplete={handleCooldownComplete} />
-    {:else}
-      <Turnstile bind:this={turnstileRef} onVerify={handleTurnstileVerify} />
-      <Button
-        type="button"
-        variant="ghost"
-        disabled={pending !== null}
-        onclick={handleResend}
-        class="w-full"
-      >
-        {#if pending === 'resend'}
-          <span
-            class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-          ></span>
-        {/if}
-        Resend code
-      </Button>
+    {#if successMessage}
+      <Alert variant="success">
+        <CircleCheckIcon class="size-4" />
+        <AlertDescription>{successMessage}</AlertDescription>
+      </Alert>
     {/if}
-  </div>
-</form>
+
+    <p class="text-center text-sm text-muted-foreground">
+      Enter the 6-digit code sent to <strong class="text-foreground">{email}</strong>
+    </p>
+
+    <CodeInput
+      bind:value={code}
+      disabled={pending !== null}
+      error={codeError}
+      oncomplete={handleCodeComplete}
+    />
+
+    <Button type="submit" disabled={pending !== null || code.length !== 6} class="w-full">
+      {#if pending === 'verify'}
+        <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+        ></span>
+      {/if}
+      {pending === 'verify' ? 'Verifying...' : 'Verify email'}
+    </Button>
+
+    <div class="my-2 h-px bg-border"></div>
+
+    <div class="flex flex-col gap-3">
+      {#if cooldownSeconds > 0}
+        <CountdownTimer seconds={cooldownSeconds} oncomplete={handleCooldownComplete} />
+      {:else}
+        <Turnstile bind:this={turnstileRef} onVerify={handleTurnstileVerify} />
+        <Button
+          type="button"
+          variant="ghost"
+          disabled={pending !== null}
+          onclick={handleResend}
+          class="w-full"
+        >
+          {#if pending === 'resend'}
+            <span
+              class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+            ></span>
+          {/if}
+          Resend code
+        </Button>
+      {/if}
+    </div>
+  </form>
+</TelemetryBoundary>

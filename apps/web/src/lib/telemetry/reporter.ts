@@ -18,6 +18,9 @@ export const MAX_DISTINCT_ERRORS = 20
 export const FLUSH_INTERVAL_MS = 10_000
 const MAX_COUNT = 10_000
 const MAX_PAGE_CHARS = 200
+const MAX_ISLAND_CHARS = 100
+const MAX_API_ROUTE_CHARS = 200
+const TRACE_ID_PATTERN = /^[0-9a-f]{32}$/
 
 export type ErrorKind = 'error' | 'unhandledrejection' | 'boundary' | 'api'
 
@@ -27,14 +30,26 @@ export interface ErrorEventBody {
   message: string
   stack?: string
   source?: string
+  island?: string
+  api_route?: string
+  status?: number
+  network_failed?: boolean
+  trace_id?: string
   count: number
 }
+
+/** A finished page load (full or in-site): the error rate's denominator. */
+export interface PageLoadEventBody {
+  type: 'page_load'
+}
+
+export type EventBody = ErrorEventBody | PageLoadEventBody
 
 export interface Batch {
   page_load_id: string
   release: string
   page: string
-  events: ErrorEventBody[]
+  events: EventBody[]
 }
 
 /** A captured error before scrubbing. */
@@ -44,6 +59,14 @@ export interface CapturedError {
   stack?: string
   /** The script URL, or `external` for another origin. */
   source?: string
+  /** For `boundary` errors: the island (`TelemetryBoundary` name) that caught it. */
+  island?: string
+  /** For `api` errors: the route template, and the status or network failure. */
+  apiRoute?: string
+  status?: number
+  networkFailed?: boolean
+  /** For `api` errors: the response's `X-Trace-Id` (32 lowercase hex). */
+  traceId?: string
 }
 
 export interface ReporterOptions {
@@ -52,19 +75,29 @@ export interface ReporterOptions {
   pathname: () => string
   /** Whether a Member is signed in now; a change starts a new page-load ID. */
   isSignedIn: () => boolean
-  /** Sends one serialized batch. Must not throw (it is guarded anyway). */
-  send: (body: string) => void
+  /**
+   * Sends one serialized batch. `anonymous` batches were collected while
+   * signed out and must go without cookies, so a session that appeared since
+   * (signing in on this page) can't be credited with them. Must not throw (it
+   * is guarded anyway).
+   */
+  send: (body: string, options: SendOptions) => void
   /** 32 lowercase hex characters. */
   newPageLoadId?: () => string
   setTimer?: (fn: () => void, ms: number) => unknown
   clearTimer?: (timer: unknown) => void
 }
 
+export interface SendOptions {
+  anonymous: boolean
+}
+
 interface Queued {
   pageLoadId: string
   page: string
-  key: string
-  event: ErrorEventBody
+  /** Dedupe key; `null` for events that are never merged (page loads). */
+  key: string | null
+  event: EventBody
 }
 
 export function randomPageLoadId(): string {
@@ -99,10 +132,18 @@ export class Reporter {
   private readonly release: string
   private pageLoadId: string
   private signedIn: boolean
+  /** Page-load IDs started while signed out (the ID rotates on sign-in or out). */
+  private anonymousIds = new Set<string>()
   /** Fingerprints seen in the current page load (sent or queued). */
   private seen = new Set<string>()
   private queue: Queued[] = []
   private timer: unknown = null
+  /**
+   * Set when an API call couldn't reach the server: the timer holds the queue
+   * until the server answers again (or the page is hidden), so the report of
+   * that failure isn't lost to the same outage.
+   */
+  private offline = false
 
   constructor(options: ReporterOptions) {
     this.options = {
@@ -114,6 +155,7 @@ export class Reporter {
     this.release = RELEASE_PATTERN.test(options.release) ? options.release : 'dev'
     this.pageLoadId = this.options.newPageLoadId()
     this.signedIn = this.safeSignedIn()
+    if (!this.signedIn) this.anonymousIds.add(this.pageLoadId)
   }
 
   /** The page-load ID errors captured now would carry. */
@@ -129,13 +171,16 @@ export class Reporter {
       const message = scrub(error.message || 'Unknown error', MAX_MESSAGE_CHARS)
       const stack = error.stack ? scrub(error.stack, MAX_STACK_CHARS) : undefined
       const source = error.source ? scrub(error.source, MAX_SOURCE_CHARS) : undefined
-      const key = `${error.kind}\n${message}\n${topFrame(stack)}`
+      const island = error.island
+        ? Array.from(error.island).slice(0, MAX_ISLAND_CHARS).join('')
+        : undefined
+      const key = `${error.kind}\n${island ?? ''}\n${message}\n${topFrame(stack)}`
       const page = pageOf(this.options.pathname())
 
       const queued = this.queue.find(
         (q) => q.key === key && q.pageLoadId === this.pageLoadId && q.page === page
       )
-      if (queued) {
+      if (queued && queued.event.type === 'error') {
         queued.event.count = Math.min(queued.event.count + 1, MAX_COUNT)
         return
       }
@@ -145,8 +190,51 @@ export class Reporter {
       const event: ErrorEventBody = { type: 'error', kind: error.kind, message, count: 1 }
       if (stack) event.stack = stack
       if (source) event.source = source
+      if (island) event.island = island
+      if (error.apiRoute) event.api_route = scrub(error.apiRoute, MAX_API_ROUTE_CHARS)
+      if (error.status !== undefined && error.status >= 100 && error.status <= 599) {
+        event.status = error.status
+      }
+      if (error.networkFailed) event.network_failed = true
+      if (error.traceId && TRACE_ID_PATTERN.test(error.traceId)) event.trace_id = error.traceId
       this.queue.push({ pageLoadId: this.pageLoadId, page, key, event })
       this.schedule()
+    } catch {
+      // Never let reporting break the page.
+    }
+  }
+
+  /**
+   * Count a finished page load on the current page: the full load, or the
+   * page an in-site navigation landed on. Never sampled, never merged.
+   */
+  pageLoad(): void {
+    try {
+      this.rotateIfSessionChanged()
+      const page = pageOf(this.options.pathname())
+      this.queue.push({
+        pageLoadId: this.pageLoadId,
+        page,
+        key: null,
+        event: { type: 'page_load' },
+      })
+      this.schedule()
+    } catch {
+      // Never let reporting break the page.
+    }
+  }
+
+  /** An API call couldn't reach the server: hold timed flushes until it can. */
+  markOffline(): void {
+    this.offline = true
+  }
+
+  /** The server answered again: send what was held. */
+  markOnline(): void {
+    try {
+      if (!this.offline) return
+      this.offline = false
+      if (this.queue.length > 0) this.flush()
     } catch {
       // Never let reporting break the page.
     }
@@ -163,7 +251,8 @@ export class Reporter {
       this.queue = []
       for (const batch of this.batches(queued)) {
         try {
-          this.options.send(JSON.stringify(batch))
+          const anonymous = this.anonymousIds.has(batch.page_load_id)
+          this.options.send(JSON.stringify(batch), { anonymous })
         } catch {
           // A failed send loses that batch, nothing more.
         }
@@ -186,6 +275,7 @@ export class Reporter {
     if (signedIn !== this.signedIn) {
       this.signedIn = signedIn
       this.pageLoadId = this.options.newPageLoadId()
+      if (!signedIn) this.anonymousIds.add(this.pageLoadId)
       this.seen = new Set()
     }
   }
@@ -194,7 +284,8 @@ export class Reporter {
     if (this.timer !== null) return
     this.timer = this.options.setTimer(() => {
       this.timer = null
-      this.flush()
+      if (this.offline) this.schedule()
+      else this.flush()
     }, FLUSH_INTERVAL_MS)
   }
 
@@ -233,7 +324,10 @@ export function fit(batch: Batch): Batch[] {
       ...fit({ ...batch, events: batch.events.slice(half) }),
     ]
   }
-  const event = { ...batch.events[0] }
+  const only = batch.events[0]
+  // Only an error can outgrow the limit; a page load is a few bytes.
+  if (only.type !== 'error') return [batch]
+  const event = { ...only }
   while (byteLength(JSON.stringify({ ...batch, events: [event] })) > MAX_BATCH_BYTES) {
     if (event.stack) {
       const chars = Array.from(event.stack)
@@ -254,13 +348,17 @@ export function fit(batch: Batch): Batch[] {
  * The transport (Decision 8): `sendBeacon`, or a `keepalive` fetch when the
  * beacon is missing or refused. Never `HttpClient`, so a report can't trigger
  * a session refresh or a sign-in redirect, or report its own failure.
+ * Anonymous batches always use the fetch with `credentials: 'omit'`, because
+ * a beacon always sends cookies.
  */
-export function beaconSend(body: string): void {
-  try {
-    const blob = new Blob([body], { type: 'application/json' })
-    if (typeof navigator.sendBeacon === 'function' && navigator.sendBeacon(ENDPOINT, blob)) return
-  } catch {
-    // Fall through to fetch.
+export function beaconSend(body: string, { anonymous }: SendOptions = { anonymous: false }): void {
+  if (!anonymous) {
+    try {
+      const blob = new Blob([body], { type: 'application/json' })
+      if (typeof navigator.sendBeacon === 'function' && navigator.sendBeacon(ENDPOINT, blob)) return
+    } catch {
+      // Fall through to fetch.
+    }
   }
   try {
     void fetch(ENDPOINT, {
@@ -268,7 +366,7 @@ export function beaconSend(body: string): void {
       body,
       headers: { 'Content-Type': 'application/json' },
       keepalive: true,
-      credentials: 'same-origin',
+      credentials: anonymous ? 'omit' : 'same-origin',
     }).catch(() => {})
   } catch {
     // Reporting is best-effort.

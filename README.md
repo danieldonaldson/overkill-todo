@@ -257,11 +257,31 @@ just obs-wipe            # delete stored traces, logs and metrics (keeps Grafana
 
 ### Browser errors
 
-The site reports uncaught script errors and unhandled promise rejections from
-every page to `POST /api/v1/client-telemetry` (OT-006). They show up as
-`client_error` events in VictoriaLogs and on the Frontend dashboard, with the
-page template, release, a fingerprint, the browser family and device class,
-and a signed-in Member's `user_id` (from the session, never from the report).
+The site reports uncaught script errors, unhandled promise rejections, panel
+crashes and failed API calls from every page to `POST /api/v1/client-telemetry`
+(OT-006). They show up as `client_error` events in VictoriaLogs and on the
+Frontend dashboard, with the page template, release, a fingerprint, the
+browser family and device class, and a signed-in Member's `user_id` (from the
+session, never from the report).
+
+- **Panels.** Every island's root component wraps its markup in
+  `TelemetryBoundary` with an allowlisted `name`. A crash replaces only that
+  island with a short message, "Try again" and "Reload the page", and is
+  reported as `kind: boundary` with the island. A new island needs the
+  boundary and its name in `backend/tests/fixtures/client_islands.json`; the
+  guard test (`islands.test.ts`) and the backend's allowlist test fail
+  otherwise. In `astro dev` and `just e2e` builds,
+  `window.__otCrashIsland = '<name>'` crashes that island on purpose.
+- **API failures.** `HttpClient` reports a 5xx or an unreachable server (never a
+  4xx) as `kind: api`, with the route template (pass `route` for paths with
+  parameters, e.g. `/admin/users/{id}/role`), the status and the response's
+  trace ID. "View backend trace" on the report opens it in Tempo.
+- **Error rate.** Each full load and in-site navigation is counted in
+  `browser.page_load` (the denominator, not traffic analytics). Errors from the
+  site's own scripts are counted in `browser.error`, per page, kind and release
+  (at most 5 releases per replica; the rest are `other`). `BrowserErrorRateHigh`
+  fires above 2% of a page's loads for 10 minutes, with at least 1 page load a
+  minute on that page.
 
 - **Privacy.** The browser scrubs each report before sending it, and the
   backend scrubs it again: query strings and fragments are cut from every

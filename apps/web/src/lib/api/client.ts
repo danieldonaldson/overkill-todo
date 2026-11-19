@@ -12,6 +12,17 @@ import {
 import { API_BASE } from '../config'
 import type { ApiError } from './errors'
 import { ApiErrorException, getErrorCode, getErrorMessage, isApiError } from './errors'
+import { reportApiFailure, reportApiReachable, routeTemplate } from '../telemetry/api-failures'
+
+/**
+ * `fetch` options plus the endpoint's path template, e.g.
+ * `/admin/users/{id}/role`, which a 5xx or network failure is reported under
+ * (OT-006). Callers whose path has parameters pass it; for the rest it's the
+ * path itself.
+ */
+export interface ApiRequestInit extends RequestInit {
+  route?: string
+}
 
 /**
  * Get the API base URL for direct fetch calls.
@@ -93,7 +104,9 @@ export class HttpClient {
     }
   }
 
-  async request<T>(endpoint: string, options: RequestInit = {}, isRetry = false): Promise<T> {
+  async request<T>(endpoint: string, options: ApiRequestInit = {}, isRetry = false): Promise<T> {
+    const { route: givenRoute, ...init } = options
+    const route = givenRoute ?? routeTemplate(endpoint)
     // For authenticated endpoints, refresh an expiring token up front rather
     // than waiting for a 401. /auth/me is an ordinary authenticated call; the
     // other /auth/* endpoints are public or manage the session themselves.
@@ -112,7 +125,7 @@ export class HttpClient {
     }
 
     // Build headers with CSRF token for state-changing methods
-    const method = options.method?.toUpperCase() || 'GET'
+    const method = init.method?.toUpperCase() || 'GET'
     const needsCsrf = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
     let csrfToken = needsCsrf ? getCsrfToken() : null
 
@@ -129,18 +142,28 @@ export class HttpClient {
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      ...(options.headers as Record<string, string>),
+      ...(init.headers as Record<string, string>),
     }
 
     if (csrfToken) {
       headers[X_CSRF_TOKEN_HEADER] = csrfToken
     }
 
-    const response = await fetch(`${API_BASE}${endpoint}`, {
-      ...options,
-      credentials: 'include',
-      headers,
-    })
+    let response: Response
+    try {
+      response = await fetch(`${API_BASE}${endpoint}`, {
+        ...init,
+        credentials: 'include',
+        headers,
+      })
+    } catch (error) {
+      // The server couldn't be reached (an abort is the caller's choice).
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        reportApiFailure({ method, route, networkFailed: true })
+      }
+      throw error
+    }
+    reportApiReachable()
 
     // Capture trace ID from response for error display
     const traceId = response.headers.get(X_TRACE_ID_HEADER)
@@ -203,6 +226,11 @@ export class HttpClient {
     }
 
     if (!response.ok) {
+      // Server errors are browser errors linked to the backend trace; 4xx are
+      // the caller's to handle and never reported.
+      if (response.status >= 500) {
+        reportApiFailure({ method, route, status: response.status, traceId })
+      }
       let errorBody: ApiError | null = null
       try {
         const parsed: unknown = await response.json()
@@ -237,7 +265,7 @@ export class HttpClient {
    * Makes a request with the device fingerprint header.
    * Used for auth endpoints that require fingerprint.
    */
-  async requestWithFingerprint<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  async requestWithFingerprint<T>(endpoint: string, options: ApiRequestInit = {}): Promise<T> {
     const fingerprint = await getDeviceFingerprint()
     return this.request<T>(endpoint, {
       ...options,

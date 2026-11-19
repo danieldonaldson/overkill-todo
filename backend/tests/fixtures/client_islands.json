@@ -1,0 +1,16 @@
+{
+  "_comment": "OT-006 Decision 6b: the name of every TelemetryBoundary, one per island root. Read by the backend's island allowlist test and the web guard test; add a name here when adding an island.",
+  "islands": [
+    "AdminPanel",
+    "AuthScreen",
+    "DashboardHeader",
+    "ForgotPasswordForm",
+    "HomePanel",
+    "ModeWatcher",
+    "ResetPasswordForm",
+    "SetPasswordForm",
+    "SettingsPanel",
+    "VerifyEmailForm",
+    "VerifyMagicForm"
+  ]
+}

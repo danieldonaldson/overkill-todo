@@ -239,7 +239,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @overkill-todo/web exec playwright install --with-deps chromium
+      # The e2e build renders TelemetryBoundary's crash hook (OT-006); release
+      # images never do.
       - run: pnpm --filter @overkill-todo/web build
+        env:
+          PUBLIC_TELEMETRY_TEST_HOOKS: 'true'
       - run: pnpm --filter @overkill-todo/web test:e2e
       - uses: actions/upload-artifact@v7
         if: failure()

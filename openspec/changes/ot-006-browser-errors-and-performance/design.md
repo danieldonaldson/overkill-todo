@@ -94,6 +94,32 @@ Found on the way: the web Caddyfile's SPA fallback answered any `.map` path with
 Docker build works, so the CI-only fallback isn't needed. The CI artifact upload
 itself is only exercised on the first push to `main`.
 
+**Slice 2 check (2026-11-19, task 2.10): confirmed.** Against `just up` with
+release images (`RELEASE=ot006-s2`, then `ot006-s2b`) and `just obs-up`, with a
+real Member signed up through the fixed dev code:
+- with Postgres stopped, changing the password got a real 500. The `api`
+  report reached VictoriaLogs within seconds with route
+  `/users/password/change`, status 500, the Member's `user_id` and a
+  `client_trace_id` whose trace Tempo returned (edge span through
+  `middleware.csrf`, where the 500 came from). The `client_trace_id` derived
+  field opens it in one click;
+- a cached account with `oauth_providers: 5` crashed `SettingsPanel` for real;
+  the boundary showed its message, Home still worked, and the `boundary` report
+  named the island;
+- `browser_error_total` and `browser_page_load_total` held only allowlisted
+  labels, and the error-rate panel's expression gave 1 error per settings page
+  load.
+
+Found on the way: page loads on `/register`, `/verify-email` and `/set-password`
+were counted `authenticated=true`. They were queued signed out but sent after
+signup completed, and a beacon always carries cookies, so the new session was
+credited with them (an error there would have carried the new `user_id`,
+against the spec). Batches from a signed-out page load now go by `fetch` with
+`credentials: 'omit'` (Decision 8); after the fix those page loads count as
+`authenticated=false`. The release images don't contain the boundary's crash
+hook, so the crash used real bad data instead; the hook is checked by
+`just e2e`.
+
 ## Decisions
 
 ### 1. In-house reporter plus a backend endpoint
@@ -380,7 +406,13 @@ with `source: external` but not counted, so extension noise never reaches the
 error rate or `BrowserErrorRateHigh`.
 
 `release` appears only on `browser.error` and `browser.release_seen`, never on
-vitals, navigation or island histograms. This keeps those series bounded
+vitals, navigation or island histograms. The client chooses `release` (the DTO
+only checks its format), so as a label it is capped per replica: the use case
+labels the first 5 distinct releases it sees, always counting its own
+`APP_VERSION`, and labels any other as `other`. A deploy restarts the replicas,
+so the new release and the one still open in tabs take the slots. A forger can
+at worst fill the slots until the next restart, and `client_error` logs always
+keep the real value. This keeps those series bounded
 however many releases accumulate in 30 days.
 
 **Comparing vitals between releases is by time.** `browser.release_seen` has
@@ -403,7 +435,8 @@ out of metrics entirely; the "top fingerprints" panel is a VictoriaLogs query.
 - Islands: about 12 islands, each living on one page, × 2 stages × 2
   navigation kinds × 3 device classes = 144.
 - Navigation counter: 22.
-- Release marker: one series per release in retention.
+- Release marker: at most 6 series per replica lifetime (5 releases plus
+  `other`), the same cap as `browser.error`'s `release`.
 
 About 1,400 histograms in total, which is acceptable. The use case's tests
 assert every label comes only from the enums and allowlists (pages, islands).
@@ -421,12 +454,21 @@ assert every label comes only from the enums and allowlists (pages, islands).
 - **`TelemetryBoundary.svelte`**: a `<svelte:boundary>` wrapper with the
   fallback UI and "Try again" (calls the boundary's `reset`). It reports
   `kind: boundary`, and handles the panel timing marks and `markReady()`
-  context (Decision 6b).
+  context (Decision 6b). A test hook (`TestCrashHook.svelte`) throws when
+  `window.__otCrashIsland` names the island; it renders only in `astro dev` and
+  in builds with `PUBLIC_TELEMETRY_TEST_HOOKS=true` (`just e2e`, CI's e2e job),
+  so release images don't contain it.
+- **`api-failures.ts`**: the import-free hook `HttpClient` calls
+  (`reportApiFailure`, `reportApiReachable`). `index.ts` registers the reporter
+  with it, so the client doesn't import the reporter (which would be a cycle
+  through the session store).
 - **`index.ts`**: `installTelemetry()`, idempotent.
   - Registers `error` and `unhandledrejection` handlers.
   - Flushes on `visibilitychange: hidden`, on `pagehide`, and every 10 s while
     there's something queued.
-  - Exposes `reportApiFailure()` for `HttpClient`.
+  - Registers the reporter with `api-failures.ts` for `HttpClient`. After a
+    network failure, timed flushes wait until the server answers again (or the
+    page is hidden), so the report isn't lost to the same outage.
 
 **Rules:**
 - **Loading:** from `Base.astro` as a bundled `<script>` (Astro emits it as an
@@ -436,15 +478,24 @@ assert every label comes only from the enums and allowlists (pages, islands).
 - **Transport:** `navigator.sendBeacon('/api/v1/client-telemetry', new Blob([json], { type: 'application/json' }))`.
   If `sendBeacon` is missing or returns false, fall back to
   `fetch(..., { keepalive: true, credentials: 'same-origin' })`.
+  Batches collected while signed out (their page-load ID was started without
+  the session hint) always use that `fetch` with `credentials: 'omit'`
+  instead, because a beacon always sends cookies: a session that appeared
+  before the send, such as signing up on that page, must not be credited
+  with them (found in slice 2).
 - **Never `HttpClient`:** reporting doesn't use `HttpClient`, so it can't
   trigger a refresh, a 401 redirect, or report its own failures.
   Batches over 16 KB are split, with oversized stacks trimmed first.
 - **Self-protection:** every reporter entry point is wrapped in `try/catch`
   that swallows errors. The reporter never reports its own errors.
 - **Page-load ID:** 16 random bytes in hex, held in module memory only, never
-  in storage. It's regenerated when the session store in
-  `lib/auth/session.svelte.ts` changes between signed in and signed out (a
-  small subscription, no change to the session API).
+  in storage. It's regenerated when the session hint (`getTokenExpiry()` in
+  `lib/auth/token.ts`) appears or disappears, that is on sign-in, sign-out or
+  an expired session. Slice 1 watched `session.user` in
+  `lib/auth/session.svelte.ts` instead; slice 2 found that the store's
+  background `/auth/me` check fills in the user on every dashboard load with
+  no cached user, which rotated the ID within one page load. The reporter only
+  reads the hint and never writes it.
 - **Release:** `import.meta.env.PUBLIC_RELEASE`, set at build time from the
   commit SHA (`--build-arg RELEASE`), `dev` otherwise. The same promoted image
   serves every environment, so a build-time value is correct.

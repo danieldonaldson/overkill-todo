@@ -10,13 +10,22 @@ use crate::domain::value_objects::UserId;
 pub struct ClientErrorReport {
     /// Page template from the allowlist, or `other`.
     pub page: &'static str,
+    /// The release the browser reported, for the log line.
     pub release: String,
+    /// The release as a metric label: `release`, or `other` once the replica
+    /// has labelled its 5 distinct releases (Decision 7).
+    pub release_label: String,
     pub kind: ClientErrorKind,
     pub fingerprint: String,
     pub count: u32,
     pub message: String,
     pub stack: Option<String>,
     pub source: Option<String>,
+    /// From another origin (an extension or a third-party script): logged, but
+    /// not counted as a site error.
+    pub external: bool,
+    /// Island template from the allowlist, or `other`, for boundary errors.
+    pub island: Option<&'static str>,
     pub api_route: Option<String>,
     pub status: Option<u16>,
     pub network_failed: Option<bool>,
@@ -29,6 +38,16 @@ pub struct ClientErrorReport {
     pub user_id: Option<UserId>,
 }
 
+/// A finished page load: the denominator of the browser error rate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientPageLoadReport {
+    /// Page template from the allowlist, or `other`.
+    pub page: &'static str,
+    pub device_class: &'static str,
+    /// Whether the session (never the report) names a signed-in user.
+    pub authenticated: bool,
+}
+
 /// Records browser reports: errors as log events, counts as metrics.
 ///
 /// # Implementors
@@ -37,6 +56,8 @@ pub struct ClientErrorReport {
 pub trait ClientReportSink: Send + Sync {
     /// Record one browser error.
     fn error(&self, report: &ClientErrorReport);
+    /// Count one page load.
+    fn page_load(&self, report: &ClientPageLoadReport);
     /// Count `n` events that were over the recording budget and not recorded.
     fn dropped(&self, n: u64);
 }

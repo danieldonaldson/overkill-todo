@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TelemetryBoundary from '$lib/telemetry/TelemetryBoundary.svelte'
   import CheckIcon from '@lucide/svelte/icons/check'
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert'
   import { Alert, AlertDescription } from '$lib/components/ui/alert'
@@ -133,92 +134,98 @@
   }
 </script>
 
-{#if step === 'code'}
-  <form class="flex flex-col gap-4" method="post" onsubmit={handleCodeSubmit}>
-    {#if formError}
-      <Alert variant="destructive">
-        <CircleAlertIcon class="size-4" />
-        <AlertDescription>{formError}</AlertDescription>
-      </Alert>
-    {/if}
-
-    <p class="text-center text-sm text-muted-foreground">
-      Enter the 6-digit code sent to <strong class="text-foreground">{email}</strong>
-    </p>
-
-    <CodeInput
-      bind:value={code}
-      disabled={loading}
-      error={codeError}
-      oncomplete={handleCodeComplete}
-    />
-
-    <Button type="submit" disabled={loading || code.length !== 6} class="w-full">
-      {#if loading}
-        <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-        ></span>
+<TelemetryBoundary name="ResetPasswordForm">
+  {#if step === 'code'}
+    <form class="flex flex-col gap-4" method="post" onsubmit={handleCodeSubmit}>
+      {#if formError}
+        <Alert variant="destructive">
+          <CircleAlertIcon class="size-4" />
+          <AlertDescription>{formError}</AlertDescription>
+        </Alert>
       {/if}
-      {loading ? 'Verifying...' : 'Verify code'}
-    </Button>
 
-    <p class="text-center text-sm text-muted-foreground">
-      <a href="/login" class="font-medium text-primary hover:underline">Back to sign in</a>
-    </p>
-  </form>
-{:else}
-  <form class="flex flex-col gap-4" method="post" onsubmit={handleResetPassword}>
-    {#if formError}
-      <Alert variant="destructive">
-        <CircleAlertIcon class="size-4" />
-        <AlertDescription>{formError}</AlertDescription>
-      </Alert>
-    {/if}
+      <p class="text-center text-sm text-muted-foreground">
+        Enter the 6-digit code sent to <strong class="text-foreground">{email}</strong>
+      </p>
 
-    <p class="text-center text-sm text-muted-foreground">Code verified! Enter your new password.</p>
-
-    <div class="flex flex-col gap-1">
-      <FormInput
-        type="password"
-        name="password"
-        label="New password"
-        placeholder="At least 8 characters"
-        bind:value={password}
-        error={passwordError}
-        required
-        autocomplete="new-password"
-        showPasswordToggle
-        onblur={validatePassword}
+      <CodeInput
+        bind:value={code}
+        disabled={loading}
+        error={codeError}
+        oncomplete={handleCodeComplete}
       />
-      <PasswordStrength {password} />
-    </div>
 
-    <div class="flex flex-col gap-1">
-      <FormInput
-        type="password"
-        name="confirmPassword"
-        label="Confirm new password"
-        placeholder="Confirm your new password"
-        bind:value={confirmPassword}
-        error={confirmPasswordError}
-        required
-        autocomplete="new-password"
-        showPasswordToggle
-        onblur={validateConfirmPassword}
-      />
-      {#if passwordsMatch}
-        <div class="flex items-center gap-2 text-sm text-primary">
-          <CheckIcon class="size-4" />
-          <span>Passwords match</span>
-        </div>
-      {/if}
-    </div>
+      <Button type="submit" disabled={loading || code.length !== 6} class="w-full">
+        {#if loading}
+          <span
+            class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+          ></span>
+        {/if}
+        {loading ? 'Verifying...' : 'Verify code'}
+      </Button>
 
-    <Button type="submit" disabled={loading} class="w-full">
-      {#if loading}
-        <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-        ></span>
+      <p class="text-center text-sm text-muted-foreground">
+        <a href="/login" class="font-medium text-primary hover:underline">Back to sign in</a>
+      </p>
+    </form>
+  {:else}
+    <form class="flex flex-col gap-4" method="post" onsubmit={handleResetPassword}>
+      {#if formError}
+        <Alert variant="destructive">
+          <CircleAlertIcon class="size-4" />
+          <AlertDescription>{formError}</AlertDescription>
+        </Alert>
       {/if}
-      {loading ? 'Resetting...' : 'Reset password'}
-    </Button>
-  </form>
-{/if}
+
+      <p class="text-center text-sm text-muted-foreground">
+        Code verified! Enter your new password.
+      </p>
+
+      <div class="flex flex-col gap-1">
+        <FormInput
+          type="password"
+          name="password"
+          label="New password"
+          placeholder="At least 8 characters"
+          bind:value={password}
+          error={passwordError}
+          required
+          autocomplete="new-password"
+          showPasswordToggle
+          onblur={validatePassword}
+        />
+        <PasswordStrength {password} />
+      </div>
+
+      <div class="flex flex-col gap-1">
+        <FormInput
+          type="password"
+          name="confirmPassword"
+          label="Confirm new password"
+          placeholder="Confirm your new password"
+          bind:value={confirmPassword}
+          error={confirmPasswordError}
+          required
+          autocomplete="new-password"
+          showPasswordToggle
+          onblur={validateConfirmPassword}
+        />
+        {#if passwordsMatch}
+          <div class="flex items-center gap-2 text-sm text-primary">
+            <CheckIcon class="size-4" />
+            <span>Passwords match</span>
+          </div>
+        {/if}
+      </div>
+
+      <Button type="submit" disabled={loading} class="w-full">
+        {#if loading}
+          <span
+            class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+          ></span>
+        {/if}
+        {loading ? 'Resetting...' : 'Reset password'}
+      </Button>
+    </form>
+  {/if}
+</TelemetryBoundary>

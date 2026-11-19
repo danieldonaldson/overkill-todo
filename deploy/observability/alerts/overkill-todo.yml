@@ -197,3 +197,27 @@ groups:
         annotations:
           summary: '{{ $value | humanize }} session anomalies in the last hour (alerts at 3)'
           dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-11'
+
+  # Browser problems (OT-006 Decision 11). A separate group from the backend
+  # and business rules.
+  - name: frontend
+    rules:
+      # Per page and release, so the email names both. Errors from other
+      # origins are never counted in browser_error_total. Only with at least 1
+      # page load a minute on that page, so 1 error in 3 quiet page loads
+      # doesn't page anyone. Page loads carry no release: each release is
+      # measured against all of the page's loads.
+      - alert: BrowserErrorRateHigh
+        expr: |
+          (
+            sum by (page, release) (rate(browser_error_total[10m]))
+              / on (page) group_left
+            sum by (page) (rate(browser_page_load_total[10m]))
+          ) > 0.02
+          and on (page) sum by (page) (rate(browser_page_load_total[10m])) * 60 >= 1
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: 'Browser errors on {{ $labels.page }} (release {{ $labels.release }}) are {{ $value | humanizePercentage }} of page loads (threshold 2%)'
+          dashboard: 'http://localhost:3000/d/frontend/frontend?viewPanel=panel-6'

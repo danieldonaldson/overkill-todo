@@ -59,6 +59,7 @@ describe('oauth api', () => {
 
     expect(request).toHaveBeenCalledWith('/auth/oauth/google/unlink', {
       method: 'DELETE',
+      route: '/auth/oauth/{provider}/unlink',
     })
   })
 })

@@ -245,12 +245,17 @@ application and domain layers only use `tracing` macros.
 - **Browser reports (OT-006).** `POST /api/v1/client-telemetry` takes
   `ClientReportBatch` (closed enums, capped text, no user ID field) through
   the `RecordClientTelemetry` port. The use case maps the page onto
-  `PAGE_TEMPLATES` (or `other`), re-scrubs every text field with the rules in
+  `PAGE_TEMPLATES` and a boundary error's island onto `ISLAND_TEMPLATES`
+  (shared with the web guard test via `tests/fixtures/client_islands.json`),
+  each with `other`, caps the `release` label at 5 values per replica (its own
+  `APP_VERSION` reserved), re-scrubs every text field with the rules in
   `use_cases/telemetry/scrub.rs` (the browser's copy shares
   `tests/fixtures/client_scrub_cases.json`), fingerprints errors, and keeps a
   per-replica budget (`CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC`). The
   `ClientReportSink` adapter in `telemetry/client_reports.rs` logs
-  `client_error` events and counts dropped ones. The route is public, outside
+  `client_error` events and counts errors from the site's own scripts
+  (`browser.error`), page loads (`browser.page_load`, `authenticated` from the
+  session) and dropped events. The route is public, outside
   CSRF, untraced (`UNTRACED_ROUTES`) but still in request metrics, capped at
   16 KB (413), and attributes a report only from the session.
 

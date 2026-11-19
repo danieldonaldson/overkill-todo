@@ -1,18 +1,26 @@
 {
   "uid": "frontend",
   "title": "Frontend",
-  "tags": ["overkill-todo", "OT-006"],
-  "description": "Browser errors reported by the site (OT-006). Reports are scrubbed in the browser and again on the server: pages are templates, never addresses; no query strings, fragments, emails or tokens. Members are named by user ID only, taken from the session. Page loads, Web Vitals, navigation and panel timings come in later slices.",
+  "tags": [
+    "overkill-todo",
+    "OT-006"
+  ],
+  "description": "Browser errors and page loads reported by the site (OT-006). Reports are scrubbed in the browser and again on the server: pages are templates, never addresses; no query strings, fragments, emails or tokens. Members are named by user ID only, taken from the session. Page loads are the error rate's denominator, not traffic analytics (that is OT-005). Errors from other origins (extensions, third-party scripts) are logged but not counted in the error rate. Web Vitals, navigation and panel timings come in later slices.",
   "editable": false,
   "schemaVersion": 41,
-  "version": 1,
+  "version": 2,
   "refresh": "1m",
   "time": {
     "from": "now-24h",
     "to": "now"
   },
   "timepicker": {
-    "refresh_intervals": ["30s", "1m", "5m", "15m"]
+    "refresh_intervals": [
+      "30s",
+      "1m",
+      "5m",
+      "15m"
+    ]
   },
   "templating": {
     "list": []
@@ -32,10 +40,10 @@
       "panels": []
     },
     {
-      "id": 2,
+      "id": 6,
       "type": "timeseries",
-      "title": "Browser errors by page and release",
-      "description": "Occurrences of browser errors (each report's count), per page template and release. From the client_error log events.",
+      "title": "Browser error rate by page and release",
+      "description": "Errors from the site's own scripts per page load, per page template and release (the BrowserErrorRateHigh alert's measure; it fires above 2% for 10 minutes with at least 1 page load a minute). Page loads carry no release, so right after a deploy each release's rate is measured against all of that page's loads.",
       "gridPos": {
         "h": 9,
         "w": 16,
@@ -43,32 +51,46 @@
         "y": 1
       },
       "datasource": {
-        "type": "victoriametrics-logs-datasource",
-        "uid": "victorialogs"
+        "type": "prometheus",
+        "uid": "victoriametrics"
       },
       "targets": [
         {
           "datasource": {
-            "type": "victoriametrics-logs-datasource",
-            "uid": "victorialogs"
+            "type": "prometheus",
+            "uid": "victoriametrics"
           },
-          "expr": "event:=\"client_error\" | stats by (page, release) sum(count) as errors",
-          "queryType": "statsRange",
-          "legendFormat": "{{page}} {{release}}",
-          "refId": "A"
+          "refId": "A",
+          "range": true,
+          "expr": "sum by (page, release) (increase(browser_error_total[$__rate_interval]))\n  / on (page) group_left\nsum by (page) (increase(browser_page_load_total[$__rate_interval]))",
+          "legendFormat": "{{page}} {{release}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short",
+          "unit": "percentunit",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.02
+              }
+            ]
+          },
           "custom": {
-            "drawStyle": "bars",
-            "fillOpacity": 60,
-            "lineWidth": 1,
-            "stacking": {
-              "mode": "normal"
-            },
-            "showPoints": "never"
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
           }
         },
         "overrides": []
@@ -77,7 +99,10 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": ["sum"]
+          "calcs": [
+            "max",
+            "mean"
+          ]
         },
         "tooltip": {
           "mode": "multi",
@@ -135,6 +160,115 @@
       }
     },
     {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Browser error reports by page and release (logs)",
+      "description": "Occurrences of browser errors (each report's count), per page template and release. From the client_error log events.",
+      "gridPos": {
+        "h": 9,
+        "w": 16,
+        "x": 0,
+        "y": 10
+      },
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "expr": "event:=\"client_error\" | stats by (page, release) sum(count) as errors",
+          "queryType": "statsRange",
+          "legendFormat": "{{page}} {{release}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Page loads by page",
+      "description": "Finished page loads and in-site navigations per page template: the error rate's denominator, not traffic analytics. Never sampled.",
+      "gridPos": {
+        "h": 9,
+        "w": 8,
+        "x": 16,
+        "y": 10
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "range": true,
+          "expr": "sum by (page) (increase(browser_page_load_total[$__interval]))",
+          "legendFormat": "{{page}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 1,
+            "stacking": {
+              "mode": "normal"
+            },
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
       "id": 4,
       "type": "table",
       "title": "Top errors (by fingerprint)",
@@ -143,7 +277,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 19
       },
       "datasource": {
         "type": "victoriametrics-logs-datasource",
@@ -183,7 +317,7 @@
         "h": 12,
         "w": 24,
         "x": 0,
-        "y": 20
+        "y": 29
       },
       "datasource": {
         "type": "victoriametrics-logs-datasource",

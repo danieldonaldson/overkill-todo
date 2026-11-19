@@ -1,6 +1,8 @@
-//! `POST /api/v1/client-telemetry` through the real router (OT-006 slice 1):
-//! attribution from the session only, the standard 400 and the 413, the
-//! recording budget, no CSRF, and no trace while the request is still counted.
+//! `POST /api/v1/client-telemetry` through the real router (OT-006 slices 1
+//! and 2): attribution from the session only, the standard 400 and the 413, the
+//! recording budget, no CSRF, no trace while the request is still counted, page
+//! loads and errors counted with allowlisted labels, and boundary and API
+//! errors logged with their island, route, status and trace ID.
 //!
 //! Each test installs the production subscriber stack as the thread default,
 //! with an in-memory span exporter and a captured JSON log writer, and builds
@@ -166,21 +168,40 @@ impl Harness {
             .collect()
     }
 
-    /// Sum of the `browser.report.dropped` counter.
-    fn dropped(&self) -> u64 {
+    /// `(sorted attributes, value)` for each point of the `u64` counter `name`.
+    fn counter(&self, name: &str) -> Vec<(Vec<(String, String)>, u64)> {
         self.meter.force_flush().unwrap();
         let batches = self.metrics.get_finished_metrics().unwrap();
-        batches
+        let mut points = batches
             .iter()
             .rev()
             .flat_map(|rm| rm.scope_metrics().flat_map(ScopeMetrics::metrics))
-            .find(|m| m.name() == "browser.report.dropped")
-            .map_or(0, |m| {
+            .find(|m| m.name() == name)
+            .map_or_else(Vec::new, |m| {
                 let AggregatedMetrics::U64(MetricData::Sum(sum)) = m.data() else {
-                    panic!("browser.report.dropped is not a u64 sum");
+                    panic!("{name} is not a u64 sum");
                 };
-                sum.data_points().map(SumDataPoint::value).sum()
-            })
+                sum.data_points()
+                    .map(|dp: &SumDataPoint<u64>| {
+                        let mut attrs: Vec<(String, String)> = dp
+                            .attributes()
+                            .map(|kv| (kv.key.to_string(), kv.value.to_string()))
+                            .collect();
+                        attrs.sort();
+                        (attrs, dp.value())
+                    })
+                    .collect()
+            });
+        points.sort();
+        points
+    }
+
+    /// Sum of the `browser.report.dropped` counter.
+    fn dropped(&self) -> u64 {
+        self.counter("browser.report.dropped")
+            .iter()
+            .map(|(_, v)| v)
+            .sum()
     }
 }
 
@@ -391,4 +412,149 @@ async fn a_report_gets_no_span_but_is_counted_in_request_metrics(pool: PgPool) {
             })
         });
     assert!(counted, "no request duration recorded for {ROUTE}");
+}
+
+fn attrs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    pairs
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn page_loads_are_counted_as_signed_in_only_from_the_session(pool: PgPool) {
+    let h = Harness::new(pool, 200);
+    let cookie = session_cookie(&common::mint_session_jwt(Uuid::new_v4(), true, "user", 15));
+    let load = json!({ "type": "page_load" });
+    for headers in [vec![("cookie", cookie.as_str())], vec![]] {
+        let (status, _) = h
+            .post_json(&batch("/dashboard", std::slice::from_ref(&load)), &headers)
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+    // An unknown page is counted as `other`, not as a new series.
+    h.post_json(&batch("/made-up", std::slice::from_ref(&load)), &[])
+        .await;
+    assert_eq!(
+        h.counter("browser.page_load"),
+        [
+            (
+                attrs(&[
+                    ("authenticated", "false"),
+                    ("device_class", "desktop"),
+                    ("page", "/dashboard")
+                ]),
+                1
+            ),
+            (
+                attrs(&[
+                    ("authenticated", "false"),
+                    ("device_class", "desktop"),
+                    ("page", "other")
+                ]),
+                1
+            ),
+            (
+                attrs(&[
+                    ("authenticated", "true"),
+                    ("device_class", "desktop"),
+                    ("page", "/dashboard")
+                ]),
+                1
+            ),
+        ]
+    );
+    assert!(h.client_errors().is_empty(), "page loads aren't errors");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn a_boundary_error_is_logged_with_its_island(pool: PgPool) {
+    let h = Harness::new(pool, 200);
+    let mut known = error_event("panel crashed");
+    known["kind"] = json!("boundary");
+    known["island"] = json!("SettingsPanel");
+    let mut made_up = known.clone();
+    made_up["island"] = json!("NotARealPanel");
+    h.post_json(&batch("/dashboard/settings", &[known, made_up]), &[])
+        .await;
+
+    let errors = h.client_errors();
+    assert_eq!(errors.len(), 2);
+    assert_eq!(errors[0]["kind"], "boundary");
+    assert_eq!(errors[0]["island"], "SettingsPanel");
+    assert_eq!(errors[1]["island"], "other");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn an_api_error_is_logged_with_route_status_and_trace_id_and_counted(pool: PgPool) {
+    let h = Harness::new(pool, 200);
+    let trace_id = "abcdef0123456789abcdef0123456789";
+    let api = json!({
+        "type": "error",
+        "kind": "api",
+        "message": "PATCH /users/me failed",
+        "api_route": "/users/me",
+        "status": 500,
+        "trace_id": trace_id,
+        "count": 2
+    });
+    let unreachable = json!({
+        "type": "error",
+        "kind": "api",
+        "message": "POST /auth/register failed",
+        "api_route": "/auth/register",
+        "network_failed": true,
+        "count": 1
+    });
+    h.post_json(&batch("/dashboard/settings", &[api]), &[])
+        .await;
+    h.post_json(&batch("/register", &[unreachable]), &[]).await;
+
+    let errors = h.client_errors();
+    assert_eq!(errors.len(), 2);
+    assert_eq!(errors[0]["api_route"], "/users/me");
+    assert_eq!(errors[0]["status"], 500);
+    assert_eq!(errors[0]["client_trace_id"], trace_id);
+    assert_eq!(errors[1]["api_route"], "/auth/register");
+    assert_eq!(errors[1]["network_failed"], true);
+    assert!(errors[1].get("client_trace_id").is_none());
+    assert!(errors[1].get("status").is_none());
+
+    assert_eq!(
+        h.counter("browser.error"),
+        [
+            (
+                attrs(&[
+                    ("kind", "api"),
+                    ("page", "/dashboard/settings"),
+                    ("release", "abc123")
+                ]),
+                2
+            ),
+            (
+                attrs(&[
+                    ("kind", "api"),
+                    ("page", "/register"),
+                    ("release", "abc123")
+                ]),
+                1
+            ),
+        ]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn an_external_error_is_logged_but_not_counted(pool: PgPool) {
+    let h = Harness::new(pool, 200);
+    let external = json!({
+        "type": "error",
+        "kind": "error",
+        "message": "Script error.",
+        "source": "external",
+        "count": 3
+    });
+    h.post_json(&batch("/login", &[external]), &[]).await;
+    assert_eq!(h.client_errors().len(), 1);
+    assert_eq!(h.client_errors()[0]["source"], "external");
+    assert_eq!(h.counter("browser.error"), Vec::new());
 }

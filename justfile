@@ -267,7 +267,7 @@ decode-stack release file="":
 # Browser e2e against the built site with the API mocked.
 [group('test')]
 e2e:
-    {{pnpm}} --filter {{web}} build
+    PUBLIC_TELEMETRY_TEST_HOOKS=true {{pnpm}} --filter {{web}} build
     {{pnpm}} --filter {{web}} test:e2e
 
 # Real-stack e2e (signup against the live backend). Needs `just dev` running.

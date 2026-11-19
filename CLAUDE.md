@@ -62,6 +62,8 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
 - The signed-in user lives in `lib/auth/session.svelte.ts`, shared by all
   islands. The dashboard header is persisted (`transition:persist`), so it
   must hold no page-specific state.
+- Every island's root renders `TelemetryBoundary` with a name listed in
+  `backend/tests/fixtures/client_islands.json` (guard test enforces it).
 - Component tests: Vitest browser mode. Flows: Playwright with the API mocked
   (`tests/`); real-backend flows go in `tests/integration/`.
 

@@ -500,3 +500,48 @@ tests:
       - eval_time: 30m
         alertname: AuthSessionAnomalies
         exp_alerts: []
+
+  # Spec scenario "Error spike after a release": 1 dashboard page load a
+  # second, 5% of them throwing in release r2 for 20 minutes, then none.
+  # Pending at first, firing once held for 10m, quiet again once errors stop.
+  - name: browser error spike fires per page and release, then resolves
+    interval: 30s
+    input_series:
+      - series: 'browser_page_load_total{page="/dashboard",device_class="desktop",authenticated="true"}'
+        values: '0+30x80'
+      - series: 'browser_error_total{page="/dashboard",kind="error",release="r2"}'
+        values: '0+1.5x40 60+0x40'
+      # Another page, quiet: no alert for it.
+      - series: 'browser_page_load_total{page="/login",device_class="mobile",authenticated="false"}'
+        values: '0+30x80'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: BrowserErrorRateHigh
+        exp_alerts: []
+      - eval_time: 19m
+        alertname: BrowserErrorRateHigh
+        exp_alerts:
+          - exp_labels: { severity: page, page: /dashboard, release: r2 }
+            exp_annotations:
+              summary: 'Browser errors on /dashboard (release r2) are 5% of page loads (threshold 2%)'
+              dashboard: 'http://localhost:3000/d/frontend/frontend?viewPanel=panel-6'
+      - eval_time: 38m
+        alertname: BrowserErrorRateHigh
+        exp_alerts: []
+
+  # Spec scenario "No alert on low traffic": 3 page loads in a quiet
+  # 10-minute window, 1 of them throwing (33%). Under 1 page load a minute.
+  - name: browser errors on low traffic do not fire
+    interval: 1m
+    input_series:
+      - series: 'browser_page_load_total{page="/dashboard",device_class="desktop",authenticated="true"}'
+        values: '0 0 0 1 1 1 2 2 2 3 3 3 4 4 4 5 5 5 6 6 6 7 7 7 8 8 8 9 9 9 10'
+      - series: 'browser_error_total{page="/dashboard",kind="error",release="r2"}'
+        values: '0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2 2 3 3 3 3'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: BrowserErrorRateHigh
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: BrowserErrorRateHigh
+        exp_alerts: []

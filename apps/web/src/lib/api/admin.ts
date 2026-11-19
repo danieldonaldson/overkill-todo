@@ -16,12 +16,13 @@ export function createAdminApi(client: HttpClient) {
   return {
     /** List users (paginated). */
     listUsers: (params?: { limit?: number; offset?: number }): Promise<AdminUserList> =>
-      client.request(`/admin/users${pageQuery(params)}`, { method: 'GET' }),
+      client.request(`/admin/users${pageQuery(params)}`, { method: 'GET', route: '/admin/users' }),
 
     /** Change a user's role (super-admin only on the backend). */
     setRole: (id: string, role: UserRole): Promise<AdminUserRow> =>
       client.request(`/admin/users/${id}/role`, {
         method: 'PUT',
+        route: '/admin/users/{id}/role',
         body: JSON.stringify({ role }),
       }),
   }

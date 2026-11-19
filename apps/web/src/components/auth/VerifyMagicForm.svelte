@@ -1,4 +1,5 @@
 <script lang="ts">
+  import TelemetryBoundary from '$lib/telemetry/TelemetryBoundary.svelte'
   import { onMount } from 'svelte'
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert'
   import { Alert, AlertDescription } from '$lib/components/ui/alert'
@@ -58,25 +59,28 @@
   }
 </script>
 
-<div class="flex flex-col gap-4">
-  {#if formError}
-    <Alert variant="destructive">
-      <CircleAlertIcon class="size-4" />
-      <AlertDescription>{formError}</AlertDescription>
-    </Alert>
-    <p class="text-center text-sm text-muted-foreground">
-      <a href="/register" class="font-medium text-primary hover:underline">Request a new code</a>
-    </p>
-  {:else}
-    <p class="text-center text-sm text-muted-foreground">
-      Press the button to confirm this is your email address.
-    </p>
-    <Button onclick={handleConfirm} disabled={loading || !token} class="w-full">
-      {#if loading}
-        <span class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
-        ></span>
-      {/if}
-      Confirm my email
-    </Button>
-  {/if}
-</div>
+<TelemetryBoundary name="VerifyMagicForm">
+  <div class="flex flex-col gap-4">
+    {#if formError}
+      <Alert variant="destructive">
+        <CircleAlertIcon class="size-4" />
+        <AlertDescription>{formError}</AlertDescription>
+      </Alert>
+      <p class="text-center text-sm text-muted-foreground">
+        <a href="/register" class="font-medium text-primary hover:underline">Request a new code</a>
+      </p>
+    {:else}
+      <p class="text-center text-sm text-muted-foreground">
+        Press the button to confirm this is your email address.
+      </p>
+      <Button onclick={handleConfirm} disabled={loading || !token} class="w-full">
+        {#if loading}
+          <span
+            class="size-4 animate-spin rounded-full border-2 border-current border-r-transparent"
+          ></span>
+        {/if}
+        Confirm my email
+      </Button>
+    {/if}
+  </div>
+</TelemetryBoundary>

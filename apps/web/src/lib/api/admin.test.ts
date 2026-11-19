@@ -13,13 +13,16 @@ describe('admin api', () => {
   it('lists users with pagination query', async () => {
     const { client, request } = fakeClient()
     await createAdminApi(client).listUsers({ limit: 10, offset: 20 })
-    expect(request).toHaveBeenCalledWith('/admin/users?limit=10&offset=20', { method: 'GET' })
+    expect(request).toHaveBeenCalledWith('/admin/users?limit=10&offset=20', {
+      method: 'GET',
+      route: '/admin/users',
+    })
   })
 
   it('lists users without query when no params', async () => {
     const { client, request } = fakeClient()
     await createAdminApi(client).listUsers()
-    expect(request).toHaveBeenCalledWith('/admin/users', { method: 'GET' })
+    expect(request).toHaveBeenCalledWith('/admin/users', { method: 'GET', route: '/admin/users' })
   })
 
   it('sets a role via PUT /admin/users/{id}/role', async () => {
@@ -27,6 +30,7 @@ describe('admin api', () => {
     await createAdminApi(client).setRole('u1', 'admin')
     expect(request).toHaveBeenCalledWith('/admin/users/u1/role', {
       method: 'PUT',
+      route: '/admin/users/{id}/role',
       body: JSON.stringify({ role: 'admin' }),
     })
   })

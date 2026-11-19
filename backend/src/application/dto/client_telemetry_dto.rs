@@ -19,6 +19,8 @@ pub const MAX_EVENTS_PER_BATCH: usize = 30;
 pub const MAX_MESSAGE_CHARS: usize = 500;
 /// Longest stack accepted, in characters.
 pub const MAX_STACK_CHARS: usize = 4_000;
+/// Longest island (panel) name accepted, in characters.
+pub const MAX_ISLAND_CHARS: usize = 100;
 
 /// `true` when `value` is exactly `len` lowercase hex characters.
 fn is_lower_hex(value: &str, len: usize) -> bool {
@@ -94,12 +96,16 @@ pub struct ClientReportBatch {
 pub enum ClientEvent {
     /// A script error, unhandled rejection, boundary error or failed API call.
     Error(ClientErrorEvent),
+    /// The page finished loading, by a full load or an in-site navigation: the
+    /// denominator of the error rate. Never sampled.
+    PageLoad,
 }
 
 impl Validate for ClientEvent {
     fn validate(&self) -> Result<(), ValidationErrors> {
         match self {
             Self::Error(event) => event.validate(),
+            Self::PageLoad => Ok(()),
         }
     }
 }
@@ -127,6 +133,13 @@ pub struct ClientErrorEvent {
     #[validate(length(max = 500, message = "source must be at most 500 characters"))]
     #[serde(default)]
     pub source: Option<String>,
+
+    /// For `boundary` errors: the island whose boundary caught it. Mapped to
+    /// the island allowlist on the server; anything unknown is `other`.
+    #[schema(max_length = 100)]
+    #[validate(length(max = 100, message = "island must be at most 100 characters"))]
+    #[serde(default)]
+    pub island: Option<String>,
 
     /// For `api` errors: the route template the call used.
     #[schema(max_length = 200)]
@@ -273,6 +286,25 @@ mod tests {
     fn rejects_an_unknown_kind_or_event_type() {
         assert!(parse(with_field("kind", json!("warning"))).is_err());
         assert!(parse(with_field("type", json!("vital"))).is_err());
+    }
+
+    #[test]
+    fn accepts_a_page_load_next_to_errors() {
+        let batch = parse(batch_with(&[json!({ "type": "page_load" }), error_event()])).unwrap();
+        assert!(matches!(batch.events[0], ClientEvent::PageLoad));
+    }
+
+    #[test]
+    fn island_is_capped_at_100_characters() {
+        assert!(parse(with_field("island", json!("SettingsPanel"))).is_ok());
+        assert!(parse(with_field("island", json!("x".repeat(MAX_ISLAND_CHARS)))).is_ok());
+        assert!(
+            parse(with_field(
+                "island",
+                json!("x".repeat(MAX_ISLAND_CHARS + 1))
+            ))
+            .is_err()
+        );
     }
 
     #[test]

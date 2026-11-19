@@ -2,38 +2,53 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { devices, expect, test, type Page } from '@playwright/test'
-import { TEST_USER } from './helpers/session'
+import { seedSession, TEST_USER } from './helpers/session'
 
-// Browser error reports (OT-006 slice 1, specs/observability). The API is
-// mocked: /api/v1/client-telemetry records each beacon. Every document gets the
-// production CSP from apps/web/Caddyfile, so a violation the reporter caused
-// would show up here.
+// Browser error reports (OT-006 slices 1 and 2, specs/observability and
+// specs/dashboard). The API is mocked: /api/v1/client-telemetry records each
+// beacon. Every document gets the production CSP from apps/web/Caddyfile, so a
+// violation the reporter caused would show up here.
+//
+// Islands are crashed on purpose through TelemetryBoundary's test hook
+// (`window.__otCrashIsland`), which `just e2e` builds in; release images don't.
 
 const here = dirname(fileURLToPath(import.meta.url))
 const CSP = readFileSync(join(here, '..', 'Caddyfile'), 'utf8').match(
   /Content-Security-Policy\s+"([^"]*)"/
 )![1]
 
+interface ReportEvent {
+  type: string
+  kind: string
+  message: string
+  stack?: string
+  source?: string
+  island?: string
+  api_route?: string
+  status?: number
+  network_failed?: boolean
+  trace_id?: string
+  count: number
+}
+
 interface Report {
   page_load_id: string
   release: string
   page: string
-  events: Array<{
-    type: string
-    kind: string
-    message: string
-    stack?: string
-    source?: string
-    count: number
-  }>
+  events: ReportEvent[]
 }
 
 interface Setup {
   /** What happens to report requests. */
   endpoint?: 'ok' | 'abort'
+  /** Signed in as TEST_USER (merged with `user`), for dashboard pages. */
+  signedIn?: boolean
+  user?: object
+  /** The island to crash on purpose, from before the page loads. */
+  crash?: string
 }
 
-async function setup(page: Page, { endpoint = 'ok' }: Setup = {}) {
+async function setup(page: Page, { endpoint = 'ok', signedIn, user, crash }: Setup = {}) {
   const reports: Report[] = []
   const rawBodies: string[] = []
   const consoleErrors: string[] = []
@@ -50,11 +65,20 @@ async function setup(page: Page, { endpoint = 'ok' }: Setup = {}) {
     )
   })
 
+  if (signedIn) await seedSession(page)
+  if (crash) {
+    await page.addInitScript((island) => {
+      ;(window as unknown as { __otCrashIsland?: string }).__otCrashIsland = island
+    }, crash)
+  }
+
   // Registered first, so the specific mocks below take precedence.
   await page.route('**/api/v1/**', (route) =>
     route.fulfill({ status: 404, json: { code: 'not_found', message: 'Not found' } })
   )
-  await page.route('**/api/v1/auth/me', (route) => route.fulfill({ json: TEST_USER }))
+  await page.route('**/api/v1/auth/me', (route) =>
+    route.fulfill({ json: { ...TEST_USER, ...user } })
+  )
   await page.route('**/api/v1/auth/login', (route) =>
     route.fulfill({
       json: {
@@ -81,8 +105,14 @@ async function setup(page: Page, { endpoint = 'ok' }: Setup = {}) {
     })
   })
 
-  const events = () => reports.flatMap((r) => r.events)
-  return { reports, rawBodies, events, consoleErrors, cspViolations }
+  /** Error events, in order (page loads left out). */
+  const events = () => reports.flatMap((r) => r.events).filter((e) => e.type === 'error')
+  /** `[page, page_load_id]` of each page load reported, in order. */
+  const pageLoads = () =>
+    reports.flatMap((r) =>
+      r.events.filter((e) => e.type === 'page_load').map(() => [r.page, r.page_load_id])
+    )
+  return { reports, rawBodies, events, pageLoads, consoleErrors, cspViolations }
 }
 
 /** Throw `count` uncaught errors from page code (outside `evaluate`'s own catch). */
@@ -270,6 +300,243 @@ test.describe('on a phone', () => {
 
     await expect.poll(() => reports.length).toBe(1)
     expect(reports[0].page).toBe('/register')
-    expect(reports[0].events).toHaveLength(2)
+    // Two errors and the page load.
+    expect(reports[0].events.map((e) => e.type).sort()).toEqual(['error', 'error', 'page_load'])
+  })
+
+  test("a crashed panel's message fits the screen without horizontal scrolling", async ({
+    page,
+  }) => {
+    const { events } = await setup(page, { signedIn: true, crash: 'SettingsPanel' })
+    await page.goto('/dashboard/settings')
+    const alert = page.getByRole('alert').filter({ hasText: "couldn't be shown" })
+    await expect(alert).toBeVisible()
+    await expect(alert.getByRole('button', { name: 'Try again' })).toBeInViewport()
+    const box = (await alert.boundingBox())!
+    const width = await page.evaluate(() => window.innerWidth)
+    expect(box.x).toBeGreaterThanOrEqual(0)
+    expect(box.x + box.width).toBeLessThanOrEqual(width)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width
+    )
+    await hide(page)
+    await expect.poll(() => events().map((e) => e.island)).toEqual(['SettingsPanel'])
+  })
+})
+
+/** The failure message a crashed island shows. */
+const failure = (page: Page) => page.getByRole('alert').filter({ hasText: "couldn't be shown" })
+
+test.describe('crashing panels are contained and reported', () => {
+  test('a crashed Settings panel is replaced, and the header and navigation still work', async ({
+    page,
+  }) => {
+    const { events, cspViolations } = await setup(page, { signedIn: true, crash: 'SettingsPanel' })
+    await page.goto('/dashboard/settings')
+
+    await expect(failure(page)).toBeVisible()
+    await expect(failure(page).getByRole('button', { name: 'Try again' })).toBeVisible()
+    await expect(page.getByRole('navigation', { name: /dashboard/i })).toBeVisible()
+
+    await page.getByRole('link', { name: 'Home' }).click()
+    await expect(page).toHaveURL('/dashboard')
+    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await expect(failure(page)).toHaveCount(0)
+
+    await hide(page)
+    await expect.poll(() => events().length).toBe(1)
+    expect(events()[0]).toMatchObject({ kind: 'boundary', island: 'SettingsPanel' })
+    expect(cspViolations).toEqual([])
+  })
+
+  test('a real rendering error from bad data is caught by the panel boundary', async ({ page }) => {
+    // The slice-1 check's error: `oauth_providers` that isn't a list.
+    const { events, reports } = await setup(page, {
+      signedIn: true,
+      user: { oauth_providers: 5 },
+    })
+    await page.goto('/dashboard/settings')
+    await expect(failure(page)).toBeVisible()
+    await hide(page)
+    await expect
+      .poll(() => events().map((e) => [e.kind, e.island]))
+      .toEqual([['boundary', 'SettingsPanel']])
+    expect(events()[0].message).toMatch(/includes is not a function/)
+    expect(reports[0].page).toBe('/dashboard/settings')
+  })
+
+  test('Try again rebuilds the panel without a reload once the problem has gone', async ({
+    page,
+  }) => {
+    await setup(page, { signedIn: true, crash: 'SettingsPanel' })
+    await page.goto('/dashboard/settings')
+    await expect(failure(page)).toBeVisible()
+    await page.evaluate(() => {
+      ;(window as unknown as { __marker: string }).__marker = 'same document'
+      delete (window as unknown as { __otCrashIsland?: string }).__otCrashIsland
+    })
+
+    await failure(page).getByRole('button', { name: 'Try again' }).click()
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+    await expect(failure(page)).toHaveCount(0)
+    expect(await page.evaluate(() => (window as unknown as { __marker?: string }).__marker)).toBe(
+      'same document'
+    )
+  })
+
+  test('Try again that fails again shows the message again and the page stays usable', async ({
+    page,
+  }) => {
+    const { events } = await setup(page, { signedIn: true, crash: 'SettingsPanel' })
+    await page.goto('/dashboard/settings')
+    await failure(page).getByRole('button', { name: 'Try again' }).click()
+    await expect(failure(page)).toBeVisible()
+    await page.getByRole('link', { name: 'Home' }).click()
+    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await hide(page)
+    // Both failures, as one event with a count.
+    await expect
+      .poll(() => events().map((e) => [e.island, e.count]))
+      .toEqual([['SettingsPanel', 2]])
+  })
+
+  test('a crashed header shows the message in its place and the page stays usable', async ({
+    page,
+  }) => {
+    const { events } = await setup(page, { signedIn: true, crash: 'DashboardHeader' })
+    await page.goto('/dashboard')
+    await expect(failure(page)).toBeVisible()
+    await expect(page.getByRole('navigation', { name: /dashboard/i })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
+    await hide(page)
+    await expect.poll(() => events().map((e) => e.island)).toEqual(['DashboardHeader'])
+  })
+
+  test('a crashed sign-in form offers Try again and a reload', async ({ page }) => {
+    const { events } = await setup(page, { crash: 'AuthScreen' })
+    await page.goto('/login')
+    await expect(failure(page)).toBeVisible()
+    await expect(failure(page).getByRole('button', { name: 'Try again' })).toBeVisible()
+    await expect(failure(page).getByRole('button', { name: 'Reload the page' })).toBeVisible()
+    const text = (await failure(page).textContent()) ?? ''
+    expect(text).not.toMatch(/Deliberate|crash|Error|trace/i)
+    await hide(page)
+    await expect
+      .poll(() => events().map((e) => [e.kind, e.island]))
+      .toEqual([['boundary', 'AuthScreen']])
+  })
+})
+
+test.describe('failed API calls', () => {
+  const TRACE = 'abcdef0123456789abcdef0123456789'
+
+  test('a server error during a dashboard action is reported with route, status and trace ID', async ({
+    page,
+  }) => {
+    const { events } = await setup(page, { signedIn: true })
+    await page.route('**/api/v1/users/password/change', (route) =>
+      route.fulfill({
+        status: 500,
+        headers: { 'x-trace-id': TRACE },
+        json: { code: 'internal_error', message: 'Internal server error' },
+      })
+    )
+    await page.goto('/dashboard/settings')
+    await page.getByLabel('Current password').fill('old password 1234')
+    await page.getByLabel('New password').fill('Tr0ub4dor&3-horse-battery')
+    await page.getByRole('button', { name: 'Change password' }).click()
+    await expect(page.getByText(/Internal server error/)).toBeVisible()
+    await hide(page)
+
+    await expect.poll(() => events().length).toBe(1)
+    expect(events()[0]).toMatchObject({
+      kind: 'api',
+      api_route: '/users/password/change',
+      status: 500,
+      trace_id: TRACE,
+      count: 1,
+    })
+  })
+
+  test('an unreachable server is reported once it answers again', async ({ page }) => {
+    const { events } = await setup(page)
+    let down = true
+    await page.route('**/api/v1/auth/register', (route) =>
+      down
+        ? route.abort('connectionrefused')
+        : route.fulfill({ json: { message: 'Check your email' } })
+    )
+    await page.goto('/register')
+    await ready(page)
+    await page.getByLabel('Email').fill('visitor@example.com')
+    await page.getByRole('button', { name: /continue/i }).click()
+    await expect(page.getByRole('alert')).toBeVisible()
+
+    // Held while the server is unreachable, even past the 10 s timer.
+    await page.clock.install()
+    await page.clock.fastForward(30_000)
+    expect(events()).toEqual([])
+
+    down = false
+    await page.getByRole('button', { name: /continue/i }).click()
+    await expect.poll(() => events().length).toBe(1)
+    expect(events()[0]).toMatchObject({
+      kind: 'api',
+      api_route: '/auth/register',
+      network_failed: true,
+    })
+    expect(events()[0]).not.toHaveProperty('status')
+    expect(events()[0]).not.toHaveProperty('trace_id')
+  })
+
+  test('an unreachable server is reported when the page is next hidden', async ({ page }) => {
+    const { events } = await setup(page)
+    await page.route('**/api/v1/auth/register', (route) => route.abort('connectionrefused'))
+    await page.goto('/register')
+    await ready(page)
+    await page.getByLabel('Email').fill('visitor@example.com')
+    await page.getByRole('button', { name: /continue/i }).click()
+    await expect(page.getByRole('alert')).toBeVisible()
+    await hide(page)
+    await expect.poll(() => events().map((e) => e.network_failed)).toEqual([true])
+  })
+
+  test('a wrong password (401) is not a browser error', async ({ page }) => {
+    const { events, pageLoads } = await setup(page)
+    await page.route('**/api/v1/auth/login', (route) =>
+      route.fulfill({
+        status: 401,
+        json: { code: 'unauthorized', message: 'Invalid email or password' },
+      })
+    )
+    await page.goto('/login')
+    await ready(page)
+    await page.getByLabel(/email/i).fill('member@example.com')
+    await page.getByRole('textbox', { name: /password/i }).fill('wrong password')
+    await page.getByRole('button', { name: /^sign in$/i }).click()
+    await expect(page.getByText(/invalid email or password/i)).toBeVisible()
+    await hide(page)
+    await expect.poll(() => pageLoads().length).toBe(1)
+    expect(events()).toEqual([])
+  })
+})
+
+test.describe('page loads', () => {
+  test('the full load and each in-site navigation are counted once, in one page load', async ({
+    page,
+  }) => {
+    const { pageLoads } = await setup(page, { signedIn: true })
+    await page.goto('/dashboard')
+    await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
+    // Before the router is ready a click is a full load: a new document.
+    await ready(page)
+    await page.getByRole('link', { name: 'Settings' }).click()
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+    await hide(page)
+
+    await expect
+      .poll(() => pageLoads().map(([p]) => p))
+      .toEqual(['/dashboard', '/dashboard/settings'])
+    expect(new Set(pageLoads().map(([, id]) => id)).size).toBe(1)
   })
 })
