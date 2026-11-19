@@ -54,4 +54,4 @@ Measuring never affects sign-in, No traffic yet and Normal use stays quiet.
 ## 4. Feature done
 
 - [x] 4.1 Document the auth metrics, the investigation log events, the dashboard and the alert thresholds in `deploy/compose/README.md` (Observability), including the manual Turnstile always-fail check. Fix the `login_user.rs` doc comment and the README so they no longer say Traefik rate limiting exists (it is planned for the production edge, not built).
-- [ ] 4.2 Archive the change. Thresholds are revisited after the first month in production (recorded in Hypothesis).
+- [x] 4.2 Archive the change. Thresholds are revisited after the first month in production (recorded in Hypothesis).

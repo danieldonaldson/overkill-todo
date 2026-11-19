@@ -224,7 +224,7 @@ the backend keeps serving and logs a warning that telemetry isn't delivered.
 
 The backend counts every credential and code check, and the **Auth security**
 dashboard (`/d/auth-security`) shows them. The design is
-`openspec/changes/ot-007-auth-anomaly-metrics/design.md`.
+`openspec/changes/archive/2026-11-19-ot-007-auth-anomaly-metrics/design.md`.
 
 Metrics carry no email, user ID, address, code or token. Every label comes
 from a closed set, so the series count is fixed:
