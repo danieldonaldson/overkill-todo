@@ -104,6 +104,14 @@ impl VerifyMagicLinkUseCase {
 
         // Check if locked (too many attempts on the 6-digit code)
         if verification_code.is_locked() {
+            // Investigation event (OT-007 D7). The link shares the email code's
+            // attempt row, so this is a refusal of a locked code, under its own flow.
+            tracing::info!(
+                event = "auth.code.refused_locked",
+                flow = "magic_link",
+                user_id = %verification_code.user_id(),
+                "Code check refused: code is locked"
+            );
             return Err(VerifyMagicLinkError::TokenLocked);
         }
 
@@ -307,8 +315,19 @@ mod tests {
         let use_case =
             VerifyMagicLinkUseCase::new(Arc::new(mock_user_repo), Arc::new(mock_verification_repo));
 
+        let logs = super::super::log_capture::LogCapture::install();
         let result = use_case.execute(token).await;
         assert!(matches!(result, Err(VerifyMagicLinkError::TokenLocked)));
+
+        // One investigation event under the link's own flow (OT-007 D7),
+        // naming the account and never the token.
+        let refused = logs.events("auth.code.refused_locked");
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert_eq!(refused[0]["level"], "INFO");
+        assert_eq!(refused[0]["flow"], "magic_link");
+        assert_eq!(refused[0]["user_id"], user_id.to_string());
+        let text = serde_json::to_string(&logs.all()).unwrap();
+        assert!(!text.contains(token), "{text}");
     }
 
     #[tokio::test]

@@ -174,3 +174,26 @@ groups:
         annotations:
           summary: '{{ $value | humanize }} codes locked in the last hour (threshold 5)'
           dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-6'
+
+      # Across all four protected forms. A Turnstile outage is a 500, not a
+      # rejection, and is covered by the 5xx alert.
+      - alert: AuthBotCheckRejectionsHigh
+        expr: |
+          sum(increase(auth_bot_check_rejections_total[15m])) > 50
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $value | humanize }} bot-check rejections in the last 15 minutes (threshold 50)'
+          dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-10'
+
+      # A revoked refresh token presented again, or a refresh from another
+      # device. 3, not 1: a retried refresh on a flaky network can look like
+      # reuse once.
+      - alert: AuthSessionAnomalies
+        expr: |
+          sum(increase(auth_session_anomalies_total[1h])) >= 3
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $value | humanize }} session anomalies in the last hour (alerts at 3)'
+          dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-11'

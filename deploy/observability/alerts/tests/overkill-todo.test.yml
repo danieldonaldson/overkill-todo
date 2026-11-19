@@ -429,3 +429,74 @@ tests:
       - eval_time: 30m
         alertname: AuthCodeLockoutsHigh
         exp_alerts: []
+
+  # Spec "Bot-check rejection is counted per form" (alerting side): 51
+  # rejections in 15 minutes, across two forms, fire; the alert resolves once
+  # the window has passed.
+  - name: bot-check rejections across forms fire and resolve
+    interval: 1m
+    input_series:
+      - series: 'auth_bot_check_rejections_total{form="register",reason="missing"}'
+        values: '5 10 15 20 25x30'
+      - series: 'auth_bot_check_rejections_total{form="sign_in",reason="invalid"}'
+        values: '5 10 15 20 26x30'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: AuthBotCheckRejectionsHigh
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: AuthBotCheckRejectionsHigh
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: '51 bot-check rejections in the last 15 minutes (threshold 50)'
+              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-10'
+      - eval_time: 25m
+        alertname: AuthBotCheckRejectionsHigh
+        exp_alerts: []
+
+  # Exactly 50 rejections in 15 minutes stays quiet.
+  - name: bot-check rejections at the threshold do not fire
+    interval: 1m
+    input_series:
+      - series: 'auth_bot_check_rejections_total{form="sign_in",reason="missing"}'
+        values: '10 20 30 40 50x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AuthBotCheckRejectionsHigh
+        exp_alerts: []
+
+  # Spec "Session theft signal": 3 anomalies within an hour fire; the alert
+  # resolves once the hour has passed.
+  - name: session anomalies fire and resolve
+    interval: 5m
+    input_series:
+      - series: 'auth_session_anomalies_total{kind="token_reuse"}'
+        values: '1 2 2x20'
+      - series: 'auth_session_anomalies_total{kind="device_mismatch"}'
+        values: '_ _ 1 1x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: AuthSessionAnomalies
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: AuthSessionAnomalies
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: '3 session anomalies in the last hour (alerts at 3)'
+              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-11'
+      - eval_time: 80m
+        alertname: AuthSessionAnomalies
+        exp_alerts: []
+
+  # 2 anomalies in an hour (one retried refresh, say) stays quiet.
+  - name: session anomalies below the threshold do not fire
+    interval: 5m
+    input_series:
+      - series: 'auth_session_anomalies_total{kind="token_reuse"}'
+        values: '1 2 2x20'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AuthSessionAnomalies
+        exp_alerts: []

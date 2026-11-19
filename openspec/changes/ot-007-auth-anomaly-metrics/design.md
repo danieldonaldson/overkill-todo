@@ -94,6 +94,24 @@ revise D5.
   logs panel uses `instant` (raw logs), as named in the VictoriaLogs plugin
   0.33.1. On a stack with no events, all four return no rows and no error.
 
+**Slice 3 results (2026-11-19, local capped stack, `DEV_MODE`):**
+
+- `just load auth-mix` (1,801 refreshes, 0% errors) counted no session
+  anomaly and no bot-check rejection, only `password_sign_in/success`, and
+  fired no new auth alert.
+- `just load auth-abuse`, now with a `replaying` step (a seeded Member's
+  rotated refresh token presented 3 times, each a 401), fired
+  `AuthSessionAnomalies` ("3 session anomalies in the last hour") linking to
+  the "Session anomalies" panel, alongside the two slice 1 alerts.
+- Bot-check rejections stay at 0 locally because Turnstile is off in
+  `DEV_MODE`. As D6 planned, vmalert unit tests prove that rule, and the
+  handler tests prove the counting with a rejecting Turnstile stub.
+- Reuse counts every replay, not once per account. After the first reuse
+  signs the account out, its other tokens are revoked too, so presenting any
+  of them is reuse as well. A Member whose session was stolen and who then
+  refreshes from their own tab adds one more. That stays within the "3, not 1"
+  margin in Risks.
+
 ## Decisions
 
 ### D1. Record in the API handlers, from typed use-case results (infrastructure)

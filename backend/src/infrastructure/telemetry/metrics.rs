@@ -150,6 +150,65 @@ impl LockableCode {
     }
 }
 
+/// Forms protected by the bot check, for `auth.bot_check.rejections`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BotCheckForm {
+    Register,
+    SignIn,
+    ResendVerification,
+    ForgotPassword,
+}
+
+impl BotCheckForm {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Register => "register",
+            Self::SignIn => "sign_in",
+            Self::ResendVerification => "resend_verification",
+            Self::ForgotPassword => "forgot_password",
+        }
+    }
+}
+
+/// Why the bot check rejected a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BotCheckReason {
+    /// No token, or an empty one.
+    Missing,
+    /// Turnstile said the token is not valid.
+    Invalid,
+}
+
+impl BotCheckReason {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Invalid => "invalid",
+        }
+    }
+}
+
+/// Signs that a session may have been stolen, for `auth.session.anomalies`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionAnomaly {
+    /// A refresh token that was already rotated or revoked, presented again.
+    TokenReuse,
+    /// A refresh from a different device than the session was issued to.
+    DeviceMismatch,
+}
+
+impl SessionAnomaly {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::TokenReuse => "token_reuse",
+            Self::DeviceMismatch => "device_mismatch",
+        }
+    }
+}
+
 /// Authentication outcome counters (OT-007 D3), recorded by the auth and
 /// verification handlers once the use case has returned.
 ///
@@ -160,6 +219,8 @@ impl LockableCode {
 pub struct AuthMetrics {
     attempts: Counter<u64>,
     lockouts: Counter<u64>,
+    bot_check_rejections: Counter<u64>,
+    session_anomalies: Counter<u64>,
 }
 
 impl AuthMetrics {
@@ -175,6 +236,16 @@ impl AuthMetrics {
                 .u64_counter("auth.code.lockouts")
                 .with_unit("{lockout}")
                 .with_description("Codes that became locked by reaching the attempt cap")
+                .build(),
+            bot_check_rejections: meter
+                .u64_counter("auth.bot_check.rejections")
+                .with_unit("{rejection}")
+                .with_description("Requests the bot check rejected, by form and reason")
+                .build(),
+            session_anomalies: meter
+                .u64_counter("auth.session.anomalies")
+                .with_unit("{anomaly}")
+                .with_description("Refresh-token reuse and device mismatches, by kind")
                 .build(),
         }
     }
@@ -194,6 +265,23 @@ impl AuthMetrics {
                 KeyValue::new("outcome", outcome.as_str()),
             ],
         );
+    }
+
+    /// Count one bot-check rejection on `form`.
+    pub fn bot_check_rejection(&self, form: BotCheckForm, reason: BotCheckReason) {
+        self.bot_check_rejections.add(
+            1,
+            &[
+                KeyValue::new("form", form.as_str()),
+                KeyValue::new("reason", reason.as_str()),
+            ],
+        );
+    }
+
+    /// Count one session anomaly of `kind`.
+    pub fn session_anomaly(&self, kind: SessionAnomaly) {
+        self.session_anomalies
+            .add(1, &[KeyValue::new("kind", kind.as_str())]);
     }
 
     /// Count a wrong code guess. The guess is a `failure`; if it left no

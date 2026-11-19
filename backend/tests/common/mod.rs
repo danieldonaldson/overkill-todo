@@ -252,6 +252,26 @@ pub fn create_test_app_with_turnstile(
     )
 }
 
+/// Bot protection on, with auth metrics recorded on the given instruments.
+#[allow(
+    dead_code,
+    reason = "`common` is compiled into every test binary; only the auth metrics binary uses this"
+)]
+pub fn create_test_app_with_turnstile_and_auth_metrics(
+    pool: PgPool,
+    turnstile_service: Arc<dyn TurnstileService>,
+    auth_metrics: AuthMetrics,
+) -> Router {
+    create_test_app_full(
+        pool,
+        test_crypto(),
+        console_email(),
+        HashMap::new(),
+        turnstile_service,
+        auth_metrics,
+    )
+}
+
 fn console_email() -> Arc<dyn EmailService> {
     Arc::new(ConsoleEmailService::new("Test".to_string()))
 }

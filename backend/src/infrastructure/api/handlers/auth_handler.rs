@@ -14,7 +14,7 @@ use crate::{
         },
         ports::TurnstileService,
         use_cases::{
-            GetCurrentUserUseCase, LoginError, LoginUserUseCase, RefreshTokenUseCase,
+            GetCurrentUserUseCase, LoginError, LoginUserUseCase, RefreshError, RefreshTokenUseCase,
             RegisterOutcome, RegisterUserUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
         },
     },
@@ -30,7 +30,9 @@ use crate::{
         middleware::AuthUser,
     },
     infrastructure::crypto::Crypto,
-    infrastructure::telemetry::metrics::{AuthFlow, AuthMetrics, AuthOutcome},
+    infrastructure::telemetry::metrics::{
+        AuthFlow, AuthMetrics, AuthOutcome, BotCheckForm, SessionAnomaly,
+    },
 };
 
 /// How long registration will wait for the verification email to be handed to
@@ -85,6 +87,8 @@ pub async fn register(
     verify_turnstile(
         deps.turnstile_service.as_ref(),
         request.turnstile_token.as_deref(),
+        BotCheckForm::Register,
+        &deps.auth_metrics,
     )
     .await?;
 
@@ -163,6 +167,8 @@ pub async fn login(
     verify_turnstile(
         deps.turnstile_service.as_ref(),
         request.turnstile_token.as_deref(),
+        BotCheckForm::SignIn,
+        &deps.auth_metrics,
     )
     .await?;
 
@@ -239,7 +245,17 @@ pub async fn refresh(
     let result = deps
         .refresh_token_use_case
         .execute(&refresh_token, &device_fingerprint)
-        .await?;
+        .await;
+    match &result {
+        Err(RefreshError::Reused) => deps
+            .auth_metrics
+            .session_anomaly(SessionAnomaly::TokenReuse),
+        Err(RefreshError::DeviceMismatch) => deps
+            .auth_metrics
+            .session_anomaly(SessionAnomaly::DeviceMismatch),
+        _ => {}
+    }
+    let result = result.map_err(DomainError::from)?;
 
     // Issue a fresh session around the rotated refresh token.
     let session = build_session(&deps.crypto, &result.user, Some(&result.new_refresh_token))?;

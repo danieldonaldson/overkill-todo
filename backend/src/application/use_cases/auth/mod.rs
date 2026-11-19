@@ -48,7 +48,7 @@ pub use get_current_user::{CurrentUser, GetCurrentUserUseCase};
 pub use login_user::{LoginError, LoginUserUseCase};
 pub use oauth_callback::{OAuthCallbackMode, OAuthCallbackResult, OAuthCallbackUseCase};
 pub use oauth_unlink::OAuthUnlinkUseCase;
-pub use refresh_token::{RefreshResult, RefreshTokenUseCase};
+pub use refresh_token::{RefreshError, RefreshResult, RefreshTokenUseCase};
 pub use register_user::{RegisterOutcome, RegisterUserUseCase};
 pub use request_password_reset::RequestPasswordResetUseCase;
 pub use resend_verification::{ResendResult, ResendVerificationError, ResendVerificationUseCase};

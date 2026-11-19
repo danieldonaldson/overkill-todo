@@ -97,3 +97,25 @@ export function guessCodeUntilLocked(client, email, attempts = 5) {
   }
   client.reset()
 }
+
+/**
+ * Sign in as a seeded Member, rotate the session once, then present the old
+ * refresh token `times` times (a stolen token being replayed). The first replay
+ * signs the Member out everywhere; each replay is a `token_reuse` session
+ * anomaly. Each replay is sent with the old cookies and CSRF token, since a 401
+ * clears them.
+ */
+export function replayRotatedRefresh(client, email = memberForVu(), times = 3) {
+  if (signIn(client, email).status !== 200) {
+    client.reset()
+    return
+  }
+  const stolen = { cookies: { ...client.cookies }, csrfToken: client.csrfToken }
+  refresh(client)
+  for (let i = 0; i < times; i++) {
+    client.cookies = { ...stolen.cookies }
+    client.csrfToken = stolen.csrfToken
+    client.request('POST', '/auth/refresh', { fingerprint: true, expect: [401] })
+  }
+  client.reset()
+}

@@ -17,6 +17,46 @@ pub struct RefreshResult {
     pub new_refresh_token: String,
 }
 
+/// Why a refresh was refused.
+///
+/// The handler counts session anomalies from these variants. The response
+/// comes from the [`DomainError`] each maps to, which is the same message the
+/// endpoint has always returned.
+#[derive(Debug)]
+pub enum RefreshError {
+    /// No refresh token with this value.
+    Invalid,
+    /// The token has expired.
+    Expired,
+    /// The token was already rotated or revoked and was presented again. Every
+    /// session of the account has been signed out.
+    Reused,
+    /// The token was issued to a different device.
+    DeviceMismatch,
+    /// Anything else, including an account that no longer exists.
+    Domain(DomainError),
+}
+
+impl From<DomainError> for RefreshError {
+    fn from(error: DomainError) -> Self {
+        Self::Domain(error)
+    }
+}
+
+impl From<RefreshError> for DomainError {
+    fn from(error: RefreshError) -> Self {
+        match error {
+            RefreshError::Invalid => Self::Authorization("Invalid refresh token".into()),
+            RefreshError::Expired => Self::Authorization("Refresh token has expired".into()),
+            RefreshError::Reused => Self::Authorization("Refresh token has been revoked".into()),
+            RefreshError::DeviceMismatch => {
+                Self::Authorization("Device fingerprint mismatch".into())
+            }
+            RefreshError::Domain(e) => e,
+        }
+    }
+}
+
 /// Use case for refreshing authentication tokens.
 ///
 /// Validates the provided refresh token and device fingerprint,
@@ -54,16 +94,17 @@ impl RefreshTokenUseCase {
     ///
     /// # Errors
     ///
-    /// Returns [`DomainError::Authorization`] if:
-    /// - The token is invalid, expired, or revoked
-    /// - The device fingerprint doesn't match
-    /// - The user no longer exists
+    /// - [`RefreshError::Invalid`], [`RefreshError::Expired`],
+    ///   [`RefreshError::Reused`] or [`RefreshError::DeviceMismatch`] for a
+    ///   token that can't be used
+    /// - [`RefreshError::Domain`] if the user no longer exists
+    ///   (`Authorization`) or for infrastructure failures
     #[tracing::instrument(name = "usecase.refresh_token", skip_all)]
     pub async fn execute(
         &self,
         token: &str,
         device_fingerprint: &str,
-    ) -> Result<RefreshResult, DomainError> {
+    ) -> Result<RefreshResult, RefreshError> {
         // Hash the provided token to look it up
         let token_hash = self.token_service.hash_token(token);
 
@@ -72,7 +113,7 @@ impl RefreshTokenUseCase {
             .refresh_token_repository
             .find_by_hash(&token_hash)
             .await?
-            .ok_or_else(|| DomainError::Authorization("Invalid refresh token".into()))?;
+            .ok_or(RefreshError::Invalid)?;
 
         match refresh_token.status(Timestamp::now()) {
             RefreshTokenStatus::Active => {}
@@ -88,14 +129,10 @@ impl RefreshTokenUseCase {
                 self.refresh_token_repository
                     .revoke_all_for_user(refresh_token.user_id())
                     .await?;
-                return Err(DomainError::Authorization(
-                    "Refresh token has been revoked".into(),
-                ));
+                return Err(RefreshError::Reused);
             }
             RefreshTokenStatus::Expired => {
-                return Err(DomainError::Authorization(
-                    "Refresh token has expired".into(),
-                ));
+                return Err(RefreshError::Expired);
             }
         }
 
@@ -106,9 +143,7 @@ impl RefreshTokenUseCase {
                 user_id = %refresh_token.user_id(),
                 "Device fingerprint mismatch during token refresh - possible token theft"
             );
-            return Err(DomainError::Authorization(
-                "Device fingerprint mismatch".into(),
-            ));
+            return Err(RefreshError::DeviceMismatch);
         }
 
         // Get the user
@@ -116,7 +151,9 @@ impl RefreshTokenUseCase {
             .user_repository
             .find_by_id(refresh_token.user_id())
             .await?
-            .ok_or_else(|| DomainError::Authorization("User not found".into()))?;
+            .ok_or_else(|| {
+                RefreshError::Domain(DomainError::Authorization("User not found".into()))
+            })?;
 
         // Atomically revoke the old token and save the new one
         let new_token = self.token_service.generate_token();
@@ -280,7 +317,7 @@ mod tests {
         );
 
         let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
-        assert!(matches!(err, DomainError::Authorization(_)));
+        assert!(matches!(err, RefreshError::Invalid));
     }
 
     /// A revoked token that is *also* expired must still trigger
@@ -307,7 +344,7 @@ mod tests {
         );
 
         let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
-        assert!(matches!(err, DomainError::Authorization(_)));
+        assert!(matches!(err, RefreshError::Reused));
     }
 
     /// An expired-but-never-revoked token is a normal expiry: reject without
@@ -331,7 +368,7 @@ mod tests {
         );
 
         let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
-        assert!(matches!(err, DomainError::Authorization(_)));
+        assert!(matches!(err, RefreshError::Expired));
     }
 
     #[tokio::test]
@@ -353,7 +390,7 @@ mod tests {
         );
 
         let err = uc.execute("plaintext", "wrong-device").await.unwrap_err();
-        assert!(matches!(err, DomainError::Authorization(_)));
+        assert!(matches!(err, RefreshError::DeviceMismatch));
     }
 
     #[tokio::test]
@@ -380,7 +417,10 @@ mod tests {
         );
 
         let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
-        assert!(matches!(err, DomainError::Authorization(_)));
+        assert!(matches!(
+            err,
+            RefreshError::Domain(DomainError::Authorization(_))
+        ));
     }
 
     /// The concurrency loser: `rotate` returns `Conflict` (the row was already
@@ -411,7 +451,32 @@ mod tests {
         );
 
         let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
-        assert!(matches!(err, DomainError::Conflict(_)));
+        assert!(matches!(
+            err,
+            RefreshError::Domain(DomainError::Conflict(_))
+        ));
+    }
+
+    /// Each variant maps to exactly the message the endpoint returned before
+    /// the error was typed, so responses don't change.
+    #[test]
+    fn errors_map_to_the_original_messages() {
+        let cases = [
+            (RefreshError::Invalid, "Invalid refresh token"),
+            (RefreshError::Expired, "Refresh token has expired"),
+            (RefreshError::Reused, "Refresh token has been revoked"),
+            (RefreshError::DeviceMismatch, "Device fingerprint mismatch"),
+            (
+                RefreshError::Domain(DomainError::Authorization("User not found".into())),
+                "User not found",
+            ),
+        ];
+        for (error, message) in cases {
+            match DomainError::from(error) {
+                DomainError::Authorization(msg) => assert_eq!(msg, message),
+                other => panic!("expected Authorization, got {other:?}"),
+            }
+        }
     }
 
     /// `create_for_user` mints a fresh token bound to the given user + device,

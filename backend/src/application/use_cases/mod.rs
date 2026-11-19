@@ -10,7 +10,7 @@ pub use admin::{ListUsersUseCase, SetUserRoleUseCase};
 
 pub use auth::{
     CompleteSignupUseCase, GetCurrentUserUseCase, LoginError, LoginUserUseCase, OAuthCallbackMode,
-    OAuthCallbackResult, OAuthCallbackUseCase, OAuthUnlinkUseCase, RefreshResult,
+    OAuthCallbackResult, OAuthCallbackUseCase, OAuthUnlinkUseCase, RefreshError, RefreshResult,
     RefreshTokenUseCase, RegisterOutcome, RegisterUserUseCase, RequestPasswordResetUseCase,
     ResendResult, ResendVerificationError, ResendVerificationUseCase, ResetCodeError,
     ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,

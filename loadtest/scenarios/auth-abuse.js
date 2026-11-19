@@ -5,9 +5,12 @@
 //   (AuthSignInFailuresHigh: more than 30 in 15 minutes).
 // - guessing: 6 fresh signups, each email code guessed wrongly until it locks,
 //   then once more (AuthCodeLockoutsHigh: more than 5 lockouts in an hour).
+// - replaying: a seeded Member's rotated refresh token presented 3 times
+//   (AuthSessionAnomalies: 3 or more in an hour). The Member is signed out
+//   everywhere, as a real reuse would.
 //
-// After a run, both alerts fire within about a minute (vmalert UI, or
-// Alertmanager on http://localhost:9093) and stay up for 15 minutes and an hour.
+// After a run, all three alerts fire within about a minute (vmalert UI, or
+// Alertmanager on http://localhost:9093) and stay up for their windows (15 minutes or an hour).
 // Locally Alertmanager has no email receiver, so nothing is sent.
 // Only errors fail the run (the expected 401s and 400s aren't errors). Latency
 // is reported but not judged: this checks alerting, not speed.
@@ -15,7 +18,12 @@ import exec from 'k6/execution'
 import { Client } from '../lib/client.js'
 import { thresholdsFor } from '../lib/budgets.js'
 import { summaryFor } from '../lib/summary.js'
-import { guessCodeUntilLocked, requireSeeded, wrongSignIn } from '../flows/auth.js'
+import {
+  guessCodeUntilLocked,
+  replayRotatedRefresh,
+  requireSeeded,
+  wrongSignIn,
+} from '../flows/auth.js'
 
 const STUFFING = 40
 const ACCOUNTS = 6
@@ -42,10 +50,19 @@ export const options = {
       maxDuration: '2m',
       tags: { phase: 'measure' },
     },
+    replaying: {
+      executor: 'per-vu-iterations',
+      exec: 'replaying',
+      vus: 1,
+      iterations: 1,
+      maxDuration: '1m',
+      tags: { phase: 'measure' },
+    },
   },
   thresholds: withoutLatencyLimits(
     thresholdsFor('auth-abuse', [
       'POST /api/v1/auth/login',
+      'POST /api/v1/auth/refresh',
       'POST /api/v1/auth/register',
       'POST /api/v1/auth/verify-email',
     ])
@@ -71,6 +88,10 @@ export function setup() {
 
 export function stuffing() {
   wrongSignIn(new Client())
+}
+
+export function replaying() {
+  replayRotatedRefresh(new Client())
 }
 
 export function guessing() {

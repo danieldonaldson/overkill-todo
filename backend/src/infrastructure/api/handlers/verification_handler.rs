@@ -39,7 +39,9 @@ use crate::{
         },
     },
     infrastructure::crypto::Crypto,
-    infrastructure::telemetry::metrics::{AuthFlow, AuthMetrics, AuthOutcome, LockableCode},
+    infrastructure::telemetry::metrics::{
+        AuthFlow, AuthMetrics, AuthOutcome, BotCheckForm, LockableCode,
+    },
 };
 
 /// Dependencies for verification-related handlers.
@@ -280,6 +282,8 @@ pub async fn resend_verification(
     if let Err(e) = verify_turnstile(
         deps.turnstile_service.as_ref(),
         request.turnstile_token.as_deref(),
+        BotCheckForm::ResendVerification,
+        &deps.auth_metrics,
     )
     .await
     {
@@ -340,6 +344,8 @@ pub async fn forgot_password(
     verify_turnstile(
         deps.turnstile_service.as_ref(),
         request.turnstile_token.as_deref(),
+        BotCheckForm::ForgotPassword,
+        &deps.auth_metrics,
     )
     .await?;
 
@@ -559,11 +565,12 @@ pub async fn verify_magic(
     headers: HeaderMap,
     ValidatedJson(request): ValidatedJson<VerifyMagicLinkRequest>,
 ) -> Response {
-    match deps
+    let result = deps
         .verify_magic_link_use_case
         .execute(&request.token)
-        .await
-    {
+        .await;
+    record_magic_link_outcome(&deps.auth_metrics, &result);
+    match result {
         Ok(user) => issue_tokens_or_signup_token(&deps, &headers, user).await,
         // Holding the link proves ownership of the address, so an account that
         // is verified but still has no password (OAuth-only, or a signup that
@@ -590,6 +597,22 @@ pub async fn verify_magic(
         ),
         Err(VerifyMagicLinkError::Internal(msg)) => AppError::Internal(msg).into_response(),
     }
+}
+
+/// Count a magic-link check (OT-007 D3). An unknown or used link is a
+/// `failure`. An already-verified account and internal errors aren't checks
+/// of the link, so they aren't counted.
+fn record_magic_link_outcome<T>(metrics: &AuthMetrics, result: &Result<T, VerifyMagicLinkError>) {
+    let outcome = match result {
+        Ok(_) => AuthOutcome::Success,
+        Err(VerifyMagicLinkError::InvalidToken) => AuthOutcome::Failure,
+        Err(VerifyMagicLinkError::TokenExpired) => AuthOutcome::Expired,
+        Err(VerifyMagicLinkError::TokenLocked) => AuthOutcome::Locked,
+        Err(VerifyMagicLinkError::AlreadyVerified(_) | VerifyMagicLinkError::Internal(_)) => {
+            return;
+        }
+    };
+    metrics.attempt(AuthFlow::MagicLink, outcome);
 }
 
 fn verification_error(message: &str, code: VerificationErrorCode) -> Response {

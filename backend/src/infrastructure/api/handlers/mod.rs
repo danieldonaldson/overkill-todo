@@ -12,6 +12,7 @@ pub mod verification_handler;
 
 use crate::application::ports::TurnstileService;
 use crate::infrastructure::api::error::AppError;
+use crate::infrastructure::telemetry::metrics::{AuthMetrics, BotCheckForm, BotCheckReason};
 
 /// Verify a Turnstile token for an incoming request.
 ///
@@ -28,22 +29,28 @@ use crate::infrastructure::api::error::AppError;
 pub async fn verify_turnstile(
     service: &dyn TurnstileService,
     token: Option<&str>,
+    form: BotCheckForm,
+    metrics: &AuthMetrics,
 ) -> Result<(), AppError> {
     if !service.is_enabled() {
         return Ok(());
     }
 
-    let token = token
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .ok_or_else(|| AppError::BotCheckFailed("Bot verification required.".into()))?;
+    let Some(token) = token.map(str::trim).filter(|t| !t.is_empty()) else {
+        metrics.bot_check_rejection(form, BotCheckReason::Missing);
+        return Err(AppError::BotCheckFailed(
+            "Bot verification required.".into(),
+        ));
+    };
 
     let is_valid = service
         .verify(token)
         .await
         .map_err(|e| AppError::Internal(format!("Turnstile verification error: {e}")))?;
 
+    // An upstream error above is a 500, not a rejection; the 5xx alert covers it.
     if !is_valid {
+        metrics.bot_check_rejection(form, BotCheckReason::Invalid);
         return Err(AppError::BotCheckFailed(
             "Bot verification failed. Please try again.".into(),
         ));
