@@ -35,8 +35,23 @@ Investigation logs hold no secrets; Alerts link to the investigation.
 - [x] 2.5 Run `just load auth-abuse`. From each alert's link, confirm the panels list the affected accounts and an entry opens its trace in Tempo. Record the result in design.md Hypothesis.
 - [x] 2.6 `just api-types-check` shows no diff and `just ci` is green.
 
-## 3. Feature done
+## 3. Slice 3: magic links, bot-check rejections and session anomalies
 
-- [ ] 3.1 After slice 2 ships, revise design.md with what slices 1 and 2 showed, then add the remaining slice (slice 3) to this file: magic-link outcomes (with its refused-locked event), bot-check rejections, session anomalies (typed `RefreshError`), and their alerts and panels.
-- [ ] 3.2 Document the auth metrics, the investigation log events, the dashboard and the alert thresholds in `deploy/compose/README.md` (Observability), including the manual Turnstile always-fail check. Fix the `login_user.rs` doc comment and the README so they no longer say Traefik rate limiting exists (it is planned for the production edge, not built).
-- [ ] 3.3 Archive the change. Thresholds are revisited after the first month in production (recorded in Hypothesis).
+Delivers these scenarios: Each code flow is counted separately; Bot-check
+rejection is counted per form; Reused refresh token is counted; Session theft
+signal; and, for the new instruments, Measurements hold no personal data,
+Measuring never affects sign-in, No traffic yet and Normal use stays quiet.
+
+- [ ] 3.1 Magic links: record `magic_link` outcomes in the `verify_magic_link` handler (`success`; `InvalidToken` is `failure`, `TokenExpired` is `expired`, `TokenLocked` is `locked`; `AlreadyVerified` isn't counted) (D3). Emit `auth.code.refused_locked` with `flow = "magic_link"` and `user_id` in `VerifyMagicLinkUseCase` on `TokenLocked` (D7). Handler test: an account whose email code is locked opens its magic link and gets 1 `magic_link/locked` with no change to `email_code`. Use-case test captures the event.
+- [ ] 3.2 Bot check: add `auth.bot_check.rejections` (`form`, `reason`) to `AuthMetrics` with closed `BotCheckForm` and `BotCheckReason` enums. `verify_turnstile` takes the form and the metrics, so all four callers name their form (D3). A Turnstile upstream error isn't counted. Handler tests with a rejecting Turnstile stub: a missing and an invalid token on sign-in each count once under `sign_in`, the other forms stay at 0, and responses are unchanged.
+- [ ] 3.3 Sessions: give `RefreshTokenUseCase` a typed `RefreshError` (`Invalid`, `Expired`, `Reused`, `DeviceMismatch`, `Domain`), mapping each to today's `Authorization` message (D2). Add `auth.session.anomalies` (`kind` = `token_reuse` | `device_mismatch`) and record it in the `refresh` handler. Tests: each variant keeps today's status and body, a reused token still signs out every session and counts once, and a device mismatch counts once.
+- [ ] 3.4 Add `AuthBotCheckRejectionsHigh` and `AuthSessionAnomalies` to the `auth` vmalert group (D5), with unit tests: 50 rejections stay quiet and 51 fire, 2 anomalies stay quiet and 3 fire, and each resolves. Verify with `just obs-check`.
+- [ ] 3.5 Add "Bot-check rejections by form" and "Session anomalies" panels with threshold lines to `auth-security.json`, and link both new alerts to them (D4). Run `just obs-check`, and on a fresh `just obs-up` stack confirm they show "no data", not errors.
+- [ ] 3.6 Extend the no-personal-data test to cover the new instruments' labels (`form`, `reason`, `kind`) and the magic-link event, with the series still fixed.
+- [ ] 3.7 Add a session-reuse step to `auth-abuse` (replay a rotated refresh token 3 times) and confirm `AuthSessionAnomalies` fires. Confirm `just load auth-mix`, which refreshes sessions, fires no auth alert and counts no anomaly. Bot-check rejections are tested in vmalert only (D6). Record both results in design.md Hypothesis.
+- [ ] 3.8 `just api-types-check` shows no diff and `just ci` is green.
+
+## 4. Feature done
+
+- [ ] 4.1 Document the auth metrics, the investigation log events, the dashboard and the alert thresholds in `deploy/compose/README.md` (Observability), including the manual Turnstile always-fail check. Fix the `login_user.rs` doc comment and the README so they no longer say Traefik rate limiting exists (it is planned for the production edge, not built).
+- [ ] 4.2 Archive the change. Thresholds are revisited after the first month in production (recorded in Hypothesis).
