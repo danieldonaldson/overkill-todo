@@ -644,6 +644,23 @@ browsers treat as secure; Safari may need HTTPS for local development.
   - `backend/tests/telemetry_integration.rs::auth_flows_leave_no_secrets_in_telemetry`
   - `backend/src/infrastructure/crypto/keyring.rs::startup_log_names_the_keys_and_holds_no_secrets`
 
+### P-34: The browser report endpoint takes identity only from the session, changes no state and returns nothing
+
+`POST /api/v1/client-telemetry` (OT-006) is public and outside CSRF, because
+`sendBeacon` can't send the header. A forged report can at most add noise under
+the sender's own session, bounded by the recording budget.
+
+- Attackers: A1
+- Strength: tested
+- Checks:
+  - `backend/tests/client_telemetry_integration.rs::a_user_id_in_the_body_is_ignored`
+  - `backend/tests/client_telemetry_integration.rs::an_expired_or_invalid_session_is_anonymous_never_a_401`
+  - `backend/tests/client_telemetry_integration.rs::a_visitor_report_is_logged_with_no_user_id_and_an_empty_204`
+  - `backend/tests/client_telemetry_integration.rs::reports_over_the_budget_get_a_204_and_are_counted_not_recorded`
+  - `backend/src/application/use_cases/telemetry/scrub.rs::every_fixture_case_scrubs_to_its_expected_output`
+- Gap: No per-client rate limit; the budget is global per replica. A
+  Cloudflare rule per client IP is planned for the first deploy (OT-006 task 2.1).
+
 ### P-26: Internal error details reach clients only in DEV_MODE
 
 - Attackers: A1

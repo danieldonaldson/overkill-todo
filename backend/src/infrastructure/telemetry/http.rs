@@ -4,7 +4,8 @@
 //!
 //! Records only the HTTP semantic-convention attributes below: no headers
 //! (except `user-agent`), no bodies, and the query string with sensitive values
-//! redacted. Health probes get no span and no metric. Both layers must be added
+//! redacted. Health probes get no span and no metric; browser reports get a
+//! metric but no span. Both layers must be added
 //! with `Router::layer` so axum has already routed the request and
 //! [`MatchedPath`] is available.
 //!
@@ -43,6 +44,11 @@ const HEALTH_ROUTES: &[&str] = &[
     "/api/v1/health/ready",
 ];
 
+/// Route templates that get no span but still get request metrics: browser
+/// reports (OT-006), which would otherwise add a trace per page load. A report
+/// about a failed API call carries that call's trace ID instead.
+const UNTRACED_ROUTES: &[&str] = &["/api/v1/client-telemetry"];
+
 /// Builds the per-request server span.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MakeHttpSpan;
@@ -58,7 +64,7 @@ fn route_of<B>(request: &Request<B>) -> &str {
 impl<B> MakeSpan<B> for MakeHttpSpan {
     fn make_span(&mut self, request: &Request<B>) -> Span {
         let route = route_of(request);
-        if HEALTH_ROUTES.contains(&route) {
+        if HEALTH_ROUTES.contains(&route) || UNTRACED_ROUTES.contains(&route) {
             return Span::none();
         }
 

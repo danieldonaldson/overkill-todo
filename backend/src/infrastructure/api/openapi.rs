@@ -42,6 +42,7 @@ pub const REFRESH_COOKIE_SCHEME: &str = "refresh_cookie";
         (name = "Profile", description = "Profile management"),
         (name = "Admin", description = "Admin panel"),
         (name = "Health", description = "Liveness and readiness probes"),
+        (name = "Telemetry", description = "Browser error and performance reports"),
     )
 )]
 pub struct ApiDoc;
@@ -587,6 +588,7 @@ mod tests {
         ("GET", "/api/v1/auth/oauth/{provider}/callback"),
         ("GET", "/api/v1/health"),
         ("GET", "/api/v1/health/ready"),
+        ("POST", "/api/v1/client-telemetry"),
     ];
 
     /// Every guarded operation requires the session cookie, and every operation

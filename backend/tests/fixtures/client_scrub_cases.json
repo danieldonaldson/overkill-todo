@@ -1,0 +1,74 @@
+[
+  {
+    "name": "magic-link token in the fragment",
+    "input": "Error: failed on https://overkill.example/verify-magic#token=mlk_9f8e7d6c5b4a",
+    "max_chars": 500,
+    "expected": "Error: failed on https://overkill.example/verify-magic"
+  },
+  {
+    "name": "email in the reset page's query string",
+    "input": "Error: bad state at /reset-password?email=alice%40example.com&step=2",
+    "max_chars": 500,
+    "expected": "Error: bad state at /reset-password"
+  },
+  {
+    "name": "location.href quoted in a message",
+    "input": "Unexpected \"https://overkill.example/reset-password?email=alice@example.com\" (reload)",
+    "max_chars": 500,
+    "expected": "Unexpected \"https://overkill.example/reset-password\" (reload)"
+  },
+  {
+    "name": "email in a message",
+    "input": "No account for alice.smith+test@example.co.uk, try again",
+    "max_chars": 500,
+    "expected": "No account for [EMAIL], try again"
+  },
+  {
+    "name": "absolute URL with a query in a Chrome stack frame",
+    "input": "TypeError: x is undefined\n    at render (https://overkill.example/_astro/index.Bx1.js?v=3&token=abc:12:345)\n    at https://overkill.example/_astro/client.js:1:2",
+    "max_chars": 4000,
+    "expected": "TypeError: x is undefined\n    at render (https://overkill.example/_astro/index.Bx1.js:12:345)\n    at https://overkill.example/_astro/client.js:1:2"
+  },
+  {
+    "name": "absolute URL with a fragment in a Firefox stack frame",
+    "input": "render@https://overkill.example/_astro/index.js#token=abc:3:4\n@https://overkill.example/verify-magic#token=abc:1:1",
+    "max_chars": 4000,
+    "expected": "render@https://overkill.example/_astro/index.js:3:4\n@https://overkill.example/verify-magic:1:1"
+  },
+  {
+    "name": "relative API path with a token in the query",
+    "input": "fetch /api/v1/auth/verify-magic?token=abc failed",
+    "max_chars": 500,
+    "expected": "fetch /api/v1/auth/verify-magic failed"
+  },
+  {
+    "name": "key=value secrets outside an address",
+    "input": "request failed token=abc123 page=2 secret=s3cr3t&mode=x (code=123456)",
+    "max_chars": 500,
+    "expected": "request failed token=[REDACTED] page=2 secret=[REDACTED]&mode=x (code=[REDACTED]"
+  },
+  {
+    "name": "a bare fragment",
+    "input": "hash was #token=mlk_abc",
+    "max_chars": 500,
+    "expected": "hash was #token=[REDACTED]"
+  },
+  {
+    "name": "text with nothing to scrub",
+    "input": "Cannot read properties of undefined (reading 'x')",
+    "max_chars": 500,
+    "expected": "Cannot read properties of undefined (reading 'x')"
+  },
+  {
+    "name": "cut to the character limit",
+    "input": "abcdéfgh",
+    "max_chars": 5,
+    "expected": "abcdé"
+  },
+  {
+    "name": "cut after scrubbing, not before",
+    "input": "a@b.io and more",
+    "max_chars": 7,
+    "expected": "[EMAIL]"
+  }
+]

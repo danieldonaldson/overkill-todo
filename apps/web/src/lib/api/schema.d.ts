@@ -405,6 +405,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/client-telemetry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record browser error reports.
+         *     # Errors
+         *     Returns a 400 for a body that isn't a valid report and a 413 for one over
+         *     [`MAX_BODY_BYTES`].
+         */
+        post: operations["record_client_telemetry"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/health": {
         parameters: {
             query?: never;
@@ -639,6 +661,58 @@ export interface components {
             current_password: string;
             /** @description New password (8-256 characters). */
             new_password: string;
+        };
+        /** @description A browser error, deduplicated within its page load (`count` repeats). */
+        ClientErrorEvent: {
+            /** @description For `api` errors: the route template the call used. */
+            api_route?: string | null;
+            /**
+             * Format: int32
+             * @description How many times this error happened in the page load.
+             */
+            count: number;
+            kind: components["schemas"]["ClientErrorKind"];
+            /** @description The error message, scrubbed in the browser and again on the server. */
+            message: string;
+            /** @description For `api` errors: the request never reached the server. */
+            network_failed?: boolean | null;
+            /** @description The script the error came from, or `external` for another origin. */
+            source?: string | null;
+            /** @description The (minified) stack. */
+            stack?: string | null;
+            /**
+             * Format: int32
+             * @description For `api` errors: the response status, when the server answered.
+             */
+            status?: number | null;
+            /** @description For `api` errors: the response's `X-Trace-Id`. */
+            trace_id?: string | null;
+        };
+        /**
+         * @description What kind of browser error a report describes (OT-006). Unlike the enums
+         *     above it is the field's real type: an unknown kind is rejected outright, so
+         *     it can't become a metric label.
+         * @enum {string}
+         */
+        ClientErrorKind: "error" | "unhandledrejection" | "boundary" | "api";
+        /** @description One browser report. */
+        ClientEvent: components["schemas"]["ClientErrorEvent"] & {
+            /** @enum {string} */
+            type: "error";
+        };
+        /** @description One batch of browser reports from one page load. */
+        ClientReportBatch: {
+            /** @description The events, at most 30. */
+            events: components["schemas"]["ClientEvent"][];
+            /**
+             * @description `location.pathname` without a trailing slash. Mapped to a page template
+             *     on the server; anything unknown is recorded as `other`.
+             */
+            page: string;
+            /** @description Random ID of the page load, regenerated on sign-in and sign-out. */
+            page_load_id: string;
+            /** @description Release of the site the browser is running (commit SHA, or `dev`). */
+            release: string;
         };
         /**
          * @description Request body for completing registration (set password after email verification).
@@ -1819,6 +1893,55 @@ export interface operations {
             };
             /** @description User not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    record_client_telemetry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClientReportBatch"];
+            };
+        };
+        responses: {
+            /** @description Accepted. Reports over the recording budget are counted, not recorded, and get this answer too */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not a valid report */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Body larger than 16 KB */
+            413: {
                 headers: {
                     [name: string]: unknown;
                 };

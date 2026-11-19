@@ -67,6 +67,9 @@ pub enum AppError {
     BotCheckFailed(String),
     #[error("Not found: {0}")]
     NotFound(String),
+    /// The request body is over the route's size limit (`413`).
+    #[error("Payload too large")]
+    PayloadTooLarge,
     #[error("Authorization error: {message}")]
     Authorization { code: &'static str, message: String },
     #[error("Forbidden: {message}")]
@@ -168,6 +171,7 @@ impl AppError {
             Self::Validation(_) => "validation_error",
             Self::BotCheckFailed(_) => "bot_check_failed",
             Self::NotFound(_) => "not_found",
+            Self::PayloadTooLarge => "payload_too_large",
             Self::Authorization { code, .. } | Self::Forbidden { code, .. } => code,
             Self::Conflict(_) => "conflict",
             Self::Internal(_) => "internal_error",
@@ -289,6 +293,10 @@ impl IntoResponse for AppError {
                 (StatusCode::BAD_REQUEST, msg.clone())
             }
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            Self::PayloadTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Request body too large".to_string(),
+            ),
             Self::Authorization { message, .. } => (StatusCode::UNAUTHORIZED, message.clone()),
             Self::Forbidden { message, .. } => (StatusCode::FORBIDDEN, message.clone()),
             Self::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),

@@ -254,6 +254,15 @@ test-integration: db-up db-migrate
 test-web:
     {{pnpm}} --filter {{web}} exec astro check
     {{pnpm}} --filter {{web}} exec vitest run
+    node scripts/decode-stack.test.mjs
+
+# Reads the stack from a `client_error` log line on stdin or from a file. `dev`
+# uses apps/web/dist (build first); a commit SHA fetches that release's maps (`gh`).
+# Decode a minified browser error stack to source files and lines (OT-006).
+[group('test')]
+[no-cd]
+decode-stack release file="":
+    node {{ quote(justfile_directory() / "scripts/decode-stack.mjs") }} {{ quote(release) }} {{ if file == "" { "" } else { quote(file) } }}
 
 # Browser e2e against the built site with the API mocked.
 [group('test')]

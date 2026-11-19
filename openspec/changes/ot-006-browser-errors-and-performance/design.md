@@ -75,6 +75,25 @@ image:
 If decoding through the Docker build turns out awkward, fall back to uploading
 maps from CI only and record that here before slice 2.
 
+**Result (2026-11-19, slice 1, task 1.14): confirmed.** Against `just up` with
+release images (`RELEASE=hyp-ot006-1`) and `just obs-up`:
+- errors thrown signed out on `/reset-password?email=…` and
+  `/verify-magic#token=…` (message and stack holding the address as opened),
+  and signed in on `/dashboard/settings` (a real `TypeError` in
+  `SettingsPanel.svelte`), all reached VictoriaLogs within seconds;
+- only the dashboard report carried a `user_id`, the new Member's, from the
+  session;
+- a search of every log line for the email (plain and `%40`-encoded), the token
+  and the Member's sign-up address found nothing;
+- `just decode-stack hyp-ot006-1`, with the maps exported from the image's
+  `sourcemaps` stage, turned the logged frame `SettingsPanel.wJ7Iev_7.js:3:4401`
+  into `src/components/dashboard/SettingsPanel.svelte:39:56`, the line that threw.
+
+Found on the way: the web Caddyfile's SPA fallback answered any `.map` path with
+`index.html` (200), so a `respond 404` for `*.map` was added. Decoding through the
+Docker build works, so the CI-only fallback isn't needed. The CI artifact upload
+itself is only exercised on the first push to `main`.
+
 ## Decisions
 
 ### 1. In-house reporter plus a backend endpoint

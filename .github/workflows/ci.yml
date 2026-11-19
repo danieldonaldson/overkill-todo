@@ -482,12 +482,40 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
-          # Baked into the backend as `service.version` (ignored by the web image).
-          build-args: APP_VERSION=${{ github.sha }}
+          # APP_VERSION is the backend's `service.version`; RELEASE is the web
+          # build's release, sent with browser error reports (OT-006). Each image
+          # ignores the other's.
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+            RELEASE=${{ github.sha }}
           cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache
           cache-to: type=registry,ref=${{ steps.image.outputs.name }}:buildcache,mode=max
           provenance: mode=max
           sbom: true
+
+      # The web build's source maps, which the image doesn't serve (OT-006): kept
+      # for `just decode-stack <sha>`, longer than browser reports are (30 days).
+      # Same build as above, so its layers come from the cache.
+      - name: Export source maps
+        if: matrix.component == 'web'
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          target: sourcemaps
+          build-args: |
+            APP_VERSION=${{ github.sha }}
+            RELEASE=${{ github.sha }}
+          outputs: type=local,dest=web-sourcemaps
+          cache-from: type=registry,ref=${{ steps.image.outputs.name }}:buildcache
+      - name: Keep source maps
+        if: matrix.component == 'web'
+        uses: actions/upload-artifact@v7
+        with:
+          name: web-sourcemaps-${{ github.sha }}
+          path: web-sourcemaps
+          retention-days: 90
+          if-no-files-found: error
 
       # Scan what was just pushed: OS packages (the web image's Alpine base), Go modules
       # in the Caddy binary, and the crates cargo-auditable embeds in the backend binary.

@@ -9,7 +9,10 @@ use overkill_todo::domain::entities::OAuthProvider;
 use overkill_todo::domain::errors::DomainError;
 use overkill_todo::{
     application::{
-        ports::{EmailService, MxValidator, OAuthProviderClient, TurnstileService},
+        ports::{
+            EmailService, MxValidator, OAuthProviderClient, TurnstileService,
+            outgoing::ClientReportSink,
+        },
         use_cases::{
             CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
             ExportUserDataUseCase, GetCurrentUserUseCase, ListUsersUseCase, LoginUserUseCase,
@@ -18,6 +21,9 @@ use overkill_todo::{
             ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
             SetPasswordUseCase, SetUserRoleUseCase, ValidateResetCodeUseCase, VerifyEmailUseCase,
             VerifyMagicLinkUseCase,
+            telemetry::{
+                RecordClientTelemetryUseCase, record_client_telemetry::DEFAULT_MAX_EVENTS_PER_SEC,
+            },
         },
     },
     infrastructure::{
@@ -25,6 +31,7 @@ use overkill_todo::{
             RouterDeps, create_router,
             handlers::{
                 admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
+                client_telemetry_handler::ClientTelemetryHandlerDeps,
                 oauth_handler::OAuthHandlerDeps, profile_handler::ProfileHandlerDeps,
                 verification_handler::VerificationHandlerDeps,
             },
@@ -42,6 +49,7 @@ use overkill_todo::{
 use sqlx::PgPool;
 
 use overkill_todo::infrastructure::crypto::Crypto;
+use overkill_todo::infrastructure::telemetry::client_reports::TelemetryClientReportSink;
 use overkill_todo::infrastructure::telemetry::metrics::AuthMetrics;
 
 static TEST_CRYPTO: OnceLock<Arc<Crypto>> = OnceLock::new();
@@ -370,10 +378,37 @@ pub fn create_test_app_with_email_service(
     )
 }
 
+/// Build the test app recording browser reports through `sink`, with a
+/// recording budget of `max_events_per_sec`.
 #[allow(
-    clippy::too_many_lines,
-    reason = "wires the whole app the way main.rs does, in the same order"
+    dead_code,
+    reason = "`common` is compiled into every test binary; only the client telemetry binary uses this"
 )]
+pub fn create_test_app_with_client_telemetry(
+    pool: PgPool,
+    sink: Arc<dyn ClientReportSink>,
+    max_events_per_sec: u32,
+) -> Router {
+    create_test_app_inner(
+        pool,
+        test_crypto(),
+        console_email(),
+        HashMap::new(),
+        no_op_turnstile(),
+        AuthMetrics::from_global(),
+        client_telemetry(sink, max_events_per_sec),
+    )
+}
+
+fn client_telemetry(
+    sink: Arc<dyn ClientReportSink>,
+    max_events_per_sec: u32,
+) -> Arc<ClientTelemetryHandlerDeps> {
+    Arc::new(ClientTelemetryHandlerDeps {
+        record: Arc::new(RecordClientTelemetryUseCase::new(sink, max_events_per_sec)),
+    })
+}
+
 fn create_test_app_full(
     pool: PgPool,
     crypto: Arc<Crypto>,
@@ -381,6 +416,33 @@ fn create_test_app_full(
     oauth_clients: HashMap<OAuthProvider, Arc<dyn OAuthProviderClient>>,
     turnstile_service: Arc<dyn TurnstileService>,
     auth_metrics: AuthMetrics,
+) -> Router {
+    create_test_app_inner(
+        pool,
+        crypto,
+        email_service,
+        oauth_clients,
+        turnstile_service,
+        auth_metrics,
+        client_telemetry(
+            Arc::new(TelemetryClientReportSink::from_global()),
+            DEFAULT_MAX_EVENTS_PER_SEC,
+        ),
+    )
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "wires the whole app the way main.rs does, in the same order"
+)]
+fn create_test_app_inner(
+    pool: PgPool,
+    crypto: Arc<Crypto>,
+    email_service: Arc<dyn EmailService>,
+    oauth_clients: HashMap<OAuthProvider, Arc<dyn OAuthProviderClient>>,
+    turnstile_service: Arc<dyn TurnstileService>,
+    auth_metrics: AuthMetrics,
+    client_telemetry: Arc<ClientTelemetryHandlerDeps>,
 ) -> Router {
     let code_generator = Arc::new(RandomCodeGenerator::development());
     let jwt_service = Arc::new(CryptoJwtService::new(crypto.clone()));
@@ -549,6 +611,7 @@ fn create_test_app_full(
             oauth: oauth_deps,
             profile: profile_deps,
             admin: admin_deps,
+            client_telemetry,
             db,
             crypto,
             users: user_repo,

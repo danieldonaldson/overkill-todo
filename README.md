@@ -75,6 +75,7 @@ only (`deploy/secrets/README.md`).
 | `just models`                          | Quint concurrency models of code entry and refresh, replayed on DB |
 | `just protocols`                       | Tamarin proofs of the sign-in protocols against a network attacker |
 | `just load <scenario>`                 | k6 load scenario against the capped stack                          |
+| `just decode-stack <release> [file]`   | a browser error's minified stack → source lines                    |
 | `just obs-up` / `just obs-down`        | traces, logs, metrics, alerts and Grafana                          |
 | `just analytics-up` / `analytics-down` | Umami web analytics on :3001                                       |
 
@@ -236,9 +237,10 @@ just obs-wipe            # delete stored traces, logs and metrics (keeps Grafana
 ```
 
 - **Grafana** is on http://localhost:3000 (`admin` / `admin` locally, or set
-  `GRAFANA_ADMIN_PASSWORD`). The Service overview and Jobs dashboards are
-  provisioned. Every API response carries `X-Trace-Id`; paste it into Explore →
-  Tempo to open the trace, and follow the links between a trace and its logs.
+  `GRAFANA_ADMIN_PASSWORD`). The Service overview, Jobs, Auth security and
+  Frontend dashboards are provisioned. Every API response carries
+  `X-Trace-Id`; paste it into Explore → Tempo to open the trace, and follow
+  the links between a trace and its logs.
 - **Alertmanager** is on http://localhost:9093. Locally it has no receiver, so
   alerts show there and never send email.
 - **With `just dev`** (backend on the host), set
@@ -252,6 +254,37 @@ just obs-wipe            # delete stored traces, logs and metrics (keeps Grafana
 - **Ports** are bound to 127.0.0.1 only (`GRAFANA_PORT`, `ALERTMANAGER_PORT`).
   `just obs-check` (part of `just ci`) validates the collector config,
   Alertmanager configs and alert-rule tests.
+
+### Browser errors
+
+The site reports uncaught script errors and unhandled promise rejections from
+every page to `POST /api/v1/client-telemetry` (OT-006). They show up as
+`client_error` events in VictoriaLogs and on the Frontend dashboard, with the
+page template, release, a fingerprint, the browser family and device class,
+and a signed-in Member's `user_id` (from the session, never from the report).
+
+- **Privacy.** The browser scrubs each report before sending it, and the
+  backend scrubs it again: query strings and fragments are cut from every
+  address, emails become `[EMAIL]`, and sensitive `key=value` pairs are
+  redacted. Both copies of the rules run the cases in
+  `backend/tests/fixtures/client_scrub_cases.json`; add a case for any new
+  link format. Nothing is stored in the browser.
+- **Limits.** The browser sends at most 20 distinct errors per page load (repeats
+  are counted), in batches under 16 KB. The backend records at most
+  `CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC` events per second per replica (default
+  200); the rest are answered 204 and counted in `browser.report.dropped`.
+  The route is public, needs no CSRF token and isn't traced.
+- **Release.** `PUBLIC_RELEASE` is baked in at build time: the `RELEASE` build arg
+  of the web image (CI passes the commit SHA, `just up` passes `$RELEASE`), and
+  `dev` otherwise.
+- **Stacks.** The site's source maps are never served. A local build keeps them
+  in `apps/web/dist`; the web image moves them out, and CI keeps each release's
+  maps as the `web-sourcemaps-<sha>` artifact for 90 days. To read a logged stack:
+
+  ```bash
+  just decode-stack dev stack.txt         # after a local `pnpm --filter @overkill-todo/web build`
+  just decode-stack <sha> < stack.txt     # fetches and caches that release's maps (needs `gh`)
+  ```
 
 ### Web analytics
 

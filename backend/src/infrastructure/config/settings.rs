@@ -12,6 +12,8 @@
 
 use std::sync::OnceLock;
 
+use crate::application::use_cases::telemetry::record_client_telemetry::DEFAULT_MAX_EVENTS_PER_SEC;
+
 static DEV_MODE: OnceLock<bool> = OnceLock::new();
 
 /// Returns true if dev mode is enabled (detailed error messages).
@@ -258,6 +260,9 @@ pub struct TelemetrySettings {
     pub version: String,
     /// `LOG_FORMAT=json|pretty` override; `None` means JSON outside dev mode.
     pub log_json: Option<bool>,
+    /// `CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC`: browser report events this replica
+    /// records per second; the rest are counted as dropped (OT-006). At least 1.
+    pub client_max_events_per_sec: u32,
 }
 
 /// Application configuration settings, grouped by concern.
@@ -285,6 +290,13 @@ fn check_telemetry_required(
              (telemetry export is required when DEV_MODE=false)"
                 .to_string(),
         );
+    }
+}
+
+/// A zero browser-report budget would silently drop every report.
+fn check_client_budget(max_events_per_sec: u32, problems: &mut Vec<String>) {
+    if max_events_per_sec == 0 {
+        problems.push("CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC must be at least 1".to_string());
     }
 }
 
@@ -382,6 +394,13 @@ impl Settings {
             }
         };
 
+        let client_max_events_per_sec = parse_env(
+            "CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC",
+            DEFAULT_MAX_EVENTS_PER_SEC,
+            &mut problems,
+        );
+        check_client_budget(client_max_events_per_sec, &mut problems);
+
         if !problems.is_empty() {
             return Err(config::ConfigError::Message(format!(
                 "\n\nConfiguration errors:\n  - {}\n\nCheck your .env file.\n",
@@ -456,6 +475,7 @@ impl Settings {
                 .or_else(|| option_env!("APP_VERSION").map(str::to_string))
                 .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
             log_json,
+            client_max_events_per_sec,
         };
 
         Ok(Self {
@@ -864,6 +884,7 @@ mod tests {
             ("DEPLOYMENT_ENVIRONMENT", "staging"),
             ("APP_VERSION", "abc123"),
             ("LOG_FORMAT", "JSON"),
+            ("CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC", "50"),
         ];
 
         with_env_vars(&vars, || {
@@ -921,7 +942,19 @@ mod tests {
             assert_eq!(s.telemetry.environment, "staging");
             assert_eq!(s.telemetry.version, "abc123");
             assert_eq!(s.telemetry.log_json, Some(true));
+            assert_eq!(s.telemetry.client_max_events_per_sec, 50);
         });
+    }
+
+    #[test]
+    fn client_budget_must_be_at_least_one() {
+        let mut problems = Vec::new();
+        check_client_budget(0, &mut problems);
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains("CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC"));
+        problems.clear();
+        check_client_budget(1, &mut problems);
+        assert_eq!(problems, Vec::<String>::new());
     }
 
     #[test]

@@ -29,7 +29,7 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
   so they're in the OpenAPI description; plain `.route(...)` fails lint. Protect
   groups with the `Guarded` methods (`require_auth()` etc.), not bare
   `route_layer`s. New authenticated groups go above `.require_csrf()`; public
-  signature-verified webhooks go below it.
+  signature-verified webhooks and public, state-free browser reports go below it.
 - Extract input with `ValidatedJson` / `ApiJson` / `ApiQuery` / `ApiPath`, not
   bare axum `Json` / `Query` / `Path`, so malformed input gets the JSON 400.
 - Every described route is fuzzed in `just ci` (`just fuzz-api`); a new route

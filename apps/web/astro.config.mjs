@@ -39,6 +39,10 @@ export default defineConfig({
   devToolbar: { enabled: false },
   vite: {
     plugins: [tailwindcss()],
+    // Source maps for decoding browser error stacks (OT-006), with no
+    // `sourceMappingURL` comment. The web image moves them out of the served
+    // tree; local builds keep them in dist/ for `just decode-stack dev`.
+    build: { sourcemap: 'hidden' },
     resolve: {
       // mode-watcher holds the theme in a module-level store. Astro loads the
       // <ModeWatcher> island from the raw package file while ThemeToggle's bare

@@ -8,7 +8,27 @@ COPY apps/web/package.json apps/web/
 COPY packages/design-tokens/package.json packages/design-tokens/
 RUN pnpm install --filter @overkill-todo/web... --frozen-lockfile
 COPY . .
-RUN pnpm --filter @overkill-todo/web build
+# The commit the site is built from, reported with every browser error (OT-006).
+# One image is promoted through every environment, so build time is right.
+ARG RELEASE=dev
+RUN PUBLIC_RELEASE="$RELEASE" pnpm --filter @overkill-todo/web build
+# Source maps (OT-006 Decision 10) move out of the served tree to
+# /sourcemaps/<release>/, kept for `just decode-stack` via the `sourcemaps` stage
+# below. The build fails if any map, or any reference to one, is left to serve.
+RUN set -eu; cd apps/web/dist; mkdir -p "/sourcemaps/$RELEASE"; \
+    find . -name '*.map' | tar -cf - -T - | tar -xf - -C "/sourcemaps/$RELEASE"; \
+    find . -name '*.map' -delete; \
+    if find . -name '*.map' | grep -q . \
+      || [ -n "$(find . -name '*.js' -exec grep -l sourceMappingURL {} +)" ]; then \
+      echo "source maps left in the served tree" >&2; exit 1; \
+    fi; \
+    find "/sourcemaps/$RELEASE" -name '*.map' | grep -q .
+
+# ---- source maps ----
+# Only the maps, for CI to export (`--target sourcemaps --output type=local`) and
+# keep as the `web-sourcemaps-<sha>` artifact. Never part of the served image.
+FROM scratch AS sourcemaps
+COPY --from=build /sourcemaps/ /
 
 # ---- dev (local Tilt inner loop: astro dev + Vite HMR, source synced by live_update) ----
 # NOT the final stage — a no-target `docker build` (CI/prod) still lands on the Caddy `serve`

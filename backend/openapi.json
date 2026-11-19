@@ -1217,6 +1217,60 @@
         }
       }
     },
+    "/api/v1/client-telemetry": {
+      "post": {
+        "tags": [
+          "Telemetry"
+        ],
+        "summary": "Record browser error reports.\n# Errors\nReturns a 400 for a body that isn't a valid report and a 413 for one over\n[`MAX_BODY_BYTES`].",
+        "operationId": "record_client_telemetry",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClientReportBatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Accepted. Reports over the recording budget are counted, not recorded, and get this answer too"
+          },
+          "400": {
+            "description": "Not a valid report",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Body larger than 16 KB",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "tags": [
@@ -1871,6 +1925,161 @@
           }
         }
       },
+      "ClientErrorEvent": {
+        "type": "object",
+        "description": "A browser error, deduplicated within its page load (`count` repeats).",
+        "required": [
+          "kind",
+          "message",
+          "count"
+        ],
+        "properties": {
+          "api_route": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `api` errors: the route template the call used.",
+            "maxLength": 200
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many times this error happened in the page load.",
+            "maximum": 10000,
+            "minimum": 1
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ClientErrorKind"
+          },
+          "message": {
+            "type": "string",
+            "description": "The error message, scrubbed in the browser and again on the server.",
+            "maxLength": 500
+          },
+          "network_failed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "For `api` errors: the request never reached the server."
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The script the error came from, or `external` for another origin.",
+            "maxLength": 500
+          },
+          "stack": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The (minified) stack.",
+            "maxLength": 4000
+          },
+          "status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "For `api` errors: the response status, when the server answered.",
+            "maximum": 599,
+            "minimum": 100
+          },
+          "trace_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For `api` errors: the response's `X-Trace-Id`.",
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$"
+          }
+        }
+      },
+      "ClientErrorKind": {
+        "type": "string",
+        "description": "What kind of browser error a report describes (OT-006). Unlike the enums\nabove it is the field's real type: an unknown kind is rejected outright, so\nit can't become a metric label.",
+        "enum": [
+          "error",
+          "unhandledrejection",
+          "boundary",
+          "api"
+        ]
+      },
+      "ClientEvent": {
+        "oneOf": [
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ClientErrorEvent",
+                "description": "A script error, unhandled rejection, boundary error or failed API call."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "error"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "A script error, unhandled rejection, boundary error or failed API call."
+          }
+        ],
+        "description": "One browser report."
+      },
+      "ClientReportBatch": {
+        "type": "object",
+        "description": "One batch of browser reports from one page load.",
+        "required": [
+          "page_load_id",
+          "release",
+          "page",
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClientEvent"
+            },
+            "description": "The events, at most 30.",
+            "maxItems": 30,
+            "minItems": 1
+          },
+          "page": {
+            "type": "string",
+            "description": "`location.pathname` without a trailing slash. Mapped to a page template\non the server; anything unknown is recorded as `other`.",
+            "maxLength": 200
+          },
+          "page_load_id": {
+            "type": "string",
+            "description": "Random ID of the page load, regenerated on sign-in and sign-out.",
+            "maxLength": 32,
+            "minLength": 32,
+            "pattern": "^[0-9a-f]{32}$"
+          },
+          "release": {
+            "type": "string",
+            "description": "Release of the site the browser is running (commit SHA, or `dev`).",
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[0-9A-Za-z._-]{1,64}$"
+          }
+        }
+      },
       "CompleteRegistrationRequest": {
         "type": "object",
         "description": "Request body for completing registration (set password after email verification).\n\nThis is step 3 of signup: user sets password after verifying email.",
@@ -2452,6 +2661,10 @@
     {
       "name": "Health",
       "description": "Liveness and readiness probes"
+    },
+    {
+      "name": "Telemetry",
+      "description": "Browser error and performance reports"
     }
   ]
 }

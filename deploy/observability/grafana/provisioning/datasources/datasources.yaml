@@ -38,6 +38,14 @@ datasources:
           datasourceUid: tempo
           url: '$${__value.raw}'
           urlDisplayLabel: View trace
+        # A browser error about a failed API call carries that call's trace
+        # (OT-006); the report itself is never traced.
+        - name: client_trace_id
+          matcherType: label
+          matcherRegex: client_trace_id
+          datasourceUid: tempo
+          url: '$${__value.raw}'
+          urlDisplayLabel: View backend trace
 
   # VictoriaMetrics speaks the Prometheus query API (PromQL/MetricsQL).
   - name: VictoriaMetrics

@@ -7,7 +7,7 @@
 //! type. They mirror domain enums, which must not depend on an API-doc crate;
 //! the tests below fail if the two sets of values ever differ.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// A user's role (domain `UserRole`).
@@ -27,9 +27,37 @@ pub enum OAuthProviderName {
     Apple,
 }
 
+/// What kind of browser error a report describes (OT-006). Unlike the enums
+/// above it is the field's real type: an unknown kind is rejected outright, so
+/// it can't become a metric label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ClientErrorKind {
+    /// An uncaught script error (`window.onerror`).
+    Error,
+    /// A promise rejection nobody handled.
+    Unhandledrejection,
+    /// An error caught by a panel's error boundary.
+    Boundary,
+    /// An API call that failed with a 5xx or never reached the server.
+    Api,
+}
+
+impl ClientErrorKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Unhandledrejection => "unhandledrejection",
+            Self::Boundary => "boundary",
+            Self::Api => "api",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{OAuthProviderName, RoleName};
+    use super::{ClientErrorKind, OAuthProviderName, RoleName};
     use crate::domain::entities::OAuthProvider;
     use crate::domain::value_objects::UserRole;
 
@@ -64,6 +92,18 @@ mod tests {
                 OAuthProvider::Apple => OAuthProviderName::Apple,
             };
             assert_eq!(wire(schema), provider.as_str());
+        }
+    }
+
+    #[test]
+    fn client_error_kinds_serialize_as_their_label() {
+        for kind in [
+            ClientErrorKind::Error,
+            ClientErrorKind::Unhandledrejection,
+            ClientErrorKind::Boundary,
+            ClientErrorKind::Api,
+        ] {
+            assert_eq!(wire(kind), kind.as_str());
         }
     }
 }

@@ -14,7 +14,7 @@ use overkill_todo::{
             RequestPasswordResetUseCase, ResendVerificationUseCase, ResetPasswordUseCase,
             RevokeTokenUseCase, SendVerificationCodeUseCase, SetPasswordUseCase,
             SetUserRoleUseCase, ValidateResetCodeUseCase, VerifyEmailUseCase,
-            VerifyMagicLinkUseCase,
+            VerifyMagicLinkUseCase, telemetry::RecordClientTelemetryUseCase,
         },
     },
     domain::entities::OAuthProvider,
@@ -24,6 +24,7 @@ use overkill_todo::{
             RouterDeps, create_router,
             handlers::{
                 admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
+                client_telemetry_handler::ClientTelemetryHandlerDeps,
                 oauth_handler::OAuthHandlerDeps, profile_handler::ProfileHandlerDeps,
                 verification_handler::VerificationHandlerDeps,
             },
@@ -376,6 +377,15 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         set_user_role_use_case: Arc::new(SetUserRoleUseCase::new(user_repo.clone())),
     });
 
+    // Browser reports (OT-006): logged and counted by the telemetry adapter,
+    // within a per-replica recording budget.
+    let client_telemetry_deps = Arc::new(ClientTelemetryHandlerDeps {
+        record: Arc::new(RecordClientTelemetryUseCase::new(
+            Arc::new(telemetry::client_reports::TelemetryClientReportSink::from_global()),
+            settings.telemetry.client_max_events_per_sec,
+        )),
+    });
+
     // Singleton background workers run under Postgres advisory-lock leader
     // election so exactly one replica drives them, however many replicas serve
     // HTTP. Anything that must not double-run (pollers with a shared cursor,
@@ -436,6 +446,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
             oauth: oauth_deps,
             profile: profile_deps,
             admin: admin_deps,
+            client_telemetry: client_telemetry_deps,
             db,
             crypto: crypto.clone(),
             users: user_repo.clone(),

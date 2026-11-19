@@ -8,15 +8,18 @@
 
 use axum::{
     Json,
-    extract::{FromRequest, FromRequestParts, Path, Query, Request},
-    http::request::Parts,
+    extract::{FromRequest, FromRequestParts, Path, Query, Request, rejection::JsonRejection},
+    http::{StatusCode, request::Parts},
 };
 use serde::de::DeserializeOwned;
 
 use crate::infrastructure::api::error::AppError;
 
-/// JSON body without `validator` rules. Prefer [`super::ValidatedJson`] when the
-/// type has constraints.
+/// JSON body without `validator` rules.
+///
+/// Prefer [`super::ValidatedJson`] when the type has constraints. A body over
+/// the route's `DefaultBodyLimit` is a `413` ([`AppError::PayloadTooLarge`]);
+/// every other rejection is the JSON `400`.
 pub struct ApiJson<T>(pub T);
 
 impl<T, S> FromRequest<S> for ApiJson<T>
@@ -30,7 +33,12 @@ where
         Json::<T>::from_request(req, state)
             .await
             .map(|Json(value)| Self(value))
-            .map_err(|e| AppError::Validation(format!("Invalid JSON body: {e}")))
+            .map_err(|e| match e {
+                JsonRejection::BytesRejection(b) if b.status() == StatusCode::PAYLOAD_TOO_LARGE => {
+                    AppError::PayloadTooLarge
+                }
+                e => AppError::Validation(format!("Invalid JSON body: {e}")),
+            })
     }
 }
 

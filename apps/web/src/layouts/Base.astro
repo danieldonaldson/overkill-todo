@@ -32,6 +32,14 @@ const { title = 'Overkill Todo Dashboard' } = Astro.props
     <script is:inline src="/scripts/analytics.js" defer></script>
     {/* Per-layout head content, e.g. DashboardLayout's session hint check. */}
     <slot name="head" />
+    {/* Browser error reporting (OT-006). A bundled module script: Astro emits it
+        as an external same-origin file, so it needs no CSP hash, runs after
+        parse and never delays paint. It runs once per document; ClientRouter
+        navigations keep it. */}
+    <script>
+      import { installTelemetry } from '../lib/telemetry'
+      installTelemetry()
+    </script>
   </head>
   <body class="bg-background font-body text-foreground antialiased">
     <ModeWatcher client:load />

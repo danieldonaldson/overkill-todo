@@ -18,6 +18,8 @@
 //! - `/api/v1/auth/verify-reset-code` - Uses signed codes
 //! - `/api/v1/auth/reset-password` - Uses signed codes
 //! - `/api/v1/auth/complete-signup` - Uses signed signup token, no session yet
+//! - `/api/v1/client-telemetry` - Browser reports via `sendBeacon`, which can't
+//!   set the header; the endpoint changes no state and returns nothing (OT-006)
 
 use std::sync::Arc;
 
@@ -51,6 +53,9 @@ const EXCLUDED_PATHS: &[&str] = &[
     // Unauthenticated pre-login endpoint: sets the device-fingerprint cookie
     // before any session (and therefore any CSRF token) exists.
     "/auth/oauth/device-fingerprint",
+    // Browser reports (OT-006): mounted below `require_csrf()` anyway; listed
+    // so the API description, which is derived from this list, agrees.
+    "/client-telemetry",
 ];
 
 /// Check if a path should be excluded from CSRF validation.

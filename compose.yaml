@@ -69,6 +69,10 @@ services:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      # Reported with browser errors (OT-006); `just decode-stack <release>`
+      # needs the maps of the same build.
+      args:
+        RELEASE: ${RELEASE:-dev}
     read_only: true
     tmpfs: ['/tmp']
     environment:

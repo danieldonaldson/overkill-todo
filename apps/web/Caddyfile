@@ -76,6 +76,11 @@
 		# app being served. Answered directly — no filesystem hit, no redirect.
 		respond /healthz "ok" 200
 
+		# Source maps are never served (OT-006): the image doesn't hold them, and
+		# without this the SPA fallback below would answer a `.map` with index.html.
+		@sourcemaps path *.map
+		respond @sourcemaps 404
+
 		# Runtime public config, rendered from env into /tmp at startup (the root filesystem
 		# is read-only, so it can't live under /srv). Regenerated per pod: never cache.
 		handle /config.js {

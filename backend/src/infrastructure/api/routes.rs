@@ -8,6 +8,7 @@
 
 use axum::{
     Extension, Router,
+    extract::DefaultBodyLimit,
     http::{HeaderName, HeaderValue, Method},
     middleware,
     routing::get,
@@ -36,6 +37,7 @@ use super::{
     handlers::{
         admin_handler::{self, AdminHandlerDeps},
         auth_handler::{self, AuthHandlerDeps},
+        client_telemetry_handler::{self, ClientTelemetryHandlerDeps},
         health_handler,
         oauth_handler::{self, OAuthHandlerDeps},
         profile_handler::{self, ProfileHandlerDeps},
@@ -65,6 +67,7 @@ pub struct RouterDeps {
     pub oauth: Arc<OAuthHandlerDeps>,
     pub profile: Arc<ProfileHandlerDeps>,
     pub admin: Arc<AdminHandlerDeps>,
+    pub client_telemetry: Arc<ClientTelemetryHandlerDeps>,
     /// Database handle for the `/health/ready` probe.
     pub db: Arc<Database>,
     /// User repository handle for the admin-group [`require_fresh_session`]
@@ -351,6 +354,15 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(health_handler::health_check))
         .routes(routes!(health_handler::health_ready));
 
+    // Browser error and performance reports (OT-006): public and state-free, so
+    // merged after `require_csrf()` below (`sendBeacon` can't send the CSRF
+    // header). Its own body limit: a 413 above 16 KB.
+    let client_telemetry = OpenApiRouter::new()
+        .routes(routes!(client_telemetry_handler::record_client_telemetry))
+        .layer(DefaultBodyLimit::max(
+            client_telemetry_handler::MAX_BODY_BYTES,
+        ));
+
     let api = OpenApiRouter::new()
         .nest("/auth", public_auth)
         .nest("/auth", private_auth)
@@ -361,9 +373,11 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         .nest("/admin", admin)
         .nest("/admin", super_admin)
         // Mount new authenticated groups above this line so they get CSRF.
-        // Public, signature-verified endpoints (e.g. payment webhooks) go below it.
+        // Below it go public endpoints that need none: signature-verified
+        // webhooks (e.g. payments) and public, state-free browser reports.
         .require_csrf()
         .merge(health)
+        .merge(client_telemetry)
         .layer(TimeoutLayer::with_status_code(
             axum::http::StatusCode::REQUEST_TIMEOUT,
             DEFAULT_REQUEST_TIMEOUT,
@@ -402,6 +416,7 @@ pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
         oauth: deps.oauth,
         profile: deps.profile,
         admin: deps.admin,
+        client_telemetry: deps.client_telemetry,
         db: deps.db,
     };
 

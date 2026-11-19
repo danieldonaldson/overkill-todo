@@ -17,8 +17,8 @@ use crate::infrastructure::persistence::Database;
 
 use super::handlers::{
     admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
-    oauth_handler::OAuthHandlerDeps, profile_handler::ProfileHandlerDeps,
-    verification_handler::VerificationHandlerDeps,
+    client_telemetry_handler::ClientTelemetryHandlerDeps, oauth_handler::OAuthHandlerDeps,
+    profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
 };
 
 /// Every handler group's dependencies, bound to the router once.
@@ -29,6 +29,7 @@ pub struct AppState {
     pub oauth: Arc<OAuthHandlerDeps>,
     pub profile: Arc<ProfileHandlerDeps>,
     pub admin: Arc<AdminHandlerDeps>,
+    pub client_telemetry: Arc<ClientTelemetryHandlerDeps>,
     pub db: Arc<Database>,
 }
 
@@ -50,5 +51,6 @@ from_ref! {
     oauth: Arc<OAuthHandlerDeps>,
     profile: Arc<ProfileHandlerDeps>,
     admin: Arc<AdminHandlerDeps>,
+    client_telemetry: Arc<ClientTelemetryHandlerDeps>,
     db: Arc<Database>,
 }

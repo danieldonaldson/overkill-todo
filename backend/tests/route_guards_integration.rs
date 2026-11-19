@@ -62,6 +62,10 @@ const PUBLIC_ROUTES: &[&str] = &[
     // Health probes.
     "GET /api/v1/health",
     "GET /api/v1/health/ready",
+    // Browser error reports: anyone's browser sends them, signed in or not. The
+    // session only attributes a report; the endpoint changes no state and
+    // returns nothing (threat model P-34).
+    "POST /api/v1/client-telemetry",
 ];
 
 /// Every `"METHOD /path"` in the API description.
