@@ -4,9 +4,6 @@ No production deploy exists yet. A slice "ships" when it's merged to `main` with
 `just ci` green and checked in the full local stack (`just dev` plus
 `just obs-up`). Production steps are collected in group 2 for the first deploy.
 
-Slices 2–4 (design "Open Questions → Planned slices") are added after slice 1
-has shipped and `design.md` has been revised with what it showed.
-
 ## 1. Slice 1 (first slice): uncaught browser errors end to end, scrubbed, attributed and decodable
 
 This slice delivers these scenarios.
@@ -88,15 +85,102 @@ From `specs/observability/spec.md`:
   Verify: `just obs-check` passes, and the dashboard loads in local Grafana with data from 1.14.
 - [x] 1.14 Check the hypothesis end to end in the full local stack. On a release-mode web build behind the edge, throw on `/reset-password?email=…` and `/verify-magic#token=…` signed out, and on `/dashboard/settings` signed in. Confirm in Grafana that all three reports appear within 1 minute, that the dashboard one carries the Member's `user_id`, that a VictoriaLogs search for the email and the token finds nothing, and that `just decode-stack` decodes a logged stack to the right source line. Record the result in `design.md` → Hypothesis.
 - [x] 1.15 Update `CLAUDE.md`: below `require_csrf()` now allows "public, state-free browser reports" as well as signature-verified webhooks. Update `README.md` with browser telemetry, `PUBLIC_RELEASE`, `CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC` and `just decode-stack`. Verify: the docs read correctly, and `just ci` is green.
-- [ ] 1.16 Merge slice 1 with `just ci` green, then revise `design.md` (Hypothesis outcome, any changed decisions) and add slices 2–4 to this file.
+- [x] 1.16 Merge slice 1 with `just ci` green, then revise `design.md` (Hypothesis outcome, any changed decisions) and add slices 2–4 to this file.
 
-## 2. Feature done
+## 2. Slice 2: panel boundaries, API failures, error rate and its alert
 
-- [ ] 2.1 Before or at the first production deploy:
+This slice delivers these scenarios.
+
+From `specs/dashboard/spec.md`:
+- **A crashing panel is contained**: all scenarios.
+
+From `specs/observability/spec.md`:
+- **Failed API calls in the browser link to the backend trace**: all scenarios.
+- **Real-user performance is measured**: the page-load counting in "Navigating
+  inside the dashboard" (Web Vitals come in slice 3).
+- **The browser report endpoint is bounded**: "Unknown metric values cannot
+  create series" for page and panel names.
+- **Operator sees and is alerted to browser problems**: error spike after a
+  release, no alert on low traffic, and the error-rate part of the dashboard.
+
+### Backend
+
+- [ ] 2.1 Add the `page_load` event variant and the optional `island` field on error events (Decision 2), with the island allowlist read from a shared fixture `backend/tests/fixtures/client_islands.json`. Map unknown islands to `other`. Verify: DTO and use case unit tests cover a valid `page_load`, an unknown island → `other`, and an over-long island name rejected.
+- [ ] 2.2 Add `page_load(...)` to `ClientReportSink`, and the counters `browser.page_load` (`page`, `device_class`, `authenticated` from the session) and `browser.error` (`page`, `kind`, `release`, incremented by `count`, same-origin only, Decision 7) in `client_reports.rs`. Log `island` on `client_error` when present. Verify: in-memory exporter tests see both counters with only enum or allowlist label values, an external error logged but not counted, and `authenticated` ignoring anything in the body.
+- [ ] 2.3 Extend `client_telemetry_integration.rs`. Verify with `just test-integration`: a signed-in `page_load` counts `authenticated=true`; a `boundary` error is logged with its island; an `api` error is logged with `api_route`, `status` and `client_trace_id`; made-up pages and islands are recorded as `other`. Then `just api-types` and commit `openapi.json` and `schema.d.ts`.
+
+### Web
+
+- [ ] 2.4 Add `lib/telemetry/TelemetryBoundary.svelte` (Decision 8, without timing): a `<svelte:boundary>` with a required `name`, a fallback with "Try again" (calls `reset`), no error details, and a `kind: boundary` report with the island name. Verify: Vitest browser tests cover a crash showing the fallback, Try again rendering the panel, Try again failing again showing the fallback once more with a second report, no message or stack in the DOM, and a phone-width fallback.
+- [ ] 2.5 Wrap the root of every island (`AuthScreen`, `ForgotPasswordForm`, `ResetPasswordForm`, `SetPasswordForm`, `VerifyEmailForm`, `VerifyMagicForm`, `HomePanel`, `SettingsPanel`, `AdminPanel`, `DashboardHeader`, `ModeWatcher`) in `TelemetryBoundary`. Add the Decision 6b guard test: every `client:*` component in `src/pages` and `src/layouts` renders a boundary, and the set of names equals `client_islands.json`. Verify: `just test-web`, and the guard fails when a boundary is removed.
+- [ ] 2.6 Emit a `page_load` event on every `astro:page-load` with the current page, never sampled. Verify: Vitest sees one event per full load and per swap, each with the page it landed on.
+- [ ] 2.7 Add `reportApiFailure({ route, status | network_failed, traceId })` to `lib/telemetry/index.ts`. Have `lib/api/client.ts` call it for 5xx and network failures only, with the path template passed by the `lib/api/*` wrappers. Verify: `client.test.ts` covers a 500 reporting route, status and `X-Trace-Id`; a network error reporting `network_failed` and no trace ID; 401 and 422 not reporting; and a throwing reporter leaving the call's result unchanged.
+- [ ] 2.8 Add Playwright flows (API mocked). Verify with `just e2e` that they cover:
+  - the Settings panel throwing: the fallback is shown and the header and navigation still work; Try again succeeds, then fails again;
+  - the header throwing while the panel keeps working;
+  - the sign-in form throwing on `/login`;
+  - a phone viewport fallback;
+  - saving the name with a mocked 500 sending one `api` event with the route, 500 and the trace ID;
+  - Register with the API aborted sending the network failure once the route is reachable again or the page is hidden;
+  - a 401 login sending no error event;
+  - no CSP violations.
+
+### Observability
+
+- [ ] 2.9 Add to `frontend.json` the metric-based error rate (`browser.error` / `browser.page_load`) per page and release, with the dashboard description saying page loads are an error-rate denominator, not traffic analytics (Decision 12). Add the `frontend` alert group with `BrowserErrorRateHigh` (Decision 11) in `alerts/overkill-todo.yml`, with tests in `alerts/tests/overkill-todo.test.yml` for the 5% spike firing, the resolved notice, and 1 error in 3 page loads not firing. Verify: `just obs-check`.
+- [ ] 2.10 Check in the full local stack: stop Postgres, save the name on `/dashboard/settings`, and confirm the `api` report appears in Grafana with the route, 500 and a `client_trace_id` that opens the backend trace in Tempo in one click. Crash a panel through a dev-only trigger in the browser console and confirm the boundary report names the island. Record the result in `design.md`.
+- [ ] 2.11 Update `backend/ARCHITECTURE.md` or the web README with "every island root renders `TelemetryBoundary`". Merge with `just ci` green.
+
+## 3. Slice 3: Web Vitals, sampling and the poor-vitals alert
+
+This slice delivers these scenarios.
+
+From `specs/observability/spec.md`:
+- **Real-user performance is measured**: Web Vitals per page, compare releases,
+  sampling, navigating inside the dashboard (the per-visit part), leaving the
+  page on a phone.
+- **The browser report endpoint is bounded**: unknown measurement names and
+  ratings are rejected.
+- **Operator sees and is alerted to browser problems**: slow page alert, and the
+  Web Vitals part of the dashboard.
+
+- [ ] 3.1 Add the `vital` event variant with the `VitalName` and `Rating` enums, plus a poor-rating attribution field (tag name and selector, 100 characters, Decision 4). Add `vital(...)` to the sink and the `browser.web_vital` histogram (Decision 7) with explicit buckets around each threshold. Log attribution only for poor ratings. Verify: unit tests reject an unknown name and rating, place values in the expected buckets, and log attribution only when poor; integration tests record a vital per page; `just api-types` committed.
+- [ ] 3.2 Add `PUBLIC_RUM_SAMPLE_RATE` to `public/config.js`, `docker-entrypoint.d/40-render-public-config.sh` and `lib/config.ts`, defaulting to `1` when unset and treating invalid values as `1`. Verify: `config.test.ts` covers unset, `0`, `0.1` and junk.
+- [ ] 3.3 Add `lib/telemetry/vitals.ts`: `web-vitals` (attribution build) for LCP, FCP and TTFB on the full load, and our own INP and CLS observers per visit (Decision 6), sampled once per full load. Verify: Vitest feeds recorded entry sequences and, for a full load with no swaps, matches `web-vitals`' INP and CLS; a visit ends at `astro:before-preparation` and on hide; a rate of `0` sends no vitals but still sends errors and page loads.
+- [ ] 3.4 Add Playwright flows. Verify with `just e2e`: Home → Settings with an interaction reports INP and CLS for `/dashboard/settings` and LCP, FCP and TTFB only for `/dashboard`; a phone viewport flushes vitals on `visibilitychange`; a sample rate of `0` sends no vitals; no CSP violations.
+- [ ] 3.5 Add `frontend.json` panels for p75 per vital per page and device class, and rating shares. Add `BrowserVitalPoor` (Decision 11) with tests for INP over 500 ms with 200 samples firing, and 30 samples not firing. Verify: `just obs-check`.
+- [ ] 3.6 Add the `browser.release_seen` counter (`release`), incremented in the sink's `page_load` (Decision 7). In `frontend.json`, add a release annotation from each release's first sample, and a panel comparing p75 per vital for the 24 h before and after the selected release, next to the error rate per release. Verify: a unit test sees one series per release; `just obs-check`; and in local Grafana, two builds with different `RELEASE` loaded one after the other show two annotations, with the vitals split at the second one.
+- [ ] 3.7 Check in the full local stack on a release build: load public pages and the dashboard on desktop and phone emulation, and confirm p75 per page and device class within a few minutes. Record the result in `design.md`. Merge with `just ci` green.
+
+## 4. Slice 4: in-site navigation and panel timing
+
+This slice delivers these scenarios.
+
+From `specs/observability/spec.md`:
+- **In-site navigations are measured**: all scenarios.
+- **Panel loading is measured**: all scenarios.
+- **The browser report endpoint is bounded**: unknown navigation kinds,
+  transition results and phases are rejected; made-up panel names become
+  `other`.
+- **Operator sees and is alerted to browser problems**: slow navigation alert,
+  and the navigation and panel parts of the dashboard.
+
+- [ ] 4.1 Add the `navigation` and `island` event variants with the `NavType`, `ViewTransitionResult`, `NavOutcome` and `IslandStage` enums, and the instruments `browser.navigation.duration`, `browser.navigation.phase.duration`, `browser.navigation` and `browser.island.duration` (Decision 7). Verify: unit tests reject unknown enum values, map unknown islands to `other`, and assert every label is from an enum or allowlist; integration tests record each variant; `just api-types` committed.
+- [ ] 4.2 Add `lib/telemetry/navigation.ts` (Decision 6a): marks t0–t4, the phases, the `view_transition` label, aborted navigations, the full-reload fallback dropped on `pagehide`, and full loads as `hard`. Verify: Vitest drives the lifecycle events in order, interrupted, and with no `startViewTransition`.
+- [ ] 4.3 Add timing to `TelemetryBoundary` (Decision 6b): **interactive** in `onMount` relative to the current navigation, `markReady()` through context (once only), and both marks dropped when a newer navigation started. Verify: Vitest covers a full load, a swap, a second `markReady()` ignored, and a superseded navigation dropping its marks.
+- [ ] 4.4 Call `markReady()` in every panel when it first shows content, an empty state or an error state, and in `onMount` for panels with no data. Verify: each panel's Vitest test asserts exactly one call for each of its states.
+- [ ] 4.5 Add a Chromium Playwright flow. Verify with `just e2e`: Home → Settings, Settings → Admin interrupted, and back report ordered phases with the right labels; with `startViewTransition` removed it reports `unsupported`; a forced full-reload fallback reports a `hard` navigation; the persisted header is timed only on the full load; a panel whose data call fails reports **ready** at its error state; leaving before ready sends no ready mark; a phone viewport reports `device_class=mobile`.
+- [ ] 4.6 Add `frontend.json` panels for navigations (p75 total per destination and kind, stacked phases, transition outcome shares, aborted share) and panels (p75 interactive and ready per panel and kind). Add `BrowserNavigationSlow` (Decision 11) with tests for `/dashboard/admin` over 1 s with 120 navigations firing, and 30 navigations not firing. Verify: `just obs-check`.
+- [ ] 4.7 Check in the full local stack: navigate around the dashboard and confirm navigations and panel timings appear per page and panel. Record the result in `design.md`. Merge with `just ci` green.
+
+## 5. Feature done
+
+- [ ] 5.1 Before or at the first production deploy:
   - add a Cloudflare rate-limiting rule for `/api/v1/client-telemetry` per client IP;
   - pass `RELEASE=<sha>` to the production web image build;
   - set `PUBLIC_RUM_SAMPLE_RATE` for production;
   - check with `just smoke <url>` and a deliberate error on a staging page that a report reaches production Grafana and `just decode-stack` decodes it.
 
   Record these in the deploy README's first-deploy checklist.
-- [ ] 2.2 Confirm the observability spec delta was merged cleanly with whatever the business-metrics change archived (both touch `openspec/specs/observability/spec.md`), then archive this change.
+- [ ] 5.2 Update `README.md` and `backend/ARCHITECTURE.md` for anything slices 2–4 changed (`PUBLIC_RUM_SAMPLE_RATE`, the boundary rule for new islands, the alerts). Verify: the docs read correctly.
+- [ ] 5.3 Confirm the observability spec delta was merged cleanly with whatever the business-metrics change archived (both touch `openspec/specs/observability/spec.md`), then archive this change.

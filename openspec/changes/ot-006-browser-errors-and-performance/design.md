@@ -127,26 +127,27 @@ The handler is thin and the use case is mockable, following the established
 pattern:
 
 - **`application/dto/client_telemetry_dto.rs`**
-  - `ClientReportBatch { page_load_id, release, page, authenticated_hint?, events: Vec<ClientEvent> }`.
-  - `ClientEvent` is a tagged enum: `error { kind, message, stack?, source?, api_route?, status?, network_failed?, trace_id?, count }`, `vital { name, value, rating }`, `page_load`, `navigation { type, view_transition, outcome, total_ms?, fetch_ms?, swap_ms?, transition_ms? }` and `island { name, stage, nav_type, ms }`. Each variant is added in the slice that uses it.
+  - `ClientReportBatch { page_load_id, release, page, events: Vec<ClientEvent> }`.
+  - `ClientEvent` is a tagged enum: `error { kind, message, stack?, source?, island?, api_route?, status?, network_failed?, trace_id?, count }`, `vital { name, value, rating }`, `page_load`, `navigation { type, view_transition, outcome, total_ms?, fetch_ms?, swap_ms?, transition_ms? }` and `island { name, stage, nav_type, ms }`. Each variant is added in the slice that uses it.
   - Validation uses `#[validate]` limits:
     - at most 30 events per batch;
     - message at most 500 characters, stack at most 4,000;
     - `page_load_id` is 32 hex characters;
     - `trace_id` is 32 lowercase hex characters.
   - Fixed value sets use `schema_enums.rs` enums: `VitalName` (LCP, INP, CLS, FCP, TTFB), `Rating`, error `kind` (`error`, `unhandledrejection`, `boundary`, `api`), `NavType`, `ViewTransitionResult`, `NavOutcome` and `IslandStage`.
-  - Island names, like pages, are free strings mapped to an allowlist on the server, falling back to `other`.
+  - Island names, like pages, are free strings mapped to an allowlist on the server, falling back to `other`. The error event's `island` (added in slice 2) names the panel whose boundary caught a `boundary` error, so the report says which panel crashed without reading the stack.
   - `page` is a free string, mapped to an allowlist on the server (Decision 5).
 - **`application/ports/incoming/record_client_telemetry.rs`**: one method,
   `record(batch, user: Option<UserId>, user_agent: &str)`.
 - **`application/ports/outgoing/client_report_sink.rs`**: `ClientReportSink`,
   with methods `error(...)`, `vital(...)`, `page_load(...)` and `dropped(n)`,
-  taking already-normalised values.
+  taking already-normalised values. Slice 1 shipped `error` and `dropped`; each
+  other method arrives with its slice.
 - **`application/use_cases/telemetry/record_client_telemetry.rs`**: the rules.
   1. Map `page` to the allowlist or `other`.
   2. Derive `device_class` and `browser_family` from the user agent with a
      small heuristic (no UA-parsing crate).
-  3. Re-scrub every text field (Decision 4).
+  3. Re-scrub every text field (Decision 4, `use_cases/telemetry/scrub.rs`).
   4. Fingerprint errors with `shared::fingerprint::generate_error_fingerprint("client:<kind>", message + top frame)`.
   5. Apply the recording budget (Decision 9).
   6. Call the sink.
@@ -174,9 +175,9 @@ no-op variant to refuse in production: it always logs, and its metric
 instruments are no-ops exactly when OT-001's exporter is (already refused in
 production).
 
-**`authenticated_hint` is not trusted for identity.** The `authenticated`
-metric label comes from `OptionalAuthUser` on the server. The hint field is
-dropped from the DTO before implementation if unused.
+**No `authenticated_hint`.** The `authenticated` metric label comes only from
+`OptionalAuthUser` on the server, so slice 1 left the hint out of the DTO; the
+batch has no identity field of any kind.
 
 ### 3. Route placement, CSRF, size and tracing
 
@@ -217,7 +218,9 @@ dropped from the DTO before implementation if unused.
 The page is sent as `location.pathname` only.
 
 **On the server**, the use case repeats steps 1–3 with the same regexes, plus
-OT-001's `redact_query` for any `key=value` pairs that survive. The server copy
+OT-001's `redact_query` for any `key=value` pairs that survive. Slice 1 moved
+`redact_query` from `infrastructure/telemetry/redact.rs` to `shared/redact.rs`
+so the use case can call it without depending outward. The server copy
 is authoritative; the client copy keeps secrets from ever leaving the browser.
 Shared fixtures (`backend/tests/fixtures/client_scrub_cases.json`, read by both
 the Rust and Vitest tests) keep the two in sync.
@@ -345,7 +348,8 @@ undocumented internals, and component URLs are hashed in production builds. An
 explicit name gives a stable, allowlisted label and also covers "ready", which
 hydration alone can't see.
 
-**Guarding the allowlist:** a Vitest test does two checks:
+**Guarding the allowlist** (added in slice 2 with the boundary itself, since
+boundary errors already carry the island name): a Vitest test does two checks:
 - it scans `src/pages` and `src/layouts` for `client:*` usages and asserts
   each component's root renders `TelemetryBoundary`;
 - it asserts the set of `name`s equals the server's island allowlist (shared
@@ -362,16 +366,32 @@ VictoriaMetrics):
 |---|---|---|
 | `browser.web_vital` | histogram, unit per vital (`ms`, or `1` for CLS), explicit buckets around the good/poor thresholds | `name`, `page`, `rating`, `device_class`, `authenticated` |
 | `browser.page_load` | counter | `page`, `device_class`, `authenticated` |
-| `browser.error` | counter (incremented by `count`) | `page`, `kind`, `release` |
+| `browser.error` | counter (incremented by `count`), same-origin errors only | `page`, `kind`, `release` |
 | `browser.report.dropped` | counter | none |
+| `browser.release_seen` | counter, incremented per `page_load` | `release` |
 | `browser.navigation.duration` | histogram, ms | `page` (destination), `type` (`hard`, `soft`), `view_transition` (`ran`, `skipped`, `unsupported`, `none` for hard), `device_class` |
 | `browser.navigation.phase.duration` | histogram, ms | `phase` (`fetch`, `swap`, `transition`), `page`, `device_class` |
 | `browser.navigation` | counter | `outcome` (`completed`, `aborted`), `page` |
 | `browser.island.duration` | histogram, ms | `island`, `page`, `stage` (`interactive`, `ready`), `nav_type` (`hard`, `soft`), `device_class` |
 
-`release` appears only on `browser.error`. Release-comparison panels for vitals
-query logs or use a recording rule over a short window. This keeps vitals
-series bounded however many releases accumulate in 30 days. Fingerprints stay
+`browser.error` counts only errors from the site's own scripts. Errors whose
+top frame isn't same-origin, and `Script error.` with no stack, are still logged
+with `source: external` but not counted, so extension noise never reaches the
+error rate or `BrowserErrorRateHigh`.
+
+`release` appears only on `browser.error` and `browser.release_seen`, never on
+vitals, navigation or island histograms. This keeps those series bounded
+however many releases accumulate in 30 days.
+
+**Comparing vitals between releases is by time.** `browser.release_seen` has
+one series per release. The Frontend dashboard turns the first sample of each
+into a release annotation, and the vitals panels compare p75 before and after
+it (for example, the 24 h before against the 24 h after). This is approximate:
+right after a deploy, open tabs still run the previous release, so both are
+mixed for a while. Errors compare exactly, because `browser.error` carries
+`release`. If time-based comparison proves too coarse with real traffic,
+adding `release` to `browser.web_vital` is a later, additive change (about 990
+histograms per release kept). Fingerprints stay
 out of metrics entirely; the "top fingerprints" panel is a VictoriaLogs query.
 
 **Series bound:**
@@ -383,6 +403,7 @@ out of metrics entirely; the "top fingerprints" panel is a VictoriaLogs query.
 - Islands: about 12 islands, each living on one page, × 2 stages × 2
   navigation kinds × 3 device classes = 144.
 - Navigation counter: 22.
+- Release marker: one series per release in retention.
 
 About 1,400 histograms in total, which is acceptable. The use case's tests
 assert every label comes only from the enums and allowlists (pages, islands).
@@ -466,17 +487,23 @@ answer that OT-005's riskiest unknown is working out.
 - **Build:** `vite.build.sourcemap: 'hidden'` in `astro.config.mjs`, which
   emits `.map` files with no `sourceMappingURL` comment.
 - **Web image:** the Dockerfile's build stage moves `dist/**/*.map` to
-  `/sourcemaps/<RELEASE>/` and does not copy them into the Caddy stage.
-- **Persistence:** CI uploads them as an artifact
-  `web-sourcemaps-<sha>` with 90 days' retention, longer than telemetry's 30.
+  `/sourcemaps/<RELEASE>/` and does not copy them into the Caddy stage. The
+  build fails if any `.map` is left in `dist`, if any JS file still holds
+  `sourceMappingURL`, or if no map was moved.
+- **Persistence:** a `FROM scratch AS sourcemaps` stage holds only the maps. CI
+  exports it with `--target sourcemaps --output type=local` and uploads it as
+  the artifact `web-sourcemaps-<sha>` with 90 days' retention, longer than
+  telemetry's 30.
 - **Local builds:** `dist/` keeps them, and `just decode-stack` falls back to
   `apps/web/dist`.
 - **Decoding:** `just decode-stack <release> [file]` (script in `scripts/`)
   takes a pasted stack on stdin or from a file. It fetches the artifact with
   `gh run download` if it's not in the local cache, and maps frames with
   `source-map` (a devDependency).
-- **Not served:** a Caddy check in `tests/caddy-headers.spec.ts` (or a new
-  spec) asserts `*.map` returns 404 from a built image.
+- **Not served:** the web Caddyfile answers `*.map` with `respond 404`. Found
+  in slice 1: without it the SPA fallback answered any `.map` path with
+  `index.html` (200). `tests/smoke/source-maps.spec.ts` asserts every map path
+  from the build returns 404 from the built image.
 
 ### 11. Dashboard and alerts
 
@@ -538,8 +565,9 @@ so the parallel business-metrics change touches different lines.
   shared fixtures gain a case for every new link format.
 - **[Browser extensions and third-party script errors create noise]** →
   errors whose top frame isn't same-origin, and `Script error.` with no stack,
-  are counted with `kind: error` and `source: external`. The error-rate alert
-  counts only same-origin errors.
+  are logged with `kind: error` and `source: external`, and left out of the
+  `browser.error` counter (Decision 7), so the error rate and its alert see only
+  same-origin errors.
 - **[Error before the reporter loads]** → accepted. The reporter is the first
   bundled script, and islands hydrate after it.
 - **[LCP, FCP and TTFB exist only for full loads]** → in-site navigations are
@@ -584,13 +612,4 @@ recorded for the first deploy.
   extension noise. Tune after real traffic; it doesn't change slices.
 - **Vitals sample rate:** whether to lower it once traffic grows. It's a
   runtime setting.
-- **Planned slices** (revisit after slice 1):
-  1. uncaught errors end to end, with scrubbing, attribution and source maps;
-  2. panel boundaries (`TelemetryBoundary` with names, without timing), API
-     failure reports with trace links, page-load counter, error dashboard and
-     alert;
-  3. Web Vitals (full-load metrics plus per-visit INP and CLS), sampling,
-     vitals dashboard panels and alert;
-  4. in-site navigation and panel timing (Decisions 6a and 6b), `markReady()`
-     in every panel, navigation and panel dashboard panels, and the
-     slow-navigation alert.
+- **Planned slices:** settled after slice 1, see `tasks.md` groups 2–4.
