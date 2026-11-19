@@ -230,6 +230,17 @@ application and domain layers only use `tracing` macros.
   takes it from `global_meter()`, which `init` wires up before anything else
   runs. Keep label values bounded (routes use the matched template, unknown
   paths are `"unmatched"`).
+- **Auth metrics and events (OT-007).** `AuthMetrics` counts credential and
+  code checks, lockouts, bot-check rejections and session anomalies. The
+  handlers record them from the use cases' typed errors (`LoginError`,
+  `VerifyEmailError`, `ResetCodeError`, `VerifyMagicLinkError`,
+  `RefreshError`), so no response changes. Every label is a closed enum with
+  `as_str()`, never request data. To name the account, the use cases write
+  `tracing` events with an `event` field (`auth.code.locked`,
+  `auth.code.refused_locked`, `auth.sign_in.failed`), `user_id` and `flow`. A
+  new auth outcome gets a label variant and, if it names an account, an event.
+  The no-personal-data test in `tests/auth_metrics_integration.rs` covers both.
+  What's measured and alerted is in `deploy/compose/README.md` (Auth security).
 
 ## Auth flow overview
 
@@ -405,8 +416,10 @@ in `models/auth_protocols.spthy`, and proven against an active network attacker.
   Umami (`/stats/`), since `Path=/` sends the session cookies everywhere.
 - Login brute-force throttling is **handled at the edge, by design** — there is no
   per-account `failed_login`/`locked_until` counter in `login_user.rs`. Password login
-  is protected by (a) a reverse-proxy rate limit on `/api/v1/auth/*` (configure one in
-  whatever fronts the API) and (b) Cloudflare Turnstile on the login form. High-entropy
+  is meant to be protected by (a) a reverse-proxy rate limit on `/api/v1/auth/*` and
+  (b) Cloudflare Turnstile on the login form. The rate limit isn't built yet: it's
+  planned for the production edge (Traefik), and until then it's the accepted gap
+  P-03 in the threat model. High-entropy
   passwords (Argon2id-verified) don't need per-account lockout the way the low-entropy
   6-digit reset/verify codes do — those keep their own atomic attempt cap. If we ever
   drop the edge limiter or Turnstile, revisit this and add an in-app per-account/IP lockout.

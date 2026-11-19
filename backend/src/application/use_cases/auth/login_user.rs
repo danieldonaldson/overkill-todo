@@ -40,14 +40,15 @@ impl From<DomainError> for LoginError {
 ///
 /// There is intentionally no per-account `failed_login`/`locked_until` counter on
 /// this path. Password login is meant to be throttled at the edge — a rate limit on
-/// `/api/v1/auth/*` at your proxy plus Cloudflare Turnstile on the form — which suits
+/// `/api/v1/auth/*` at the proxy plus Cloudflare Turnstile on the form — which suits
 /// high-entropy, Argon2id-verified passwords. (The low-entropy 6-digit reset/verify
 /// codes keep their own atomic in-app attempt cap; see `verify_email.rs`.)
 ///
-/// Per-IP rate limiting of `/api/v1/auth/*` is done at the Traefik level, outside
-/// this repo; the Caddy edge in `deploy/compose` and the k8s ingress here don't
-/// throttle. Turnstile is required outside `DEV_MODE` (startup fails without
-/// `TURNSTILE_SECRET_KEY`).
+/// That edge rate limit is not built yet: it is planned for the production edge
+/// (Traefik). Neither the Caddy edge in `deploy/compose` nor the k8s ingress here
+/// throttles, so today Turnstile and the Argon2 cost are the only brakes, and the
+/// OT-007 auth alerts show an attack without stopping it. Turnstile is required
+/// outside `DEV_MODE` (startup fails without `TURNSTILE_SECRET_KEY`).
 pub struct LoginUserUseCase {
     user_repository: Arc<dyn UserRepository>,
     password_hasher: Arc<dyn PasswordHasher>,

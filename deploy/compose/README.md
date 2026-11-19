@@ -34,9 +34,11 @@ encryption keys (`JWT_SIGNING_KEY` from `just jwt-keygen`; rotation steps are
 in `backend/.env.example`). The backend refuses to start in production with a no-op adapter
 or missing config, which is the point: a bad deploy fails at boot, not later.
 
-Rate limiting of the auth endpoints (`/api/v1/auth/*`, per client IP) is done at
-the Traefik level, not by this Caddy edge or the backend. Without it, password
-login has no brute-force throttle beyond Turnstile.
+Nothing rate-limits the auth endpoints yet: not this Caddy edge, not the
+backend. Per-address and per-account limits on `/api/v1/auth/*` are planned for
+the production edge (Traefik, see Security below). Until then, password login
+has no brute-force throttle beyond Turnstile and the Argon2 cost. The auth
+alerts (Observability) show an attack, but don't stop it.
 
 ### TLS key exchange (post-quantum)
 
@@ -121,8 +123,12 @@ Auth anomaly metrics (OT-007) on the first deploy: the alert rules and the
 backend (`dc restart vmalert grafana`). Rules over metrics that don't exist yet
 stay quiet. Then roll the backend digest, `just smoke https://<domain>`, sign
 in once, and check that the dashboard's successful sign-ins rise by one within a
-minute. Record each auth alert that fires in the first month, and whether it
-was a real attack, in the OT-007 design's Hypothesis.
+minute. Sign in once with a wrong password, and check that "Failed sign-ins per
+account" lists your account with a working **View trace** link. Send one
+sign-in with no bot-check token (for example with `curl`), and check that it
+gets `400 bot_check_failed` and that "Bot-check rejections by form" rises for
+`sign_in`. Record each auth alert that fires in the first month, and
+whether it was a real attack, in the OT-007 design's Hypothesis.
 
 Security (OT-010), before launch:
 
@@ -213,6 +219,67 @@ edge).
 telemetry variables. The observability services can be stopped at any time
 (`dc stop otel-collector tempo victorialogs grafana`) without affecting the app:
 the backend keeps serving and logs a warning that telemetry isn't delivered.
+
+### Auth security (OT-007)
+
+The backend counts every credential and code check, and the **Auth security**
+dashboard (`/d/auth-security`) shows them. The design is
+`openspec/changes/ot-007-auth-anomaly-metrics/design.md`.
+
+Metrics carry no email, user ID, address, code or token. Every label comes
+from a closed set, so the series count is fixed:
+
+| Metric (VictoriaMetrics name)     | Labels                                                                                                                       |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `auth_attempts_total`             | `flow` = `password_sign_in`, `email_code`, `reset_code`, `magic_link`; `outcome` = `success`, `failure`, `locked`, `expired` |
+| `auth_code_lockouts_total`        | `flow` = `email_code`, `reset_code`. Counted once per code, on the guess that uses the last attempt                          |
+| `auth_bot_check_rejections_total` | `form` = `register`, `sign_in`, `resend_verification`, `forgot_password`; `reason` = `missing`, `invalid`                    |
+| `auth_session_anomalies_total`    | `kind` = `token_reuse`, `device_mismatch`                                                                                    |
+
+An unknown email counts as a failed sign-in, the same as a wrong password. A
+Turnstile outage is a 500, not a rejection.
+
+To show which account was affected, the backend also writes log events
+(VictoriaLogs, field `event`). Each has the account's `user_id` and the
+request's `trace_id`, and never an email, code, token, password or address:
+
+| `event`                    | Level | When                                                                                           |
+| -------------------------- | ----- | ---------------------------------------------------------------------------------------------- |
+| `auth.code.locked`         | warn  | An email or reset code locks (`flow`)                                                          |
+| `auth.code.refused_locked` | info  | A check is refused because the code is locked (`flow`, including `magic_link`)                 |
+| `auth.sign_in.failed`      | info  | A wrong password, or a sign-in to an account with no password. An unknown email writes nothing |
+
+The dashboard turns these into "Recent lockouts" (open an entry, then
+**View trace**) and per-account tables of lockouts, refused checks and failed
+sign-ins. Many accounts with a few failures each looks like credential
+stuffing, and one account with many looks like a targeted guess.
+
+Alerts (vmalert group `auth`, `severity: warning`, email like the rest). Each
+email links to its panel, and a resolved notice follows when the count drops:
+
+| Alert                        | Fires when                                                 | Links to                     |
+| ---------------------------- | ---------------------------------------------------------- | ---------------------------- |
+| `AuthSignInFailuresHigh`     | more than 30 failed password sign-ins in 15 minutes        | Failed sign-ins per account  |
+| `AuthCodeLockoutsHigh`       | more than 5 codes locked in an hour, all flows             | Recent lockouts              |
+| `AuthBotCheckRejectionsHigh` | more than 50 bot-check rejections in 15 minutes, all forms | Bot-check rejections by form |
+| `AuthSessionAnomalies`       | 3 or more session anomalies in an hour                     | Session anomalies            |
+
+The thresholds are first guesses, made with no production traffic. Record each
+firing in the first month, and whether it was real, in the OT-007 Hypothesis.
+Then revise them in `deploy/observability/alerts/overkill-todo.yml`, whose unit
+tests (`just obs-check`) pin each boundary.
+
+Locally, `just load auth-abuse` fires the sign-in, lockout and session alerts,
+and `just load auth-mix` fires none. Alertmanager's local route has no receiver,
+so no email is sent.
+
+**Manual check: bot-check rejections.** Turnstile is off in `DEV_MODE`, so no
+local run counts a rejection. To check the counting against the real service,
+run a non-dev backend with Cloudflare's always-fail test secret
+(`TURNSTILE_SECRET_KEY=2x0000000000000000000000000000000AA`). Then sign in
+through the web app: the request gets `400 bot_check_failed`, and
+`auth_bot_check_rejections_total{form="sign_in",reason="invalid"}` goes up by 1.
+Submit a request with no token, and `reason="missing"` goes up.
 
 **Disk.** VictoriaLogs is capped by `VLOGS_MAX_DISK` (default 10 GiB, set in
 `.env`); Tempo and VictoriaLogs data live in the `tempo-data` and `vlogs-data`
