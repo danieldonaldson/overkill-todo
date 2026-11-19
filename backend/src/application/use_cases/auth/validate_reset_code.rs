@@ -135,7 +135,16 @@ impl ValidateResetCodeUseCase {
             .await?
         {
             AttemptOutcome::Claimed(attempts) => attempts,
-            AttemptOutcome::Locked => return Err(ResetCodeError::Locked),
+            AttemptOutcome::Locked => {
+                // Investigation event (OT-007 D7). `flow` matches the metric label.
+                tracing::info!(
+                    event = "auth.code.refused_locked",
+                    flow = "reset_code",
+                    user_id = %user.id(),
+                    "Code check refused: code is locked"
+                );
+                return Err(ResetCodeError::Locked);
+            }
             AttemptOutcome::NotFound => return Err(ResetCodeError::NoCode),
         };
 
@@ -148,9 +157,16 @@ impl ValidateResetCodeUseCase {
         if !is_valid {
             // `Claimed` is only returned after incrementing while below the cap,
             // so this is in `0..MAX_ATTEMPTS`.
-            return Err(ResetCodeError::Invalid {
-                attempts_remaining: MAX_ATTEMPTS - attempts_after,
-            });
+            let attempts_remaining = MAX_ATTEMPTS - attempts_after;
+            if attempts_remaining == 0 {
+                tracing::warn!(
+                    event = "auth.code.locked",
+                    flow = "reset_code",
+                    user_id = %user.id(),
+                    "Code locked after too many wrong guesses"
+                );
+            }
+            return Err(ResetCodeError::Invalid { attempts_remaining });
         }
 
         // The code was live when read, but the Argon2 check takes time: refuse
@@ -580,6 +596,79 @@ mod tests {
                 })
             ),
             "{result:?}"
+        );
+    }
+
+    /// 5 wrong guesses then 3 more: exactly one `auth.code.locked` (on the
+    /// fifth guess) and three `auth.code.refused_locked`, each naming the flow
+    /// and the account and nothing else identifying (OT-007 D7).
+    #[tokio::test]
+    async fn lockout_and_refused_checks_are_logged() {
+        use super::super::log_capture::LogCapture;
+        use std::sync::atomic::{AtomicI32, Ordering};
+
+        let user = create_test_user();
+        let user_id = *user.id();
+        let reset_code = PasswordResetCode::from_persistence(
+            ResetCodeId::new(),
+            user_id,
+            "hashed_code".to_string(),
+            Timestamp::now() + SignedDuration::from_mins(15),
+            0,
+            Timestamp::now(),
+            Timestamp::now(),
+        );
+
+        let mut mock_user_repo = MockUserRepository::new();
+        mock_user_repo
+            .expect_find_by_email()
+            .returning(move |_| Ok(Some(user.clone())));
+        let attempts = Arc::new(AtomicI32::new(0));
+        let mut mock_reset_repo = MockPasswordResetRepository::new();
+        mock_reset_repo
+            .expect_find_by_user()
+            .returning(move |_| Ok(Some(reset_code.clone())));
+        mock_reset_repo
+            .expect_register_attempt()
+            .returning(move |_, _, max| {
+                let n = attempts.load(Ordering::SeqCst);
+                if n >= max {
+                    return Ok(AttemptOutcome::Locked);
+                }
+                attempts.store(n + 1, Ordering::SeqCst);
+                Ok(AttemptOutcome::Claimed(n + 1))
+            });
+        let mut mock_hasher = MockPasswordHasher::new();
+        mock_hasher.expect_verify().returning(|_, _| Ok(false));
+
+        let use_case = ValidateResetCodeUseCase::new(
+            Arc::new(mock_user_repo),
+            Arc::new(mock_reset_repo),
+            Arc::new(mock_hasher),
+            Arc::new(MockJwtService::new()),
+        );
+
+        let logs = LogCapture::install();
+        for _ in 0..8 {
+            let _ = use_case.execute("test@example.com", "000000").await;
+        }
+
+        let locked = logs.events("auth.code.locked");
+        let refused = logs.events("auth.code.refused_locked");
+        assert_eq!(locked.len(), 1, "{locked:?}");
+        assert_eq!(refused.len(), 3, "{refused:?}");
+        assert_eq!(locked[0]["level"], "WARN");
+        for event in locked.iter().chain(&refused) {
+            assert_eq!(event["flow"], "reset_code");
+            assert_eq!(event["user_id"], user_id.to_string());
+        }
+        for event in &refused {
+            assert_eq!(event["level"], "INFO");
+        }
+        let text = serde_json::to_string(&logs.all()).unwrap();
+        assert!(
+            !text.contains("test@example.com") && !text.contains("000000"),
+            "{text}"
         );
     }
 

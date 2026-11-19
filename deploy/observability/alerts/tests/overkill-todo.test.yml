@@ -347,7 +347,7 @@ tests:
           - exp_labels: { severity: warning }
             exp_annotations:
               summary: '40 failed password sign-ins in the last 15 minutes (threshold 30)'
-              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-1'
+              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-9'
       - eval_time: 30m
         alertname: AuthSignInFailuresHigh
         exp_alerts: []
@@ -374,7 +374,7 @@ tests:
           - exp_labels: { severity: warning }
             exp_annotations:
               summary: '31 failed password sign-ins in the last 15 minutes (threshold 30)'
-              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-1'
+              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-9'
 
   # Spec "A forgetful Member does not alert": 6 wrong passwords, then a reset
   # code is used and the new password works.
@@ -414,7 +414,7 @@ tests:
           - exp_labels: { severity: warning }
             exp_annotations:
               summary: '6 codes locked in the last hour (threshold 5)'
-              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-4'
+              dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-6'
       - eval_time: 90m
         alertname: AuthCodeLockoutsHigh
         exp_alerts: []

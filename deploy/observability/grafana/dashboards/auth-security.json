@@ -2,10 +2,10 @@
   "uid": "auth-security",
   "title": "Auth security",
   "tags": ["overkill-todo", "OT-007"],
-  "description": "Sign-in and code check outcomes, and the abuse signals the auth alerts watch. Counts only: no emails, users, addresses or codes.",
+  "description": "Sign-in and code check outcomes, the abuse signals the auth alerts watch, and per-account investigation from the logs. Metrics are counts only; the log panels name accounts by user ID, never by email, address or code.",
   "editable": false,
   "schemaVersion": 41,
-  "version": 1,
+  "version": 2,
   "refresh": "1m",
   "time": {
     "from": "now-24h",
@@ -234,6 +234,102 @@
       }
     },
     {
+      "id": 9,
+      "type": "table",
+      "title": "Failed sign-ins per account",
+      "description": "Wrong-password sign-ins per account in the selected range, from the auth.sign_in.failed log event. Many accounts with a few each looks like credential stuffing; one account with many looks like a targeted guess. Unknown emails are counted above but never named here. Linked from alert AuthSignInFailuresHigh.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "expr": "_time:$__range event:=\"auth.sign_in.failed\" | stats by (user_id) count() as count",
+          "queryType": "stats",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Value",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true
+            },
+            "renameByName": {
+              "user_id": "Account (user ID)",
+              "Value": "Failed sign-ins"
+            },
+            "indexByName": {
+              "user_id": 0,
+              "flow": 1,
+              "Value": 2
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Account (user ID)"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 320
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
       "id": 101,
       "type": "row",
       "title": "Codes",
@@ -242,7 +338,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 9
+        "y": 17
       },
       "panels": []
     },
@@ -255,7 +351,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 10
+        "y": 18
       },
       "datasource": {
         "type": "prometheus",
@@ -334,7 +430,7 @@
         "h": 8,
         "w": 16,
         "x": 8,
-        "y": 10
+        "y": 18
       },
       "datasource": {
         "type": "prometheus",
@@ -391,6 +487,237 @@
         "tooltip": {
           "mode": "multi",
           "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "logs",
+      "title": "Recent lockouts",
+      "description": "Each code that became locked (auth.code.locked), newest first, with its flow and account. Open an entry and use View trace to see the request in Tempo. Linked from alert AuthCodeLockoutsHigh.",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "expr": "event:=\"auth.code.locked\" | format \"<flow> code locked for account <user_id>\" as _msg | fields _time, _msg, level, flow, user_id, trace_id",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Lockouts per account",
+      "description": "Codes locked per account and flow in the selected range (auth.code.locked).",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 34
+      },
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "expr": "_time:$__range event:=\"auth.code.locked\" | stats by (user_id, flow) count() as count",
+          "queryType": "stats",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Value",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true
+            },
+            "renameByName": {
+              "user_id": "Account (user ID)",
+              "flow": "Flow",
+              "Value": "Lockouts"
+            },
+            "indexByName": {
+              "user_id": 0,
+              "flow": 1,
+              "Value": 2
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Account (user ID)"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 320
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Refused checks per account",
+      "description": "Code checks refused because the code was already locked, per account and flow (auth.code.refused_locked). Many refusals after one lockout means someone kept guessing.",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "datasource": {
+        "type": "victoriametrics-logs-datasource",
+        "uid": "victorialogs"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "victoriametrics-logs-datasource",
+            "uid": "victorialogs"
+          },
+          "expr": "_time:$__range event:=\"auth.code.refused_locked\" | stats by (user_id, flow) count() as count",
+          "queryType": "stats",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "Value",
+                "desc": true
+              }
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true
+            },
+            "renameByName": {
+              "user_id": "Account (user ID)",
+              "flow": "Flow",
+              "Value": "Refused checks"
+            },
+            "indexByName": {
+              "user_id": 0,
+              "flow": 1,
+              "Value": 2
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Account (user ID)"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 320
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
         }
       }
     }

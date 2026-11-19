@@ -162,7 +162,7 @@ groups:
           severity: warning
         annotations:
           summary: '{{ $value | humanize }} failed password sign-ins in the last 15 minutes (threshold 30)'
-          dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-1'
+          dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-9'
 
       # Counted once per code, on the guess that uses the last attempt; guesses
       # refused while it stays locked are not lockouts.
@@ -173,4 +173,4 @@ groups:
           severity: warning
         annotations:
           summary: '{{ $value | humanize }} codes locked in the last hour (threshold 5)'
-          dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-4'
+          dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-6'

@@ -21,12 +21,76 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use overkill_todo::infrastructure::telemetry::metrics::{AuthMetrics, METER_NAME};
+use opentelemetry_sdk::trace::{InMemorySpanExporter, SimpleSpanProcessor};
+use overkill_todo::infrastructure::telemetry::{
+    self, LogFormat, ServiceInfo,
+    metrics::{AuthMetrics, METER_NAME},
+};
+use std::io::Write;
+use std::sync::{Arc, Mutex};
+use tracing_subscriber::EnvFilter;
 
 /// The code the dev code generator gives `e2e-*` addresses.
 const DEV_CODE: &str = "123456";
 const WRONG_CODE: &str = "000000";
 const PASSWORD: &str = "correct-horse-1";
+
+/// Log lines written under the production subscriber stack (JSON, with
+/// `trace_id` from the request span), captured in memory.
+#[derive(Clone, Default)]
+struct LogCapture(Arc<Mutex<Vec<u8>>>);
+
+impl Write for LogCapture {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+    type Writer = Self;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+impl LogCapture {
+    /// Install the production stack as the thread default. `#[sqlx::test]`
+    /// runs on a current-thread runtime, so every request is captured.
+    fn install() -> (Self, tracing::subscriber::DefaultGuard) {
+        let service = ServiceInfo {
+            name: "overkill-todo-backend".into(),
+            version: "test".into(),
+            environment: "test".into(),
+        };
+        let provider = telemetry::tracer_provider(
+            &service,
+            Some(SimpleSpanProcessor::new(InMemorySpanExporter::default())),
+        );
+        let logs = Self::default();
+        let subscriber = telemetry::subscriber(
+            &provider,
+            EnvFilter::new("overkill_todo=debug"),
+            LogFormat::Json,
+            logs.clone(),
+            service,
+        );
+        (logs, tracing::subscriber::set_default(subscriber))
+    }
+
+    /// Captured lines that carry an `event` field (the investigation events).
+    fn events(&self) -> Vec<Value> {
+        String::from_utf8(self.0.lock().unwrap().clone())
+            .unwrap()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .filter(|l| l.get("event").is_some())
+            .collect()
+    }
+}
 
 /// An app recording auth metrics on an in-memory exporter.
 struct Harness {
@@ -395,7 +459,9 @@ async fn reset_code_success_is_counted(pool: PgPool) {
 /// are the fixed flow/outcome combinations only.
 #[sqlx::test(migrations = "./migrations")]
 async fn measurements_hold_no_personal_data(pool: PgPool) {
+    let (logs, _guard) = LogCapture::install();
     let h = Harness::new(pool.clone());
+    let mut user_ids: Vec<String> = Vec::new();
     let mut secrets: Vec<String> = vec![
         DEV_CODE.into(),
         WRONG_CODE.into(),
@@ -420,6 +486,7 @@ async fn measurements_hold_no_personal_data(pool: PgPool) {
             .await
             .unwrap();
         secrets.push(id.to_string());
+        user_ids.push(id.to_string());
         secrets.push(email);
     }
     for i in 0..3 {
@@ -462,4 +529,27 @@ async fn measurements_hold_no_personal_data(pool: PgPool) {
         ]
     );
     assert_eq!(lockouts, vec![(labels(&[("flow", "email_code")]), 3)]);
+
+    // The investigation events from the same runs (OT-007 D7): they may name
+    // the account by user ID, but never hold an email, code, token or
+    // password, and each links to its request trace.
+    let events = logs.events();
+    let count = |name: &str| events.iter().filter(|e| e["event"] == name).count();
+    assert_eq!(count("auth.sign_in.failed"), 4);
+    assert_eq!(count("auth.code.locked"), 3);
+    assert_eq!(count("auth.code.refused_locked"), 3);
+    for event in &events {
+        let trace_id = event["trace_id"].as_str().unwrap_or_default();
+        assert_eq!(trace_id.len(), 32, "no trace_id on {event}");
+        // Timestamps and IDs are random digits that could contain a code by
+        // chance; everything else is searched.
+        let mut fields = event.as_object().unwrap().clone();
+        for key in ["timestamp", "trace_id", "span_id"] {
+            fields.remove(key);
+        }
+        let text = Value::Object(fields).to_string();
+        for secret in secrets.iter().filter(|s| !user_ids.contains(s)) {
+            assert!(!text.contains(secret.as_str()), "{text} contains {secret}");
+        }
+    }
 }

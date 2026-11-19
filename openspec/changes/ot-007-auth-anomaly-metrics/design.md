@@ -72,6 +72,28 @@ revise D5.
   Argon2 burst (registers and code checks at 64 MiB each), not a leak. Not
   investigated further here.
 
+**Slice 2 results (2026-11-19, local capped stack, `DEV_MODE`):**
+
+- `just load auth-abuse` wrote 40 `auth.sign_in.failed`, 6 `auth.code.locked`
+  and 6 `auth.code.refused_locked` events. "Failed sign-ins per account"
+  listed the 4 seeded accounts the scenario targets, 10 each. "Lockouts per
+  account" and "Refused checks per account" listed the 6 fresh signups, 1 each.
+  "Recent lockouts" showed 6 WARN entries naming flow and account. An entry's
+  `trace_id` opened the full request trace in Tempo (edge → handler → use case
+  → `register_attempt`).
+- Both alerts fired again, and their `dashboard` links opened "Failed sign-ins
+  per account" (`AuthSignInFailuresHigh`) and "Recent lockouts"
+  (`AuthCodeLockoutsHigh`).
+- The scenario spreads failures over 4 accounts, not the spec's 20 with 2 each,
+  and guesses once after a lock, not 10 times. The per-account grouping is the
+  same query either way, so these weren't run separately.
+- Events reach VictoriaLogs through the collector's docker-log pipeline (stdout
+  JSON), not OTLP logs as D7 says. Fields arrive as top-level fields (`event`,
+  `flow`, `user_id`, `trace_id`), and the redaction processor leaves them alone.
+- The table panels use the `stats` query type with `_time:$__range`, and the
+  logs panel uses `instant` (raw logs), as named in the VictoriaLogs plugin
+  0.33.1. On a stack with no events, all four return no rows and no error.
+
 ## Decisions
 
 ### D1. Record in the API handlers, from typed use-case results (infrastructure)
@@ -179,9 +201,11 @@ anomalies. Each alert's threshold is drawn as a line on its panel. Alert
 
 Metrics say how many, logs say which. Events are written with `tracing` in the
 use cases, where the user is already loaded, so the error enums are unchanged
-and `NoCode` still doesn't reveal whether an account exists. They reach
-VictoriaLogs through the existing OTLP log pipeline and carry the span's
-`trace_id`.
+and `NoCode` still doesn't reveal whether an account exists. They are JSON
+lines on stdout, which the collector's docker-log pipeline ships to
+VictoriaLogs (slice 2 showed this; it isn't OTLP logs). Each carries the
+request span's `trace_id`, and its fields (`event`, `flow`, `user_id`) arrive as
+top-level fields.
 
 | `event` | Level | Where | Fields |
 |---|---|---|---|

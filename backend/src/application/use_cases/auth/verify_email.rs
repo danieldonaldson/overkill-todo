@@ -124,7 +124,16 @@ impl VerifyEmailUseCase {
             .map_err(|e| VerifyEmailError::Internal(e.to_string()))?
         {
             AttemptOutcome::Claimed(attempts) => attempts,
-            AttemptOutcome::Locked => return Err(VerifyEmailError::CodeLocked),
+            AttemptOutcome::Locked => {
+                // Investigation event (OT-007 D7). `flow` matches the metric label.
+                tracing::info!(
+                    event = "auth.code.refused_locked",
+                    flow = "email_code",
+                    user_id = %user.id(),
+                    "Code check refused: code is locked"
+                );
+                return Err(VerifyEmailError::CodeLocked);
+            }
             AttemptOutcome::NotFound => return Err(VerifyEmailError::CodeExpired),
         };
 
@@ -140,6 +149,14 @@ impl VerifyEmailUseCase {
             // below the cap, so `attempts_after` is in `1..=MAX_ATTEMPTS` and this
             // subtraction is always >= 0.
             let attempts_remaining = MAX_ATTEMPTS - attempts_after;
+            if attempts_remaining == 0 {
+                tracing::warn!(
+                    event = "auth.code.locked",
+                    flow = "email_code",
+                    user_id = %user.id(),
+                    "Code locked after too many wrong guesses"
+                );
+            }
 
             return Err(VerifyEmailError::CodeInvalid { attempts_remaining });
         }
@@ -445,6 +462,60 @@ mod tests {
         let uc = VerifyEmailUseCase::new(Arc::new(repo), Arc::new(codes), Arc::new(hasher));
         let err = uc.execute(EMAIL, "123456").await.unwrap_err();
         assert!(matches!(err, VerifyEmailError::CodeExpired), "{err:?}");
+    }
+
+    /// 5 wrong guesses then 3 more: exactly one `auth.code.locked` (on the
+    /// fifth guess) and three `auth.code.refused_locked`, each naming the flow
+    /// and the account and nothing else identifying (OT-007 D7).
+    #[tokio::test]
+    async fn lockout_and_refused_checks_are_logged() {
+        use super::super::log_capture::LogCapture;
+        use std::sync::atomic::{AtomicI32, Ordering};
+
+        let user_id = UserId::new();
+        let mut repo = MockUserRepository::new();
+        repo.expect_find_by_email()
+            .returning(move |_| Ok(Some(user(user_id, false))));
+
+        let attempts = Arc::new(AtomicI32::new(0));
+        let mut codes = MockEmailVerificationRepository::new();
+        codes
+            .expect_find_by_user()
+            .returning(move |_| Ok(Some(valid_code(user_id))));
+        codes.expect_register_attempt().returning(move |_, _, max| {
+            let n = attempts.load(Ordering::SeqCst);
+            if n >= max {
+                return Ok(AttemptOutcome::Locked);
+            }
+            attempts.store(n + 1, Ordering::SeqCst);
+            Ok(AttemptOutcome::Claimed(n + 1))
+        });
+
+        let uc = VerifyEmailUseCase::new(
+            Arc::new(repo),
+            Arc::new(codes),
+            Arc::new(hasher_verifying(false)),
+        );
+
+        let logs = LogCapture::install();
+        for _ in 0..8 {
+            let _ = uc.execute(EMAIL, "000000").await;
+        }
+
+        let locked = logs.events("auth.code.locked");
+        let refused = logs.events("auth.code.refused_locked");
+        assert_eq!(locked.len(), 1, "{locked:?}");
+        assert_eq!(refused.len(), 3, "{refused:?}");
+        assert_eq!(locked[0]["level"], "WARN");
+        for event in locked.iter().chain(&refused) {
+            assert_eq!(event["flow"], "email_code");
+            assert_eq!(event["user_id"], user_id.to_string());
+        }
+        for event in &refused {
+            assert_eq!(event["level"], "INFO");
+        }
+        let text = serde_json::to_string(&logs.all()).unwrap();
+        assert!(!text.contains(EMAIL) && !text.contains("000000"), "{text}");
     }
 
     #[tokio::test]

@@ -94,7 +94,19 @@ impl LoginUserUseCase {
 
         match user {
             Some(user) if matches => Ok(user),
-            _ => Err(LoginError::InvalidCredentials),
+            // Wrong password or password-less account: same response as an
+            // unknown email, but the account is named in an investigation
+            // event (OT-007 D7). An unknown email logs nothing that names an
+            // account; it is only counted.
+            Some(user) => {
+                tracing::info!(
+                    event = "auth.sign_in.failed",
+                    user_id = %user.id(),
+                    "Password sign-in failed for an existing account"
+                );
+                Err(LoginError::InvalidCredentials)
+            }
+            None => Err(LoginError::InvalidCredentials),
         }
     }
 
@@ -194,6 +206,37 @@ mod tests {
         let result = uc.execute(EMAIL, "correct").await;
 
         assert!(matches!(result, Err(LoginError::InvalidCredentials)));
+    }
+
+    /// A wrong password and a password-less account each log one
+    /// `auth.sign_in.failed` naming the account; an unknown email logs no
+    /// event at all. All three stay `InvalidCredentials` (OT-007 D7).
+    #[tokio::test]
+    async fn failed_sign_ins_name_existing_accounts_only() {
+        use super::super::log_capture::LogCapture;
+
+        for (found, dummy_verifies) in [(Some(Some("stored")), 0), (Some(None), 1)] {
+            let account = user(found.unwrap());
+            let id = account.id().to_string();
+            let uc = use_case(repo_returning(Some(account)), hasher(dummy_verifies));
+            let logs = LogCapture::install();
+
+            let result = uc.execute(EMAIL, "wrong").await;
+
+            assert!(matches!(result, Err(LoginError::InvalidCredentials)));
+            let events = logs.events("auth.sign_in.failed");
+            assert_eq!(events.len(), 1, "{events:?}");
+            assert_eq!(events[0]["level"], "INFO");
+            assert_eq!(events[0]["user_id"], id);
+            let text = serde_json::to_string(&logs.all()).unwrap();
+            assert!(!text.contains(EMAIL) && !text.contains("wrong\""), "{text}");
+        }
+
+        let uc = use_case(repo_returning(None), hasher(1));
+        let logs = LogCapture::install();
+        let result = uc.execute("nobody@example.com", "wrong").await;
+        assert!(matches!(result, Err(LoginError::InvalidCredentials)));
+        assert!(logs.named().is_empty(), "{:?}", logs.all());
     }
 
     #[tokio::test]

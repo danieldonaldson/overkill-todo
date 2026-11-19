@@ -28,12 +28,12 @@ Delivers these scenarios: Lockout names the account; Targeted guessing is
 visible; Stuffing versus brute force; Unknown email names no account;
 Investigation logs hold no secrets; Alerts link to the investigation.
 
-- [ ] 2.1 Emit `auth.code.locked` (warn) on the locking guess and `auth.code.refused_locked` (info) on a `Locked` claim, in `VerifyEmailUseCase` and `ValidateResetCodeUseCase`, with `flow` and `user_id` (D7). Use-case tests capture the tracing output: 5 wrong guesses then 3 more give exactly 1 locked and 3 refused events, with their fields. Verify with `just test`.
-- [ ] 2.2 Emit `auth.sign_in.failed` (info) with `user_id` in `LoginUserUseCase` for a wrong password and for a password-less account, and nothing for an unknown email. Tests cover all three and check the error is still `InvalidCredentials`.
-- [ ] 2.3 Extend the 1.4 no-personal-data test to capture the log events from the same runs. Assert that none contains an email, code, token or password, and that each carries a `trace_id`.
-- [ ] 2.4 Add the four VictoriaLogs panels to `auth-security.json` and repoint both alerts' `dashboard` annotations (D7). Run `just obs-check`, then `just obs-up` on a fresh stack and confirm the panels show "no data", not errors.
-- [ ] 2.5 Run `just load auth-abuse`. From each alert's link, confirm the panels list the affected accounts and an entry opens its trace in Tempo. Record the result in design.md Hypothesis.
-- [ ] 2.6 `just api-types-check` shows no diff and `just ci` is green.
+- [x] 2.1 Emit `auth.code.locked` (warn) on the locking guess and `auth.code.refused_locked` (info) on a `Locked` claim, in `VerifyEmailUseCase` and `ValidateResetCodeUseCase`, with `flow` and `user_id` (D7). Use-case tests capture the tracing output: 5 wrong guesses then 3 more give exactly 1 locked and 3 refused events, with their fields. Verify with `just test`.
+- [x] 2.2 Emit `auth.sign_in.failed` (info) with `user_id` in `LoginUserUseCase` for a wrong password and for a password-less account, and nothing for an unknown email. Tests cover all three and check the error is still `InvalidCredentials`.
+- [x] 2.3 Extend the 1.4 no-personal-data test to capture the log events from the same runs. Assert that none contains an email, code, token or password, and that each carries a `trace_id`.
+- [x] 2.4 Add the four VictoriaLogs panels to `auth-security.json` and repoint both alerts' `dashboard` annotations (D7). Run `just obs-check`, then `just obs-up` on a fresh stack and confirm the panels show "no data", not errors.
+- [x] 2.5 Run `just load auth-abuse`. From each alert's link, confirm the panels list the affected accounts and an entry opens its trace in Tempo. Record the result in design.md Hypothesis.
+- [x] 2.6 `just api-types-check` shows no diff and `just ci` is green.
 
 ## 3. Feature done
 
