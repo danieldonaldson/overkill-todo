@@ -1,6 +1,7 @@
 <script lang="ts">
   import TelemetryBoundary from '$lib/telemetry/TelemetryBoundary.svelte'
-  import { onMount } from 'svelte'
+  import { createIslandTiming } from '$lib/telemetry/island-timing'
+  import { onMount, tick } from 'svelte'
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert'
   import CircleCheckIcon from '@lucide/svelte/icons/circle-check'
   import { Alert, AlertDescription } from '$lib/components/ui/alert'
@@ -22,6 +23,9 @@
 
   const ROLES: UserRole[] = ['user', 'admin', 'super_admin']
   const PAGE_SIZE = 50
+
+  // Ready once the first page of users, the empty state or the error is shown.
+  const timing = createIslandTiming()
 
   let loading = $state(true)
   let message = $state<string | null>(null)
@@ -81,6 +85,9 @@
       error = loadError instanceof Error ? loadError.message : 'Failed to load admin data'
     } finally {
       if (request === latestRequest) {
+        // The first answer shows content, the empty state or the error; a
+        // 403 leaves the page instead, so it's never ready.
+        if (loading && !leaving) void tick().then(timing.markReady)
         loading = false
         pageLoading = false
       }
@@ -114,7 +121,7 @@
   }
 </script>
 
-<TelemetryBoundary name="AdminPanel">
+<TelemetryBoundary name="AdminPanel" {timing}>
   <div class="space-y-6">
     <div>
       <h1 class="text-2xl font-semibold">Admin</h1>

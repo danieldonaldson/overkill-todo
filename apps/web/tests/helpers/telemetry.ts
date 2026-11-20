@@ -26,10 +26,21 @@ export interface ReportEvent {
   network_failed?: boolean
   trace_id?: string
   count: number
-  /** For `vital` events. */
+  /** For `vital` events, and the island's name for `island` events. */
   name?: string
   value?: number
   rating?: string
+  /** For `navigation` events. */
+  nav_type?: string
+  view_transition?: string
+  outcome?: string
+  total_ms?: number
+  fetch_ms?: number
+  swap_ms?: number
+  transition_ms?: number
+  /** For `island` events (and `nav_type`, `name`). */
+  stage?: string
+  ms?: number
 }
 
 export interface Report {
@@ -57,6 +68,8 @@ export async function setup(
 ) {
   const reports: Report[] = []
   const rawBodies: string[] = []
+  /** The `User-Agent` each report was sent with (the server's device class). */
+  const userAgents: string[] = []
   const consoleErrors: string[] = []
   const cspViolations: string[] = []
 
@@ -98,6 +111,7 @@ export async function setup(
     if (endpoint === 'abort') return route.abort('connectionrefused')
     const body = route.request().postData() ?? ''
     rawBodies.push(body)
+    userAgents.push(route.request().headers()['user-agent'] ?? '')
     reports.push(JSON.parse(body) as Report)
     return route.fulfill({ status: 204 })
   })
@@ -136,7 +150,28 @@ export async function setup(
     reports.flatMap((r) =>
       r.events.filter((e) => e.type === 'vital').map((e) => [e.name!, r.page] as const)
     )
-  return { reports, rawBodies, events, pageLoads, vitals, consoleErrors, cspViolations }
+  /** Navigation events with the page each went to, in order. */
+  const navigations = () =>
+    reports.flatMap((r) =>
+      r.events.filter((e) => e.type === 'navigation').map((e) => ({ ...e, page: r.page }))
+    )
+  /** Island timing events with their page, in order. */
+  const islands = () =>
+    reports.flatMap((r) =>
+      r.events.filter((e) => e.type === 'island').map((e) => ({ ...e, page: r.page }))
+    )
+  return {
+    reports,
+    rawBodies,
+    userAgents,
+    events,
+    pageLoads,
+    vitals,
+    navigations,
+    islands,
+    consoleErrors,
+    cspViolations,
+  }
 }
 
 /** Throw `count` uncaught errors from page code (outside `evaluate`'s own catch). */
@@ -168,3 +203,12 @@ export async function ready(page: Page) {
   await page.waitForLoadState('networkidle')
 }
 
+/**
+ * Wait until an in-site navigation has finished, view transition included: a
+ * navigation is reported only then (it may be after the network went idle).
+ */
+export async function settled(page: Page) {
+  await page.waitForLoadState('networkidle')
+  await page.waitForFunction(() => !document.documentElement.hasAttribute('data-astro-transition'))
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 50))))
+}

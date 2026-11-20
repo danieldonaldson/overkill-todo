@@ -5,10 +5,10 @@
     "overkill-todo",
     "OT-006"
   ],
-  "description": "Browser errors and page loads reported by the site (OT-006). Reports are scrubbed in the browser and again on the server: pages are templates, never addresses; no query strings, fragments, emails or tokens. Members are named by user ID only, taken from the session. Page loads are the error rate's denominator, not traffic analytics (that is OT-005). Errors from other origins (extensions, third-party scripts) are logged but not counted in the error rate. Web Vitals are measured on the sampled share of page loads (PUBLIC_RUM_SAMPLE_RATE); LCP, FCP and TTFB per full load, INP and CLS per page visit. Navigation and panel timings come in a later slice.",
+  "description": "Browser errors and page loads reported by the site (OT-006). Reports are scrubbed in the browser and again on the server: pages are templates, never addresses; no query strings, fragments, emails or tokens. Members are named by user ID only, taken from the session. Page loads are the error rate's denominator, not traffic analytics (that is OT-005). Errors from other origins (extensions, third-party scripts) are logged but not counted in the error rate. Web Vitals are measured on the sampled share of page loads (PUBLIC_RUM_SAMPLE_RATE); LCP, FCP and TTFB per full load, INP and CLS per page visit. In-site navigations (total, fetch, swap and view transition) and panel times to interactive and ready are measured on the same sampled share.",
   "editable": false,
   "schemaVersion": 41,
-  "version": 2,
+  "version": 3,
   "refresh": "1m",
   "time": {
     "from": "now-24h",
@@ -1257,6 +1257,726 @@
           "language": "plaintext",
           "showLineNumbers": false,
           "showMiniMap": false
+        }
+      }
+    },
+    {
+      "id": 17,
+      "type": "row",
+      "title": "In-site navigation",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 89
+      },
+      "panels": []
+    },
+    {
+      "id": 18,
+      "type": "table",
+      "title": "p75 time to a usable page by destination, kind and device (selected range)",
+      "description": "75th percentile, over the selected range, from the start of a navigation until the new page was usable and any view transition had finished. Hard is a full page load, timed from the start of the document; soft is an in-site navigation (ClientRouter), timed from the click or back/forward. Aborted navigations have no time and are left out. Measured on the sampled share of page loads (PUBLIC_RUM_SAMPLE_RATE).",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 90
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "p75",
+          "expr": "histogram_quantile(0.75, sum by (page, type, device_class, le) (increase(browser_navigation_duration_milliseconds_bucket[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "count",
+          "expr": "sum by (page, type, device_class) (increase(browser_navigation_duration_milliseconds_count[$__range]))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "page": "Destination",
+              "type": "Kind",
+              "device_class": "Device"
+            },
+            "indexByName": {
+              "page": 0,
+              "type": 1,
+              "device_class": 2,
+              "Value #p75": 3,
+              "Value #count": 4
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #p75"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p75 total"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 500
+                    },
+                    {
+                      "color": "red",
+                      "value": 1000
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #count"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "Navigations"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "p75 total",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "p75 in-site navigation time by destination",
+      "description": "75th percentile of in-site navigations (soft) over the last hour at each point: the BrowserNavigationSlow window. The alert fires on a dashboard page over 1 s for an hour, with at least 50 completed navigations an hour.",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 90
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.75, sum by (page, le) (increase(browser_navigation_duration_milliseconds_bucket{type=\"soft\"}[1h])))",
+          "range": true,
+          "legendFormat": "{{page}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1000
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 20,
+      "type": "barchart",
+      "title": "p75 phases of in-site navigations by destination (selected range)",
+      "description": "Where an in-site navigation's time goes: fetching the new page, swapping it into the document, and the view transition's animation (only when it ran). Each bar segment is that phase's own 75th percentile, so the stack is a guide, not the p75 total.",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 99
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "fetch",
+          "expr": "histogram_quantile(0.75, sum by (page, le) (increase(browser_navigation_phase_duration_milliseconds_bucket{phase=\"fetch\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "swap",
+          "expr": "histogram_quantile(0.75, sum by (page, le) (increase(browser_navigation_phase_duration_milliseconds_bucket{phase=\"swap\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "transition",
+          "expr": "histogram_quantile(0.75, sum by (page, le) (increase(browser_navigation_phase_duration_milliseconds_bucket{phase=\"transition\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "page": "Destination",
+              "Value #fetch": "fetch",
+              "Value #swap": "swap",
+              "Value #transition": "transition"
+            },
+            "indexByName": {
+              "page": 0,
+              "Value #fetch": 1,
+              "Value #swap": 2,
+              "Value #transition": 3
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "stacking": "normal",
+        "xField": "Destination",
+        "showValue": "auto",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      }
+    },
+    {
+      "id": 21,
+      "type": "bargauge",
+      "title": "View transitions (selected range)",
+      "description": "Share of completed in-site navigations whose view transition ran, was skipped (superseded by another navigation, or reduced motion) or is unsupported by the browser (the page was swapped without one).",
+      "gridPos": {
+        "h": 9,
+        "w": 6,
+        "x": 12,
+        "y": 99
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "expr": "sum by (view_transition) (increase(browser_navigation_duration_milliseconds_count{type=\"soft\"}[$__range]))\n  / scalar(sum(increase(browser_navigation_duration_milliseconds_count{type=\"soft\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{view_transition}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ran"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "skipped"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unsupported"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "blue"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 22,
+      "type": "bargauge",
+      "title": "Aborted in-site navigations by destination (selected range)",
+      "description": "Share of in-site navigations to each page that were interrupted by another navigation before the page was usable (counted for the page they were heading to). A high share can mean the page is slow to arrive.",
+      "gridPos": {
+        "h": 9,
+        "w": 6,
+        "x": 18,
+        "y": 99
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "expr": "sum by (page) (increase(browser_navigation_total{outcome=\"aborted\"}[$__range]))\n  / sum by (page) (increase(browser_navigation_total[$__range]))",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{page}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "orange"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 23,
+      "type": "row",
+      "title": "Panel loading",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 108
+      },
+      "panels": []
+    },
+    {
+      "id": 24,
+      "type": "table",
+      "title": "p75 panel times by panel, navigation kind and device (selected range)",
+      "description": "For each panel and form, the 75th percentile time from the start of the navigation that showed it (the start of the page load for hard, the click for soft) until it was interactive (mounted) and until it was ready (showing its content, empty state or error state). The dashboard header stays across in-site navigation, so it is timed only on full loads. A panel the Member left before it was ready has no ready time.",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 109
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "interactive",
+          "expr": "histogram_quantile(0.75, sum by (island, nav_type, device_class, le) (increase(browser_island_duration_milliseconds_bucket{stage=\"interactive\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "ready",
+          "expr": "histogram_quantile(0.75, sum by (island, nav_type, device_class, le) (increase(browser_island_duration_milliseconds_bucket{stage=\"ready\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "island": "Panel",
+              "nav_type": "Navigation",
+              "device_class": "Device"
+            },
+            "indexByName": {
+              "island": 0,
+              "nav_type": 1,
+              "device_class": 2,
+              "Value #interactive": 3,
+              "Value #ready": 4
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #interactive"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p75 interactive"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 500
+                    },
+                    {
+                      "color": "red",
+                      "value": 1000
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #ready"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p75 ready"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1000
+                    },
+                    {
+                      "color": "red",
+                      "value": 2500
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "p75 ready",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "p75 time to ready by panel and navigation kind",
+      "description": "75th percentile time to ready over the last hour at each point.",
+      "gridPos": {
+        "h": 9,
+        "w": 24,
+        "x": 0,
+        "y": 119
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.75, sum by (island, nav_type, le) (increase(browser_island_duration_milliseconds_bucket{stage=\"ready\"}[1h])))",
+          "range": true,
+          "legendFormat": "{{island}} {{nav_type}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
       }
     }

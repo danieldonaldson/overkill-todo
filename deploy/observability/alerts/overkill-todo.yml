@@ -241,3 +241,20 @@ groups:
         annotations:
           summary: 'p75 {{ $labels.name }} on {{ $labels.page }} is {{ $value | humanize }} ms over the last hour (poor: INP over 500 ms, LCP over 4000 ms)'
           dashboard: 'http://localhost:3000/d/frontend/frontend?viewPanel=panel-9'
+
+      # Per dashboard page: p75 time of in-site navigations to it over 1 s
+      # across the last hour, with at least 50 completed navigations in it,
+      # held for an hour. Aborted navigations have no duration, so the count is
+      # of completed ones. The bucket edges sit on 1 s. Not paging, like
+      # BrowserVitalPoor.
+      - alert: BrowserNavigationSlow
+        expr: |
+          histogram_quantile(0.75, sum by (page, le) (rate(browser_navigation_duration_milliseconds_bucket{type="soft", page=~"/dashboard.*"}[1h]))) > 1000
+          and on (page)
+            sum by (page) (increase(browser_navigation_duration_milliseconds_count{type="soft", page=~"/dashboard.*"}[1h])) >= 50
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: 'p75 in-site navigation to {{ $labels.page }} takes {{ $value | humanize }} ms over the last hour (threshold 1000 ms)'
+          dashboard: 'http://localhost:3000/d/frontend/frontend?viewPanel=panel-19'

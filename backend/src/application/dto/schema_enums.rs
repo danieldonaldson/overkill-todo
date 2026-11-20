@@ -116,9 +116,97 @@ impl Rating {
     }
 }
 
+/// How the browser reached a page (OT-006 Decision 6a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum NavType {
+    /// A full page load, timed from the start of the document.
+    Hard,
+    /// An in-site navigation (`ClientRouter`), timed from its start.
+    Soft,
+}
+
+impl NavType {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hard => "hard",
+            Self::Soft => "soft",
+        }
+    }
+}
+
+/// What happened to an in-site navigation's view transition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ViewTransitionResult {
+    /// The animation ran to the end.
+    Ran,
+    /// It was skipped: superseded by another navigation, or reduced motion.
+    Skipped,
+    /// The browser has no view transitions; the page was swapped without one.
+    Unsupported,
+    /// A full page load, which has no transition.
+    None,
+}
+
+impl ViewTransitionResult {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ran => "ran",
+            Self::Skipped => "skipped",
+            Self::Unsupported => "unsupported",
+            Self::None => "none",
+        }
+    }
+}
+
+/// Whether a navigation reached its page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum NavOutcome {
+    Completed,
+    /// Another navigation started before this one finished.
+    Aborted,
+}
+
+impl NavOutcome {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Aborted => "aborted",
+        }
+    }
+}
+
+/// Which moment of a panel's loading an island timing marks (Decision 6b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum IslandStage {
+    /// The island mounted and responds to input.
+    Interactive,
+    /// It shows its content, its empty state or its error state.
+    Ready,
+}
+
+impl IslandStage {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Ready => "ready",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ClientErrorKind, OAuthProviderName, RoleName};
+    use super::{
+        ClientErrorKind, IslandStage, NavOutcome, NavType, OAuthProviderName, RoleName,
+        ViewTransitionResult,
+    };
     use crate::domain::entities::OAuthProvider;
     use crate::domain::value_objects::UserRole;
 
@@ -165,6 +253,27 @@ mod tests {
             ClientErrorKind::Api,
         ] {
             assert_eq!(wire(kind), kind.as_str());
+        }
+    }
+
+    #[test]
+    fn navigation_and_island_enums_serialize_as_their_label() {
+        for v in [NavType::Hard, NavType::Soft] {
+            assert_eq!(wire(v), v.as_str());
+        }
+        for v in [
+            ViewTransitionResult::Ran,
+            ViewTransitionResult::Skipped,
+            ViewTransitionResult::Unsupported,
+            ViewTransitionResult::None,
+        ] {
+            assert_eq!(wire(v), v.as_str());
+        }
+        for v in [NavOutcome::Completed, NavOutcome::Aborted] {
+            assert_eq!(wire(v), v.as_str());
+        }
+        for v in [IslandStage::Interactive, IslandStage::Ready] {
+            assert_eq!(wire(v), v.as_str());
         }
     }
 }

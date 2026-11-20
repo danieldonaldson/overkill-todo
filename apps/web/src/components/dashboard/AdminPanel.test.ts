@@ -14,6 +14,16 @@ vi.mock('../../lib/navigation', () => ({
   redirect: vi.fn(),
 }))
 
+// The panel's timing handle, with `markReady` observable (OT-006 Decision 6b).
+const markReady = vi.hoisted(() => vi.fn())
+vi.mock('../../lib/telemetry/island-timing', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/telemetry/island-timing')>()
+  return {
+    ...actual,
+    createIslandTiming: () => Object.assign(new actual.IslandTimer(), { markReady }),
+  }
+})
+
 import { api } from '../../lib/api'
 import { ApiErrorException } from '../../lib/api/errors'
 import { resetSession, session } from '../../lib/auth/session.svelte'
@@ -263,5 +273,63 @@ describe('AdminPanel', () => {
     await expect.element(screen.getByText('Cannot demote the last super admin')).toBeInTheDocument()
     await expect.element(aliceRoleSelect(screen)).toHaveValue('user')
     await expect.element(aliceRoleSelect(screen)).toBeEnabled()
+  })
+})
+
+describe('AdminPanel timing', () => {
+  beforeEach(() => {
+    resetSession()
+    vi.clearAllMocks()
+    setCurrentUser(viewer('admin'))
+  })
+
+  it('is ready once, when the first page of users is shown', async () => {
+    const list = deferred<AdminUserList>()
+    vi.mocked(api.admin.listUsers).mockReturnValue(list.promise)
+    const screen = await render(AdminPanel)
+    await expect.element(screen.getByTestId('admin-skeleton')).toBeInTheDocument()
+    expect(markReady).not.toHaveBeenCalled()
+
+    list.resolve({ users: [alice], total: 1, limit: 50, offset: 0 })
+    await expect.element(screen.getByText('alice@example.com')).toBeInTheDocument()
+    await vi.waitFor(() => expect(markReady).toHaveBeenCalledTimes(1))
+  })
+
+  it('is ready once, at the empty state', async () => {
+    vi.mocked(api.admin.listUsers).mockResolvedValue({ users: [], total: 0, limit: 50, offset: 0 })
+    const screen = await render(AdminPanel)
+    await expect.element(screen.getByText('No users.')).toBeInTheDocument()
+    await vi.waitFor(() => expect(markReady).toHaveBeenCalledTimes(1))
+  })
+
+  it('is ready once, at the error state', async () => {
+    vi.mocked(api.admin.listUsers).mockRejectedValue(new Error('Service down'))
+    const screen = await render(AdminPanel)
+    await expect.element(screen.getByText('Service down')).toBeInTheDocument()
+    await vi.waitFor(() => expect(markReady).toHaveBeenCalledTimes(1))
+  })
+
+  it('is never ready when the server sends a non-admin away', async () => {
+    vi.mocked(api.admin.listUsers).mockRejectedValue(
+      new ApiErrorException({ code: 'forbidden', message: 'Forbidden' }, { status: 403 })
+    )
+    await render(AdminPanel)
+    await vi.waitFor(() => expect(navigateReplace).toHaveBeenCalledWith('/dashboard'))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(markReady).not.toHaveBeenCalled()
+  })
+
+  it('is not ready again when the Admin moves to another page of users', async () => {
+    vi.mocked(api.admin.listUsers).mockImplementation(async (params) =>
+      params?.offset === 50
+        ? { users: [bob], total: 120, limit: 50, offset: 50 }
+        : { users: [alice], total: 120, limit: 50, offset: 0 }
+    )
+    const screen = await render(AdminPanel)
+    await expect.element(screen.getByText('Showing 1–50 of 120')).toBeInTheDocument()
+    await screen.getByRole('button', { name: 'Go to next page' }).click()
+    await expect.element(screen.getByText('bob@example.com')).toBeInTheDocument()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(markReady).toHaveBeenCalledTimes(1)
   })
 })

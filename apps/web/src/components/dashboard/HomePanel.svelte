@@ -1,5 +1,6 @@
 <script lang="ts">
   import TelemetryBoundary from '$lib/telemetry/TelemetryBoundary.svelte'
+  import { createIslandTiming } from '$lib/telemetry/island-timing'
   import {
     Card,
     CardContent,
@@ -12,9 +13,17 @@
   // Placeholder home: replace with the product's first real panel. The user
   // comes from the tab's session store; it is null only until the background
   // check answers in a tab with nothing cached (design D4).
+
+  // Ready once it shows the Member (content) or the session check failed
+  // (the header's error banner); until then it shows skeletons.
+  const timing = createIslandTiming()
+  const ready = $derived(session.user !== null || session.status === 'unreachable')
+  $effect(() => {
+    if (ready) timing.markReady()
+  })
 </script>
 
-<TelemetryBoundary name="HomePanel">
+<TelemetryBoundary name="HomePanel" {timing}>
   <div class="space-y-6">
     <div>
       <h1 class="text-2xl font-semibold">Home</h1>

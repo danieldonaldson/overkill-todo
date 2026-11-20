@@ -5,6 +5,7 @@
 // Every public method swallows its own errors. Reporting must never break or
 // slow the page, and the reporter never reports itself.
 
+import type { components } from '../api/schema'
 import { MAX_MESSAGE_CHARS, MAX_SOURCE_CHARS, MAX_STACK_CHARS, scrub } from './scrub'
 
 export const ENDPOINT = '/api/v1/client-telemetry'
@@ -24,6 +25,8 @@ const TRACE_ID_PATTERN = /^[0-9a-f]{32}$/
 const MAX_ATTRIBUTION_CHARS = 100
 /** The server's ceiling for a vital's value (ms, or the CLS score). */
 const MAX_VITAL_VALUE = 600_000
+/** The server's ceiling for a navigation or island duration, in ms. */
+const MAX_DURATION_MS = 600_000
 
 export type ErrorKind = 'error' | 'unhandledrejection' | 'boundary' | 'api'
 
@@ -58,7 +61,16 @@ export interface VitalEventBody {
   attribution?: string
 }
 
-export type EventBody = ErrorEventBody | PageLoadEventBody | VitalEventBody
+/** A full load or in-site navigation with its timings (Decision 6a). Sampled. */
+export type NavigationEventBody = components['schemas']['ClientNavigationEvent'] & {
+  type: 'navigation'
+}
+
+/** When an island became interactive or ready (Decision 6b). Sampled. */
+export type IslandEventBody = components['schemas']['ClientIslandEvent'] & { type: 'island' }
+
+export type EventBody =
+  ErrorEventBody | PageLoadEventBody | VitalEventBody | NavigationEventBody | IslandEventBody
 
 export interface Batch {
   page_load_id: string
@@ -266,6 +278,53 @@ export class Reporter {
     }
   }
 
+  /** Queue a navigation for `pathname`, the page it went to. Never merged. */
+  navigation(navigation: Omit<NavigationEventBody, 'type'>, pathname: string): void {
+    try {
+      const durations = [
+        navigation.total_ms,
+        navigation.fetch_ms,
+        navigation.swap_ms,
+        navigation.transition_ms,
+      ]
+      // One out-of-range value would get the whole batch refused.
+      if (durations.some((ms) => ms != null && !(ms >= 0 && ms <= MAX_DURATION_MS))) return
+      this.push({ type: 'navigation', ...navigation }, pathname)
+    } catch {
+      // Never let reporting break the page.
+    }
+  }
+
+  /** Queue an island timing mark for `pathname`, its page. Never merged. */
+  island(island: Omit<IslandEventBody, 'type'>, pathname: string): void {
+    try {
+      // A panel that appeared 10 minutes in (scrolled into view late) isn't a
+      // load time, and the server would refuse the batch.
+      if (!(island.ms >= 0 && island.ms <= MAX_DURATION_MS)) return
+      this.push(
+        {
+          type: 'island',
+          ...island,
+          name: Array.from(island.name).slice(0, MAX_ISLAND_CHARS).join(''),
+          ms: Math.round(island.ms),
+        },
+        pathname
+      )
+    } catch {
+      // Never let reporting break the page.
+    }
+  }
+
+  private push(event: EventBody, pathname: string): void {
+    try {
+      this.rotateIfSessionChanged()
+      this.queue.push({ pageLoadId: this.pageLoadId, page: pageOf(pathname), key: null, event })
+      this.schedule()
+    } catch {
+      // Never let reporting break the page.
+    }
+  }
+
   /** An API call couldn't reach the server: hold timed flushes until it can. */
   markOffline(): void {
     this.offline = true
@@ -367,7 +426,7 @@ export function fit(batch: Batch): Batch[] {
     ]
   }
   const only = batch.events[0]
-  // Only an error can outgrow the limit; a page load is a few bytes.
+  // Only an error can outgrow the limit; other events are a few bytes.
   if (only.type !== 'error') return [batch]
   const event = { ...only }
   while (byteLength(JSON.stringify({ ...batch, events: [event] })) > MAX_BATCH_BYTES) {

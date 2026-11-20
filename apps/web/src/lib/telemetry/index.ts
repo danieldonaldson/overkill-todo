@@ -6,6 +6,7 @@
 import { getTokenExpiry } from '../auth/token'
 import { RUM_SAMPLE_RATE } from '../config'
 import { type ApiFailure, setApiFailureHandlers } from './api-failures'
+import { type CurrentNavigation, installNavigationTiming } from './navigation'
 import { type CapturedError, Reporter, beaconSend } from './reporter'
 import { installVitals } from './vitals'
 
@@ -56,6 +57,27 @@ export function fromRejection(event: PromiseRejectionEvent): CapturedError {
 export function reportBoundaryError(island: string, error: unknown): void {
   try {
     reporter?.capture({ kind: 'boundary', island, ...describe(error) })
+  } catch {
+    // Never let reporting break the page.
+  }
+}
+
+/**
+ * Queue an island timing mark made at `at` (`performance.now()`) for the
+ * navigation `navigation` (Decision 6b). `IslandTimer` decides whether a mark
+ * is sent at all. A no-op until `installTelemetry()` has run; never throws.
+ */
+export function reportIslandTiming(
+  name: string,
+  stage: 'interactive' | 'ready',
+  navigation: CurrentNavigation,
+  at: number
+): void {
+  try {
+    reporter?.island(
+      { name, stage, nav_type: navigation.type, ms: at - navigation.start },
+      navigation.pathname
+    )
   } catch {
     // Never let reporting break the page.
   }
@@ -121,6 +143,16 @@ export function installTelemetry(): Reporter | null {
       }
     })
     watchPageLoads(document, () => r.pageLoad())
+    // One sampling decision per full load for vitals, navigations and panels.
+    const sampled = Math.random() < RUM_SAMPLE_RATE
+    try {
+      installNavigationTiming({
+        report: (navigation, pathname) => r.navigation(navigation, pathname),
+        sampled,
+      })
+    } catch {
+      // Timings are optional, like vitals.
+    }
     // Before the reporter's own visibility listener, so a visit ended by
     // hiding the page is queued before that flush. Vitals that arrive later
     // in the same event (web-vitals' LCP) get one more flush.
@@ -128,7 +160,7 @@ export function installTelemetry(): Reporter | null {
     try {
       installVitals({
         report: (vital, pathname) => r.vital(vital, pathname),
-        sampleRate: RUM_SAMPLE_RATE,
+        sampleRate: sampled ? 1 : 0,
         onHidden: () => {
           if (flushQueued) return
           flushQueued = true

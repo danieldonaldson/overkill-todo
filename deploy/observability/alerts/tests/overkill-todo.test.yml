@@ -621,3 +621,60 @@ tests:
             exp_annotations:
               summary: 'p75 LCP on /dashboard is 5.5k ms over the last hour (poor: INP over 500 ms, LCP over 4000 ms)'
               dashboard: 'http://localhost:3000/d/frontend/frontend?viewPanel=panel-9'
+
+  # Spec scenario "Slow navigation alert": in-site navigations to
+  # /dashboard/admin take about 1.2 s (between the 1000 and 1500 ms bucket
+  # edges), 2 a minute, 120 an hour. Pending once 50 are in the window, firing
+  # an hour later.
+  - name: slow in-site navigations to a dashboard page fire, held for an hour
+    interval: 1m
+    input_series:
+      - series: 'browser_navigation_duration_milliseconds_bucket{page="/dashboard/admin",type="soft",view_transition="ran",device_class="desktop",le="750"}'
+        values: '0x150'
+      - series: 'browser_navigation_duration_milliseconds_bucket{page="/dashboard/admin",type="soft",view_transition="ran",device_class="desktop",le="1000"}'
+        values: '0x150'
+      - series: 'browser_navigation_duration_milliseconds_bucket{page="/dashboard/admin",type="soft",view_transition="ran",device_class="desktop",le="1500"}'
+        values: '0+2x150'
+      - series: 'browser_navigation_duration_milliseconds_bucket{page="/dashboard/admin",type="soft",view_transition="ran",device_class="desktop",le="+Inf"}'
+        values: '0+2x150'
+      - series: 'browser_navigation_duration_milliseconds_count{page="/dashboard/admin",type="soft",view_transition="ran",device_class="desktop"}'
+        values: '0+2x150'
+      # Full loads of the same page are slower still, but aren't in-site
+      # navigations: they never count towards this alert.
+      - series: 'browser_navigation_duration_milliseconds_bucket{page="/dashboard",type="hard",view_transition="none",device_class="desktop",le="1500"}'
+        values: '0x150'
+      - series: 'browser_navigation_duration_milliseconds_bucket{page="/dashboard",type="hard",view_transition="none",device_class="desktop",le="+Inf"}'
+        values: '0+5x150'
+      - series: 'browser_navigation_duration_milliseconds_count{page="/dashboard",type="hard",view_transition="none",device_class="desktop"}'
+        values: '0+5x150'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: BrowserNavigationSlow
+        exp_alerts: []
+      - eval_time: 100m
+        alertname: BrowserNavigationSlow
+        exp_alerts:
+          - exp_labels: { severity: warning, page: /dashboard/admin }
+            exp_annotations:
+              summary: 'p75 in-site navigation to /dashboard/admin takes 1.375k ms over the last hour (threshold 1000 ms)'
+              dashboard: 'http://localhost:3000/d/frontend/frontend?viewPanel=panel-19'
+
+  # The same slow navigations, but only 30 an hour: too few to alert on.
+  - name: slow in-site navigations with few navigations do not fire
+    interval: 2m
+    input_series:
+      - series: 'browser_navigation_duration_milliseconds_bucket{page="/dashboard/admin",type="soft",view_transition="ran",device_class="desktop",le="1000"}'
+        values: '0x90'
+      - series: 'browser_navigation_duration_milliseconds_bucket{page="/dashboard/admin",type="soft",view_transition="ran",device_class="desktop",le="1500"}'
+        values: '0+1x90'
+      - series: 'browser_navigation_duration_milliseconds_bucket{page="/dashboard/admin",type="soft",view_transition="ran",device_class="desktop",le="+Inf"}'
+        values: '0+1x90'
+      - series: 'browser_navigation_duration_milliseconds_count{page="/dashboard/admin",type="soft",view_transition="ran",device_class="desktop"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: BrowserNavigationSlow
+        exp_alerts: []
+      - eval_time: 170m
+        alertname: BrowserNavigationSlow
+        exp_alerts: []

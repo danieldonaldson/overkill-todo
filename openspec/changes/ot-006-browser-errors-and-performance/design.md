@@ -146,6 +146,37 @@ Found on the way:
   `min_over_time(timestamp(...)[30d:10m])` subquery missed releases younger
   than its step.
 
+**Slice 4 check (2026-11-20, task 4.7): confirmed.** Against `just up` with
+release images (`RELEASE=ot006-s4`) and `just obs-up`, a scripted Chromium
+signed up a Member through the fixed dev code, promoted them to admin and
+walked Home, Settings, Admin, back and Home three times, on desktop and with
+Pixel 7 emulation:
+- within one metric export, `browser.navigation.duration` held a series per
+  destination, kind and device class: hard loads of `/dashboard` around
+  40 ms locally, in-site navigations around 400-450 ms, nearly all of it the
+  view transition (p75 fetch about 20 ms, swap about 4 ms, transition
+  300-350 ms). Every transition `ran`;
+- `browser.island.duration` held interactive and ready per island and
+  navigation kind. AdminPanel was ready about 15 ms after it was interactive
+  (the user list); Home and Settings were ready at once, with the Member
+  already known. The dashboard header was timed on full loads, and on the
+  in-site navigation that first showed it (signing up ends with one);
+- the walk's "Settings, then Admin at once" never aborted locally: Settings
+  reached `astro:page-load` in about 25 ms, before the second click. With the
+  router's fetch of Settings held for 1.5 s, three runs gave three `aborted`
+  navigations to `/dashboard/settings` and three completed ones to Admin;
+- every new Frontend panel loaded with data in local Grafana.
+
+Found on the way:
+- An in-site navigation is reported only when its view transition finishes,
+  about 300 ms after `astro:page-load`, so it can be queued after the flush
+  that hiding the page triggers and wait for the next timed flush. That is
+  fine for real visits; the Playwright flows wait for the transition to end
+  (`settled()`) before hiding the page.
+- A panel's script can't read context from its own `TelemetryBoundary`,
+  which is the panel's root, so `markReady()` comes from a handle instead
+  (Decision 6b).
+
 ## Decisions
 
 ### 1. In-house reporter plus a backend endpoint
@@ -180,7 +211,14 @@ pattern:
 
 - **`application/dto/client_telemetry_dto.rs`**
   - `ClientReportBatch { page_load_id, release, page, events: Vec<ClientEvent> }`.
-  - `ClientEvent` is a tagged enum: `error { kind, message, stack?, source?, island?, api_route?, status?, network_failed?, trace_id?, count }`, `vital { name, value, rating }`, `page_load`, `navigation { type, view_transition, outcome, total_ms?, fetch_ms?, swap_ms?, transition_ms? }` and `island { name, stage, nav_type, ms }`. Each variant is added in the slice that uses it.
+  - `ClientEvent` is a tagged enum: `error { kind, message, stack?, source?, island?, api_route?, status?, network_failed?, trace_id?, count }`, `vital { name, value, rating }`, `page_load`, `navigation { nav_type, view_transition, outcome, total_ms?, fetch_ms?, swap_ms?, transition_ms? }` and `island { name, stage, nav_type, ms }`. Each variant is added in the slice that uses it. (The navigation's kind is `nav_type`, not `type`, because `type` is the event's tag; changed in slice 4.)
+  - Durations are at most 600,000 ms. The fuzzer checks that every request
+    the schema allows is accepted, so contradictory navigations are not
+    rejected but labelled consistently by the use case: a `hard` load is
+    always `view_transition=none` with a total only, a `hard` one marked
+    aborted is recorded nowhere, an aborted in-site navigation has no
+    durations, an in-site one claiming `none` is counted but not timed, and
+    the transition phase is kept only when it `ran` (slice 4).
   - Validation uses `#[validate]` limits:
     - at most 30 events per batch;
     - message at most 500 characters, stack at most 4,000;
@@ -386,9 +424,14 @@ wraps its content in it. It:
 
 - marks **interactive** in `onMount`, relative to the current navigation's
   start: 0 for a full load, t0 for a swap (read from `navigation.ts`);
-- provides `markReady()` through Svelte context. A panel calls it once, when it
-  first shows content, its empty state or its error state. Later calls are
-  ignored;
+- takes `markReady()` from a timing handle. A panel that loads data creates
+  it in its script (`createIslandTiming()`), passes it to its boundary
+  (`<TelemetryBoundary name="AdminPanel" {timing}>`) and calls
+  `timing.markReady()` once, when it first shows content, its empty state or
+  its error state. Later calls are ignored. An island with nothing to load
+  passes no handle and is ready when it mounts. (Planned as Svelte context;
+  changed in slice 4 because the boundary is the panel's own root, so the
+  panel's script is outside any context the boundary could provide.);
 - drops both marks if a newer navigation has started meanwhile, so a superseded
   navigation's panel isn't recorded;
 - contains errors and shows the fallback with "Try again" (dashboard spec);
@@ -410,7 +453,9 @@ boundary errors already carry the island name): a Vitest test does two checks:
 - it asserts the set of `name`s equals the server's island allowlist (shared
   fixture, like Decision 5's page list).
 
-Panels with no data to load call `markReady()` in `onMount`.
+Panels with no data to load pass no timing handle; the boundary marks them
+ready in its `onMount`. "Try again" rebuilds the content, not the boundary,
+so it isn't timed again.
 
 ### 7. Metrics
 
@@ -427,7 +472,7 @@ VictoriaMetrics):
 | `browser.release_seen` | counter, incremented per `page_load` | `release` |
 | `browser.navigation.duration` | histogram, ms | `page` (destination), `type` (`hard`, `soft`), `view_transition` (`ran`, `skipped`, `unsupported`, `none` for hard), `device_class` |
 | `browser.navigation.phase.duration` | histogram, ms | `phase` (`fetch`, `swap`, `transition`), `page`, `device_class` |
-| `browser.navigation` | counter | `outcome` (`completed`, `aborted`), `page` |
+| `browser.navigation` | counter, in-site navigations only (only they can abort) | `outcome` (`completed`, `aborted`), `page` |
 | `browser.island.duration` | histogram, ms | `island`, `page`, `stage` (`interactive`, `ready`), `nav_type` (`hard`, `soft`), `device_class` |
 
 **CLS has its own histogram** (changed in slice 3). The plan was one
@@ -489,8 +534,8 @@ assert every label comes only from the enums and allowlists (pages, islands).
   current navigation" (start time and kind) that the other modules read.
 - **`TelemetryBoundary.svelte`**: a `<svelte:boundary>` wrapper with the
   fallback UI and "Try again" (calls the boundary's `reset`). It reports
-  `kind: boundary`, and handles the panel timing marks and `markReady()`
-  context (Decision 6b). A test hook (`TestCrashHook.svelte`) throws when
+  `kind: boundary`, and handles the panel timing marks (Decision 6b) with
+  **`island-timing.ts`**'s handle. A test hook (`TestCrashHook.svelte`) throws when
   `window.__otCrashIsland` names the island; it renders only in `astro dev` and
   in builds with `PUBLIC_TELEMETRY_TEST_HOOKS=true` (`just e2e`, CI's e2e job),
   so release images don't contain it.

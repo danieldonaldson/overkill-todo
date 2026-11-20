@@ -3,8 +3,9 @@
 //! Browser errors become `client_error` log events, shipped to the log store
 //! like every other log line, and are counted; page loads and dropped reports
 //! are counted; Web Vitals go to histograms, and poor ones are also logged as
-//! `client_vital_poor` with their attribution. Every label value comes from an
-//! enum or an allowlist.
+//! `client_vital_poor` with their attribution. Navigations and island timings
+//! go to histograms, and in-site navigations are counted by outcome. Every
+//! label value comes from an enum or an allowlist.
 //!
 //! Its instruments are no-ops exactly when the OTLP exporter is (dev only), and
 //! the log events always go to stdout, so there is no no-op variant to refuse
@@ -14,9 +15,10 @@ use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 
 use super::metrics::global_meter;
-use crate::application::dto::Rating;
+use crate::application::dto::{NavType, Rating};
 use crate::application::ports::outgoing::{
-    ClientErrorReport, ClientPageLoadReport, ClientReportSink, ClientVitalReport,
+    ClientErrorReport, ClientIslandReport, ClientNavigationReport, ClientPageLoadReport,
+    ClientReportSink, ClientVitalReport,
 };
 
 /// Buckets for the millisecond vitals.
@@ -33,6 +35,19 @@ pub const VITAL_MS_BUCKETS: &[f64] = &[
 /// Buckets for CLS, with edges at its thresholds 0.1 and 0.25.
 pub const VITAL_CLS_BUCKETS: &[f64] = &[0.01, 0.05, 0.1, 0.15, 0.25, 0.5, 1.0, 2.0];
 
+/// Buckets for navigation totals and island timings, in ms: dense around the
+/// 1 s `BrowserNavigationSlow` threshold.
+pub const NAVIGATION_MS_BUCKETS: &[f64] = &[
+    25.0, 50.0, 100.0, 200.0, 300.0, 500.0, 750.0, 1_000.0, 1_500.0, 2_000.0, 3_000.0, 5_000.0,
+    10_000.0, 20_000.0,
+];
+
+/// Buckets for navigation phases, in ms: a swap takes a few ms, a fetch or a
+/// transition a few hundred.
+pub const NAVIGATION_PHASE_MS_BUCKETS: &[f64] = &[
+    5.0, 10.0, 25.0, 50.0, 100.0, 200.0, 300.0, 500.0, 1_000.0, 2_000.0, 5_000.0, 10_000.0,
+];
+
 /// Writes browser reports to the logs and metrics.
 #[derive(Clone)]
 pub struct TelemetryClientReportSink {
@@ -44,6 +59,10 @@ pub struct TelemetryClientReportSink {
     vital_ms: Histogram<f64>,
     vital_cls: Histogram<f64>,
     releases_seen: Counter<u64>,
+    navigation_duration: Histogram<f64>,
+    navigation_phase: Histogram<f64>,
+    navigations: Counter<u64>,
+    island_duration: Histogram<f64>,
 }
 
 impl TelemetryClientReportSink {
@@ -87,6 +106,29 @@ impl TelemetryClientReportSink {
                 .with_unit("1")
                 .with_description("Cumulative Layout Shift per page visit, measured in the browser")
                 .with_boundaries(VITAL_CLS_BUCKETS.to_vec())
+                .build(),
+            navigation_duration: meter
+                .f64_histogram("browser.navigation.duration")
+                .with_unit("ms")
+                .with_description("Time to a usable page: from the start of a full load or an in-site navigation until the page loaded and any transition finished")
+                .with_boundaries(NAVIGATION_MS_BUCKETS.to_vec())
+                .build(),
+            navigation_phase: meter
+                .f64_histogram("browser.navigation.phase.duration")
+                .with_unit("ms")
+                .with_description("Phases of in-site navigations: fetching the page, swapping it in, and the view transition when it ran")
+                .with_boundaries(NAVIGATION_PHASE_MS_BUCKETS.to_vec())
+                .build(),
+            navigations: meter
+                .u64_counter("browser.navigation")
+                .with_unit("{navigation}")
+                .with_description("In-site navigations by outcome: completed, or aborted by another navigation")
+                .build(),
+            island_duration: meter
+                .f64_histogram("browser.island.duration")
+                .with_unit("ms")
+                .with_description("Time from the start of the navigation that showed a panel until it was interactive, and until it showed its content, empty or error state")
+                .with_boundaries(NAVIGATION_MS_BUCKETS.to_vec())
                 .build(),
         }
     }
@@ -175,6 +217,60 @@ impl ClientReportSink for TelemetryClientReportSink {
         }
     }
 
+    fn navigation(&self, report: &ClientNavigationReport) {
+        // Only in-site navigations can be aborted, so only they are counted:
+        // the aborted share is of in-site navigations.
+        if report.nav_type == NavType::Soft {
+            self.navigations.add(
+                1,
+                &[
+                    KeyValue::new("outcome", report.outcome.as_str()),
+                    KeyValue::new("page", report.page),
+                ],
+            );
+        }
+        if let Some(total) = report.total_ms {
+            self.navigation_duration.record(
+                total,
+                &[
+                    KeyValue::new("page", report.page),
+                    KeyValue::new("type", report.nav_type.as_str()),
+                    KeyValue::new("view_transition", report.view_transition.as_str()),
+                    KeyValue::new("device_class", report.device_class),
+                ],
+            );
+        }
+        for (phase, ms) in [
+            ("fetch", report.fetch_ms),
+            ("swap", report.swap_ms),
+            ("transition", report.transition_ms),
+        ] {
+            if let Some(ms) = ms {
+                self.navigation_phase.record(
+                    ms,
+                    &[
+                        KeyValue::new("phase", phase),
+                        KeyValue::new("page", report.page),
+                        KeyValue::new("device_class", report.device_class),
+                    ],
+                );
+            }
+        }
+    }
+
+    fn island(&self, report: &ClientIslandReport) {
+        self.island_duration.record(
+            report.ms,
+            &[
+                KeyValue::new("island", report.island),
+                KeyValue::new("page", report.page),
+                KeyValue::new("stage", report.stage.as_str()),
+                KeyValue::new("nav_type", report.nav_type.as_str()),
+                KeyValue::new("device_class", report.device_class),
+            ],
+        );
+    }
+
     fn dropped(&self, n: u64) {
         self.dropped.add(n, &[]);
     }
@@ -186,7 +282,11 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::application::dto::{ClientErrorKind, VitalName};
+    use opentelemetry_sdk::metrics::InMemoryMetricExporter;
+
+    use crate::application::dto::{
+        ClientErrorKind, IslandStage, NavOutcome, ViewTransitionResult, VitalName,
+    };
     use crate::application::use_cases::auth::log_capture::LogCapture;
     use crate::domain::value_objects::UserId;
     use crate::infrastructure::telemetry::metrics::testing::Attrs;
@@ -491,6 +591,178 @@ mod tests {
                 (attrs(&[("release", "r1")]), 2),
                 (attrs(&[("release", "r2")]), 1)
             ]
+        );
+    }
+
+    fn soft_navigation() -> ClientNavigationReport {
+        ClientNavigationReport {
+            page: "/dashboard/settings",
+            device_class: "mobile",
+            nav_type: NavType::Soft,
+            view_transition: ViewTransitionResult::Ran,
+            outcome: NavOutcome::Completed,
+            total_ms: Some(420.0),
+            fetch_ms: Some(120.0),
+            swap_ms: Some(8.0),
+            transition_ms: Some(250.0),
+        }
+    }
+
+    fn hist_counts(exporter: &InMemoryMetricExporter, name: &str) -> Vec<(Attrs, u64)> {
+        let (_, points) = testing::f64_histogram_buckets(exporter, name);
+        let mut out: Vec<(Attrs, u64)> = points
+            .into_iter()
+            .map(|(a, counts)| (a, counts.iter().sum()))
+            .collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn navigations_are_timed_by_page_kind_transition_and_device() {
+        let (provider, exporter) = testing::in_memory();
+        let sink = TelemetryClientReportSink::new(&provider.meter(METER_NAME));
+        sink.navigation(&soft_navigation());
+        sink.navigation(&ClientNavigationReport {
+            page: "/dashboard",
+            device_class: "desktop",
+            nav_type: NavType::Hard,
+            view_transition: ViewTransitionResult::None,
+            outcome: NavOutcome::Completed,
+            total_ms: Some(900.0),
+            fetch_ms: None,
+            swap_ms: None,
+            transition_ms: None,
+        });
+        sink.navigation(&ClientNavigationReport {
+            page: "/dashboard/admin",
+            outcome: NavOutcome::Aborted,
+            view_transition: ViewTransitionResult::Skipped,
+            total_ms: None,
+            fetch_ms: None,
+            swap_ms: None,
+            transition_ms: None,
+            ..soft_navigation()
+        });
+        provider.force_flush().unwrap();
+
+        assert_eq!(
+            hist_counts(&exporter, "browser.navigation.duration"),
+            [
+                (
+                    attrs(&[
+                        ("device_class", "desktop"),
+                        ("page", "/dashboard"),
+                        ("type", "hard"),
+                        ("view_transition", "none"),
+                    ]),
+                    1
+                ),
+                (
+                    attrs(&[
+                        ("device_class", "mobile"),
+                        ("page", "/dashboard/settings"),
+                        ("type", "soft"),
+                        ("view_transition", "ran"),
+                    ]),
+                    1
+                ),
+            ]
+        );
+        assert_eq!(
+            hist_counts(&exporter, "browser.navigation.phase.duration"),
+            ["fetch", "swap", "transition"]
+                .iter()
+                .map(|phase| (
+                    attrs(&[
+                        ("device_class", "mobile"),
+                        ("page", "/dashboard/settings"),
+                        ("phase", phase),
+                    ]),
+                    1
+                ))
+                .collect::<Vec<_>>()
+        );
+        // The full load isn't counted: only in-site navigations can abort.
+        assert_eq!(
+            testing::u64_sum_points(&exporter, "browser.navigation"),
+            [
+                (
+                    attrs(&[("outcome", "aborted"), ("page", "/dashboard/admin")]),
+                    1
+                ),
+                (
+                    attrs(&[("outcome", "completed"), ("page", "/dashboard/settings")]),
+                    1
+                ),
+            ]
+        );
+        for name in [
+            "browser.navigation.duration",
+            "browser.navigation.phase.duration",
+        ] {
+            assert_eq!(
+                testing::unit(&exporter, name).as_deref(),
+                Some("ms"),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn navigation_totals_land_on_either_side_of_the_one_second_edge() {
+        let (provider, exporter) = testing::in_memory();
+        let sink = TelemetryClientReportSink::new(&provider.meter(METER_NAME));
+        for total in [1_000.0, 1_001.0] {
+            sink.navigation(&ClientNavigationReport {
+                total_ms: Some(total),
+                ..soft_navigation()
+            });
+        }
+        provider.force_flush().unwrap();
+        let (bounds, points) =
+            testing::f64_histogram_buckets(&exporter, "browser.navigation.duration");
+        assert_eq!(bounds, NAVIGATION_MS_BUCKETS);
+        let counts = &points[0].1;
+        assert_eq!(counts[bucket_of(&bounds, 1_000.0)], 1);
+        assert_eq!(counts[bucket_of(&bounds, 1_001.0)], 1);
+        assert_ne!(bucket_of(&bounds, 1_000.0), bucket_of(&bounds, 1_001.0));
+    }
+
+    #[test]
+    fn island_timings_are_recorded_by_island_page_stage_kind_and_device() {
+        let (provider, exporter) = testing::in_memory();
+        let sink = TelemetryClientReportSink::new(&provider.meter(METER_NAME));
+        for (stage, ms) in [
+            (IslandStage::Interactive, 40.0),
+            (IslandStage::Ready, 310.0),
+        ] {
+            sink.island(&ClientIslandReport {
+                island: "SettingsPanel",
+                page: "/dashboard/settings",
+                stage,
+                nav_type: NavType::Soft,
+                device_class: "mobile",
+                ms,
+            });
+        }
+        provider.force_flush().unwrap();
+        let base = |stage: &str| {
+            attrs(&[
+                ("device_class", "mobile"),
+                ("island", "SettingsPanel"),
+                ("nav_type", "soft"),
+                ("page", "/dashboard/settings"),
+                ("stage", stage),
+            ])
+        };
+        assert_eq!(
+            hist_counts(&exporter, "browser.island.duration"),
+            [(base("interactive"), 1), (base("ready"), 1)]
+        );
+        assert_eq!(
+            testing::unit(&exporter, "browser.island.duration").as_deref(),
+            Some("ms")
         );
     }
 }

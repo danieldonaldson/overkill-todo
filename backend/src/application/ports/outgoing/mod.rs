@@ -18,7 +18,8 @@ pub mod user_repository;
 
 pub use account_lifecycle::AccountLifecycleRepository;
 pub use client_report_sink::{
-    ClientErrorReport, ClientPageLoadReport, ClientReportSink, ClientVitalReport,
+    ClientErrorReport, ClientIslandReport, ClientNavigationReport, ClientPageLoadReport,
+    ClientReportSink, ClientVitalReport,
 };
 pub use code_generator::CodeGenerator;
 

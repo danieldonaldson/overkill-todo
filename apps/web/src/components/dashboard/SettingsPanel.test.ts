@@ -27,6 +27,16 @@ vi.mock('../../lib/navigation', () => ({
   redirect: vi.fn(),
 }))
 
+// The panel's timing handle, with `markReady` observable (OT-006 Decision 6b).
+const markReady = vi.hoisted(() => vi.fn())
+vi.mock('../../lib/telemetry/island-timing', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/telemetry/island-timing')>()
+  return {
+    ...actual,
+    createIslandTiming: () => Object.assign(new actual.IslandTimer(), { markReady }),
+  }
+})
+
 import { api } from '../../lib/api'
 import { resetSession, session } from '../../lib/auth/session.svelte'
 import { getSessionUser } from '../../lib/auth/session'
@@ -279,5 +289,36 @@ describe('SettingsPanel', () => {
     expect(session.user).toBeNull()
     expect(getSessionUser()).toBeNull()
     expect(getTokenExpiry()).toBeNull()
+  })
+})
+
+describe('SettingsPanel timing', () => {
+  beforeEach(() => {
+    resetSession()
+    vi.clearAllMocks()
+  })
+
+  it('is ready once, when it shows the account', async () => {
+    const screen = await render(SettingsPanel)
+    await expect.element(screen.getByTestId('settings-skeleton')).toBeInTheDocument()
+    expect(markReady).not.toHaveBeenCalled()
+
+    setCurrentUser(passwordUser)
+    await expect.element(screen.getByText('test@example.com')).toBeInTheDocument()
+    await vi.waitFor(() => expect(markReady).toHaveBeenCalledTimes(1))
+    // A later change to the account isn't a new "ready".
+    session.patch({ has_password: false })
+    await expect.element(screen.getByText('Set a password')).toBeInTheDocument()
+    expect(markReady).toHaveBeenCalledTimes(1)
+  })
+
+  it('is ready once, when the account check fails (the error state)', async () => {
+    setTokenExpiry(Date.now() + 60_000)
+    vi.mocked(api.auth.me).mockRejectedValue(new TypeError('Failed to fetch'))
+    const screen = await render(SettingsPanel)
+    await session.revalidate()
+    await vi.waitFor(() => expect(session.status).toBe('unreachable'))
+    await expect.element(screen.getByTestId('settings-skeleton')).toBeInTheDocument()
+    await vi.waitFor(() => expect(markReady).toHaveBeenCalledTimes(1))
   })
 })

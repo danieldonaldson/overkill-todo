@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::{Validate, ValidationError, ValidationErrors};
 
-use super::schema_enums::{ClientErrorKind, Rating, VitalName};
+use super::schema_enums::{
+    ClientErrorKind, IslandStage, NavOutcome, NavType, Rating, ViewTransitionResult, VitalName,
+};
 
 /// Most events one batch may carry.
 pub const MAX_EVENTS_PER_BATCH: usize = 30;
@@ -26,6 +28,9 @@ pub const MAX_ATTRIBUTION_CHARS: usize = 100;
 /// Largest Web Vital value accepted: 10 minutes in ms, far above any real
 /// measurement and any CLS score.
 pub const MAX_VITAL_VALUE: f64 = 600_000.0;
+/// Longest navigation or panel duration accepted, in ms: 10 minutes, like
+/// [`MAX_VITAL_VALUE`].
+pub const MAX_DURATION_MS: f64 = 600_000.0;
 
 /// `true` when `value` is exactly `len` lowercase hex characters.
 fn is_lower_hex(value: &str, len: usize) -> bool {
@@ -107,6 +112,12 @@ pub enum ClientEvent {
     /// One Web Vital: LCP, FCP or TTFB for a full load, INP or CLS for a page
     /// visit. Sampled.
     Vital(ClientVitalEvent),
+    /// A full page load or an in-site navigation, with its timings (Decision
+    /// 6a). Sampled.
+    Navigation(ClientNavigationEvent),
+    /// When an island became interactive or ready, from the start of the
+    /// navigation that showed it (Decision 6b). Sampled.
+    Island(ClientIslandEvent),
 }
 
 impl Validate for ClientEvent {
@@ -115,6 +126,8 @@ impl Validate for ClientEvent {
             Self::Error(event) => event.validate(),
             Self::PageLoad => Ok(()),
             Self::Vital(event) => event.validate(),
+            Self::Navigation(event) => event.validate(),
+            Self::Island(event) => event.validate(),
         }
     }
 }
@@ -139,6 +152,67 @@ pub struct ClientVitalEvent {
     #[validate(length(max = 100, message = "attribution must be at most 100 characters"))]
     #[serde(default)]
     pub attribution: Option<String>,
+}
+
+/// A navigation to the batch's page (Decision 6a). The field is `nav_type`
+/// because the event's own tag is `type`.
+///
+/// Any combination the schema allows is accepted; the server labels it
+/// consistently: a `hard` load is always `view_transition=none` with no phases,
+/// an `aborted` navigation has no durations, and a navigation without the
+/// timings it needs is counted but not timed.
+// `Serialize` for the same reason as `ClientErrorEvent`.
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
+pub struct ClientNavigationEvent {
+    pub nav_type: NavType,
+    pub view_transition: ViewTransitionResult,
+    pub outcome: NavOutcome,
+
+    /// From the start of the navigation (0 for a full load) to the page being
+    /// usable and any transition having finished.
+    #[schema(minimum = 0, maximum = 600_000)]
+    #[validate(range(min = 0.0, max = 600_000.0, message = "total_ms must be 0-600000"))]
+    #[serde(default)]
+    pub total_ms: Option<f64>,
+
+    /// Fetching the new page.
+    #[schema(minimum = 0, maximum = 600_000)]
+    #[validate(range(min = 0.0, max = 600_000.0, message = "fetch_ms must be 0-600000"))]
+    #[serde(default)]
+    pub fetch_ms: Option<f64>,
+
+    /// Swapping it into the document.
+    #[schema(minimum = 0, maximum = 600_000)]
+    #[validate(range(min = 0.0, max = 600_000.0, message = "swap_ms must be 0-600000"))]
+    #[serde(default)]
+    pub swap_ms: Option<f64>,
+
+    /// The view transition's animation, when it ran.
+    #[schema(minimum = 0, maximum = 600_000)]
+    #[validate(range(min = 0.0, max = 600_000.0, message = "transition_ms must be 0-600000"))]
+    #[serde(default)]
+    pub transition_ms: Option<f64>,
+}
+
+/// One island timing mark on the batch's page (Decision 6b).
+// `Serialize` for the same reason as `ClientErrorEvent`.
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
+pub struct ClientIslandEvent {
+    /// The island's `TelemetryBoundary` name. Mapped to the island allowlist
+    /// on the server; anything unknown is `other`.
+    #[schema(max_length = 100)]
+    #[validate(length(max = 100, message = "name must be at most 100 characters"))]
+    pub name: String,
+
+    pub stage: IslandStage,
+
+    /// The kind of navigation that showed the island.
+    pub nav_type: NavType,
+
+    /// From the start of that navigation, in ms.
+    #[schema(minimum = 0, maximum = 600_000)]
+    #[validate(range(min = 0.0, max = 600_000.0, message = "ms must be 0-600000"))]
+    pub ms: f64,
 }
 
 /// A browser error, deduplicated within its page load (`count` repeats).
@@ -316,7 +390,7 @@ mod tests {
     #[test]
     fn rejects_an_unknown_kind_or_event_type() {
         assert!(parse(with_field("kind", json!("warning"))).is_err());
-        assert!(parse(with_field("type", json!("navigation"))).is_err());
+        assert!(parse(with_field("type", json!("navigate"))).is_err());
     }
 
     #[test]
@@ -407,5 +481,100 @@ mod tests {
         assert!(parse(batch_with(&[event.clone()])).is_ok());
         event["attribution"] = json!("x".repeat(MAX_ATTRIBUTION_CHARS + 1));
         assert!(parse(batch_with(&[event])).is_err());
+    }
+
+    fn navigation(nav_type: &str, view_transition: &str, outcome: &str) -> Value {
+        json!({
+            "type": "navigation",
+            "nav_type": nav_type,
+            "view_transition": view_transition,
+            "outcome": outcome,
+            "total_ms": 420.5,
+            "fetch_ms": 120.0,
+            "swap_ms": 8.0,
+            "transition_ms": 250.0
+        })
+    }
+
+    fn island(name: &str, stage: &str, nav_type: &str) -> Value {
+        json!({ "type": "island", "name": name, "stage": stage, "nav_type": nav_type, "ms": 310.0 })
+    }
+
+    #[test]
+    fn accepts_navigations_and_island_timings() {
+        let batch = parse(batch_with(&[
+            navigation("soft", "ran", "completed"),
+            navigation("soft", "unsupported", "aborted"),
+            json!({ "type": "navigation", "nav_type": "hard", "view_transition": "none",
+                    "outcome": "completed", "total_ms": 900.0 }),
+            island("SettingsPanel", "interactive", "soft"),
+            island("HomePanel", "ready", "hard"),
+        ]))
+        .unwrap();
+        let ClientEvent::Navigation(nav) = &batch.events[0] else {
+            panic!("not a navigation");
+        };
+        assert_eq!(nav.nav_type, NavType::Soft);
+        assert_eq!(nav.view_transition, ViewTransitionResult::Ran);
+        assert_eq!(nav.outcome, NavOutcome::Completed);
+        assert_eq!(nav.total_ms, Some(420.5));
+        let ClientEvent::Navigation(hard) = &batch.events[2] else {
+            panic!("not a navigation");
+        };
+        assert_eq!(hard.fetch_ms, None);
+        let ClientEvent::Island(ready) = &batch.events[4] else {
+            panic!("not an island");
+        };
+        assert_eq!(ready.stage, IslandStage::Ready);
+        assert_eq!(ready.nav_type, NavType::Hard);
+    }
+
+    #[test]
+    fn rejects_unknown_navigation_kinds_results_outcomes_and_stages() {
+        for bad in [
+            navigation("reload", "ran", "completed"),
+            navigation("Soft", "ran", "completed"),
+            navigation("soft", "finished", "completed"),
+            navigation("soft", "ran", "failed"),
+            island("SettingsPanel", "hydrated", "soft"),
+            island("SettingsPanel", "ready", "back"),
+        ] {
+            assert!(
+                parse(batch_with(std::slice::from_ref(&bad))).is_err(),
+                "{bad} accepted"
+            );
+        }
+        // A navigation's kind is `nav_type`; `type` is the event's tag.
+        let mut tagged = navigation("soft", "ran", "completed");
+        tagged.as_object_mut().unwrap().remove("nav_type");
+        assert!(parse(batch_with(&[tagged])).is_err());
+    }
+
+    #[test]
+    fn rejects_negative_or_huge_durations() {
+        for field in ["total_ms", "fetch_ms", "swap_ms", "transition_ms"] {
+            let mut ok = navigation("soft", "ran", "completed");
+            ok[field] = json!(MAX_DURATION_MS);
+            assert!(parse(batch_with(&[ok])).is_ok(), "{field}");
+            for bad in [-1.0, MAX_DURATION_MS + 1.0] {
+                let mut nav = navigation("soft", "ran", "completed");
+                nav[field] = json!(bad);
+                assert!(parse(batch_with(&[nav])).is_err(), "{field} {bad}");
+            }
+        }
+        let mut slow = island("HomePanel", "ready", "hard");
+        slow["ms"] = json!(MAX_DURATION_MS + 1.0);
+        assert!(parse(batch_with(&[slow])).is_err());
+        let mut negative = island("HomePanel", "ready", "hard");
+        negative["ms"] = json!(-0.5);
+        assert!(parse(batch_with(&[negative])).is_err());
+    }
+
+    #[test]
+    fn island_timing_name_is_capped_at_100_characters() {
+        let long = "x".repeat(MAX_ISLAND_CHARS);
+        assert!(parse(batch_with(&[island(&long, "ready", "soft")])).is_ok());
+        let longer = "x".repeat(MAX_ISLAND_CHARS + 1);
+        assert!(parse(batch_with(&[island(&longer, "ready", "soft")])).is_err());
     }
 }

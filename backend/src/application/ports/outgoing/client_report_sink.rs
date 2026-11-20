@@ -1,6 +1,8 @@
 //! Where accepted browser reports go (OT-006 Decision 2).
 
-use crate::application::dto::{ClientErrorKind, Rating, VitalName};
+use crate::application::dto::{
+    ClientErrorKind, IslandStage, NavOutcome, NavType, Rating, ViewTransitionResult, VitalName,
+};
 use crate::domain::value_objects::UserId;
 
 /// A browser error, already validated, scrubbed and normalised by
@@ -67,8 +69,40 @@ pub struct ClientVitalReport {
     pub attribution: Option<String>,
 }
 
-/// Records browser reports: errors as log events, counts and
-/// Web Vitals as metrics.
+/// A navigation to `page` (Decision 6a).
+///
+/// The use case has already made its labels consistent: a `hard` load has `view_transition=None` and no phases, an
+/// aborted navigation has no durations, and a duration is `None` whenever it
+/// must not be recorded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientNavigationReport {
+    /// Destination page template from the allowlist, or `other`.
+    pub page: &'static str,
+    pub device_class: &'static str,
+    pub nav_type: NavType,
+    pub view_transition: ViewTransitionResult,
+    pub outcome: NavOutcome,
+    pub total_ms: Option<f64>,
+    pub fetch_ms: Option<f64>,
+    pub swap_ms: Option<f64>,
+    pub transition_ms: Option<f64>,
+}
+
+/// One island timing mark (Decision 6b).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientIslandReport {
+    /// Island name from the allowlist, or `other`.
+    pub island: &'static str,
+    /// Page template from the allowlist, or `other`.
+    pub page: &'static str,
+    pub stage: IslandStage,
+    pub nav_type: NavType,
+    pub device_class: &'static str,
+    pub ms: f64,
+}
+
+/// Records browser reports: errors as log events; counts, Web
+/// Vitals, navigations and island timings as metrics.
 ///
 /// # Implementors
 ///
@@ -80,6 +114,10 @@ pub trait ClientReportSink: Send + Sync {
     fn page_load(&self, report: &ClientPageLoadReport);
     /// Record one Web Vital measurement.
     fn vital(&self, report: &ClientVitalReport);
+    /// Record one navigation: counted if in-site, timed where it has timings.
+    fn navigation(&self, report: &ClientNavigationReport);
+    /// Record one island timing mark.
+    fn island(&self, report: &ClientIslandReport);
     /// Count `n` events that were over the recording budget and not recorded.
     fn dropped(&self, n: u64);
 }

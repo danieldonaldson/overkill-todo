@@ -16,9 +16,13 @@ pub use admin_dto::*;
 pub use auth_dto::*;
 
 pub use client_telemetry_dto::{
-    ClientErrorEvent, ClientEvent, ClientReportBatch, ClientVitalEvent,
+    ClientErrorEvent, ClientEvent, ClientIslandEvent, ClientNavigationEvent, ClientReportBatch,
+    ClientVitalEvent,
 };
 
 pub use oauth_dto::*;
 pub use profile_dto::*;
-pub use schema_enums::{ClientErrorKind, OAuthProviderName, Rating, RoleName, VitalName};
+pub use schema_enums::{
+    ClientErrorKind, IslandStage, NavOutcome, NavType, OAuthProviderName, Rating, RoleName,
+    ViewTransitionResult, VitalName,
+};

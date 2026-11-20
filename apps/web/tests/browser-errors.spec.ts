@@ -165,11 +165,12 @@ test.describe('on a phone', () => {
 
     await expect.poll(() => reports.length).toBe(1)
     expect(reports[0].page).toBe('/register')
-    // Two errors and the page load (vitals have their own flow in web-vitals.spec.ts).
+    // Two errors and the page load (sampled vitals and timings have their own
+    // flows in web-vitals.spec.ts and navigation-timing.spec.ts).
     expect(
       reports[0].events
         .map((e) => e.type)
-        .filter((t) => t !== 'vital')
+        .filter((t) => t === 'error' || t === 'page_load')
         .sort()
     ).toEqual(['error', 'error', 'page_load'])
   })

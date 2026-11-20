@@ -5,11 +5,19 @@
   // replaced by a short message with "Try again", which rebuilds it in place.
   // The message never shows the error, its stack or a trace ID.
   //
+  // It also times the island (Decision 6b): **interactive** when it mounts,
+  // **ready** when the panel calls `timing.markReady()` (see island-timing.ts),
+  // or at mount for an island with nothing to load (no `timing` passed).
+  // "Try again" rebuilds the content, not the boundary, so it isn't re-timed,
+  // and a persisted island (the dashboard header) is timed only when it first
+  // mounts.
+  //
   // `name` must be in backend/tests/fixtures/client_islands.json; the guard
   // test in islands.test.ts checks every `client:*` island uses one.
-  import type { Snippet } from 'svelte'
+  import { onMount, type Snippet } from 'svelte'
   import { Button } from '$lib/components/ui/button'
   import { reportBoundaryError } from './index'
+  import { IslandTimer } from './island-timing'
   import TestCrashHook from './TestCrashHook.svelte'
 
   // A constant per build: false in release images, so the hook never renders.
@@ -20,10 +28,26 @@
     name: string
     /** `none` for islands with no UI of their own (nothing to replace). */
     fallback?: 'message' | 'none'
+    /**
+     * From `createIslandTiming()`, for a panel that loads data and calls
+     * `markReady()` itself. Omit it when the island has nothing to load.
+     */
+    timing?: IslandTimer
     children: Snippet
   }
 
-  let { name, fallback = 'message', children }: Props = $props()
+  let { name, fallback = 'message', timing, children }: Props = $props()
+
+  // Fixed for the island's life: read once, like `name` below.
+  // svelte-ignore state_referenced_locally
+  const given = timing
+  const timer = given ?? new IslandTimer()
+
+  onMount(() => {
+    timer.attach(name)
+    timer.markInteractive()
+    if (!given) timer.markReady()
+  })
 
   function onerror(error: unknown) {
     reportBoundaryError(name, error)

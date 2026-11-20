@@ -710,7 +710,64 @@ export interface components {
         } | (components["schemas"]["ClientVitalEvent"] & {
             /** @enum {string} */
             type: "vital";
+        }) | (components["schemas"]["ClientNavigationEvent"] & {
+            /** @enum {string} */
+            type: "navigation";
+        }) | (components["schemas"]["ClientIslandEvent"] & {
+            /** @enum {string} */
+            type: "island";
         });
+        /** @description One island timing mark on the batch's page (Decision 6b). */
+        ClientIslandEvent: {
+            /**
+             * Format: double
+             * @description From the start of that navigation, in ms.
+             */
+            ms: number;
+            /**
+             * @description The island's `TelemetryBoundary` name. Mapped to the island allowlist
+             *     on the server; anything unknown is `other`.
+             */
+            name: string;
+            /** @description The kind of navigation that showed the island. */
+            nav_type: components["schemas"]["NavType"];
+            stage: components["schemas"]["IslandStage"];
+        };
+        /**
+         * @description A navigation to the batch's page (Decision 6a). The field is `nav_type`
+         *     because the event's own tag is `type`.
+         *
+         *     Any combination the schema allows is accepted; the server labels it
+         *     consistently: a `hard` load is always `view_transition=none` with no phases,
+         *     an `aborted` navigation has no durations, and a navigation without the
+         *     timings it needs is counted but not timed.
+         */
+        ClientNavigationEvent: {
+            /**
+             * Format: double
+             * @description Fetching the new page.
+             */
+            fetch_ms?: number | null;
+            nav_type: components["schemas"]["NavType"];
+            outcome: components["schemas"]["NavOutcome"];
+            /**
+             * Format: double
+             * @description Swapping it into the document.
+             */
+            swap_ms?: number | null;
+            /**
+             * Format: double
+             * @description From the start of the navigation (0 for a full load) to the page being
+             *     usable and any transition having finished.
+             */
+            total_ms?: number | null;
+            /**
+             * Format: double
+             * @description The view transition's animation, when it ran.
+             */
+            transition_ms?: number | null;
+            view_transition: components["schemas"]["ViewTransitionResult"];
+        };
         /** @description One batch of browser reports from one page load. */
         ClientReportBatch: {
             /** @description The events, at most 30. */
@@ -802,6 +859,11 @@ export interface components {
             message: string;
             success: boolean;
         };
+        /**
+         * @description Which moment of a panel's loading an island timing marks (Decision 6b).
+         * @enum {string}
+         */
+        IslandStage: "interactive" | "ready";
         /** @description A linked OAuth provider account, included in the data export. */
         LinkedOAuthAccountExport: {
             /**
@@ -826,6 +888,16 @@ export interface components {
         LogoutResponse: {
             success: boolean;
         };
+        /**
+         * @description Whether a navigation reached its page.
+         * @enum {string}
+         */
+        NavOutcome: "completed" | "aborted";
+        /**
+         * @description How the browser reached a page (OT-006 Decision 6a).
+         * @enum {string}
+         */
+        NavType: "hard" | "soft";
         /** @description Request body for storing the OAuth device binding cookie before redirecting. */
         OAuthDeviceFingerprintRequest: {
             /**
@@ -1001,6 +1073,11 @@ export interface components {
             /** @description Short-lived JWT token for password reset (5 min expiry). */
             reset_token: string;
         };
+        /**
+         * @description What happened to an in-site navigation's view transition.
+         * @enum {string}
+         */
+        ViewTransitionResult: "ran" | "skipped" | "unsupported" | "none";
         /**
          * @description A Web Vital the browser measures (OT-006 Decision 6). Like
          *     [`ClientErrorKind`] it is the field's real type, so an unknown name is

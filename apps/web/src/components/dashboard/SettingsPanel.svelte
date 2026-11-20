@@ -1,5 +1,6 @@
 <script lang="ts">
   import TelemetryBoundary from '$lib/telemetry/TelemetryBoundary.svelte'
+  import { createIslandTiming } from '$lib/telemetry/island-timing'
   import CircleAlertIcon from '@lucide/svelte/icons/circle-alert'
   import CircleCheckIcon from '@lucide/svelte/icons/circle-check'
   import MailIcon from '@lucide/svelte/icons/mail'
@@ -190,9 +191,17 @@
     // Clears local state first, then waits at most 1 s for the server (D6).
     await session.signOut()
   }
+
+  // Ready once it shows the Member (content) or the session check failed
+  // (the header's error banner); until then it shows skeletons.
+  const timing = createIslandTiming()
+  const ready = $derived(session.user !== null || session.status === 'unreachable')
+  $effect(() => {
+    if (ready) timing.markReady()
+  })
 </script>
 
-<TelemetryBoundary name="SettingsPanel">
+<TelemetryBoundary name="SettingsPanel" {timing}>
   <section class="mx-auto flex w-full max-w-2xl flex-col gap-6">
     <div>
       <h1 class="font-display text-2xl font-semibold tracking-tight">Settings</h1>

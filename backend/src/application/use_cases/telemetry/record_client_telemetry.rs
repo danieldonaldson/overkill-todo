@@ -3,6 +3,8 @@
 //!
 //! 1. Map `page` onto the site's page templates, `island` onto the islands,
 //!    and `release` onto this replica's release labels, each with `other`.
+//!    Make navigation labels consistent (a full load has no transition, an
+//!    aborted navigation no durations).
 //! 2. Derive the browser family and device class from the `User-Agent`.
 //! 3. Re-scrub every text field ([`super::scrub`]).
 //! 4. Fingerprint each error for grouping.
@@ -17,11 +19,13 @@ use crate::application::dto::client_telemetry_dto::{
     MAX_ATTRIBUTION_CHARS, MAX_MESSAGE_CHARS, MAX_STACK_CHARS,
 };
 use crate::application::dto::{
-    ClientErrorEvent, ClientEvent, ClientReportBatch, ClientVitalEvent, Rating,
+    ClientErrorEvent, ClientEvent, ClientIslandEvent, ClientNavigationEvent, ClientReportBatch,
+    ClientVitalEvent, NavOutcome, NavType, Rating, ViewTransitionResult,
 };
 use crate::application::ports::incoming::RecordClientTelemetry;
 use crate::application::ports::outgoing::{
-    ClientErrorReport, ClientPageLoadReport, ClientReportSink, ClientVitalReport,
+    ClientErrorReport, ClientIslandReport, ClientNavigationReport, ClientPageLoadReport,
+    ClientReportSink, ClientVitalReport,
 };
 use crate::domain::value_objects::UserId;
 use crate::shared::fingerprint::generate_error_fingerprint;
@@ -290,6 +294,15 @@ impl RecordClientTelemetryUseCase {
                     self.sink
                         .vital(&vital_report(vital, page, device_class, user.is_some()));
                 }
+                ClientEvent::Navigation(navigation) => {
+                    if let Some(report) = navigation_report(&navigation, page, device_class) {
+                        self.sink.navigation(&report);
+                    }
+                }
+                ClientEvent::Island(island) => {
+                    self.sink
+                        .island(&island_report(&island, page, device_class));
+                }
             }
         }
         if dropped > 0 {
@@ -366,6 +379,68 @@ fn vital_report(
     }
 }
 
+/// Make a navigation's labels and timings consistent (Decision 6a), so every
+/// combination the schema allows maps onto the bounded label set:
+///
+/// - a full load (`hard`) is always `view_transition=none`, with a total and
+///   no phases; it can't be aborted, so an aborted one is recorded nowhere;
+/// - an aborted in-site navigation has no durations;
+/// - an in-site navigation claiming `view_transition=none` contradicts itself:
+///   it is counted, not timed;
+/// - the transition phase exists only when the transition ran.
+fn navigation_report(
+    nav: &ClientNavigationEvent,
+    page: &'static str,
+    device_class: &'static str,
+) -> Option<ClientNavigationReport> {
+    let report = |view_transition, total_ms, fetch_ms, swap_ms, transition_ms| {
+        Some(ClientNavigationReport {
+            page,
+            device_class,
+            nav_type: nav.nav_type,
+            view_transition,
+            outcome: nav.outcome,
+            total_ms,
+            fetch_ms,
+            swap_ms,
+            transition_ms,
+        })
+    };
+    match (nav.nav_type, nav.outcome, nav.view_transition) {
+        (NavType::Hard, NavOutcome::Aborted, _) => None,
+        (NavType::Hard, NavOutcome::Completed, _) => {
+            report(ViewTransitionResult::None, nav.total_ms, None, None, None)
+        }
+        (NavType::Soft, NavOutcome::Aborted, vt) => report(vt, None, None, None, None),
+        (NavType::Soft, NavOutcome::Completed, ViewTransitionResult::None) => {
+            report(ViewTransitionResult::None, None, None, None, None)
+        }
+        (NavType::Soft, NavOutcome::Completed, vt) => report(
+            vt,
+            nav.total_ms,
+            nav.fetch_ms,
+            nav.swap_ms,
+            nav.transition_ms
+                .filter(|_| vt == ViewTransitionResult::Ran),
+        ),
+    }
+}
+
+fn island_report(
+    island: &ClientIslandEvent,
+    page: &'static str,
+    device_class: &'static str,
+) -> ClientIslandReport {
+    ClientIslandReport {
+        island: island_template(&island.name),
+        page,
+        stage: island.stage,
+        nav_type: island.nav_type,
+        device_class,
+        ms: island.ms,
+    }
+}
+
 impl RecordClientTelemetry for RecordClientTelemetryUseCase {
     // Not instrumented: browser reports get no trace (the request has no span,
     // so a span here would start an exported trace of its own).
@@ -380,7 +455,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::application::dto::{ClientErrorKind, VitalName};
+    use crate::application::dto::{ClientErrorKind, IslandStage, VitalName};
 
     const CHROME_DESKTOP: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     const SAFARI_IPHONE: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1";
@@ -390,6 +465,8 @@ mod tests {
         errors: Mutex<Vec<ClientErrorReport>>,
         page_loads: Mutex<Vec<ClientPageLoadReport>>,
         vitals: Mutex<Vec<ClientVitalReport>>,
+        navigations: Mutex<Vec<ClientNavigationReport>>,
+        islands: Mutex<Vec<ClientIslandReport>>,
         dropped: Mutex<Vec<u64>>,
     }
 
@@ -402,6 +479,12 @@ mod tests {
         }
         fn vital(&self, report: &ClientVitalReport) {
             self.vitals.lock().unwrap().push(report.clone());
+        }
+        fn navigation(&self, report: &ClientNavigationReport) {
+            self.navigations.lock().unwrap().push(report.clone());
+        }
+        fn island(&self, report: &ClientIslandReport) {
+            self.islands.lock().unwrap().push(report.clone());
         }
         fn dropped(&self, n: u64) {
             self.dropped.lock().unwrap().push(n);
@@ -971,5 +1054,342 @@ mod tests {
             .collect();
         // `own` holds one of the 5 slots: r0-r3 take the rest.
         assert_eq!(labels, ["r0", "r1", "r2", "r3", "other", "other"]);
+    }
+
+    fn nav(
+        nav_type: NavType,
+        view_transition: ViewTransitionResult,
+        outcome: NavOutcome,
+    ) -> ClientNavigationEvent {
+        ClientNavigationEvent {
+            nav_type,
+            view_transition,
+            outcome,
+            total_ms: Some(400.0),
+            fetch_ms: Some(120.0),
+            swap_ms: Some(10.0),
+            transition_ms: Some(250.0),
+        }
+    }
+
+    fn record_navigations(
+        page: &str,
+        events: Vec<ClientNavigationEvent>,
+    ) -> Vec<ClientNavigationReport> {
+        let (uc, sink) = use_case(DEFAULT_MAX_EVENTS_PER_SEC);
+        uc.record(
+            batch(
+                page,
+                events.into_iter().map(ClientEvent::Navigation).collect(),
+            ),
+            None,
+            SAFARI_IPHONE,
+        );
+        sink.navigations.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn a_completed_soft_navigation_keeps_its_labels_and_timings() {
+        let reports = record_navigations(
+            "/dashboard/settings/",
+            vec![nav(
+                NavType::Soft,
+                ViewTransitionResult::Ran,
+                NavOutcome::Completed,
+            )],
+        );
+        assert_eq!(
+            reports,
+            [ClientNavigationReport {
+                page: "/dashboard/settings",
+                device_class: "mobile",
+                nav_type: NavType::Soft,
+                view_transition: ViewTransitionResult::Ran,
+                outcome: NavOutcome::Completed,
+                total_ms: Some(400.0),
+                fetch_ms: Some(120.0),
+                swap_ms: Some(10.0),
+                transition_ms: Some(250.0),
+            }]
+        );
+    }
+
+    #[test]
+    fn navigation_labels_are_made_consistent() {
+        let reports = record_navigations(
+            "/made-up",
+            vec![
+                // A full load claiming a transition: `none`, total only.
+                nav(
+                    NavType::Hard,
+                    ViewTransitionResult::Ran,
+                    NavOutcome::Completed,
+                ),
+                // A full load can't be aborted: recorded nowhere.
+                nav(
+                    NavType::Hard,
+                    ViewTransitionResult::None,
+                    NavOutcome::Aborted,
+                ),
+                // Aborted: counted with no durations.
+                nav(
+                    NavType::Soft,
+                    ViewTransitionResult::Skipped,
+                    NavOutcome::Aborted,
+                ),
+                // In-site with no transition at all contradicts itself: counted, not timed.
+                nav(
+                    NavType::Soft,
+                    ViewTransitionResult::None,
+                    NavOutcome::Completed,
+                ),
+                // The transition phase only exists when it ran.
+                nav(
+                    NavType::Soft,
+                    ViewTransitionResult::Unsupported,
+                    NavOutcome::Completed,
+                ),
+            ],
+        );
+        let summary: Vec<_> = reports
+            .iter()
+            .map(|r| {
+                (
+                    r.page,
+                    r.nav_type,
+                    r.view_transition,
+                    r.outcome,
+                    r.total_ms,
+                    r.fetch_ms,
+                    r.swap_ms,
+                    r.transition_ms,
+                )
+            })
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (
+                    OTHER_PAGE,
+                    NavType::Hard,
+                    ViewTransitionResult::None,
+                    NavOutcome::Completed,
+                    Some(400.0),
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    OTHER_PAGE,
+                    NavType::Soft,
+                    ViewTransitionResult::Skipped,
+                    NavOutcome::Aborted,
+                    None,
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    OTHER_PAGE,
+                    NavType::Soft,
+                    ViewTransitionResult::None,
+                    NavOutcome::Completed,
+                    None,
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    OTHER_PAGE,
+                    NavType::Soft,
+                    ViewTransitionResult::Unsupported,
+                    NavOutcome::Completed,
+                    Some(400.0),
+                    Some(120.0),
+                    Some(10.0),
+                    None
+                ),
+            ]
+        );
+    }
+
+    /// Decision 7's series bound: whatever the client sends, a timed
+    /// navigation's (`nav_type`, `view_transition`) is one of four pairs.
+    #[test]
+    fn timed_navigations_use_only_the_four_label_pairs() {
+        use ViewTransitionResult as Vt;
+        let mut events = Vec::new();
+        for nav_type in [NavType::Hard, NavType::Soft] {
+            for vt in [Vt::Ran, Vt::Skipped, Vt::Unsupported, Vt::None] {
+                for outcome in [NavOutcome::Completed, NavOutcome::Aborted] {
+                    events.push(nav(nav_type, vt, outcome));
+                }
+            }
+        }
+        let timed: BTreeSet<(&str, &str)> = record_navigations("/dashboard", events)
+            .iter()
+            .filter(|r| r.total_ms.is_some())
+            .map(|r| (r.nav_type.as_str(), r.view_transition.as_str()))
+            .collect();
+        assert_eq!(
+            timed,
+            BTreeSet::from([
+                ("hard", "none"),
+                ("soft", "ran"),
+                ("soft", "skipped"),
+                ("soft", "unsupported"),
+            ])
+        );
+    }
+
+    #[test]
+    fn island_timings_map_unknown_islands_and_pages_to_other() {
+        let (uc, sink) = use_case(DEFAULT_MAX_EVENTS_PER_SEC);
+        let island = |name: &str, stage| {
+            ClientEvent::Island(ClientIslandEvent {
+                name: name.into(),
+                stage,
+                nav_type: NavType::Soft,
+                ms: 310.0,
+            })
+        };
+        uc.record(
+            batch(
+                "/dashboard/settings",
+                vec![
+                    island("SettingsPanel", IslandStage::Interactive),
+                    island("SettingsPanel", IslandStage::Ready),
+                    island("MadeUpPanel", IslandStage::Ready),
+                ],
+            ),
+            None,
+            CHROME_DESKTOP,
+        );
+        uc.record(
+            batch("/nope", vec![island("HomePanel", IslandStage::Ready)]),
+            None,
+            CHROME_DESKTOP,
+        );
+        let islands = sink.islands.lock().unwrap().clone();
+        let summary: Vec<_> = islands
+            .iter()
+            .map(|r| (r.island, r.page, r.stage, r.nav_type, r.device_class, r.ms))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (
+                    "SettingsPanel",
+                    "/dashboard/settings",
+                    IslandStage::Interactive,
+                    NavType::Soft,
+                    "desktop",
+                    310.0
+                ),
+                (
+                    "SettingsPanel",
+                    "/dashboard/settings",
+                    IslandStage::Ready,
+                    NavType::Soft,
+                    "desktop",
+                    310.0
+                ),
+                (
+                    OTHER_PAGE,
+                    "/dashboard/settings",
+                    IslandStage::Ready,
+                    NavType::Soft,
+                    "desktop",
+                    310.0
+                ),
+                (
+                    "HomePanel",
+                    OTHER_PAGE,
+                    IslandStage::Ready,
+                    NavType::Soft,
+                    "desktop",
+                    310.0
+                ),
+            ]
+        );
+    }
+
+    /// Every label the navigation and island reports carry comes from an enum
+    /// or an allowlist, however the client fills the free-text fields.
+    #[test]
+    fn navigation_and_island_labels_come_only_from_enums_and_allowlists() {
+        let (uc, sink) = use_case(DEFAULT_MAX_EVENTS_PER_SEC);
+        for (page, island) in [
+            ("/dashboard/admin", "AdminPanel"),
+            ("/<script>", "<img onerror>"),
+            ("/dashboard?email=a@b.io", "x".repeat(100).as_str()),
+        ] {
+            uc.record(
+                batch(
+                    page,
+                    vec![
+                        ClientEvent::Navigation(nav(
+                            NavType::Soft,
+                            ViewTransitionResult::Ran,
+                            NavOutcome::Completed,
+                        )),
+                        ClientEvent::Island(ClientIslandEvent {
+                            name: island.to_string(),
+                            stage: IslandStage::Ready,
+                            nav_type: NavType::Soft,
+                            ms: 1.0,
+                        }),
+                    ],
+                ),
+                None,
+                "made-up agent",
+            );
+        }
+        let pages: BTreeSet<&str> = PAGE_TEMPLATES.iter().copied().chain([OTHER_PAGE]).collect();
+        let islands: BTreeSet<&str> = ISLAND_TEMPLATES
+            .iter()
+            .copied()
+            .chain([OTHER_PAGE])
+            .collect();
+        let devices = BTreeSet::from(["mobile", "tablet", "desktop"]);
+        for r in sink.navigations.lock().unwrap().iter() {
+            assert!(pages.contains(r.page), "{}", r.page);
+            assert!(devices.contains(r.device_class));
+        }
+        for r in sink.islands.lock().unwrap().iter() {
+            assert!(pages.contains(r.page), "{}", r.page);
+            assert!(islands.contains(r.island), "{}", r.island);
+            assert!(devices.contains(r.device_class));
+        }
+        assert_eq!(sink.navigations.lock().unwrap().len(), 3);
+        assert_eq!(sink.islands.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn navigations_and_island_timings_share_the_budget() {
+        let (uc, sink) = use_case(2);
+        let events = vec![
+            ClientEvent::Navigation(nav(
+                NavType::Hard,
+                ViewTransitionResult::None,
+                NavOutcome::Completed,
+            )),
+            ClientEvent::Island(ClientIslandEvent {
+                name: "HomePanel".into(),
+                stage: IslandStage::Interactive,
+                nav_type: NavType::Hard,
+                ms: 1.0,
+            }),
+            ClientEvent::Island(ClientIslandEvent {
+                name: "HomePanel".into(),
+                stage: IslandStage::Ready,
+                nav_type: NavType::Hard,
+                ms: 2.0,
+            }),
+        ];
+        uc.record(batch("/dashboard", events), None, CHROME_DESKTOP);
+        assert_eq!(sink.navigations.lock().unwrap().len(), 1);
+        assert_eq!(sink.islands.lock().unwrap().len(), 1);
+        assert_eq!(sink.dropped_total(), 1);
     }
 }

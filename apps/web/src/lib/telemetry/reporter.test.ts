@@ -413,3 +413,48 @@ describe('beaconSend', () => {
     await Promise.resolve()
   })
 })
+
+describe('Reporter navigations and island timings', () => {
+  it('queues them for the page they belong to, never merged', () => {
+    const { reporter, sent } = setup()
+    const nav = {
+      nav_type: 'soft' as const,
+      view_transition: 'ran' as const,
+      outcome: 'completed' as const,
+      total_ms: 400,
+      fetch_ms: 120,
+    }
+    reporter.navigation(nav, '/dashboard/settings/')
+    reporter.navigation(nav, '/dashboard/settings')
+    reporter.island(
+      { name: 'SettingsPanel', stage: 'ready', nav_type: 'soft', ms: 310.6 },
+      '/dashboard/settings'
+    )
+    reporter.flush()
+    expect(sent).toHaveLength(1)
+    expect(sent[0].page).toBe('/dashboard/settings')
+    expect(sent[0].events).toEqual([
+      { type: 'navigation', ...nav },
+      { type: 'navigation', ...nav },
+      { type: 'island', name: 'SettingsPanel', stage: 'ready', nav_type: 'soft', ms: 311 },
+    ])
+  })
+
+  it('drops values the server would refuse, so the rest of the batch still goes', () => {
+    const { reporter, sent, events } = setup()
+    reporter.island({ name: 'HomePanel', stage: 'ready', nav_type: 'hard', ms: 600_001 }, '/login')
+    reporter.island({ name: 'HomePanel', stage: 'ready', nav_type: 'hard', ms: NaN }, '/login')
+    reporter.navigation(
+      { nav_type: 'hard', view_transition: 'none', outcome: 'completed', total_ms: 700_000 },
+      '/login'
+    )
+    reporter.navigation(
+      { nav_type: 'soft', view_transition: 'ran', outcome: 'completed', fetch_ms: -1 },
+      '/login'
+    )
+    reporter.capture(boom())
+    reporter.flush()
+    expect(sent.flatMap((b) => b.events).map((e) => e.type)).toEqual(['error'])
+    expect(events()).toHaveLength(1)
+  })
+})

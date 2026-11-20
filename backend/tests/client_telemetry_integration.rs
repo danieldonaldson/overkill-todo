@@ -680,3 +680,155 @@ async fn unknown_vital_names_and_ratings_get_a_400(pool: PgPool) {
     }
     assert_eq!(h.histogram("browser.web_vital").len(), 0);
 }
+
+#[sqlx::test(migrations = "./migrations")]
+async fn navigations_are_timed_counted_and_labelled_consistently(pool: PgPool) {
+    let h = Harness::new(pool, 200);
+    let (status, body) = h
+        .post_json(
+            &batch(
+                "/dashboard/settings",
+                &[
+                    json!({ "type": "navigation", "nav_type": "soft", "view_transition": "ran",
+                            "outcome": "completed", "total_ms": 420.0, "fetch_ms": 120.0,
+                            "swap_ms": 8.0, "transition_ms": 250.0 }),
+                ],
+            ),
+            &[],
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(body, "");
+    h.post_json(
+        &batch(
+            "/dashboard/admin",
+            &[
+                json!({ "type": "navigation", "nav_type": "soft", "view_transition": "skipped",
+                      "outcome": "aborted", "total_ms": 50.0 }),
+            ],
+        ),
+        &[],
+    )
+    .await;
+    // A full load claiming a transition is labelled `none`; a made-up page is `other`.
+    h.post_json(
+        &batch(
+            "/made-up",
+            &[
+                json!({ "type": "navigation", "nav_type": "hard", "view_transition": "ran",
+                      "outcome": "completed", "total_ms": 900.0, "fetch_ms": 1.0 }),
+            ],
+        ),
+        &[],
+    )
+    .await;
+
+    assert_eq!(
+        h.histogram("browser.navigation.duration"),
+        [
+            (
+                attrs(&[
+                    ("device_class", "desktop"),
+                    ("page", "/dashboard/settings"),
+                    ("type", "soft"),
+                    ("view_transition", "ran"),
+                ]),
+                1
+            ),
+            (
+                attrs(&[
+                    ("device_class", "desktop"),
+                    ("page", "other"),
+                    ("type", "hard"),
+                    ("view_transition", "none"),
+                ]),
+                1
+            ),
+        ]
+    );
+    assert_eq!(
+        h.histogram("browser.navigation.phase.duration"),
+        ["fetch", "swap", "transition"]
+            .iter()
+            .map(|phase| (
+                attrs(&[
+                    ("device_class", "desktop"),
+                    ("page", "/dashboard/settings"),
+                    ("phase", phase),
+                ]),
+                1
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        h.counter("browser.navigation"),
+        [
+            (
+                attrs(&[("outcome", "aborted"), ("page", "/dashboard/admin")]),
+                1
+            ),
+            (
+                attrs(&[("outcome", "completed"), ("page", "/dashboard/settings")]),
+                1
+            ),
+        ]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn island_timings_are_recorded_and_made_up_panels_are_other(pool: PgPool) {
+    let h = Harness::new(pool, 200);
+    let (status, _) = h
+        .post_json(
+            &batch(
+                "/dashboard/admin",
+                &[
+                    json!({ "type": "island", "name": "AdminPanel", "stage": "interactive",
+                            "nav_type": "soft", "ms": 60.0 }),
+                    json!({ "type": "island", "name": "AdminPanel", "stage": "ready",
+                            "nav_type": "soft", "ms": 340.0 }),
+                    json!({ "type": "island", "name": "MadeUpPanel", "stage": "ready",
+                            "nav_type": "hard", "ms": 10.0 }),
+                ],
+            ),
+            &[],
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let labels = |island: &str, stage: &str, nav_type: &str| {
+        attrs(&[
+            ("device_class", "desktop"),
+            ("island", island),
+            ("nav_type", nav_type),
+            ("page", "/dashboard/admin"),
+            ("stage", stage),
+        ])
+    };
+    assert_eq!(
+        h.histogram("browser.island.duration"),
+        [
+            (labels("AdminPanel", "interactive", "soft"), 1),
+            (labels("AdminPanel", "ready", "soft"), 1),
+            (labels("other", "ready", "hard"), 1),
+        ]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn unknown_navigation_kinds_transitions_outcomes_and_stages_get_a_400(pool: PgPool) {
+    let h = Harness::new(pool, 200);
+    for event in [
+        json!({ "type": "navigation", "nav_type": "reload", "view_transition": "ran", "outcome": "completed" }),
+        json!({ "type": "navigation", "nav_type": "soft", "view_transition": "animated", "outcome": "completed" }),
+        json!({ "type": "navigation", "nav_type": "soft", "view_transition": "ran", "outcome": "failed" }),
+        json!({ "type": "island", "name": "HomePanel", "stage": "hydrated", "nav_type": "hard", "ms": 1.0 }),
+    ] {
+        let (status, _) = h
+            .post_json(&batch("/dashboard", std::slice::from_ref(&event)), &[])
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{event}");
+    }
+    assert_eq!(h.histogram("browser.navigation.duration").len(), 0);
+    assert_eq!(h.histogram("browser.island.duration").len(), 0);
+    assert_eq!(h.counter("browser.navigation").len(), 0);
+}
