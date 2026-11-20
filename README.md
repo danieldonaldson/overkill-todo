@@ -271,7 +271,10 @@ session, never from the report).
   boundary and its name in `backend/tests/fixtures/client_islands.json`; the
   guard test (`islands.test.ts`) and the backend's allowlist test fail
   otherwise. In `astro dev` and `just e2e` builds,
-  `window.__otCrashIsland = '<name>'` crashes that island on purpose.
+  `window.__otCrashIsland = '<name>'` crashes that island on purpose. A panel
+  that loads data also creates `createIslandTiming()`, passes it as the
+  boundary's `timing` and calls `timing.markReady()` once it first shows its
+  content, empty state or error state (see Navigations and panels).
 - **API failures.** `HttpClient` reports a 5xx or an unreachable server (never a
   4xx) as `kind: api`, with the route template (pass `route` for paths with
   parameters, e.g. `/admin/users/{id}/role`), the status and the response's
@@ -294,6 +297,20 @@ session, never from the report).
   compared by time: `browser.release_seen` marks each release's first page
   load on the Frontend dashboard, which compares the 24 h before and after
   the selected release. Errors and page loads are never sampled.
+- **Navigations and panels.** The same sampled page loads time every
+  navigation (`lib/telemetry/navigation.ts`, from the ClientRouter lifecycle):
+  full loads as `hard`, in-site ones as `soft` with fetch, swap and
+  view-transition phases and whether the transition ran, was skipped or is
+  unsupported. A navigation interrupted by another counts as aborted for where
+  it was heading. They go to `browser.navigation.duration`,
+  `browser.navigation.phase.duration` and the `browser.navigation` counter
+  (in-site only). Each island's boundary records when it became interactive
+  and ready, from the start of the navigation that showed it, in
+  `browser.island.duration`; an island with nothing to load is ready when it
+  mounts, and marks from a navigation the Member already left are dropped.
+  `BrowserNavigationSlow` warns when p75 in-site navigation time to a
+  dashboard page stays over 1 s for an hour, with at least 50 completed
+  navigations an hour.
 
 - **Privacy.** The browser scrubs each report before sending it, and the
   backend scrubs it again: query strings and fragments are cut from every

@@ -130,6 +130,23 @@ gets `400 bot_check_failed` and that "Bot-check rejections by form" rises for
 `sign_in`. Record each auth alert that fires in the first month, and
 whether it was a real attack, in the OT-007 design's Hypothesis.
 
+Browser errors and performance (OT-006) on the first deploy:
+
+1. Add a Cloudflare rate-limiting rule for `/api/v1/client-telemetry` per
+   client IP. Until then the backend's per-replica budget
+   (`CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC`) is the only limit: a flood can crowd
+   out real reports but can't grow storage or series.
+2. Build the production web image with `RELEASE=<sha>` (CI passes the commit
+   SHA), so reports carry the release and `just decode-stack <sha>` finds its
+   `web-sourcemaps-<sha>` artifact.
+3. Set `PUBLIC_RUM_SAMPLE_RATE` for production (unset means every page load;
+   lower it once traffic grows). Errors and page loads are never sampled.
+4. Roll the config (`dc restart vmalert grafana`) and the images, run
+   `just smoke https://<domain>`, then throw a deliberate error on a staging
+   page (`setTimeout(() => { throw new Error('ot006 check') })` in the
+   console) and check that it reaches the Frontend dashboard within a minute
+   and that `just decode-stack <sha>` turns its stack into `src/…` lines.
+
 Security (OT-010), before launch:
 
 1. Add sign-in rate limiting at the edge (Traefik), per address and per

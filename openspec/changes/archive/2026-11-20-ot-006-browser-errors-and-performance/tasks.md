@@ -175,12 +175,12 @@ From `specs/observability/spec.md`:
 
 ## 5. Feature done
 
-- [ ] 5.1 Before or at the first production deploy:
+- [x] 5.1 Before or at the first production deploy:
   - add a Cloudflare rate-limiting rule for `/api/v1/client-telemetry` per client IP;
   - pass `RELEASE=<sha>` to the production web image build;
   - set `PUBLIC_RUM_SAMPLE_RATE` for production;
   - check with `just smoke <url>` and a deliberate error on a staging page that a report reaches production Grafana and `just decode-stack` decodes it.
 
   Record these in the deploy README's first-deploy checklist.
-- [ ] 5.2 Update `README.md` and `backend/ARCHITECTURE.md` for anything slices 2–4 changed (`PUBLIC_RUM_SAMPLE_RATE`, the boundary rule for new islands, the alerts). Verify: the docs read correctly.
-- [ ] 5.3 Confirm the observability spec delta was merged cleanly with whatever the business-metrics change archived (both touch `openspec/specs/observability/spec.md`), then archive this change.
+- [x] 5.2 Update `README.md` and `backend/ARCHITECTURE.md` for anything slices 2–4 changed (`PUBLIC_RUM_SAMPLE_RATE`, the boundary rule for new islands, the alerts). Verify: the docs read correctly.
+- [x] 5.3 Confirm the observability spec delta was merged cleanly with whatever the business-metrics change archived (both touch `openspec/specs/observability/spec.md`), then archive this change.

@@ -255,7 +255,12 @@ application and domain layers only use `tracing` macros.
   `ClientReportSink` adapter in `telemetry/client_reports.rs` logs
   `client_error` events and counts errors from the site's own scripts
   (`browser.error`), page loads (`browser.page_load`, `authenticated` from the
-  session) and dropped events. The route is public, outside
+  session) and dropped events, and records Web Vitals, navigations and island
+  timings in histograms. Navigation labels are made consistent in the use case
+  rather than rejected (a `hard` load is always `view_transition=none`, an
+  aborted one has no durations), so every request the schema allows is
+  accepted, as the fuzzer checks. Every metric label comes from an enum or an
+  allowlist. The route is public, outside
   CSRF, untraced (`UNTRACED_ROUTES`) but still in request metrics, capped at
   16 KB (413), and attributes a report only from the session.
 
