@@ -20,6 +20,15 @@ else
     echo "Skipping eslint; no relevant staged frontend files changed."
 fi
 
+# Prettier on the staged files only (it skips .prettierignore'd and unknown types).
+# Like eslint above, this checks the working-tree copy.
+staged_files=$(git diff --cached --name-only --diff-filter=ACMR)
+if [ -n "$staged_files" ]; then
+    echo "Running prettier check..."
+    echo "$staged_files" | tr '\n' '\0' | xargs -0 env PNPM_CONFIG_MINIMUM_RELEASE_AGE=1440 pnpm exec prettier --check --ignore-unknown --no-error-on-unmatched-pattern \
+        || { echo "  prettier failed. Run: pnpm exec prettier --write <files>"; exit 1; }
+fi
+
 # Non-blocking reminder: API-shaping backend changes usually need `just api-types`.
 # CI's "API spec current" step is the real gate; this only saves a round trip.
 staged=$(git diff --cached --name-only)

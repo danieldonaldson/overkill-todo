@@ -68,6 +68,7 @@ jobs:
               - .nvmrc
               - eslint.config.js
               - .prettierrc
+              - .prettierignore
               - tsconfig.base.json
               # The web API types are generated from it (`just api-types`).
               - backend/openapi.json
@@ -202,6 +203,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @overkill-todo/web exec playwright install --with-deps chromium
       - run: pnpm lint
+      - run: pnpm format:check
       # Fails when backend/openapi.json changed without `just api-types`.
       - name: API types current
         run: |
@@ -451,7 +453,17 @@ jobs:
   images:
     name: Build ${{ matrix.component }} image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [backend, api-fuzz, verify, models, protocols, web, web-e2e, observability, secrets, threat-model]
+    needs:
+      - backend
+      - api-fuzz
+      - verify
+      - models
+      - protocols
+      - web
+      - web-e2e
+      - observability
+      - secrets
+      - threat-model
     runs-on: ubuntu-24.04
     permissions:
       contents: read

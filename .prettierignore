@@ -12,3 +12,14 @@ loadtest/results/
 
 # Vendored Umami tracker (OT-005 tests); kept byte-identical to the pinned image.
 apps/web/tests/fixtures/
+
+# Written by `openspec` (archive/sync rewrite specs); keep its output as-is so
+# regeneration doesn't fight the formatter.
+openspec/
+
+# Generated: SQLx offline cache (`just db-prepare`) and the pnpm lockfile.
+backend/.sqlx/
+pnpm-lock.yaml
+
+# Tool caches that ignore themselves with a nested .gitignore Prettier doesn't read.
+**/.pytest_cache/

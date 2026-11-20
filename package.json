@@ -13,6 +13,7 @@
     "test:e2e": "pnpm --filter @overkill-todo/web test:e2e",
     "lint": "eslint .",
     "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "prepare": "husky"
   },
   "devDependencies": {

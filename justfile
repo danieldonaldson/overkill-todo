@@ -232,6 +232,11 @@ lint:
 lint-js:
     {{pnpm}} lint
 
+# Fail if the repo isn't Prettier clean (.prettierignore lists the exemptions).
+[group('format & lint')]
+fmt-check-js:
+    {{pnpm}} format:check
+
 # .mise.toml and backend/rust-toolchain.toml must pin the same Rust.
 [group('format & lint')]
 toolchain-check:
@@ -540,4 +545,4 @@ ci: ci-checks verify models protocols
 
 # The rest of `ci`, in order: static checks first, then tests.
 [group('ci')]
-ci-checks: toolchain-check fmt-check lint machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web e2e
+ci-checks: toolchain-check fmt-check fmt-check-js lint machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web e2e
