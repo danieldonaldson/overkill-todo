@@ -707,7 +707,10 @@ export interface components {
         }) | {
             /** @enum {string} */
             type: "page_load";
-        };
+        } | (components["schemas"]["ClientVitalEvent"] & {
+            /** @enum {string} */
+            type: "vital";
+        });
         /** @description One batch of browser reports from one page load. */
         ClientReportBatch: {
             /** @description The events, at most 30. */
@@ -721,6 +724,22 @@ export interface components {
             page_load_id: string;
             /** @description Release of the site the browser is running (commit SHA, or `dev`). */
             release: string;
+        };
+        /** @description A Web Vital measurement (Decision 6). */
+        ClientVitalEvent: {
+            /**
+             * @description For a poor rating: the element responsible, as its tag name and the
+             *     selector `web-vitals` gives. Logged only for poor ratings, never a
+             *     metric label.
+             */
+            attribution?: string | null;
+            name: components["schemas"]["VitalName"];
+            rating: components["schemas"]["Rating"];
+            /**
+             * Format: double
+             * @description Milliseconds, or the unitless score for CLS.
+             */
+            value: number;
         };
         /**
          * @description Request body for completing registration (set password after email verification).
@@ -825,6 +844,11 @@ export interface components {
          * @enum {string}
          */
         OAuthProviderName: "google" | "apple";
+        /**
+         * @description A Web Vital's rating against the standard thresholds.
+         * @enum {string}
+         */
+        Rating: "good" | "needs-improvement" | "poor";
         /** @description Request to delete account. */
         RequestDeletionRequest: {
             /**
@@ -977,6 +1001,13 @@ export interface components {
             /** @description Short-lived JWT token for password reset (5 min expiry). */
             reset_token: string;
         };
+        /**
+         * @description A Web Vital the browser measures (OT-006 Decision 6). Like
+         *     [`ClientErrorKind`] it is the field's real type, so an unknown name is
+         *     rejected and can't become a metric label.
+         * @enum {string}
+         */
+        VitalName: "LCP" | "FCP" | "TTFB" | "INP" | "CLS";
     };
     responses: never;
     parameters: never;

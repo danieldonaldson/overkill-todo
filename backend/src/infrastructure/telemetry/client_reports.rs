@@ -2,19 +2,36 @@
 //!
 //! Browser errors become `client_error` log events, shipped to the log store
 //! like every other log line, and are counted; page loads and dropped reports
-//! are counted. Every label value comes from an enum or an allowlist.
+//! are counted; Web Vitals go to histograms, and poor ones are also logged as
+//! `client_vital_poor` with their attribution. Every label value comes from an
+//! enum or an allowlist.
 //!
 //! Its instruments are no-ops exactly when the OTLP exporter is (dev only), and
 //! the log events always go to stdout, so there is no no-op variant to refuse
 //! in production.
 
 use opentelemetry::KeyValue;
-use opentelemetry::metrics::{Counter, Meter};
+use opentelemetry::metrics::{Counter, Histogram, Meter};
 
 use super::metrics::global_meter;
+use crate::application::dto::Rating;
 use crate::application::ports::outgoing::{
-    ClientErrorReport, ClientPageLoadReport, ClientReportSink,
+    ClientErrorReport, ClientPageLoadReport, ClientReportSink, ClientVitalReport,
 };
+
+/// Buckets for the millisecond vitals.
+///
+/// There is an edge at every good/poor threshold: INP 200/500, TTFB 800/1800,
+/// FCP 1800/3000, LCP 2500/4000. The low edges keep quick interactions (8 ms
+/// when under the browser's 40 ms entry threshold) and fast local loads from
+/// all reading as ~40 ms.
+pub const VITAL_MS_BUCKETS: &[f64] = &[
+    10.0, 25.0, 50.0, 100.0, 200.0, 300.0, 500.0, 800.0, 1_000.0, 1_500.0, 1_800.0, 2_500.0,
+    3_000.0, 4_000.0, 6_000.0, 10_000.0, 20_000.0,
+];
+
+/// Buckets for CLS, with edges at its thresholds 0.1 and 0.25.
+pub const VITAL_CLS_BUCKETS: &[f64] = &[0.01, 0.05, 0.1, 0.15, 0.25, 0.5, 1.0, 2.0];
 
 /// Writes browser reports to the logs and metrics.
 #[derive(Clone)]
@@ -22,6 +39,11 @@ pub struct TelemetryClientReportSink {
     errors: Counter<u64>,
     page_loads: Counter<u64>,
     dropped: Counter<u64>,
+    /// LCP, FCP, TTFB and INP. One instrument has one unit and one bucket
+    /// set, so CLS, a unitless score, has its own.
+    vital_ms: Histogram<f64>,
+    vital_cls: Histogram<f64>,
+    releases_seen: Counter<u64>,
 }
 
 impl TelemetryClientReportSink {
@@ -46,6 +68,25 @@ impl TelemetryClientReportSink {
                 .u64_counter("browser.report.dropped")
                 .with_unit("{event}")
                 .with_description("Browser report events over the recording budget, not recorded")
+                .build(),
+            vital_ms: meter
+                .f64_histogram("browser.web_vital")
+                .with_unit("ms")
+                .with_description("Web Vitals measured in the browser: LCP, FCP and TTFB per full load, INP per page visit")
+                .with_boundaries(VITAL_MS_BUCKETS.to_vec())
+                .build(),
+            releases_seen: meter
+                .u64_counter("browser.release_seen")
+                .with_unit("{load}")
+                .with_description(
+                    "Page loads per release: the first sample of each marks when a release went out",
+                )
+                .build(),
+            vital_cls: meter
+                .f64_histogram("browser.web_vital.cls")
+                .with_unit("1")
+                .with_description("Cumulative Layout Shift per page visit, measured in the browser")
+                .with_boundaries(VITAL_CLS_BUCKETS.to_vec())
                 .build(),
         }
     }
@@ -104,6 +145,34 @@ impl ClientReportSink for TelemetryClientReportSink {
                 KeyValue::new("authenticated", report.authenticated),
             ],
         );
+        self.releases_seen
+            .add(1, &[KeyValue::new("release", report.release_label.clone())]);
+    }
+
+    fn vital(&self, report: &ClientVitalReport) {
+        let mut labels = vec![
+            KeyValue::new("page", report.page),
+            KeyValue::new("rating", report.rating.as_str()),
+            KeyValue::new("device_class", report.device_class),
+            KeyValue::new("authenticated", report.authenticated),
+        ];
+        if report.name.is_duration() {
+            labels.push(KeyValue::new("name", report.name.as_str()));
+            self.vital_ms.record(report.value, &labels);
+        } else {
+            self.vital_cls.record(report.value, &labels);
+        }
+        if report.rating == Rating::Poor {
+            tracing::info!(
+                event = "client_vital_poor",
+                name = report.name.as_str(),
+                value = report.value,
+                page = report.page,
+                device_class = report.device_class,
+                attribution = report.attribution.as_deref(),
+                "poor web vital"
+            );
+        }
     }
 
     fn dropped(&self, n: u64) {
@@ -117,9 +186,10 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-    use crate::application::dto::ClientErrorKind;
+    use crate::application::dto::{ClientErrorKind, VitalName};
     use crate::application::use_cases::auth::log_capture::LogCapture;
     use crate::domain::value_objects::UserId;
+    use crate::infrastructure::telemetry::metrics::testing::Attrs;
     use crate::infrastructure::telemetry::metrics::{METER_NAME, testing};
 
     fn report(user_id: Option<UserId>) -> ClientErrorReport {
@@ -250,6 +320,7 @@ mod tests {
             page: "/dashboard",
             device_class: "mobile",
             authenticated: true,
+            release_label: "r1".into(),
         };
         sink.page_load(&load);
         sink.page_load(&load);
@@ -257,6 +328,7 @@ mod tests {
             page: "/login",
             device_class: "desktop",
             authenticated: false,
+            release_label: "r2".into(),
         });
         provider.force_flush().unwrap();
         assert_eq!(
@@ -296,6 +368,129 @@ mod tests {
         assert_eq!(
             testing::unit(&exporter, "browser.report.dropped").as_deref(),
             Some("{event}")
+        );
+    }
+
+    fn vital(name: VitalName, value: f64, rating: Rating) -> ClientVitalReport {
+        ClientVitalReport {
+            name,
+            value,
+            rating,
+            page: "/dashboard",
+            device_class: "mobile",
+            authenticated: true,
+            attribution: None,
+        }
+    }
+
+    /// Index of the bucket `value` lands in, given upper-inclusive bounds.
+    fn bucket_of(bounds: &[f64], value: f64) -> usize {
+        bounds
+            .iter()
+            .position(|b| value <= *b)
+            .unwrap_or(bounds.len())
+    }
+
+    #[test]
+    fn vitals_land_in_the_bucket_their_threshold_puts_them_in() {
+        let (provider, exporter) = testing::in_memory();
+        let sink = TelemetryClientReportSink::new(&provider.meter(METER_NAME));
+        sink.vital(&vital(VitalName::Inp, 200.0, Rating::Good));
+        sink.vital(&vital(VitalName::Inp, 201.0, Rating::NeedsImprovement));
+        sink.vital(&vital(VitalName::Lcp, 4_100.0, Rating::Poor));
+        sink.vital(&vital(VitalName::Cls, 0.1, Rating::Good));
+        sink.vital(&vital(VitalName::Cls, 0.3, Rating::Poor));
+        provider.force_flush().unwrap();
+
+        let (bounds, points) = testing::f64_histogram_buckets(&exporter, "browser.web_vital");
+        assert_eq!(bounds, VITAL_MS_BUCKETS);
+        let base = [
+            ("authenticated", "true"),
+            ("device_class", "mobile"),
+            ("page", "/dashboard"),
+        ];
+        let with = |name: &str, rating: &str| {
+            let mut a = attrs(&base);
+            a.push(("name".into(), name.into()));
+            a.push(("rating".into(), rating.into()));
+            a.sort();
+            a
+        };
+        let counts = |a: &Attrs| points.iter().find(|(p, _)| p == a).unwrap().1.clone();
+        // Bucket bounds are upper-inclusive: 200 ms is the top of the good INP
+        // bucket and 201 ms the start of the next.
+        assert_eq!(counts(&with("INP", "good"))[bucket_of(&bounds, 200.0)], 1);
+        assert_eq!(bucket_of(&bounds, 200.0) + 1, bucket_of(&bounds, 201.0));
+        assert_eq!(
+            counts(&with("INP", "needs-improvement"))[bucket_of(&bounds, 201.0)],
+            1
+        );
+        assert_eq!(counts(&with("LCP", "poor"))[bucket_of(&bounds, 4_100.0)], 1);
+        assert_eq!(
+            testing::unit(&exporter, "browser.web_vital").as_deref(),
+            Some("ms")
+        );
+
+        let (cls_bounds, cls_points) =
+            testing::f64_histogram_buckets(&exporter, "browser.web_vital.cls");
+        assert_eq!(cls_bounds, VITAL_CLS_BUCKETS);
+        let good = attrs(&[
+            ("authenticated", "true"),
+            ("device_class", "mobile"),
+            ("page", "/dashboard"),
+            ("rating", "good"),
+        ]);
+        let good_counts = &cls_points.iter().find(|(p, _)| *p == good).unwrap().1;
+        assert_eq!(good_counts[bucket_of(&cls_bounds, 0.1)], 1);
+        // CLS carries no `name` label: the instrument is the name.
+        assert!(
+            cls_points
+                .iter()
+                .all(|(a, _)| a.iter().all(|(k, _)| k != "name"))
+        );
+        assert_eq!(
+            testing::unit(&exporter, "browser.web_vital.cls").as_deref(),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn only_poor_vitals_are_logged_with_their_attribution() {
+        let logs = LogCapture::install();
+        let sink = TelemetryClientReportSink::new(&opentelemetry::global::meter("t"));
+        sink.vital(&vital(VitalName::Inp, 120.0, Rating::Good));
+        sink.vital(&vital(VitalName::Inp, 300.0, Rating::NeedsImprovement));
+        let mut poor = vital(VitalName::Inp, 640.0, Rating::Poor);
+        poor.attribution = Some("button#save".into());
+        sink.vital(&poor);
+        let events = logs.events("client_vital_poor");
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0]["name"], "INP");
+        assert_eq!(events[0]["value"], 640.0);
+        assert_eq!(events[0]["page"], "/dashboard");
+        assert_eq!(events[0]["attribution"], "button#save");
+        assert!(events[0].get("user_id").is_none());
+    }
+
+    #[test]
+    fn each_release_is_one_release_seen_series() {
+        let (provider, exporter) = testing::in_memory();
+        let sink = TelemetryClientReportSink::new(&provider.meter(METER_NAME));
+        for (page, release) in [("/login", "r1"), ("/dashboard", "r1"), ("/login", "r2")] {
+            sink.page_load(&ClientPageLoadReport {
+                page,
+                device_class: "desktop",
+                authenticated: false,
+                release_label: release.into(),
+            });
+        }
+        provider.force_flush().unwrap();
+        assert_eq!(
+            testing::u64_sum_points(&exporter, "browser.release_seen"),
+            [
+                (attrs(&[("release", "r1")]), 2),
+                (attrs(&[("release", "r2")]), 1)
+            ]
         );
     }
 }

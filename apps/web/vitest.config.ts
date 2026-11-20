@@ -40,6 +40,8 @@ export default defineConfig({
     testTimeout: 10000,
   },
   optimizeDeps: {
+    // Pre-bundled up front: discovering them mid-run reloads the test page.
+    include: ['web-vitals', 'web-vitals/attribution'],
     exclude: [
       '@lucide/svelte',
       '@testing-library/svelte-core',

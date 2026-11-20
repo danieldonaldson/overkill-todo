@@ -221,3 +221,23 @@ groups:
         annotations:
           summary: 'Browser errors on {{ $labels.page }} (release {{ $labels.release }}) are {{ $value | humanizePercentage }} of page loads (threshold 2%)'
           dashboard: 'http://localhost:3000/d/frontend/frontend?viewPanel=panel-6'
+
+      # Per page and vital: p75 INP over 500 ms or LCP over 4 s across the last
+      # hour, with at least 50 measurements in it, held for an hour. The
+      # histogram's bucket edges sit on both thresholds. Not paging: a slow page
+      # is worth a look the same day, not at night.
+      - alert: BrowserVitalPoor
+        expr: |
+          (
+            histogram_quantile(0.75, sum by (page, name, le) (rate(browser_web_vital_milliseconds_bucket{name="INP"}[1h]))) > 500
+            or
+            histogram_quantile(0.75, sum by (page, name, le) (rate(browser_web_vital_milliseconds_bucket{name="LCP"}[1h]))) > 4000
+          )
+          and on (page, name)
+            sum by (page, name) (increase(browser_web_vital_milliseconds_count{name=~"INP|LCP"}[1h])) >= 50
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: 'p75 {{ $labels.name }} on {{ $labels.page }} is {{ $value | humanize }} ms over the last hour (poor: INP over 500 ms, LCP over 4000 ms)'
+          dashboard: 'http://localhost:3000/d/frontend/frontend?viewPanel=panel-9'

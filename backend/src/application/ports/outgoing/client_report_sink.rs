@@ -1,6 +1,6 @@
 //! Where accepted browser reports go (OT-006 Decision 2).
 
-use crate::application::dto::ClientErrorKind;
+use crate::application::dto::{ClientErrorKind, Rating, VitalName};
 use crate::domain::value_objects::UserId;
 
 /// A browser error, already validated, scrubbed and normalised by
@@ -38,17 +38,37 @@ pub struct ClientErrorReport {
     pub user_id: Option<UserId>,
 }
 
-/// A finished page load: the denominator of the browser error rate.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A finished page load: the denominator of the browser error rate, and the
+/// sign that a release is in use.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClientPageLoadReport {
     /// Page template from the allowlist, or `other`.
     pub page: &'static str,
     pub device_class: &'static str,
     /// Whether the session (never the report) names a signed-in user.
     pub authenticated: bool,
+    /// The release as a metric label, capped like `ClientErrorReport`'s.
+    pub release_label: String,
 }
 
-/// Records browser reports: errors as log events, counts as metrics.
+/// One Web Vital measurement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientVitalReport {
+    pub name: VitalName,
+    /// Milliseconds, or the unitless score for CLS.
+    pub value: f64,
+    pub rating: Rating,
+    /// Page template from the allowlist, or `other`.
+    pub page: &'static str,
+    pub device_class: &'static str,
+    /// Whether the session (never the report) names a signed-in user.
+    pub authenticated: bool,
+    /// The element responsible, scrubbed; only ever set for a poor rating.
+    pub attribution: Option<String>,
+}
+
+/// Records browser reports: errors as log events, counts and
+/// Web Vitals as metrics.
 ///
 /// # Implementors
 ///
@@ -56,8 +76,10 @@ pub struct ClientPageLoadReport {
 pub trait ClientReportSink: Send + Sync {
     /// Record one browser error.
     fn error(&self, report: &ClientErrorReport);
-    /// Count one page load.
+    /// Count one page load, and mark its release as seen.
     fn page_load(&self, report: &ClientPageLoadReport);
+    /// Record one Web Vital measurement.
+    fn vital(&self, report: &ClientVitalReport);
     /// Count `n` events that were over the recording budget and not recorded.
     fn dropped(&self, n: u64);
 }

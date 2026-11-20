@@ -1,8 +1,5 @@
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { devices, expect, test, type Page } from '@playwright/test'
-import { seedSession, TEST_USER } from './helpers/session'
+import { hide, ready, setup, throwErrors } from './helpers/telemetry'
 
 // Browser error reports (OT-006 slices 1 and 2, specs/observability and
 // specs/dashboard). The API is mocked: /api/v1/client-telemetry records each
@@ -11,138 +8,6 @@ import { seedSession, TEST_USER } from './helpers/session'
 //
 // Islands are crashed on purpose through TelemetryBoundary's test hook
 // (`window.__otCrashIsland`), which `just e2e` builds in; release images don't.
-
-const here = dirname(fileURLToPath(import.meta.url))
-const CSP = readFileSync(join(here, '..', 'Caddyfile'), 'utf8').match(
-  /Content-Security-Policy\s+"([^"]*)"/
-)![1]
-
-interface ReportEvent {
-  type: string
-  kind: string
-  message: string
-  stack?: string
-  source?: string
-  island?: string
-  api_route?: string
-  status?: number
-  network_failed?: boolean
-  trace_id?: string
-  count: number
-}
-
-interface Report {
-  page_load_id: string
-  release: string
-  page: string
-  events: ReportEvent[]
-}
-
-interface Setup {
-  /** What happens to report requests. */
-  endpoint?: 'ok' | 'abort'
-  /** Signed in as TEST_USER (merged with `user`), for dashboard pages. */
-  signedIn?: boolean
-  user?: object
-  /** The island to crash on purpose, from before the page loads. */
-  crash?: string
-}
-
-async function setup(page: Page, { endpoint = 'ok', signedIn, user, crash }: Setup = {}) {
-  const reports: Report[] = []
-  const rawBodies: string[] = []
-  const consoleErrors: string[] = []
-  const cspViolations: string[] = []
-
-  page.on('console', (msg) => {
-    if (msg.type() !== 'error') return
-    if (/content security policy/i.test(msg.text())) cspViolations.push(msg.text())
-    else consoleErrors.push(msg.text())
-  })
-  await page.addInitScript(() => {
-    document.addEventListener('securitypolicyviolation', (e) =>
-      console.error(`Content Security Policy violation: ${e.violatedDirective} ${e.blockedURI}`)
-    )
-  })
-
-  if (signedIn) await seedSession(page)
-  if (crash) {
-    await page.addInitScript((island) => {
-      ;(window as unknown as { __otCrashIsland?: string }).__otCrashIsland = island
-    }, crash)
-  }
-
-  // Registered first, so the specific mocks below take precedence.
-  await page.route('**/api/v1/**', (route) =>
-    route.fulfill({ status: 404, json: { code: 'not_found', message: 'Not found' } })
-  )
-  await page.route('**/api/v1/auth/me', (route) =>
-    route.fulfill({ json: { ...TEST_USER, ...user } })
-  )
-  await page.route('**/api/v1/auth/login', (route) =>
-    route.fulfill({
-      json: {
-        user: TEST_USER,
-        expires_at: Math.floor(Date.now() / 1000) + 900,
-        csrf_token: 'csrf',
-      },
-    })
-  )
-  await page.route('**/api/v1/client-telemetry', (route) => {
-    if (endpoint === 'abort') return route.abort('connectionrefused')
-    const body = route.request().postData() ?? ''
-    rawBodies.push(body)
-    reports.push(JSON.parse(body) as Report)
-    return route.fulfill({ status: 204 })
-  })
-
-  await page.route('**/*', async (route) => {
-    if (route.request().resourceType() !== 'document') return route.fallback()
-    const response = await route.fetch()
-    await route.fulfill({
-      response,
-      headers: { ...response.headers(), 'content-security-policy': CSP },
-    })
-  })
-
-  /** Error events, in order (page loads left out). */
-  const events = () => reports.flatMap((r) => r.events).filter((e) => e.type === 'error')
-  /** `[page, page_load_id]` of each page load reported, in order. */
-  const pageLoads = () =>
-    reports.flatMap((r) =>
-      r.events.filter((e) => e.type === 'page_load').map(() => [r.page, r.page_load_id])
-    )
-  return { reports, rawBodies, events, pageLoads, consoleErrors, cspViolations }
-}
-
-/** Throw `count` uncaught errors from page code (outside `evaluate`'s own catch). */
-async function throwErrors(page: Page, count: number, distinct: boolean, prefix = 'boom') {
-  await page.evaluate(
-    ({ count, distinct, prefix }) => {
-      for (let i = 0; i < count; i++) {
-        setTimeout(() => {
-          throw new Error(distinct ? `${prefix} ${i}` : prefix)
-        })
-      }
-    },
-    { count, distinct, prefix }
-  )
-  // Let every timer fire.
-  await page.evaluate(() => new Promise((r) => setTimeout(r, 50)))
-}
-
-/** The page is hidden (tab switch, app switch on a phone): the reporter flushes. */
-async function hide(page: Page) {
-  await page.evaluate(() => {
-    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
-    document.dispatchEvent(new Event('visibilitychange'))
-  })
-}
-
-/** Wait for the reporter script and hydration to settle. */
-async function ready(page: Page) {
-  await page.waitForLoadState('networkidle')
-}
 
 test.describe('browser error reports', () => {
   test('an error on Login sends one report with the page, release, kind and a stack', async ({
@@ -300,8 +165,13 @@ test.describe('on a phone', () => {
 
     await expect.poll(() => reports.length).toBe(1)
     expect(reports[0].page).toBe('/register')
-    // Two errors and the page load.
-    expect(reports[0].events.map((e) => e.type).sort()).toEqual(['error', 'error', 'page_load'])
+    // Two errors and the page load (vitals have their own flow in web-vitals.spec.ts).
+    expect(
+      reports[0].events
+        .map((e) => e.type)
+        .filter((t) => t !== 'vital')
+        .sort()
+    ).toEqual(['error', 'error', 'page_load'])
   })
 
   test("a crashed panel's message fits the screen without horizontal scrolling", async ({

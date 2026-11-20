@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { resolvePublicValue } from './config'
+import { parseSampleRate, resolvePublicValue } from './config'
 
 // How a PUBLIC_* value such as UMAMI_WEBSITE_ID (the OT-005 analytics flag)
 // is resolved from the rendered /config.js and the build-time env.
@@ -33,5 +33,25 @@ describe('UMAMI_WEBSITE_ID', () => {
   it('is off in the test environment', async () => {
     const { UMAMI_WEBSITE_ID } = await import('./config')
     expect(UMAMI_WEBSITE_ID).toBe('')
+  })
+})
+
+// PUBLIC_RUM_SAMPLE_RATE (OT-006): the share of page loads reporting Web Vitals.
+describe('parseSampleRate', () => {
+  it('is 1 when unset', () => {
+    expect(parseSampleRate('')).toBe(1)
+    expect(parseSampleRate(resolvePublicValue('${PUBLIC_RUM_SAMPLE_RATE}', undefined))).toBe(1)
+  })
+
+  it('accepts 0, a fraction and 1', () => {
+    expect(parseSampleRate('0')).toBe(0)
+    expect(parseSampleRate('0.1')).toBe(0.1)
+    expect(parseSampleRate('1')).toBe(1)
+  })
+
+  it('treats junk and out-of-range values as 1', () => {
+    for (const junk of ['abc', '10%', '-0.5', '1.5', 'NaN', 'Infinity']) {
+      expect(parseSampleRate(junk), junk).toBe(1)
+    }
   })
 })

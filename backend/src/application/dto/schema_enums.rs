@@ -55,6 +55,67 @@ impl ClientErrorKind {
     }
 }
 
+/// A Web Vital the browser measures (OT-006 Decision 6). Like
+/// [`ClientErrorKind`] it is the field's real type, so an unknown name is
+/// rejected and can't become a metric label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+pub enum VitalName {
+    /// Largest Contentful Paint, ms, per full load.
+    #[serde(rename = "LCP")]
+    Lcp,
+    /// First Contentful Paint, ms, per full load.
+    #[serde(rename = "FCP")]
+    Fcp,
+    /// Time to First Byte, ms, per full load.
+    #[serde(rename = "TTFB")]
+    Ttfb,
+    /// Interaction to Next Paint, ms, per page visit.
+    #[serde(rename = "INP")]
+    Inp,
+    /// Cumulative Layout Shift, a unitless score, per page visit.
+    #[serde(rename = "CLS")]
+    Cls,
+}
+
+impl VitalName {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Lcp => "LCP",
+            Self::Fcp => "FCP",
+            Self::Ttfb => "TTFB",
+            Self::Inp => "INP",
+            Self::Cls => "CLS",
+        }
+    }
+
+    /// `true` for the vitals measured in milliseconds; CLS is a score.
+    #[must_use]
+    pub const fn is_duration(self) -> bool {
+        !matches!(self, Self::Cls)
+    }
+}
+
+/// A Web Vital's rating against the standard thresholds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum Rating {
+    Good,
+    NeedsImprovement,
+    Poor,
+}
+
+impl Rating {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Good => "good",
+            Self::NeedsImprovement => "needs-improvement",
+            Self::Poor => "poor",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ClientErrorKind, OAuthProviderName, RoleName};

@@ -21,6 +21,9 @@ const MAX_PAGE_CHARS = 200
 const MAX_ISLAND_CHARS = 100
 const MAX_API_ROUTE_CHARS = 200
 const TRACE_ID_PATTERN = /^[0-9a-f]{32}$/
+const MAX_ATTRIBUTION_CHARS = 100
+/** The server's ceiling for a vital's value (ms, or the CLS score). */
+const MAX_VITAL_VALUE = 600_000
 
 export type ErrorKind = 'error' | 'unhandledrejection' | 'boundary' | 'api'
 
@@ -43,7 +46,19 @@ export interface PageLoadEventBody {
   type: 'page_load'
 }
 
-export type EventBody = ErrorEventBody | PageLoadEventBody
+export type VitalName = 'LCP' | 'FCP' | 'TTFB' | 'INP' | 'CLS'
+export type Rating = 'good' | 'needs-improvement' | 'poor'
+
+/** One Web Vital (Decision 6). Attribution only ever comes with `poor`. */
+export interface VitalEventBody {
+  type: 'vital'
+  name: VitalName
+  value: number
+  rating: Rating
+  attribution?: string
+}
+
+export type EventBody = ErrorEventBody | PageLoadEventBody | VitalEventBody
 
 export interface Batch {
   page_load_id: string
@@ -218,6 +233,33 @@ export class Reporter {
         key: null,
         event: { type: 'page_load' },
       })
+      this.schedule()
+    } catch {
+      // Never let reporting break the page.
+    }
+  }
+
+  /**
+   * Queue a Web Vital for `pathname`, the page it was measured on, which may
+   * no longer be the current one (LCP is final only at the first input, and a
+   * visit ends as the next navigation starts). Never merged.
+   */
+  vital(vital: Omit<VitalEventBody, 'type'>, pathname: string): void {
+    try {
+      if (!Number.isFinite(vital.value)) return
+      this.rotateIfSessionChanged()
+      const value = Math.min(Math.max(vital.value, 0), MAX_VITAL_VALUE)
+      const event: VitalEventBody = {
+        type: 'vital',
+        name: vital.name,
+        // Whole ms are plenty; CLS keeps four decimals.
+        value: vital.name === 'CLS' ? Math.round(value * 10_000) / 10_000 : Math.round(value),
+        rating: vital.rating,
+      }
+      if (vital.rating === 'poor' && vital.attribution) {
+        event.attribution = scrub(vital.attribution, MAX_ATTRIBUTION_CHARS)
+      }
+      this.queue.push({ pageLoadId: this.pageLoadId, page: pageOf(pathname), key: null, event })
       this.schedule()
     } catch {
       // Never let reporting break the page.

@@ -407,6 +407,30 @@ pub(crate) mod testing {
         .unwrap_or_default()
     }
 
+    /// `(attributes, bucket counts)` for each data point of the `f64`
+    /// histogram `name`, sorted by attributes, with its bucket boundaries.
+    pub fn f64_histogram_buckets(
+        exporter: &InMemoryMetricExporter,
+        name: &str,
+    ) -> (Vec<f64>, Vec<(Attrs, Vec<u64>)>) {
+        with_metric(exporter, name, |m| {
+            let AggregatedMetrics::F64(MetricData::Histogram(hist)) = m.data() else {
+                panic!("{name} is not an f64 histogram");
+            };
+            let mut bounds = Vec::new();
+            let mut points: Vec<(Attrs, Vec<u64>)> = hist
+                .data_points()
+                .map(|dp| {
+                    bounds = dp.bounds().collect();
+                    (sorted_attrs(dp.attributes()), dp.bucket_counts().collect())
+                })
+                .collect();
+            points.sort();
+            (bounds, points)
+        })
+        .unwrap_or_default()
+    }
+
     /// `(attributes, value)` for each data point of the `u64` sum `name`,
     /// sorted by attributes.
     pub fn u64_sum_points(exporter: &InMemoryMetricExporter, name: &str) -> Vec<(Attrs, u64)> {

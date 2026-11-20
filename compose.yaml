@@ -80,6 +80,8 @@ services:
       # Web analytics (OT-005): empty = off. Set to the site's ID from Umami
       # (http://localhost:3001) with the `analytics` profile running.
       PUBLIC_UMAMI_WEBSITE_ID: ${PUBLIC_UMAMI_WEBSITE_ID:-}
+      # Share of page loads reporting Web Vitals, 0-1 (OT-006). Empty = all.
+      PUBLIC_RUM_SAMPLE_RATE: ${PUBLIC_RUM_SAMPLE_RATE:-}
 
   edge:
     logging: *logging

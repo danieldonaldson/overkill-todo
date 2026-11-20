@@ -46,6 +46,8 @@ services:
       # Web analytics (OT-005): the site ID from Umami. Empty = off; unsetting
       # it is the rollback.
       PUBLIC_UMAMI_WEBSITE_ID: ${PUBLIC_UMAMI_WEBSITE_ID:-}
+      # Share of page loads reporting Web Vitals, 0-1 (OT-006). Empty = all.
+      PUBLIC_RUM_SAMPLE_RATE: ${PUBLIC_RUM_SAMPLE_RATE:-}
     restart: unless-stopped
 
   edge:

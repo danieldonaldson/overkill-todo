@@ -545,3 +545,79 @@ tests:
       - eval_time: 30m
         alertname: BrowserErrorRateHigh
         exp_alerts: []
+
+  # Spec scenario "Slow page alert": on /dashboard/settings every interaction
+  # takes about 640 ms (between the 500 and 800 ms bucket edges), 4 a minute,
+  # 240 an hour. Pending once 50 are in the window, firing an hour later.
+  - name: poor INP on a page fires, held for an hour
+    interval: 1m
+    input_series:
+      - series: 'browser_web_vital_milliseconds_bucket{name="INP",page="/dashboard/settings",rating="poor",device_class="desktop",authenticated="true",le="300"}'
+        values: '0x150'
+      - series: 'browser_web_vital_milliseconds_bucket{name="INP",page="/dashboard/settings",rating="poor",device_class="desktop",authenticated="true",le="500"}'
+        values: '0x150'
+      - series: 'browser_web_vital_milliseconds_bucket{name="INP",page="/dashboard/settings",rating="poor",device_class="desktop",authenticated="true",le="800"}'
+        values: '0+4x150'
+      - series: 'browser_web_vital_milliseconds_bucket{name="INP",page="/dashboard/settings",rating="poor",device_class="desktop",authenticated="true",le="+Inf"}'
+        values: '0+4x150'
+      - series: 'browser_web_vital_milliseconds_count{name="INP",page="/dashboard/settings",rating="poor",device_class="desktop",authenticated="true"}'
+        values: '0+4x150'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: BrowserVitalPoor
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: BrowserVitalPoor
+        exp_alerts:
+          - exp_labels: { severity: warning, page: /dashboard/settings, name: INP }
+            exp_annotations:
+              summary: 'p75 INP on /dashboard/settings is 725 ms over the last hour (poor: INP over 500 ms, LCP over 4000 ms)'
+              dashboard: 'http://localhost:3000/d/frontend/frontend?viewPanel=panel-9'
+
+  # The same slow interactions, but only 30 an hour: too few to alert on.
+  - name: poor INP with few measurements does not fire
+    interval: 2m
+    input_series:
+      - series: 'browser_web_vital_milliseconds_bucket{name="INP",page="/dashboard/settings",rating="poor",device_class="desktop",authenticated="true",le="500"}'
+        values: '0x90'
+      - series: 'browser_web_vital_milliseconds_bucket{name="INP",page="/dashboard/settings",rating="poor",device_class="desktop",authenticated="true",le="800"}'
+        values: '0+1x90'
+      - series: 'browser_web_vital_milliseconds_bucket{name="INP",page="/dashboard/settings",rating="poor",device_class="desktop",authenticated="true",le="+Inf"}'
+        values: '0+1x90'
+      - series: 'browser_web_vital_milliseconds_count{name="INP",page="/dashboard/settings",rating="poor",device_class="desktop",authenticated="true"}'
+        values: '0+1x90'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: BrowserVitalPoor
+        exp_alerts: []
+      - eval_time: 170m
+        alertname: BrowserVitalPoor
+        exp_alerts: []
+
+  # LCP around 4.5 s on Home, 2 a minute: fires for LCP. INP there is good, so
+  # no INP alert.
+  - name: poor LCP fires and good INP does not
+    interval: 1m
+    input_series:
+      - series: 'browser_web_vital_milliseconds_bucket{name="LCP",page="/dashboard",rating="poor",device_class="mobile",authenticated="true",le="4000"}'
+        values: '0x150'
+      - series: 'browser_web_vital_milliseconds_bucket{name="LCP",page="/dashboard",rating="poor",device_class="mobile",authenticated="true",le="6000"}'
+        values: '0+2x150'
+      - series: 'browser_web_vital_milliseconds_bucket{name="LCP",page="/dashboard",rating="poor",device_class="mobile",authenticated="true",le="+Inf"}'
+        values: '0+2x150'
+      - series: 'browser_web_vital_milliseconds_count{name="LCP",page="/dashboard",rating="poor",device_class="mobile",authenticated="true"}'
+        values: '0+2x150'
+      - series: 'browser_web_vital_milliseconds_bucket{name="INP",page="/dashboard",rating="good",device_class="mobile",authenticated="true",le="200"}'
+        values: '0+4x150'
+      - series: 'browser_web_vital_milliseconds_bucket{name="INP",page="/dashboard",rating="good",device_class="mobile",authenticated="true",le="+Inf"}'
+        values: '0+4x150'
+      - series: 'browser_web_vital_milliseconds_count{name="INP",page="/dashboard",rating="good",device_class="mobile",authenticated="true"}'
+        values: '0+4x150'
+    alert_rule_test:
+      - eval_time: 100m
+        alertname: BrowserVitalPoor
+        exp_alerts:
+          - exp_labels: { severity: warning, page: /dashboard, name: LCP }
+            exp_annotations:
+              summary: 'p75 LCP on /dashboard is 5.5k ms over the last hour (poor: INP over 500 ms, LCP over 4000 ms)'
+              dashboard: 'http://localhost:3000/d/frontend/frontend?viewPanel=panel-9'

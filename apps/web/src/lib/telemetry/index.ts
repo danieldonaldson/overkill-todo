@@ -1,11 +1,13 @@
-// Browser error reporting entry point (OT-006 Decision 8), loaded on every page
+// Browser error and performance reporting entry point (OT-006 Decision 8), loaded on every page
 // from `Base.astro` as a bundled module script, so it runs after parse and never
 // blocks paint. Errors thrown before it loads aren't captured; islands hydrate
 // after it.
 
 import { getTokenExpiry } from '../auth/token'
+import { RUM_SAMPLE_RATE } from '../config'
 import { type ApiFailure, setApiFailureHandlers } from './api-failures'
 import { type CapturedError, Reporter, beaconSend } from './reporter'
+import { installVitals } from './vitals'
 
 let reporter: Reporter | null = null
 
@@ -119,6 +121,26 @@ export function installTelemetry(): Reporter | null {
       }
     })
     watchPageLoads(document, () => r.pageLoad())
+    // Before the reporter's own visibility listener, so a visit ended by
+    // hiding the page is queued before that flush. Vitals that arrive later
+    // in the same event (web-vitals' LCP) get one more flush.
+    let flushQueued = false
+    try {
+      installVitals({
+        report: (vital, pathname) => r.vital(vital, pathname),
+        sampleRate: RUM_SAMPLE_RATE,
+        onHidden: () => {
+          if (flushQueued) return
+          flushQueued = true
+          queueMicrotask(() => {
+            flushQueued = false
+            r.flush()
+          })
+        },
+      })
+    } catch {
+      // Vitals are optional; errors and page loads are reported without them.
+    }
     setApiFailureHandlers({
       failure: (failure) => {
         if (failure.networkFailed) r.markOffline()

@@ -29,6 +29,8 @@ set -eu
 : "${PUBLIC_TURNSTILE_SITE_KEY:=}"
 # Empty = web analytics off (OT-005).
 : "${PUBLIC_UMAMI_WEBSITE_ID:=}"
+# Share of page loads reporting Web Vitals, 0-1 (OT-006). Empty = all of them.
+: "${PUBLIC_RUM_SAMPLE_RATE:=}"
 
 src=/srv/config.js
 dst=/tmp/config.js
@@ -55,9 +57,10 @@ if [ ! -f "$src" ]; then
 fi
 
 # Add a key here (and to PublicConfig in src/lib/config.ts) for each new PUBLIC_* value.
-json=$(printf '{"TURNSTILE_SITE_KEY":%s,"UMAMI_WEBSITE_ID":%s}' \
+json=$(printf '{"TURNSTILE_SITE_KEY":%s,"UMAMI_WEBSITE_ID":%s,"RUM_SAMPLE_RATE":%s}' \
   "$(json_string "$PUBLIC_TURNSTILE_SITE_KEY")" \
-  "$(json_string "$PUBLIC_UMAMI_WEBSITE_ID")")
+  "$(json_string "$PUBLIC_UMAMI_WEBSITE_ID")" \
+  "$(json_string "$PUBLIC_RUM_SAMPLE_RATE")")
 
 # Escape for the single-quoted JS string literal (layer 2). Backslash-doubling must run first so
 # the "</" rewrite's own backslash is not re-doubled.

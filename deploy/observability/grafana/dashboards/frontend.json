@@ -5,7 +5,7 @@
     "overkill-todo",
     "OT-006"
   ],
-  "description": "Browser errors and page loads reported by the site (OT-006). Reports are scrubbed in the browser and again on the server: pages are templates, never addresses; no query strings, fragments, emails or tokens. Members are named by user ID only, taken from the session. Page loads are the error rate's denominator, not traffic analytics (that is OT-005). Errors from other origins (extensions, third-party scripts) are logged but not counted in the error rate. Web Vitals, navigation and panel timings come in later slices.",
+  "description": "Browser errors and page loads reported by the site (OT-006). Reports are scrubbed in the browser and again on the server: pages are templates, never addresses; no query strings, fragments, emails or tokens. Members are named by user ID only, taken from the session. Page loads are the error rate's denominator, not traffic analytics (that is OT-005). Errors from other origins (extensions, third-party scripts) are logged but not counted in the error rate. Web Vitals are measured on the sampled share of page loads (PUBLIC_RUM_SAMPLE_RATE); LCP, FCP and TTFB per full load, INP and CLS per page visit. Navigation and panel timings come in a later slice.",
   "editable": false,
   "schemaVersion": 41,
   "version": 2,
@@ -23,7 +23,48 @@
     ]
   },
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "release",
+        "label": "Release",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "victoriametrics"
+        },
+        "description": "The release the before-and-after comparison is about.",
+        "query": {
+          "query": "label_values(browser_release_seen_total{release!=\"other\"}, release)",
+          "refId": "release"
+        },
+        "definition": "label_values(browser_release_seen_total{release!=\"other\"}, release)",
+        "includeAll": false,
+        "multi": false,
+        "refresh": 2,
+        "sort": 0
+      },
+      {
+        "name": "release_start",
+        "label": "Release first seen",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "victoriametrics"
+        },
+        "hide": 2,
+        "description": "Unix time of the selected release's first page load, within the 30 days metrics are kept (MetricsQL tfirst_over_time).",
+        "query": {
+          "query": "query_result(min(tfirst_over_time(browser_release_seen_total{release=\"$release\"}[30d])))",
+          "refId": "release_start"
+        },
+        "definition": "query_result(min(tfirst_over_time(browser_release_seen_total{release=\"$release\"}[30d])))",
+        "regex": "/(\\d{9,})/",
+        "includeAll": false,
+        "multi": false,
+        "refresh": 2,
+        "sort": 0
+      }
+    ]
   },
   "panels": [
     {
@@ -378,6 +419,844 @@
         "cellHeight": "sm"
       },
       "transformations": []
+    },
+    {
+      "id": 8,
+      "type": "row",
+      "title": "Web Vitals",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "panels": []
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "p75 Web Vitals by page, device class and sign-in (selected range)",
+      "description": "75th percentile of each Web Vital over the selected time range (up to the 30 days metrics are kept). LCP, FCP and TTFB are per full page load; INP and CLS per page visit, including visits reached by in-site navigation. Green is good, orange needs improvement, red is poor (standard thresholds). Measured on the sampled share of page loads (PUBLIC_RUM_SAMPLE_RATE). The BrowserVitalPoor alert fires on a page whose p75 INP stays over 500 ms or LCP over 4 s for an hour, with at least 50 measurements an hour.",
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 42
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "LCP",
+          "expr": "histogram_quantile(0.75, sum by (page, device_class, authenticated, le) (increase(browser_web_vital_milliseconds_bucket{name=\"LCP\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "FCP",
+          "expr": "histogram_quantile(0.75, sum by (page, device_class, authenticated, le) (increase(browser_web_vital_milliseconds_bucket{name=\"FCP\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "TTFB",
+          "expr": "histogram_quantile(0.75, sum by (page, device_class, authenticated, le) (increase(browser_web_vital_milliseconds_bucket{name=\"TTFB\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "INP",
+          "expr": "histogram_quantile(0.75, sum by (page, device_class, authenticated, le) (increase(browser_web_vital_milliseconds_bucket{name=\"INP\"}[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "CLS",
+          "expr": "histogram_quantile(0.75, sum by (page, device_class, authenticated, le) (increase(browser_web_vital_cls_bucket[$__range])))",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "page": "Page",
+              "device_class": "Device",
+              "authenticated": "Signed in"
+            },
+            "indexByName": {
+              "page": 0,
+              "device_class": 1,
+              "authenticated": 2,
+              "Value #LCP": 3,
+              "Value #FCP": 4,
+              "Value #TTFB": 5,
+              "Value #INP": 6,
+              "Value #CLS": 7
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #LCP"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p75 LCP"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 2500
+                    },
+                    {
+                      "color": "red",
+                      "value": 4000
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #FCP"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p75 FCP"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 1800
+                    },
+                    {
+                      "color": "red",
+                      "value": 3000
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #TTFB"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p75 TTFB"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 800
+                    },
+                    {
+                      "color": "red",
+                      "value": 1800
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #INP"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p75 INP"
+              },
+              {
+                "id": "unit",
+                "value": "ms"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 200
+                    },
+                    {
+                      "color": "red",
+                      "value": 500
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Value #CLS"
+            },
+            "properties": [
+              {
+                "id": "displayName",
+                "value": "p75 CLS"
+              },
+              {
+                "id": "unit",
+                "value": "none"
+              },
+              {
+                "id": "decimals",
+                "value": 3
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.1
+                    },
+                    {
+                      "color": "red",
+                      "value": 0.25
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [
+          {
+            "displayName": "p75 INP",
+            "desc": true
+          }
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "p75 INP by page and device class",
+      "description": "Interaction to Next Paint per page visit, 75th percentile over the last hour at each point (the BrowserVitalPoor window). Good up to 200 ms, poor over 500 ms.",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.75, sum by (page, device_class, le) (increase(browser_web_vital_milliseconds_bucket{name=\"INP\"}[1h])))",
+          "range": true,
+          "legendFormat": "{{page}} {{device_class}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 200
+              },
+              {
+                "color": "red",
+                "value": 500
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "p75 LCP by page and device class",
+      "description": "Largest Contentful Paint per full page load, 75th percentile over the last hour at each point. Good up to 2.5 s, poor over 4 s.",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.75, sum by (page, device_class, le) (increase(browser_web_vital_milliseconds_bucket{name=\"LCP\"}[1h])))",
+          "range": true,
+          "legendFormat": "{{page}} {{device_class}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2500
+              },
+              {
+                "color": "red",
+                "value": 4000
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "p75 CLS by page and device class",
+      "description": "Cumulative Layout Shift per page visit (largest session window), 75th percentile over the last hour at each point. Good up to 0.1, poor over 0.25.",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 61
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "expr": "histogram_quantile(0.75, sum by (page, device_class, le) (increase(browser_web_vital_cls_bucket[1h])))",
+          "range": true,
+          "legendFormat": "{{page}} {{device_class}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 0.25
+              }
+            ]
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never",
+            "spanNulls": true,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "bargauge",
+      "title": "Rating shares by vital (selected range)",
+      "description": "Share of measurements rated good, needs improvement and poor, per Web Vital, over the selected range.",
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 61
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "expr": "sum by (name, rating) (increase(browser_web_vital_milliseconds_count[$__range]))\n  / ignoring (rating) group_left\nsum by (name) (increase(browser_web_vital_milliseconds_count[$__range]))\nor\nlabel_replace(\n  sum by (rating) (increase(browser_web_vital_cls_count[$__range]))\n    / ignoring (rating) group_left\n  sum (increase(browser_web_vital_cls_count[$__range])),\n  \"name\", \"CLS\", \"\", \"\"\n)",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{name}} {{rating}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* good"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* needs-improvement"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": ".* poor"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Release $release: p75 Web Vitals, 24 h before and after",
+      "description": "75th percentile of each Web Vital over the 24 hours before the selected release's first page load and the 24 hours after it (the purple release annotations mark those times). The comparison is by time: right after a deploy, tabs still open on the previous release are mixed in for a while. LCP, FCP, TTFB and INP are in ms; CLS is a score. An empty After column means 24 hours haven't passed yet, or nothing was measured.",
+      "gridPos": {
+        "h": 8,
+        "w": 14,
+        "x": 0,
+        "y": 70
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "Before",
+          "expr": "histogram_quantile(0.75, sum by (name, le) (increase(browser_web_vital_milliseconds_bucket[24h] @ ${release_start})))\nor\nlabel_replace(histogram_quantile(0.75, sum by (le) (increase(browser_web_vital_cls_bucket[24h] @ ${release_start}))), \"name\", \"CLS\", \"\", \"\")",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "After",
+          "expr": "histogram_quantile(0.75, sum by (name, le) (increase(browser_web_vital_milliseconds_bucket[24h] @ ${release_start} offset -24h)))\nor\nlabel_replace(histogram_quantile(0.75, sum by (le) (increase(browser_web_vital_cls_bucket[24h] @ ${release_start} offset -24h))), \"name\", \"CLS\", \"\", \"\")",
+          "instant": true,
+          "range": false,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "name": "Vital",
+              "Value #Before": "Before",
+              "Value #After": "After"
+            },
+            "indexByName": {
+              "name": 0,
+              "Value #Before": 1,
+              "Value #After": 2
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      }
+    },
+    {
+      "id": 15,
+      "type": "bargauge",
+      "title": "Browser error rate by release (selected range)",
+      "description": "Errors from the site's own scripts per page load of each release, over the selected range. Exact per release: both counts carry the release (page loads through browser.release_seen). Releases beyond the 5 a replica labels are grouped as other.",
+      "gridPos": {
+        "h": 8,
+        "w": 10,
+        "x": 14,
+        "y": 70
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "victoriametrics"
+          },
+          "refId": "A",
+          "instant": true,
+          "range": false,
+          "legendFormat": "{{release}}",
+          "expr": "(\n  sum by (release) (increase(browser_error_total[$__range]))\n  or sum by (release) (increase(browser_release_seen_total[$__range])) * 0\n)\n  /\nsum by (release) (increase(browser_release_seen_total[$__range]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0.02
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic",
+        "showUnfilled": true,
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      }
     }
-  ]
+  ],
+  "annotations": {
+    "list": [
+      {
+        "name": "Releases",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "victoriametrics"
+        },
+        "enable": true,
+        "iconColor": "purple",
+        "expr": "count by (release) (sum by (release) (browser_release_seen_total{release!=\"other\"}))\nunless\ncount by (release) (sum by (release) (browser_release_seen_total{release!=\"other\"} offset 1h))",
+        "step": "10m",
+        "titleFormat": "Release {{release}}",
+        "tagKeys": "release",
+        "textFormat": "First page load from release {{release}}"
+      }
+    ]
+  }
 }

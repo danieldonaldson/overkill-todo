@@ -282,6 +282,18 @@ session, never from the report).
   (at most 5 releases per replica; the rest are `other`). `BrowserErrorRateHigh`
   fires above 2% of a page's loads for 10 minutes, with at least 1 page load a
   minute on that page.
+- **Web Vitals.** A share of full page loads (`PUBLIC_RUM_SAMPLE_RATE`, 0–1,
+  rendered into `/config.js` at container start; unset or invalid means all)
+  also reports LCP, FCP and TTFB for the full load, and INP and CLS for each
+  page visit, in-site navigations included. They go to the
+  `browser.web_vital` (ms) and `browser.web_vital.cls` histograms, per page,
+  rating, device class and signed-in or not; poor ones are also logged as
+  `client_vital_poor` with the element responsible (tag, ID and classes only).
+  `BrowserVitalPoor` warns when a page's p75 INP stays over 500 ms or LCP over
+  4 s for an hour, with at least 50 measurements an hour. Releases are
+  compared by time: `browser.release_seen` marks each release's first page
+  load on the Frontend dashboard, which compares the 24 h before and after
+  the selected release. Errors and page loads are never sampled.
 
 - **Privacy.** The browser scrubs each report before sending it, and the
   backend scrubs it again: query strings and fragments are cut from every

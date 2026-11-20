@@ -8,6 +8,7 @@
 interface PublicConfig {
   TURNSTILE_SITE_KEY?: string
   UMAMI_WEBSITE_ID?: string
+  RUM_SAMPLE_RATE?: string
 }
 
 const runtime: PublicConfig =
@@ -43,6 +44,22 @@ export const TURNSTILE_SITE_KEY: string = resolvePublicValue(
 export const UMAMI_WEBSITE_ID: string = resolvePublicValue(
   runtime.UMAMI_WEBSITE_ID,
   import.meta.env.PUBLIC_UMAMI_WEBSITE_ID,
+)
+
+/**
+ * The share of full page loads that report Web Vitals (OT-006 Decision 6): a
+ * number from 0 to 1. Unset, empty or anything else invalid means 1, so a typo
+ * never silently turns measurement off. Exported for tests.
+ */
+export function parseSampleRate(value: string): number {
+  if (value.trim() === '') return 1
+  const rate = Number(value)
+  return Number.isFinite(rate) && rate >= 0 && rate <= 1 ? rate : 1
+}
+
+/** `PUBLIC_RUM_SAMPLE_RATE`; errors and page loads are never sampled. */
+export const RUM_SAMPLE_RATE: number = parseSampleRate(
+  resolvePublicValue(runtime.RUM_SAMPLE_RATE, import.meta.env.PUBLIC_RUM_SAMPLE_RATE),
 )
 
 /**

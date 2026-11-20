@@ -2059,6 +2059,29 @@
                 ]
               }
             }
+          },
+          {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ClientVitalEvent",
+                "description": "One Web Vital: LCP, FCP or TTFB for a full load, INP or CLS for a page\nvisit. Sampled."
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "vital"
+                    ]
+                  }
+                }
+              }
+            ],
+            "description": "One Web Vital: LCP, FCP or TTFB for a full load, INP or CLS for a page\nvisit. Sampled."
           }
         ],
         "description": "One browser report."
@@ -2100,6 +2123,38 @@
             "maxLength": 64,
             "minLength": 1,
             "pattern": "^[0-9A-Za-z._-]{1,64}$"
+          }
+        }
+      },
+      "ClientVitalEvent": {
+        "type": "object",
+        "description": "A Web Vital measurement (Decision 6).",
+        "required": [
+          "name",
+          "value",
+          "rating"
+        ],
+        "properties": {
+          "attribution": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For a poor rating: the element responsible, as its tag name and the\nselector `web-vitals` gives. Logged only for poor ratings, never a\nmetric label.",
+            "maxLength": 100
+          },
+          "name": {
+            "$ref": "#/components/schemas/VitalName"
+          },
+          "rating": {
+            "$ref": "#/components/schemas/Rating"
+          },
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "Milliseconds, or the unitless score for CLS.",
+            "maximum": 600000,
+            "minimum": 0
           }
         }
       },
@@ -2308,6 +2363,15 @@
         "enum": [
           "google",
           "apple"
+        ]
+      },
+      "Rating": {
+        "type": "string",
+        "description": "A Web Vital's rating against the standard thresholds.",
+        "enum": [
+          "good",
+          "needs-improvement",
+          "poor"
         ]
       },
       "RequestDeletionRequest": {
@@ -2637,6 +2701,17 @@
             "description": "Short-lived JWT token for password reset (5 min expiry)."
           }
         }
+      },
+      "VitalName": {
+        "type": "string",
+        "description": "A Web Vital the browser measures (OT-006 Decision 6). Like\n[`ClientErrorKind`] it is the field's real type, so an unknown name is\nrejected and can't become a metric label.",
+        "enum": [
+          "LCP",
+          "FCP",
+          "TTFB",
+          "INP",
+          "CLS"
+        ]
       }
     },
     "securitySchemes": {

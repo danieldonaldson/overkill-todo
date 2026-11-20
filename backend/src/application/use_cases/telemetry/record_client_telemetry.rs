@@ -13,11 +13,16 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use super::scrub::scrub;
-use crate::application::dto::client_telemetry_dto::{MAX_MESSAGE_CHARS, MAX_STACK_CHARS};
-use crate::application::dto::{ClientErrorEvent, ClientEvent, ClientReportBatch};
+use crate::application::dto::client_telemetry_dto::{
+    MAX_ATTRIBUTION_CHARS, MAX_MESSAGE_CHARS, MAX_STACK_CHARS,
+};
+use crate::application::dto::{
+    ClientErrorEvent, ClientEvent, ClientReportBatch, ClientVitalEvent, Rating,
+};
 use crate::application::ports::incoming::RecordClientTelemetry;
-use crate::application::ports::outgoing::ClientPageLoadReport;
-use crate::application::ports::outgoing::{ClientErrorReport, ClientReportSink};
+use crate::application::ports::outgoing::{
+    ClientErrorReport, ClientPageLoadReport, ClientReportSink, ClientVitalReport,
+};
 use crate::domain::value_objects::UserId;
 use crate::shared::fingerprint::generate_error_fingerprint;
 
@@ -270,11 +275,21 @@ impl RecordClientTelemetryUseCase {
                     );
                     self.sink.error(&report);
                 }
-                ClientEvent::PageLoad => self.sink.page_load(&ClientPageLoadReport {
-                    page,
-                    device_class,
-                    authenticated: user.is_some(),
-                }),
+                ClientEvent::PageLoad => {
+                    let release_label = release_label
+                        .get_or_insert_with(|| self.releases.label(&batch.release))
+                        .clone();
+                    self.sink.page_load(&ClientPageLoadReport {
+                        page,
+                        device_class,
+                        authenticated: user.is_some(),
+                        release_label,
+                    });
+                }
+                ClientEvent::Vital(vital) => {
+                    self.sink
+                        .vital(&vital_report(vital, page, device_class, user.is_some()));
+                }
             }
         }
         if dropped > 0 {
@@ -325,6 +340,32 @@ fn error_report(error: ClientErrorEvent, cx: ReportContext<'_>) -> ClientErrorRe
     }
 }
 
+/// Attribution is kept only for a poor rating (Decision 4), and scrubbed: a
+/// selector can carry an attribute value.
+fn vital_report(
+    vital: ClientVitalEvent,
+    page: &'static str,
+    device_class: &'static str,
+    authenticated: bool,
+) -> ClientVitalReport {
+    let attribution = match vital.rating {
+        Rating::Poor => vital
+            .attribution
+            .map(|a| scrub(&a, MAX_ATTRIBUTION_CHARS))
+            .filter(|a| !a.is_empty()),
+        Rating::Good | Rating::NeedsImprovement => None,
+    };
+    ClientVitalReport {
+        name: vital.name,
+        value: vital.value,
+        rating: vital.rating,
+        page,
+        device_class,
+        authenticated,
+        attribution,
+    }
+}
+
 impl RecordClientTelemetry for RecordClientTelemetryUseCase {
     // Not instrumented: browser reports get no trace (the request has no span,
     // so a span here would start an exported trace of its own).
@@ -339,7 +380,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::application::dto::ClientErrorKind;
+    use crate::application::dto::{ClientErrorKind, VitalName};
 
     const CHROME_DESKTOP: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     const SAFARI_IPHONE: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1";
@@ -348,6 +389,7 @@ mod tests {
     struct RecordingSink {
         errors: Mutex<Vec<ClientErrorReport>>,
         page_loads: Mutex<Vec<ClientPageLoadReport>>,
+        vitals: Mutex<Vec<ClientVitalReport>>,
         dropped: Mutex<Vec<u64>>,
     }
 
@@ -356,7 +398,10 @@ mod tests {
             self.errors.lock().unwrap().push(report.clone());
         }
         fn page_load(&self, report: &ClientPageLoadReport) {
-            self.page_loads.lock().unwrap().push(*report);
+            self.page_loads.lock().unwrap().push(report.clone());
+        }
+        fn vital(&self, report: &ClientVitalReport) {
+            self.vitals.lock().unwrap().push(report.clone());
         }
         fn dropped(&self, n: u64) {
             self.dropped.lock().unwrap().push(n);
@@ -660,11 +705,13 @@ mod tests {
                     page: "/dashboard/settings",
                     device_class: "mobile",
                     authenticated: true,
+                    release_label: "abc123".into(),
                 },
                 ClientPageLoadReport {
                     page: OTHER_PAGE,
                     device_class: "desktop",
                     authenticated: false,
+                    release_label: "abc123".into(),
                 },
             ]
         );
@@ -772,5 +819,157 @@ mod tests {
             sink.dropped.lock().unwrap().is_empty(),
             "no dropped(0) calls"
         );
+    }
+
+    fn vital(
+        name: VitalName,
+        value: f64,
+        rating: Rating,
+        attribution: Option<&str>,
+    ) -> ClientEvent {
+        ClientEvent::Vital(ClientVitalEvent {
+            name,
+            value,
+            rating,
+            attribution: attribution.map(str::to_string),
+        })
+    }
+
+    #[test]
+    fn a_vital_is_recorded_with_the_page_device_and_session() {
+        let (uc, sink) = use_case(DEFAULT_MAX_EVENTS_PER_SEC);
+        let user = UserId::new();
+        uc.record(
+            batch(
+                "/dashboard/settings/",
+                vec![
+                    vital(VitalName::Inp, 120.0, Rating::Good, None),
+                    vital(VitalName::Cls, 0.02, Rating::Good, None),
+                ],
+            ),
+            Some(user),
+            SAFARI_IPHONE,
+        );
+        uc.record(
+            batch(
+                "/made-up",
+                vec![vital(VitalName::Lcp, 2000.0, Rating::Good, None)],
+            ),
+            None,
+            CHROME_DESKTOP,
+        );
+        let vitals = sink.vitals.lock().unwrap().clone();
+        assert_eq!(
+            vitals,
+            [
+                ClientVitalReport {
+                    name: VitalName::Inp,
+                    value: 120.0,
+                    rating: Rating::Good,
+                    page: "/dashboard/settings",
+                    device_class: "mobile",
+                    authenticated: true,
+                    attribution: None,
+                },
+                ClientVitalReport {
+                    name: VitalName::Cls,
+                    value: 0.02,
+                    rating: Rating::Good,
+                    page: "/dashboard/settings",
+                    device_class: "mobile",
+                    authenticated: true,
+                    attribution: None,
+                },
+                ClientVitalReport {
+                    name: VitalName::Lcp,
+                    value: 2000.0,
+                    rating: Rating::Good,
+                    page: OTHER_PAGE,
+                    device_class: "desktop",
+                    authenticated: false,
+                    attribution: None,
+                },
+            ]
+        );
+        assert_eq!(sink.errors().len(), 0);
+    }
+
+    #[test]
+    fn attribution_is_kept_only_for_a_poor_rating_and_scrubbed() {
+        let (uc, sink) = use_case(DEFAULT_MAX_EVENTS_PER_SEC);
+        uc.record(
+            batch(
+                "/dashboard",
+                vec![
+                    vital(VitalName::Inp, 640.0, Rating::Poor, Some("button#save")),
+                    vital(
+                        VitalName::Inp,
+                        300.0,
+                        Rating::NeedsImprovement,
+                        Some("button#save"),
+                    ),
+                    vital(VitalName::Lcp, 900.0, Rating::Good, Some("img.hero")),
+                    vital(
+                        VitalName::Cls,
+                        0.4,
+                        Rating::Poor,
+                        Some("a[href=\"mailto:ann@example.com\"]"),
+                    ),
+                ],
+            ),
+            None,
+            CHROME_DESKTOP,
+        );
+        let attributions: Vec<Option<String>> = sink
+            .vitals
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|v| v.attribution.clone())
+            .collect();
+        assert_eq!(attributions[0].as_deref(), Some("button#save"));
+        assert_eq!(attributions[1], None);
+        assert_eq!(attributions[2], None);
+        let scrubbed = attributions[3].as_deref().unwrap();
+        assert!(!scrubbed.contains("ann@example.com"), "{scrubbed}");
+    }
+
+    #[test]
+    fn vitals_share_the_budget() {
+        let (uc, sink) = use_case(2);
+        uc.record(
+            batch(
+                "/login",
+                vec![
+                    vital(VitalName::Lcp, 1.0, Rating::Good, None),
+                    vital(VitalName::Fcp, 1.0, Rating::Good, None),
+                    vital(VitalName::Ttfb, 1.0, Rating::Good, None),
+                ],
+            ),
+            None,
+            CHROME_DESKTOP,
+        );
+        assert_eq!(sink.vitals.lock().unwrap().len(), 2);
+        assert_eq!(sink.dropped_total(), 1);
+    }
+
+    #[test]
+    fn page_loads_carry_the_capped_release_label() {
+        let (uc, sink) = use_case(DEFAULT_MAX_EVENTS_PER_SEC);
+        let uc = uc.with_own_release("own");
+        for n in 0..6 {
+            let mut b = batch("/login", vec![ClientEvent::PageLoad]);
+            b.release = format!("r{n}");
+            uc.record(b, None, CHROME_DESKTOP);
+        }
+        let labels: Vec<String> = sink
+            .page_loads
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|l| l.release_label.clone())
+            .collect();
+        // `own` holds one of the 5 slots: r0-r3 take the rest.
+        assert_eq!(labels, ["r0", "r1", "r2", "r3", "other", "other"]);
     }
 }

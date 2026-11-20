@@ -120,6 +120,32 @@ against the spec). Batches from a signed-out page load now go by `fetch` with
 hook, so the crash used real bad data instead; the hook is checked by
 `just e2e`.
 
+**Slice 3 check (2026-11-19, task 3.7): confirmed.** Against `just up` with
+release images, `ot006-s3a` then `ot006-s3b`, and `just obs-up`, a scripted
+Chromium loaded the public pages signed out and Home → Settings signed in, on
+desktop and with Pixel 7 emulation:
+- p75 for every vital appeared per page, device class and sign-in within the
+  first metric export (about a minute). `/dashboard/settings` had INP and CLS
+  only; LCP, FCP and TTFB belonged to `/dashboard`, the full load;
+- the two releases gave two release annotations, and the before/after table for
+  `ot006-s3b` split there: the 24 h before held `ot006-s3a`'s values, the 24 h
+  after held `ot006-s3b`'s;
+- the error rate per release (now exact, through `browser.release_seen`) read
+  0% for both.
+
+Found on the way:
+- `ot006-s3a` reported no INP at all. Real clicks in the app take under 40 ms,
+  below the `event` entries' threshold, so only slow interactions would have
+  counted and p75 INP would have been drawn from the slow tail. As
+  `web-vitals` does, the observers now also read `first-input`, and a visit
+  with interactions (`performance.interactionCount`) but no measured one has
+  an INP of 8 ms. `ot006-s3b` reported INP on every page.
+- With 50 ms as the lowest bucket edge, those 8 ms values read as a p75 of
+  37.5 ms. `browser.web_vital` now has edges at 10 and 25 ms as well.
+- The release's first-seen time uses MetricsQL `tfirst_over_time`: a
+  `min_over_time(timestamp(...)[30d:10m])` subquery missed releases younger
+  than its step.
+
 ## Decisions
 
 ### 1. In-house reporter plus a backend endpoint
@@ -282,7 +308,10 @@ wrong under ClientRouter:
 - **INP:** `event` entries (`durationThreshold: 40`), grouped by
   `interactionId`, with the longest duration per interaction. A visit's INP is
   the worst interaction, or the 98th percentile once a visit has more than 50
-  interactions, matching the standard definition.
+  interactions, matching the standard definition. `first-input` entries are
+  read too, and a visit whose interactions were all too quick for an entry
+  (`performance.interactionCount` rose, no candidate) has an INP of 8 ms, as
+  `web-vitals` does (changed in slice 3).
 - **CLS:** `layout-shift` entries without `hadRecentInput`, grouped into
   session windows (gap under 1 s, window at most 5 s). A visit's CLS is the
   largest window.
@@ -390,7 +419,8 @@ VictoriaMetrics):
 
 | Instrument | Type | Labels |
 |---|---|---|
-| `browser.web_vital` | histogram, unit per vital (`ms`, or `1` for CLS), explicit buckets around the good/poor thresholds | `name`, `page`, `rating`, `device_class`, `authenticated` |
+| `browser.web_vital` | histogram, ms, explicit buckets with an edge at every good/poor threshold | `name` (LCP, FCP, TTFB, INP), `page`, `rating`, `device_class`, `authenticated` |
+| `browser.web_vital.cls` | histogram, unit `1`, buckets around 0.1 and 0.25 | `page`, `rating`, `device_class`, `authenticated` |
 | `browser.page_load` | counter | `page`, `device_class`, `authenticated` |
 | `browser.error` | counter (incremented by `count`), same-origin errors only | `page`, `kind`, `release` |
 | `browser.report.dropped` | counter | none |
@@ -399,6 +429,12 @@ VictoriaMetrics):
 | `browser.navigation.phase.duration` | histogram, ms | `phase` (`fetch`, `swap`, `transition`), `page`, `device_class` |
 | `browser.navigation` | counter | `outcome` (`completed`, `aborted`), `page` |
 | `browser.island.duration` | histogram, ms | `island`, `page`, `stage` (`interactive`, `ready`), `nav_type` (`hard`, `soft`), `device_class` |
+
+**CLS has its own histogram** (changed in slice 3). The plan was one
+`browser.web_vital` with a unit per vital, but an OTel instrument has one unit
+and one bucket set, and CLS is a score near 0–1 while the others are
+milliseconds. Poor vitals are also logged as `client_vital_poor` (name, value,
+page, device class, and the scrubbed attribution), never with `user_id`.
 
 `browser.error` counts only errors from the site's own scripts. Errors whose
 top frame isn't same-origin, and `Script error.` with no stack, are still logged
@@ -427,8 +463,8 @@ histograms per release kept). Fingerprints stay
 out of metrics entirely; the "top fingerprints" panel is a VictoriaLogs query.
 
 **Series bound:**
-- Web Vitals: 5 names × 11 pages × 3 ratings × 3 device classes × 2 = 990
-  histograms.
+- Web Vitals: 5 names (4 in `browser.web_vital`, CLS in its own) × 11 pages
+  × 3 ratings × 3 device classes × 2 = 990 histograms.
 - Navigation duration: 11 pages × 4 type/transition combinations × 3 device
   classes = 132.
 - Navigation phases: 3 × 11 × 3 = 99.

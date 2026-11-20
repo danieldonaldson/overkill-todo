@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use validator::{Validate, ValidationError, ValidationErrors};
 
-use super::schema_enums::ClientErrorKind;
+use super::schema_enums::{ClientErrorKind, Rating, VitalName};
 
 /// Most events one batch may carry.
 pub const MAX_EVENTS_PER_BATCH: usize = 30;
@@ -21,6 +21,11 @@ pub const MAX_MESSAGE_CHARS: usize = 500;
 pub const MAX_STACK_CHARS: usize = 4_000;
 /// Longest island (panel) name accepted, in characters.
 pub const MAX_ISLAND_CHARS: usize = 100;
+/// Longest Web Vital attribution (tag name and selector) accepted, in characters.
+pub const MAX_ATTRIBUTION_CHARS: usize = 100;
+/// Largest Web Vital value accepted: 10 minutes in ms, far above any real
+/// measurement and any CLS score.
+pub const MAX_VITAL_VALUE: f64 = 600_000.0;
 
 /// `true` when `value` is exactly `len` lowercase hex characters.
 fn is_lower_hex(value: &str, len: usize) -> bool {
@@ -99,6 +104,9 @@ pub enum ClientEvent {
     /// The page finished loading, by a full load or an in-site navigation: the
     /// denominator of the error rate. Never sampled.
     PageLoad,
+    /// One Web Vital: LCP, FCP or TTFB for a full load, INP or CLS for a page
+    /// visit. Sampled.
+    Vital(ClientVitalEvent),
 }
 
 impl Validate for ClientEvent {
@@ -106,8 +114,31 @@ impl Validate for ClientEvent {
         match self {
             Self::Error(event) => event.validate(),
             Self::PageLoad => Ok(()),
+            Self::Vital(event) => event.validate(),
         }
     }
+}
+
+/// A Web Vital measurement (Decision 6).
+// `Serialize` for the same reason as `ClientErrorEvent`.
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, ToSchema)]
+pub struct ClientVitalEvent {
+    pub name: VitalName,
+
+    /// Milliseconds, or the unitless score for CLS.
+    #[schema(minimum = 0, maximum = 600_000)]
+    #[validate(range(min = 0.0, max = 600_000.0, message = "value must be 0-600000"))]
+    pub value: f64,
+
+    pub rating: Rating,
+
+    /// For a poor rating: the element responsible, as its tag name and the
+    /// selector `web-vitals` gives. Logged only for poor ratings, never a
+    /// metric label.
+    #[schema(max_length = 100)]
+    #[validate(length(max = 100, message = "attribution must be at most 100 characters"))]
+    #[serde(default)]
+    pub attribution: Option<String>,
 }
 
 /// A browser error, deduplicated within its page load (`count` repeats).
@@ -285,7 +316,7 @@ mod tests {
     #[test]
     fn rejects_an_unknown_kind_or_event_type() {
         assert!(parse(with_field("kind", json!("warning"))).is_err());
-        assert!(parse(with_field("type", json!("vital"))).is_err());
+        assert!(parse(with_field("type", json!("navigation"))).is_err());
     }
 
     #[test]
@@ -321,5 +352,60 @@ mod tests {
         assert!(parse(with_field("count", json!(0))).is_err());
         assert!(parse(with_field("status", json!(99))).is_err());
         assert!(parse(with_field("status", json!(600))).is_err());
+    }
+
+    fn vital(name: &str, value: f64, rating: &str) -> Value {
+        json!({ "type": "vital", "name": name, "value": value, "rating": rating })
+    }
+
+    #[test]
+    fn accepts_every_vital_and_rating() {
+        let events: Vec<Value> = [
+            ("LCP", 2400.0, "good"),
+            ("FCP", 1900.5, "needs-improvement"),
+            ("TTFB", 0.0, "good"),
+            ("INP", 640.0, "poor"),
+            ("CLS", 0.31, "poor"),
+        ]
+        .into_iter()
+        .map(|(n, v, r)| vital(n, v, r))
+        .collect();
+        let batch = parse(batch_with(&events)).unwrap();
+        let ClientEvent::Vital(cls) = &batch.events[4] else {
+            panic!("not a vital");
+        };
+        assert_eq!(cls.name, VitalName::Cls);
+        assert_eq!(cls.rating, Rating::Poor);
+    }
+
+    #[test]
+    fn rejects_an_unknown_vital_name_or_rating() {
+        for (name, rating) in [
+            ("FID", "good"),
+            ("lcp", "good"),
+            ("LCP", "bad"),
+            ("LCP", "Poor"),
+        ] {
+            assert!(
+                parse(batch_with(&[vital(name, 100.0, rating)])).is_err(),
+                "{name} {rating} accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_a_negative_or_huge_vital_value() {
+        assert!(parse(batch_with(&[vital("LCP", MAX_VITAL_VALUE, "poor")])).is_ok());
+        assert!(parse(batch_with(&[vital("LCP", -1.0, "good")])).is_err());
+        assert!(parse(batch_with(&[vital("LCP", MAX_VITAL_VALUE + 1.0, "poor")])).is_err());
+    }
+
+    #[test]
+    fn attribution_is_capped_at_100_characters() {
+        let mut event = vital("INP", 700.0, "poor");
+        event["attribution"] = json!("x".repeat(MAX_ATTRIBUTION_CHARS));
+        assert!(parse(batch_with(&[event.clone()])).is_ok());
+        event["attribution"] = json!("x".repeat(MAX_ATTRIBUTION_CHARS + 1));
+        assert!(parse(batch_with(&[event])).is_err());
     }
 }

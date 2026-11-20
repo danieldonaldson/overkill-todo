@@ -17,7 +17,9 @@ pub mod turnstile_service;
 pub mod user_repository;
 
 pub use account_lifecycle::AccountLifecycleRepository;
-pub use client_report_sink::{ClientErrorReport, ClientPageLoadReport, ClientReportSink};
+pub use client_report_sink::{
+    ClientErrorReport, ClientPageLoadReport, ClientReportSink, ClientVitalReport,
+};
 pub use code_generator::CodeGenerator;
 
 pub use email_service::EmailService;

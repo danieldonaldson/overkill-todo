@@ -196,6 +196,34 @@ impl Harness {
         points
     }
 
+    /// `(sorted attributes, count)` for each point of the `f64` histogram `name`.
+    fn histogram(&self, name: &str) -> Vec<(Vec<(String, String)>, u64)> {
+        self.meter.force_flush().unwrap();
+        let batches = self.metrics.get_finished_metrics().unwrap();
+        let mut points = batches
+            .iter()
+            .rev()
+            .flat_map(|rm| rm.scope_metrics().flat_map(ScopeMetrics::metrics))
+            .find(|m| m.name() == name)
+            .map_or_else(Vec::new, |m| {
+                let AggregatedMetrics::F64(MetricData::Histogram(hist)) = m.data() else {
+                    panic!("{name} is not an f64 histogram");
+                };
+                hist.data_points()
+                    .map(|dp| {
+                        let mut attrs: Vec<(String, String)> = dp
+                            .attributes()
+                            .map(|kv| (kv.key.to_string(), kv.value.to_string()))
+                            .collect();
+                        attrs.sort();
+                        (attrs, dp.count())
+                    })
+                    .collect()
+            });
+        points.sort();
+        points
+    }
+
     /// Sum of the `browser.report.dropped` counter.
     fn dropped(&self) -> u64 {
         self.counter("browser.report.dropped")
@@ -557,4 +585,98 @@ async fn an_external_error_is_logged_but_not_counted(pool: PgPool) {
     assert_eq!(h.client_errors().len(), 1);
     assert_eq!(h.client_errors()[0]["source"], "external");
     assert_eq!(h.counter("browser.error"), Vec::new());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn vitals_are_recorded_per_page_and_poor_ones_logged(pool: PgPool) {
+    let h = Harness::new(pool, 200);
+    let cookie = session_cookie(&common::mint_session_jwt(Uuid::new_v4(), true, "user", 15));
+    let (status, body) = h
+        .post_json(
+            &batch(
+                "/dashboard/settings",
+                &[
+                    json!({ "type": "vital", "name": "INP", "value": 640.0, "rating": "poor",
+                            "attribution": "button#save" }),
+                    json!({ "type": "vital", "name": "CLS", "value": 0.02, "rating": "good" }),
+                ],
+            ),
+            &[("cookie", &cookie)],
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(body, "");
+    h.post_json(
+        &batch(
+            "/made-up",
+            &[json!({ "type": "vital", "name": "LCP", "value": 1200.0, "rating": "good" })],
+        ),
+        &[],
+    )
+    .await;
+
+    assert_eq!(
+        h.histogram("browser.web_vital"),
+        [
+            (
+                attrs(&[
+                    ("authenticated", "false"),
+                    ("device_class", "desktop"),
+                    ("name", "LCP"),
+                    ("page", "other"),
+                    ("rating", "good"),
+                ]),
+                1
+            ),
+            (
+                attrs(&[
+                    ("authenticated", "true"),
+                    ("device_class", "desktop"),
+                    ("name", "INP"),
+                    ("page", "/dashboard/settings"),
+                    ("rating", "poor"),
+                ]),
+                1
+            ),
+        ]
+    );
+    assert_eq!(
+        h.histogram("browser.web_vital.cls"),
+        [(
+            attrs(&[
+                ("authenticated", "true"),
+                ("device_class", "desktop"),
+                ("page", "/dashboard/settings"),
+                ("rating", "good"),
+            ]),
+            1
+        )]
+    );
+    let poor: Vec<Value> = h
+        .log_lines()
+        .into_iter()
+        .filter(|line| line["event"] == "client_vital_poor")
+        .collect();
+    assert_eq!(poor.len(), 1, "{poor:?}");
+    assert_eq!(poor[0]["attribution"], "button#save");
+    assert_eq!(poor[0]["page"], "/dashboard/settings");
+    assert!(h.client_errors().is_empty(), "vitals aren't errors");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn unknown_vital_names_and_ratings_get_a_400(pool: PgPool) {
+    let h = Harness::new(pool, 200);
+    for (name, rating) in [("FID", "good"), ("LCP", "great")] {
+        let (status, _) = h
+            .post_json(
+                &batch(
+                    "/login",
+                    &[json!({ "type": "vital", "name": name, "value": 1.0, "rating": rating })],
+                ),
+                &[],
+            )
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{name} {rating}");
+    }
+    assert_eq!(h.histogram("browser.web_vital").len(), 0);
 }
