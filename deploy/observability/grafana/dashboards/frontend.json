@@ -1239,6 +1239,26 @@
           "values": false
         }
       }
+    },
+    {
+      "id": 16,
+      "type": "text",
+      "title": "What the Web Vitals mean",
+      "gridPos": {
+        "h": 11,
+        "w": 24,
+        "x": 0,
+        "y": 78
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "| Name | Stands for | What it measures | Measured | Good | Poor |\n|---|---|---|---|---|---|\n| **LCP** | Largest Contentful Paint | When the largest image or text block on screen finished rendering: when the page looks loaded. | Each full page load | \u2264 2.5 s | > 4 s |\n| **FCP** | First Contentful Paint | When the first text or image appeared: the first sign the page is loading. | Each full page load | \u2264 1.8 s | > 3 s |\n| **TTFB** | Time to First Byte | From the start of the request until the first byte of the page arrived: server and network time. | Each full page load | \u2264 800 ms | > 1.8 s |\n| **INP** | Interaction to Next Paint | How long the page took to visibly respond to a click, tap or key press, for the worst interaction of a visit (98th percentile past 50). | Each page visit, in-site navigations included | \u2264 200 ms | > 500 ms |\n| **CLS** | Cumulative Layout Shift | How much content jumped around unexpectedly, as a score: the largest burst of shifts not caused by the user. No unit. | Each page visit, in-site navigations included | \u2264 0.1 | > 0.25 |\n\nValues between good and poor are rated *needs improvement*.\n\n- **Full page load:** the browser loaded a new document (opening the site, a reload, a link from outside).\n- **Page visit:** the time spent on one page, whether it was reached by a full load or by in-site navigation (e.g. Home \u2192 Settings in the dashboard).\n- **p75:** the 75th percentile, the value 3 in 4 measurements are at or under. It is the standard way to report Web Vitals: most visitors' experience, not the lucky or the unlucky few.\n- **Device class:** desktop, tablet or mobile, from the browser's user agent.\n\nOnly a share of full page loads is measured (`PUBLIC_RUM_SAMPLE_RATE`). See [web.dev/vitals](https://web.dev/articles/vitals) for the full definitions.",
+        "code": {
+          "language": "plaintext",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        }
+      }
     }
   ],
   "annotations": {
