@@ -14,7 +14,7 @@ describe('loginNoticeFromSearch', () => {
       const notice = loginNoticeFromSearch(`?error=${code}`)
       expect(notice?.kind).toBe('error')
       expect(notice?.text).not.toContain(code)
-    },
+    }
   )
 
   it('never echoes an unknown error value', () => {

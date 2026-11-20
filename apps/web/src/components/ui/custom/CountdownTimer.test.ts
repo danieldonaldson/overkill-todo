@@ -50,7 +50,9 @@ describe('CountdownTimer', () => {
 
   it('calls oncomplete and hides itself when it reaches zero', async () => {
     const oncomplete = vi.fn()
-    const screen = await render(CountdownTimer, { props: { seconds: 2, autoStart: true, oncomplete } })
+    const screen = await render(CountdownTimer, {
+      props: { seconds: 2, autoStart: true, oncomplete },
+    })
 
     await vi.advanceTimersByTimeAsync(2000)
 
@@ -60,7 +62,9 @@ describe('CountdownTimer', () => {
 
   it('does not auto-start when autoStart is false', async () => {
     const oncomplete = vi.fn()
-    const screen = await render(CountdownTimer, { props: { seconds: 3, autoStart: false, oncomplete } })
+    const screen = await render(CountdownTimer, {
+      props: { seconds: 3, autoStart: false, oncomplete },
+    })
 
     await vi.advanceTimersByTimeAsync(5000)
 

@@ -21,7 +21,7 @@ const runtime: PublicConfig =
  */
 export function resolvePublicValue(
   runtimeValue: string | undefined,
-  buildValue: string | undefined,
+  buildValue: string | undefined
 ): string {
   const rendered = runtimeValue && !runtimeValue.startsWith('${') ? runtimeValue : undefined
   return rendered ?? buildValue ?? ''
@@ -33,7 +33,7 @@ export function resolvePublicValue(
  */
 export const TURNSTILE_SITE_KEY: string = resolvePublicValue(
   runtime.TURNSTILE_SITE_KEY,
-  import.meta.env.PUBLIC_TURNSTILE_SITE_KEY,
+  import.meta.env.PUBLIC_TURNSTILE_SITE_KEY
 )
 
 /**
@@ -43,7 +43,7 @@ export const TURNSTILE_SITE_KEY: string = resolvePublicValue(
  */
 export const UMAMI_WEBSITE_ID: string = resolvePublicValue(
   runtime.UMAMI_WEBSITE_ID,
-  import.meta.env.PUBLIC_UMAMI_WEBSITE_ID,
+  import.meta.env.PUBLIC_UMAMI_WEBSITE_ID
 )
 
 /**
@@ -59,7 +59,7 @@ export function parseSampleRate(value: string): number {
 
 /** `PUBLIC_RUM_SAMPLE_RATE`; errors and page loads are never sampled. */
 export const RUM_SAMPLE_RATE: number = parseSampleRate(
-  resolvePublicValue(runtime.RUM_SAMPLE_RATE, import.meta.env.PUBLIC_RUM_SAMPLE_RATE),
+  resolvePublicValue(runtime.RUM_SAMPLE_RATE, import.meta.env.PUBLIC_RUM_SAMPLE_RATE)
 )
 
 /**

@@ -1,10 +1,7 @@
 {
   "uid": "frontend",
   "title": "Frontend",
-  "tags": [
-    "overkill-todo",
-    "OT-006"
-  ],
+  "tags": ["overkill-todo", "OT-006"],
   "description": "Browser errors and page loads reported by the site (OT-006). Reports are scrubbed in the browser and again on the server: pages are templates, never addresses; no query strings, fragments, emails or tokens. Members are named by user ID only, taken from the session. Page loads are the error rate's denominator, not traffic analytics (that is OT-005). Errors from other origins (extensions, third-party scripts) are logged but not counted in the error rate. Web Vitals are measured on the sampled share of page loads (PUBLIC_RUM_SAMPLE_RATE); LCP, FCP and TTFB per full load, INP and CLS per page visit. In-site navigations (total, fetch, swap and view transition) and panel times to interactive and ready are measured on the same sampled share.",
   "editable": false,
   "schemaVersion": 41,
@@ -15,12 +12,7 @@
     "to": "now"
   },
   "timepicker": {
-    "refresh_intervals": [
-      "30s",
-      "1m",
-      "5m",
-      "15m"
-    ]
+    "refresh_intervals": ["30s", "1m", "5m", "15m"]
   },
   "templating": {
     "list": [
@@ -140,10 +132,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "max",
-            "mean"
-          ]
+          "calcs": ["max", "mean"]
         },
         "tooltip": {
           "mode": "multi",
@@ -246,9 +235,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "sum"
-          ]
+          "calcs": ["sum"]
         },
         "tooltip": {
           "mode": "multi",
@@ -844,10 +831,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "mean",
-            "max"
-          ]
+          "calcs": ["mean", "max"]
         },
         "tooltip": {
           "mode": "multi",
@@ -920,10 +904,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "mean",
-            "max"
-          ]
+          "calcs": ["mean", "max"]
         },
         "tooltip": {
           "mode": "multi",
@@ -996,10 +977,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "mean",
-            "max"
-          ]
+          "calcs": ["mean", "max"]
         },
         "tooltip": {
           "mode": "multi",
@@ -1098,9 +1076,7 @@
         "displayMode": "basic",
         "showUnfilled": true,
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         }
@@ -1232,9 +1208,7 @@
         "displayMode": "basic",
         "showUnfilled": true,
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         }
@@ -1476,10 +1450,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "mean",
-            "max"
-          ]
+          "calcs": ["mean", "max"]
         },
         "tooltip": {
           "mode": "multi",
@@ -1678,9 +1649,7 @@
         "displayMode": "basic",
         "showUnfilled": true,
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         }
@@ -1731,9 +1700,7 @@
         "displayMode": "basic",
         "showUnfilled": true,
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         }
@@ -1969,10 +1936,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "mean",
-            "max"
-          ]
+          "calcs": ["mean", "max"]
         },
         "tooltip": {
           "mode": "multi",

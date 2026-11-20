@@ -35,7 +35,7 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
       DEPLOYMENT_ENVIRONMENT: production
       # Required when DEV_MODE=false: the no-op MX validator is dev-only.
-      MX_VALIDATION_ENABLED: "true"
+      MX_VALIDATION_ENABLED: 'true'
     restart: unless-stopped
 
   web:

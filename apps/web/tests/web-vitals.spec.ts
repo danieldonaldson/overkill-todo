@@ -20,9 +20,7 @@ async function slowClicks(page: Page, ms = 600) {
 }
 
 test.describe('Web Vitals', () => {
-  test('Home then Settings: load vitals for Home, INP and CLS for each visit', async ({
-    page,
-  }) => {
+  test('Home then Settings: load vitals for Home, INP and CLS for each visit', async ({ page }) => {
     const { vitals, reports, cspViolations } = await setup(page, { signedIn: true })
     await page.goto('/dashboard')
     await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible()
@@ -38,15 +36,26 @@ test.describe('Web Vitals', () => {
     await hide(page)
 
     await expect
-      .poll(() => vitals().filter(([, p]) => p === '/dashboard/settings').map(([n]) => n).sort())
+      .poll(() =>
+        vitals()
+          .filter(([, p]) => p === '/dashboard/settings')
+          .map(([n]) => n)
+          .sort()
+      )
       .toEqual(['CLS', 'INP'])
     // Home's INP is the click on the Settings link that ended its visit.
     await expect
-      .poll(() => vitals().filter(([, p]) => p === '/dashboard').map(([n]) => n).sort())
+      .poll(() =>
+        vitals()
+          .filter(([, p]) => p === '/dashboard')
+          .map(([n]) => n)
+          .sort()
+      )
       .toEqual(['CLS', 'FCP', 'INP', 'LCP', 'TTFB'])
     // Load metrics belong to the full load only.
-    expect(vitals().filter(([n, p]) => ['LCP', 'FCP', 'TTFB'].includes(n) && p !== '/dashboard'))
-      .toEqual([])
+    expect(
+      vitals().filter(([n, p]) => ['LCP', 'FCP', 'TTFB'].includes(n) && p !== '/dashboard')
+    ).toEqual([])
 
     const inp = reports
       .filter((r) => r.page === '/dashboard/settings')
@@ -101,7 +110,11 @@ test.describe('Web Vitals on a phone', () => {
     await hide(page)
 
     await expect
-      .poll(() => vitals().map(([n]) => n).sort())
+      .poll(() =>
+        vitals()
+          .map(([n]) => n)
+          .sort()
+      )
       .toEqual(expect.arrayContaining(['CLS', 'FCP', 'LCP', 'TTFB']))
     expect(new Set(reports.map((r) => r.page))).toEqual(new Set(['/register']))
   })

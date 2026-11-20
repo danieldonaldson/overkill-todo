@@ -7,8 +7,7 @@
     control,
     fallback = 'message',
     timing,
-  }: { control: { fail: boolean }; fallback?: 'message' | 'none'; timing?: IslandTimer } =
-    $props()
+  }: { control: { fail: boolean }; fallback?: 'message' | 'none'; timing?: IslandTimer } = $props()
 </script>
 
 <TelemetryBoundary name="SettingsPanel" {fallback} {timing}>

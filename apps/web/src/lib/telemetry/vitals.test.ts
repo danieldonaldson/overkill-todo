@@ -94,7 +94,8 @@ describe('selectorOf', () => {
   it('names tags and classes up to the nearest ID, never text or attributes', () => {
     const root = document.createElement('section')
     root.id = 'settings'
-    root.innerHTML = '<form class="b a"><button data-email="ann@example.com">Save ann@example.com</button></form>'
+    root.innerHTML =
+      '<form class="b a"><button data-email="ann@example.com">Save ann@example.com</button></form>'
     document.body.append(root)
     const button = root.querySelector('button')
     expect(selectorOf(button)).toBe('#settings>form.a.b>button')
@@ -109,7 +110,13 @@ describe('selectorOf', () => {
 })
 
 function visitHarness() {
-  const reports: { name: string; value: number; rating: string; page: string; attribution?: string }[] = []
+  const reports: {
+    name: string
+    value: number
+    rating: string
+    page: string
+    attribution?: string
+  }[] = []
   let path = '/dashboard'
   let now = 0
   let count: number | null = null
@@ -326,7 +333,10 @@ describe('Reporter.vital', () => {
   it('keeps attribution only for a poor rating, scrubbed and capped', () => {
     const { r, sent } = reporter()
     r.vital({ name: 'INP', value: 700, rating: 'poor', attribution: 'x'.repeat(150) }, '/dashboard')
-    r.vital({ name: 'INP', value: 300, rating: 'needs-improvement', attribution: 'button' }, '/dashboard')
+    r.vital(
+      { name: 'INP', value: 300, rating: 'needs-improvement', attribution: 'button' },
+      '/dashboard'
+    )
     r.flush()
     const [poor, fine] = sent()[0].events
     expect(poor.attribution).toHaveLength(100)
