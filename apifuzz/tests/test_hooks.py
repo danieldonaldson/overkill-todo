@@ -2,7 +2,7 @@
 
 import pytest
 
-from hooks import error_body_problem, leaked_internal_text
+from hooks import decoded_url, error_body_problem, leaked_internal_text
 
 DENIED = [
     "Database error: connection refused",
@@ -42,6 +42,18 @@ def test_echoed_client_input_is_not_a_leak() -> None:
     message = "Unknown provider: SQLSTATE"
     assert leaked_internal_text(message, "DELETE /api/v1/auth/oauth/SQLSTATE/unlink") is None
     assert leaked_internal_text(message, "DELETE /api/v1/auth/oauth/google/unlink") is not None
+
+
+def test_query_string_is_form_decoded() -> None:
+    # Nightly seed 1594448333: `?mode=relation+%22` echoed back as `relation "`.
+    url = "http://127.0.0.1:4399/api/v1/auth/oauth/google?mode=relation+%22"
+    message = "Failed to deserialize query string: mode: unknown variant `relation \"`"
+    assert decoded_url(url).endswith('?mode=relation "')
+    assert leaked_internal_text(message, decoded_url(url)) is None
+
+
+def test_plus_in_path_stays_a_plus() -> None:
+    assert decoded_url("/api/v1/a+b%20c?q=d+e") == "/api/v1/a+b c?q=d e"
 
 
 def test_standard_and_verification_shapes_pass() -> None:

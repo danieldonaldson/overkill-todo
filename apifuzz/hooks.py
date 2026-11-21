@@ -264,16 +264,23 @@ def error_body_problem(status: int, content_type: str, body: Any, request_text: 
     return None
 
 
+def decoded_url(url: str) -> str:
+    """`url` as the server sees it: the path percent-decoded, and the query
+    form-decoded too (`+` is a space there, but a literal plus in the path)."""
+    from urllib.parse import unquote, unquote_plus
+
+    path, sep, query = url.partition("?")
+    return f"{unquote(path)}{sep}{unquote_plus(query)}"
+
+
 def _request_text(response: Any) -> str:
     """The request as the client sent it (decoded URL and body), to tell echoed
     input from internal text."""
-    from urllib.parse import unquote
-
     request = response.request
     body = request.body or b""
     if isinstance(body, bytes):
         body = body.decode("utf-8", "replace")
-    return f"{unquote(request.url or '')}\n{body}"
+    return f"{decoded_url(request.url or '')}\n{body}"
 
 
 @schemathesis.check
