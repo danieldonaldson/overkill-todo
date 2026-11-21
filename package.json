@@ -19,14 +19,14 @@
   "devDependencies": {
     "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^21.2.4",
-    "eslint": "^10.14.0",
+    "eslint": "^10.15.0",
     "eslint-plugin-svelte": "^3.24.1",
     "husky": "^9.1.7",
-    "prettier": "^3.9.10",
-    "prettier-plugin-svelte": "^4.1.1",
-    "source-map": "^0.7.6",
+    "prettier": "^3.10.1",
+    "prettier-plugin-svelte": "^4.2.0",
+    "source-map": "^0.8.0",
     "svelte-eslint-parser": "^1.10.1",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.72.1"
+    "typescript-eslint": "^8.73.0"
   }
 }
