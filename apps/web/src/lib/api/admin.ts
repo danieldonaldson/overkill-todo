@@ -1,13 +1,28 @@
-import type { AdminUserList, AdminUserRow, UserRole } from '../types'
+import type {
+  AdminUserList,
+  AdminUserRow,
+  AuditEventList,
+  AuditKindFilter,
+  UserRole,
+} from '../types'
 import { HttpClient } from './client'
 
-/** Build a `?limit=&offset=` suffix, omitting absent params (and the `?`). */
-function pageQuery(params?: { limit?: number; offset?: number }): string {
+/** Build a query suffix, omitting absent params (and the `?` when none). */
+function pageQuery(params?: Record<string, string | number | undefined | null>): string {
   const query = new URLSearchParams()
-  if (params?.limit != null) query.set('limit', String(params.limit))
-  if (params?.offset != null) query.set('offset', String(params.offset))
+  for (const [key, value] of Object.entries(params ?? {})) {
+    if (value != null && value !== '') query.set(key, String(value))
+  }
   const qs = query.toString()
   return qs ? `?${qs}` : ''
+}
+
+export interface AuditEventsQuery {
+  limit?: number
+  offset?: number
+  /** Only events where this account was affected or acted. */
+  account_id?: string
+  kind?: AuditKindFilter
 }
 
 // Admin panel endpoints (`/api/v1/admin/*`). The backend enforces the admin /
@@ -24,6 +39,13 @@ export function createAdminApi(client: HttpClient) {
         method: 'PUT',
         route: '/admin/users/{id}/role',
         body: JSON.stringify({ role }),
+      }),
+
+    /** List audit events, newest first (super-admin only on the backend). */
+    listAuditEvents: (params?: AuditEventsQuery): Promise<AuditEventList> =>
+      client.request(`/admin/audit-events${pageQuery({ ...params })}`, {
+        method: 'GET',
+        route: '/admin/audit-events',
       }),
   }
 }

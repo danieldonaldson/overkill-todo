@@ -171,10 +171,29 @@ grant-admin email:
     #!/usr/bin/env bash
     set -euo pipefail
     # Bound as a psql variable and quoted by psql (:'em'), never interpolated into SQL.
-    out=$(printf '%s\n' "UPDATE users SET role = 'super_admin' WHERE email = :'em' RETURNING email, role;" \
+    # One statement: the role change and its audit event (OT-008, actor
+    # "operator") commit together, and nothing is written if the role was
+    # already super_admin.
+    sql="WITH target AS (
+           SELECT id, email, role FROM users WHERE email = :'em' FOR UPDATE
+         ), changed AS (
+           UPDATE users u
+           SET role = 'super_admin', updated_at = NOW(), version = u.version + 1
+           FROM target t
+           WHERE u.id = t.id AND t.role <> 'super_admin'
+           RETURNING u.id, t.role AS old_role
+         ), audited AS (
+           INSERT INTO audit_events (kind, subject_id, actor_kind, details)
+           SELECT 'role_changed', id, 'operator',
+                  jsonb_build_object('from', old_role::text, 'to', 'super_admin')
+           FROM changed
+         )
+         SELECT t.email, 'super_admin' AS role, EXISTS (SELECT 1 FROM changed) AS changed
+         FROM target t;"
+    out=$(printf '%s\n' "$sql" \
       | docker compose exec -T db psql -U overkill_todo -d overkill_todo -v ON_ERROR_STOP=1 -v em={{ quote(email) }})
     echo "$out"
-    if grep -q '^UPDATE 0$' <<<"$out"; then echo "no user matched" >&2; exit 1; fi
+    if grep -q '^(0 rows)$' <<<"$out"; then echo "no user matched" >&2; exit 1; fi
 
 # ── API contract ─────────────────────────────────────────────────────────────────
 # backend/openapi.json is generated from the route tree; the web types are generated

@@ -53,6 +53,7 @@ pub const PAGE_TEMPLATES: &[&str] = &[
     "/dashboard",
     "/dashboard/settings",
     "/dashboard/admin",
+    "/dashboard/audit",
 ];
 
 /// The site's islands (Decision 6b): the `name` of every `TelemetryBoundary`.
@@ -61,6 +62,7 @@ pub const PAGE_TEMPLATES: &[&str] = &[
 /// the web guard test checks against the islands themselves.
 pub const ISLAND_TEMPLATES: &[&str] = &[
     "AdminPanel",
+    "AuditLogPanel",
     "AuthScreen",
     "DashboardHeader",
     "ForgotPasswordForm",

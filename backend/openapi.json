@@ -9,6 +9,113 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/api/v1/admin/audit-events": {
+      "get": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "List audit events, newest first (super-admin only).\n# Errors\nReturns an error if the audit log is unreachable.",
+        "operationId": "list_audit_events",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max events (default 50, max 100)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Pagination offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "account_id",
+            "in": "query",
+            "description": "Only events where this account was affected or acted",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "Only events of this kind",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AuditKindFilter"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of audit events",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditEventListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed or invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Session superseded by a password reset, account purge or role change; sign in again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not a super-admin",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/admin/users": {
       "get": {
         "tags": [
@@ -1879,6 +1986,147 @@
             "$ref": "#/components/schemas/RoleName"
           }
         }
+      },
+      "AuditAccountResponse": {
+        "type": "object",
+        "description": "An account named by an event, as it is now.",
+        "required": [
+          "id",
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The account's current email; `null` once the account is deleted."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "AuditActorKind": {
+        "type": "string",
+        "description": "Who acted.",
+        "enum": [
+          "user",
+          "system",
+          "operator"
+        ]
+      },
+      "AuditActorResponse": {
+        "type": "object",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "account": {
+            "$ref": "#/components/schemas/AuditAccountResponse",
+            "description": "The acting account, present only when `kind` is `user`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AuditActorKind"
+          }
+        }
+      },
+      "AuditDetailsResponse": {
+        "type": "object",
+        "description": "The event's details: for a role change, the old and new role.",
+        "properties": {
+          "from_role": {
+            "$ref": "#/components/schemas/RoleName"
+          },
+          "to_role": {
+            "$ref": "#/components/schemas/RoleName"
+          }
+        }
+      },
+      "AuditEventListResponse": {
+        "type": "object",
+        "description": "A page of audit events, newest first.",
+        "required": [
+          "events",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEventResponse"
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "offset": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Events matching the filter, across all pages."
+          }
+        }
+      },
+      "AuditEventResponse": {
+        "type": "object",
+        "description": "One audit event.",
+        "required": [
+          "id",
+          "occurred_at",
+          "kind",
+          "subject",
+          "actor",
+          "details"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/AuditActorResponse"
+          },
+          "details": {
+            "$ref": "#/components/schemas/AuditDetailsResponse"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AuditKindName"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "subject": {
+            "$ref": "#/components/schemas/AuditAccountResponse",
+            "description": "The affected account."
+          }
+        }
+      },
+      "AuditKindFilter": {
+        "type": "string",
+        "description": "A kind to filter the audit log by.",
+        "enum": [
+          "role_changed"
+        ]
+      },
+      "AuditKindName": {
+        "type": "string",
+        "description": "The kind of an audit event, as listed.",
+        "enum": [
+          "role_changed",
+          "other"
+        ]
       },
       "AuthResponse": {
         "type": "object",

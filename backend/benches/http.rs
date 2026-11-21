@@ -21,6 +21,7 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use criterion::{Criterion, criterion_group, criterion_main};
 use overkill_todo::application::ports::UserRepository;
+use overkill_todo::domain::entities::{Actor, AuditEvent};
 use overkill_todo::domain::value_objects::UserRole;
 use overkill_todo::infrastructure::persistence::postgres::{Database, PostgresUserRepository};
 use serde_json::{Value, json};
@@ -32,6 +33,8 @@ const PASSWORD: &str = "hunter2hunter2";
 const FINGERPRINT: &str = "bench-device-0123456789abcdef";
 /// Rows behind the admin list, so pagination does real work.
 const SEEDED_USERS: usize = 200;
+/// Audit events seeded for the audit log benches (OT-008 task 1.9).
+const SEEDED_AUDIT_EVENTS: i64 = 100_000;
 
 /// A logged-in browser: session cookie, CSRF token, and refresh cookie.
 #[derive(Clone)]
@@ -128,8 +131,14 @@ async fn log_in(app: &Router, email: &str) -> Session {
 async fn promote_to_super_admin(pool: &PgPool, email: &str) {
     let users = PostgresUserRepository::new(Arc::new(Database::from_pool(pool.clone())));
     let mut user = users.find_by_email(email).await.unwrap().unwrap();
+    let event = AuditEvent::role_changed(
+        *user.id(),
+        Actor::Operator,
+        user.role(),
+        UserRole::SuperAdmin,
+    );
     user.set_role(UserRole::SuperAdmin);
-    users.save_role_change(&user, false).await.unwrap();
+    users.save_role_change(&user, false, &event).await.unwrap();
 }
 
 async fn seed(app: &Router, pool: &PgPool) -> (Session, Session) {
@@ -139,6 +148,7 @@ async fn seed(app: &Router, pool: &PgPool) -> (Session, Session) {
     let admin = "test-bench-admin@example.com";
     sign_up(app, admin).await;
     promote_to_super_admin(pool, admin).await;
+    seed_audit_events(pool).await;
     // The role change revoked earlier sessions, and a token is only accepted if
     // issued in a later whole second than the cutoff, so wait one out first.
     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
@@ -146,6 +156,33 @@ async fn seed(app: &Router, pool: &PgPool) -> (Session, Session) {
         log_in(app, "test-bench-0@example.com").await,
         log_in(app, admin).await,
     )
+}
+
+/// Spreads [`SEEDED_AUDIT_EVENTS`] role changes over the seeded accounts,
+/// each made by the next account, straight into the table.
+async fn seed_audit_events(pool: &PgPool) {
+    sqlx::query(
+        "WITH accounts AS (
+           SELECT array_agg(id ORDER BY id) AS ids FROM users
+         )
+         INSERT INTO audit_events (kind, subject_id, actor_kind, actor_id, details)
+         SELECT 'role_changed',
+                ids[1 + n % array_length(ids, 1)],
+                'user',
+                ids[1 + (n + 1) % array_length(ids, 1)],
+                '{\"from\": \"user\", \"to\": \"admin\"}'
+         FROM accounts, generate_series(1, $1) AS n",
+    )
+    .bind(SEEDED_AUDIT_EVENTS)
+    .execute(pool)
+    .await
+    .unwrap();
+    // As autovacuum would have by then: sets the visibility map, so paging on
+    // IDs and counting can use index-only scans.
+    sqlx::query("VACUUM ANALYZE audit_events")
+        .execute(pool)
+        .await
+        .unwrap();
 }
 
 fn get(uri: &str, s: &Session) -> Request<Body> {
@@ -201,6 +238,35 @@ fn http(c: &mut Criterion) {
         b.to_async(&rt)
             .iter(|| expect_ok(&app, get("/api/v1/admin/users?limit=50&offset=100", &admin)));
     });
+
+    // OT-008: the audit log must page as fast as the user list above.
+    let audit_account: String = rt.block_on(async {
+        sqlx::query_scalar("SELECT id::text FROM users ORDER BY id LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    });
+    for (name, uri) in [
+        (
+            "admin_audit_events_first_page",
+            "/api/v1/admin/audit-events?limit=50".to_string(),
+        ),
+        (
+            "admin_audit_events_last_page",
+            format!(
+                "/api/v1/admin/audit-events?limit=50&offset={}",
+                SEEDED_AUDIT_EVENTS - 50
+            ),
+        ),
+        (
+            "admin_audit_events_by_account",
+            format!("/api/v1/admin/audit-events?limit=50&account_id={audit_account}"),
+        ),
+    ] {
+        g.bench_function(name, |b| {
+            b.to_async(&rt).iter(|| expect_ok(&app, get(&uri, &admin)));
+        });
+    }
 
     g.bench_function("login", |b| {
         b.to_async(&rt).iter(|| {

@@ -1,0 +1,8 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro'
+import AuditLogPanel from '../../components/dashboard/AuditLogPanel.svelte'
+---
+
+<DashboardLayout title="Audit log | Overkill Todo">
+  <AuditLogPanel client:load />
+</DashboardLayout>

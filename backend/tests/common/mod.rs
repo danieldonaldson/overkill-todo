@@ -15,12 +15,12 @@ use overkill_todo::{
         },
         use_cases::{
             CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
-            ExportUserDataUseCase, GetCurrentUserUseCase, ListUsersUseCase, LoginUserUseCase,
-            OAuthCallbackUseCase, OAuthUnlinkUseCase, RefreshTokenUseCase, RegisterUserUseCase,
-            RequestAccountDeletionUseCase, RequestPasswordResetUseCase, ResendVerificationUseCase,
-            ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
-            SetPasswordUseCase, SetUserRoleUseCase, ValidateResetCodeUseCase, VerifyEmailUseCase,
-            VerifyMagicLinkUseCase,
+            ExportUserDataUseCase, GetCurrentUserUseCase, ListAuditEventsUseCase, ListUsersUseCase,
+            LoginUserUseCase, OAuthCallbackUseCase, OAuthUnlinkUseCase, RefreshTokenUseCase,
+            RegisterUserUseCase, RequestAccountDeletionUseCase, RequestPasswordResetUseCase,
+            ResendVerificationUseCase, ResetPasswordUseCase, RevokeTokenUseCase,
+            SendVerificationCodeUseCase, SetPasswordUseCase, SetUserRoleUseCase,
+            ValidateResetCodeUseCase, VerifyEmailUseCase, VerifyMagicLinkUseCase,
             telemetry::{
                 RecordClientTelemetryUseCase, record_client_telemetry::DEFAULT_MAX_EVENTS_PER_SEC,
             },
@@ -453,6 +453,7 @@ fn create_test_app_inner(
     let Persistence {
         users: user_repo,
         account_lifecycle: _,
+        audit_log: audit_log_repo,
         oauth_accounts: oauth_account_repo,
         refresh_tokens: refresh_token_repo,
         email_verifications: email_verification_repo,
@@ -602,6 +603,7 @@ fn create_test_app_inner(
     let admin_deps = Arc::new(AdminHandlerDeps {
         list_users_use_case: Arc::new(ListUsersUseCase::new(user_repo.clone())),
         set_user_role_use_case: Arc::new(SetUserRoleUseCase::new(user_repo.clone())),
+        list_audit_events_use_case: Arc::new(ListAuditEventsUseCase::new(audit_log_repo)),
     });
 
     create_router(

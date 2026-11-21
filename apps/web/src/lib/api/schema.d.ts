@@ -4,6 +4,27 @@
  */
 
 export interface paths {
+    "/api/v1/admin/audit-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List audit events, newest first (super-admin only).
+         *     # Errors
+         *     Returns an error if the audit log is unreachable.
+         */
+        get: operations["list_audit_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/admin/users": {
         parameters: {
             query?: never;
@@ -635,6 +656,64 @@ export interface components {
             id: string;
             role: components["schemas"]["RoleName"];
         };
+        /** @description An account named by an event, as it is now. */
+        AuditAccountResponse: {
+            deleted: boolean;
+            /** @description The account's current email; `null` once the account is deleted. */
+            email?: string | null;
+            /** Format: uuid */
+            id: string;
+        };
+        /**
+         * @description Who acted.
+         * @enum {string}
+         */
+        AuditActorKind: "user" | "system" | "operator";
+        AuditActorResponse: {
+            /** @description The acting account, present only when `kind` is `user`. */
+            account?: components["schemas"]["AuditAccountResponse"];
+            kind: components["schemas"]["AuditActorKind"];
+        };
+        /** @description The event's details: for a role change, the old and new role. */
+        AuditDetailsResponse: {
+            from_role?: components["schemas"]["RoleName"];
+            to_role?: components["schemas"]["RoleName"];
+        };
+        /** @description A page of audit events, newest first. */
+        AuditEventListResponse: {
+            events: components["schemas"]["AuditEventResponse"][];
+            /** Format: int64 */
+            limit: number;
+            /** Format: int64 */
+            offset: number;
+            /**
+             * Format: int64
+             * @description Events matching the filter, across all pages.
+             */
+            total: number;
+        };
+        /** @description One audit event. */
+        AuditEventResponse: {
+            actor: components["schemas"]["AuditActorResponse"];
+            details: components["schemas"]["AuditDetailsResponse"];
+            /** Format: int64 */
+            id: number;
+            kind: components["schemas"]["AuditKindName"];
+            /** Format: date-time */
+            occurred_at: string;
+            /** @description The affected account. */
+            subject: components["schemas"]["AuditAccountResponse"];
+        };
+        /**
+         * @description A kind to filter the audit log by.
+         * @enum {string}
+         */
+        AuditKindFilter: "role_changed";
+        /**
+         * @description The kind of an audit event, as listed.
+         * @enum {string}
+         */
+        AuditKindName: "role_changed" | "other";
         /**
          * @description Response body for successful authentication and for token refresh.
          *
@@ -1094,6 +1173,71 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_audit_events: {
+        parameters: {
+            query?: {
+                /** @description Max events (default 50, max 100) */
+                limit?: number;
+                /** @description Pagination offset */
+                offset?: number;
+                /** @description Only events where this account was affected or acted */
+                account_id?: string;
+                /** @description Only events of this kind */
+                kind?: components["schemas"]["AuditKindFilter"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of audit events */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuditEventListResponse"];
+                };
+            };
+            /** @description Malformed or invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Session superseded by a password reset, account purge or role change; sign in again */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not a super-admin */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     list_users: {
         parameters: {
             query?: {

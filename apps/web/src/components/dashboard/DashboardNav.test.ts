@@ -50,6 +50,25 @@ describe('DashboardNav', () => {
     expect(screen.container.querySelector('a[href="/dashboard/admin"]')).toBeNull()
   })
 
+  it('shows the Audit log link only to a known super-admin', async () => {
+    session.set(account('super_admin'))
+    const screen = await render(DashboardNav)
+
+    await expect
+      .element(screen.getByRole('link', { name: /audit log/i }))
+      .toHaveAttribute('href', '/dashboard/audit')
+  })
+
+  for (const role of ['admin', 'user', null] as const) {
+    it(`hides the Audit log link for ${role ?? 'an unknown role'}`, async () => {
+      if (role) session.set(account(role))
+      const screen = await render(DashboardNav)
+
+      await expect.element(screen.getByRole('link', { name: /home/i })).toBeInTheDocument()
+      expect(screen.container.querySelector('a[href="/dashboard/audit"]')).toBeNull()
+    })
+  }
+
   it('shows the Admin link for admin users', async () => {
     session.set(account('super_admin'))
     const screen = await render(DashboardNav)

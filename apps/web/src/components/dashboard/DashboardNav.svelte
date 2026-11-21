@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import HomeIcon from '@lucide/svelte/icons/home'
+  import ScrollTextIcon from '@lucide/svelte/icons/scroll-text'
   import SettingsIcon from '@lucide/svelte/icons/settings'
   import ShieldIcon from '@lucide/svelte/icons/shield'
   import ThemeToggle from '../ui/custom/ThemeToggle.svelte'
   import { session } from '../../lib/auth/session.svelte'
-  import { isAdminRole } from '../../lib/types'
+  import { isAdminRole, isSuperAdminRole } from '../../lib/types'
 
   // `pathname` is injectable for tests; in the app it tracks the real location,
   // updated on Astro client-side navigations (astro:page-load).
@@ -15,6 +16,8 @@
   // super-admin, never guessed (design D5): an unknown role means no link, so
   // a Member never sees it flash. The backend enforces access regardless.
   const isAdmin = $derived(isAdminRole(session.user?.role))
+  // The Audit log link likewise waits for a known super-admin (OT-008 D5).
+  const isSuperAdmin = $derived(isSuperAdminRole(session.user?.role))
 
   let currentPath = $state('')
 
@@ -35,11 +38,13 @@
     { href: '/dashboard', label: 'Home', icon: HomeIcon },
     { href: '/dashboard/settings', label: 'Settings', icon: SettingsIcon },
   ]
-  const links = $derived(
-    isAdmin
-      ? [...baseLinks, { href: '/dashboard/admin', label: 'Admin', icon: ShieldIcon }]
-      : baseLinks
-  )
+  const links = $derived([
+    ...baseLinks,
+    ...(isAdmin ? [{ href: '/dashboard/admin', label: 'Admin', icon: ShieldIcon }] : []),
+    ...(isSuperAdmin
+      ? [{ href: '/dashboard/audit', label: 'Audit log', icon: ScrollTextIcon }]
+      : []),
+  ])
 
   // Home is an exact match (every route starts with /dashboard); the others own
   // their subtree so nested pages keep their tab lit.
@@ -58,7 +63,7 @@
         <a
           href={link.href}
           aria-current={active ? 'page' : undefined}
-          class="inline-flex h-9 items-center gap-2 rounded-full px-3 text-sm font-medium no-underline transition-all duration-[var(--motion-fast)] ease-out hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background {active
+          class="inline-flex h-9 items-center gap-2 rounded-full px-2.5 sm:px-3 text-sm font-medium no-underline transition-all duration-[var(--motion-fast)] ease-out hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background {active
             ? 'bg-primary text-primary-foreground shadow-xs'
             : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'}"
         >

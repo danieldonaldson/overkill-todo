@@ -1,6 +1,7 @@
 //! Application DTOs for the auth slice.
 
 pub mod admin_dto;
+pub mod audit_dto;
 
 pub mod auth_dto;
 
@@ -12,6 +13,7 @@ pub mod schema_enums;
 pub mod validation;
 
 pub use admin_dto::*;
+pub use audit_dto::*;
 
 pub use auth_dto::*;
 

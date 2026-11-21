@@ -43,6 +43,26 @@ last-super-admin demotion, a version conflict and an injected insert failure
 each leave neither change nor event. We'll know it holds for every other
 action when slice 2's integration tests cover each one the same way.
 
+**Slice 1 result (task 1.9, 2026-11-20).** The atomicity cases above all pass
+(`tests/audit_log_integration.rs`). Latency, from `just bench-db admin_` (full
+router, local Postgres, 100,000 events over 201 accounts, vacuumed as
+autovacuum would leave them):
+
+| Request | Mean |
+|---|---|
+| `GET /admin/users?limit=50&offset=100` (201 users) | 0.52 ms |
+| `GET /admin/audit-events?limit=50` (first page) | 7.7 ms |
+| `GET /admin/audit-events?limit=50&offset=99950` (last page) | 7.8 ms |
+| `GET /admin/audit-events?limit=50&account_id=…` | 1.7 ms |
+
+The first query version joined every row it skipped, which made the last page
+take 60 ms. Choosing the page by ID first and then joining made every page cost
+the same. What's left is the exact `COUNT(*)` for the total, an index-only scan
+that grows with the table. Every page is well inside the latency budget the
+user list would get under the OT-004 rule (p95 25 ms, p99 50 ms). It's slower
+than the user list only because the user list counts 201 rows. If the table
+grows by orders of magnitude, the fix is an estimated or capped total.
+
 ## Decisions
 
 ### D1. The event rides on the action's primary write (all layers)

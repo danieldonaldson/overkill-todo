@@ -6,6 +6,7 @@ use std::sync::Arc;
 use super::{DatabaseError, Persistence};
 
 mod advisory_lock;
+pub mod audit_log;
 pub mod connection;
 pub mod email_verification_repository;
 pub mod error;
@@ -19,6 +20,7 @@ pub mod time;
 
 pub mod user_repository;
 
+pub use audit_log::PostgresAuditLogRepository;
 pub use connection::{Database, STATEMENT_LOG_DIRECTIVE};
 pub use email_verification_repository::PostgresEmailVerificationRepository;
 
@@ -47,6 +49,7 @@ pub fn wire(db: Arc<Database>) -> Persistence {
     Persistence {
         users: users.clone(),
         account_lifecycle: users,
+        audit_log: Arc::new(PostgresAuditLogRepository::new(db.clone())),
         oauth_accounts: Arc::new(PostgresOAuthAccountRepository::new(db.clone())),
         refresh_tokens: Arc::new(PostgresRefreshTokenRepository::new(db.clone())),
         email_verifications: Arc::new(PostgresEmailVerificationRepository::new(db.clone())),

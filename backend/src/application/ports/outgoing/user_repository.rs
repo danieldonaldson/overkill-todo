@@ -1,4 +1,4 @@
-use crate::domain::entities::User;
+use crate::domain::entities::{AuditEvent, User};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{UserId, UserRole};
 use async_trait::async_trait;
@@ -45,10 +45,14 @@ pub trait UserRepository: Send + Sync {
     /// tokens. When `removing_super_admin` is true, the implementation must
     /// serialize the last-super-admin check with other role changes and reject
     /// the update if it would remove the final active super-admin.
+    ///
+    /// `event` is stored in the same transaction: it exists if and only if the
+    /// role change took effect (OT-008).
     async fn save_role_change(
         &self,
         user: &User,
         removing_super_admin: bool,
+        event: &AuditEvent,
     ) -> Result<(), DomainError>;
 
     /// Reads the persisted role and revocation cutoff used to validate a

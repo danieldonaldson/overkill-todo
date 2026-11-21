@@ -17,8 +17,8 @@ use std::future::Future;
 use std::sync::Arc;
 
 use crate::application::ports::outgoing::{
-    AccountLifecycleRepository, EmailVerificationRepository, OAuthAccountRepository,
-    PasswordResetRepository, RefreshTokenRepository, UserRepository,
+    AccountLifecycleRepository, AuditLogRepository, EmailVerificationRepository,
+    OAuthAccountRepository, PasswordResetRepository, RefreshTokenRepository, UserRepository,
 };
 
 pub mod postgres;
@@ -38,6 +38,7 @@ pub type Database = postgres::Database;
 pub struct Persistence {
     pub users: Arc<dyn UserRepository>,
     pub account_lifecycle: Arc<dyn AccountLifecycleRepository>,
+    pub audit_log: Arc<dyn AuditLogRepository>,
     pub oauth_accounts: Arc<dyn OAuthAccountRepository>,
     pub refresh_tokens: Arc<dyn RefreshTokenRepository>,
     pub email_verifications: Arc<dyn EmailVerificationRepository>,

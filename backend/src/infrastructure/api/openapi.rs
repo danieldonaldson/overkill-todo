@@ -10,7 +10,7 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityRequirement, SecurityScheme};
 use utoipa::openapi::{Components, Content, Ref, RefOr, Response, path::Operation};
 
-use crate::application::dto::OAuthMode;
+use crate::application::dto::{AuditKindFilter, OAuthMode};
 use crate::infrastructure::api::cookies::{AUTH_COOKIE, CSRF_COOKIE, REFRESH_COOKIE};
 use crate::infrastructure::api::error::ErrorResponse;
 use crate::infrastructure::api::middleware::csrf::CSRF_TOKEN_HEADER;
@@ -34,7 +34,7 @@ pub const REFRESH_COOKIE_SCHEME: &str = "refresh_cookie";
     // `routes!` collects body schemas but not types named only in `params(...)`
     // tuples, nor `ErrorResponse`, which `finalize` attaches to error responses.
     // `every_schema_ref_resolves` fails if one is missed.
-    components(schemas(OAuthMode, ErrorResponse)),
+    components(schemas(OAuthMode, AuditKindFilter, ErrorResponse)),
     tags(
         (name = "Authentication", description = "Auth endpoints"),
         (name = "Verification", description = "Email verification"),

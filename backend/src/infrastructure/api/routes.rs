@@ -343,8 +343,11 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
     // out-of-band with `just grant-admin <email>`.
     let admin = admin_guards(OpenApiRouter::new().routes(routes!(admin_handler::list_users)));
     // Role management: Super Admin only.
-    let super_admin =
-        super_admin_guards(OpenApiRouter::new().routes(routes!(admin_handler::set_user_role)));
+    let super_admin = super_admin_guards(
+        OpenApiRouter::new()
+            .routes(routes!(admin_handler::set_user_role))
+            .routes(routes!(admin_handler::list_audit_events)),
+    );
 
     // Health probes, reachable through the single-origin `/api` route for
     // external monitoring. Public (no auth/CSRF), so merged after

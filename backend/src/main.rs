@@ -8,12 +8,12 @@ use overkill_todo::{
         ports::{EmailService, MxValidator, OAuthProviderClient, TurnstileService},
         use_cases::{
             CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
-            ExportUserDataUseCase, GetCurrentUserUseCase, ListUsersUseCase, LoginUserUseCase,
-            OAuthCallbackUseCase, OAuthUnlinkUseCase, PurgeScheduledAccountsUseCase,
-            RefreshTokenUseCase, RegisterUserUseCase, RequestAccountDeletionUseCase,
-            RequestPasswordResetUseCase, ResendVerificationUseCase, ResetPasswordUseCase,
-            RevokeTokenUseCase, SendVerificationCodeUseCase, SetPasswordUseCase,
-            SetUserRoleUseCase, ValidateResetCodeUseCase, VerifyEmailUseCase,
+            ExportUserDataUseCase, GetCurrentUserUseCase, ListAuditEventsUseCase, ListUsersUseCase,
+            LoginUserUseCase, OAuthCallbackUseCase, OAuthUnlinkUseCase,
+            PurgeScheduledAccountsUseCase, RefreshTokenUseCase, RegisterUserUseCase,
+            RequestAccountDeletionUseCase, RequestPasswordResetUseCase, ResendVerificationUseCase,
+            ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
+            SetPasswordUseCase, SetUserRoleUseCase, ValidateResetCodeUseCase, VerifyEmailUseCase,
             VerifyMagicLinkUseCase, telemetry::RecordClientTelemetryUseCase,
         },
     },
@@ -124,6 +124,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let Persistence {
         users: user_repo,
         account_lifecycle: account_lifecycle_repo,
+        audit_log: audit_log_repo,
         oauth_accounts: oauth_account_repo,
         refresh_tokens: refresh_token_repo,
         email_verifications: email_verification_repo,
@@ -375,6 +376,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let admin_deps = Arc::new(AdminHandlerDeps {
         list_users_use_case: Arc::new(ListUsersUseCase::new(user_repo.clone())),
         set_user_role_use_case: Arc::new(SetUserRoleUseCase::new(user_repo.clone())),
+        list_audit_events_use_case: Arc::new(ListAuditEventsUseCase::new(audit_log_repo)),
     });
 
     // Browser reports (OT-006): logged and counted by the telemetry adapter,

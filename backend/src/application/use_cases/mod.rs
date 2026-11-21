@@ -8,7 +8,7 @@ pub mod telemetry;
 
 pub mod user;
 
-pub use admin::{ListUsersUseCase, SetUserRoleUseCase};
+pub use admin::{ListAuditEventsUseCase, ListUsersUseCase, SetUserRoleUseCase};
 
 pub use auth::{
     CompleteSignupUseCase, GetCurrentUserUseCase, LoginError, LoginUserUseCase, OAuthCallbackMode,

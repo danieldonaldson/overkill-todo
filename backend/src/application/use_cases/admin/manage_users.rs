@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::application::ports::outgoing::UserRepository;
-use crate::domain::entities::User;
+use crate::domain::entities::{Actor, AuditEvent, User};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{RoleChangeRefusal, UserId, UserRole};
 
@@ -100,14 +100,19 @@ impl SetUserRoleUseCase {
         // repository refuses it in the same statement as the write.
         let removing_super_admin = UserRole::removes_super_admin(user.role(), new_role);
 
-        let role_changed = user.role() != new_role;
+        let old_role = user.role();
         user.set_role(new_role);
-        if role_changed {
-            self.users
-                .save_role_change(&user, removing_super_admin)
-                .await?;
-        } else {
+        if old_role == new_role {
+            // Same role: nothing changes, so nothing is audited.
             self.users.save(&user).await?;
+        } else {
+            // The repository stores the event in the role change's own
+            // transaction, so a refusal or failure there leaves no event.
+            let event =
+                AuditEvent::role_changed(*target, Actor::User(*actor_id), old_role, new_role);
+            self.users
+                .save_role_change(&user, removing_super_admin, &event)
+                .await?;
         }
         Ok(user)
     }
@@ -117,7 +122,49 @@ impl SetUserRoleUseCase {
 mod tests {
     use super::*;
     use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::UserBuilder;
+    use crate::domain::entities::{AuditDetails, UserBuilder};
+
+    #[tokio::test]
+    async fn set_user_role_to_the_same_role_is_not_audited() {
+        let mut users = MockUserRepository::new();
+        users
+            .expect_find_by_id()
+            .returning(|_| Ok(Some(UserBuilder::new().role(UserRole::Admin).build())));
+        users.expect_save_role_change().never();
+        users.expect_save().times(1).returning(|_| Ok(()));
+
+        let uc = SetUserRoleUseCase::new(Arc::new(users));
+        let user = uc
+            .execute(
+                UserRole::SuperAdmin,
+                &UserId::new(),
+                &UserId::new(),
+                "admin",
+            )
+            .await
+            .unwrap();
+        assert_eq!(user.role(), UserRole::Admin);
+    }
+
+    #[tokio::test]
+    async fn set_user_role_missing_user_is_not_audited() {
+        let mut users = MockUserRepository::new();
+        users.expect_find_by_id().returning(|_| Ok(None));
+        users.expect_save_role_change().never();
+        users.expect_save().never();
+
+        let uc = SetUserRoleUseCase::new(Arc::new(users));
+        let err = uc
+            .execute(
+                UserRole::SuperAdmin,
+                &UserId::new(),
+                &UserId::new(),
+                "admin",
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DomainError::NotFound(_)));
+    }
 
     #[tokio::test]
     async fn list_users_returns_page_and_total() {
@@ -158,6 +205,7 @@ mod tests {
             .expect_find_by_id()
             .returning(|_| Ok(Some(UserBuilder::new().role(UserRole::Admin).build())));
         users.expect_save().never();
+        users.expect_save_role_change().never();
 
         let uc = SetUserRoleUseCase::new(Arc::new(users));
         let err = uc
@@ -169,24 +217,30 @@ mod tests {
 
     #[tokio::test]
     async fn set_user_role_super_admin_promotes() {
+        let (actor, target) = (UserId::new(), UserId::new());
         let mut users = MockUserRepository::new();
         users
             .expect_find_by_id()
             .returning(|_| Ok(Some(UserBuilder::new().role(UserRole::User).build())));
         users
             .expect_save_role_change()
-            .withf(|u, removing| u.role() == UserRole::Admin && !removing)
+            .withf(move |u, removing, event| {
+                u.role() == UserRole::Admin
+                    && !removing
+                    && *event
+                        == AuditEvent::role_changed(
+                            target,
+                            Actor::User(actor),
+                            UserRole::User,
+                            UserRole::Admin,
+                        )
+            })
             .times(1)
-            .returning(|_, _| Ok(()));
+            .returning(|_, _, _| Ok(()));
 
         let uc = SetUserRoleUseCase::new(Arc::new(users));
         let user = uc
-            .execute(
-                UserRole::SuperAdmin,
-                &UserId::new(),
-                &UserId::new(),
-                "admin",
-            )
+            .execute(UserRole::SuperAdmin, &actor, &target, "admin")
             .await
             .unwrap();
         assert_eq!(user.role(), UserRole::Admin);
@@ -219,7 +273,7 @@ mod tests {
         users
             .expect_find_by_id()
             .returning(|_| Ok(Some(UserBuilder::new().role(UserRole::SuperAdmin).build())));
-        users.expect_save_role_change().returning(|_, removing| {
+        users.expect_save_role_change().returning(|_, removing, _| {
             assert!(removing);
             Err(DomainError::Forbidden(
                 "Cannot demote the last super-admin".into(),
@@ -242,9 +296,17 @@ mod tests {
             .returning(|_| Ok(Some(UserBuilder::new().role(UserRole::SuperAdmin).build())));
         users
             .expect_save_role_change()
-            .withf(|u, removing| u.role() == UserRole::User && *removing)
+            .withf(|u, removing, event| {
+                u.role() == UserRole::User
+                    && *removing
+                    && event.details()
+                        == AuditDetails::RoleChanged {
+                            from: UserRole::SuperAdmin,
+                            to: UserRole::User,
+                        }
+            })
             .times(1)
-            .returning(|_, removing| {
+            .returning(|_, removing, _| {
                 assert!(removing);
                 Ok(())
             });

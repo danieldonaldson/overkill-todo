@@ -22,6 +22,11 @@ export function isAdminRole(role: UserRole | undefined | null): boolean {
   return role === 'admin' || role === 'super_admin'
 }
 
+/** Whether a role is known to be super-admin (audit log, role management). */
+export function isSuperAdminRole(role: UserRole | undefined | null): boolean {
+  return role === 'super_admin'
+}
+
 export type User = Schemas['UserResponse']
 
 // --- Auth requests/responses ---
@@ -69,3 +74,12 @@ export type AccountDeletionResponse = Schemas['AccountDeletionResponse']
 /** A user row in the admin user-management table. */
 export type AdminUserRow = Schemas['AdminUserResponse']
 export type AdminUserList = Schemas['AdminUserListResponse']
+
+// --- Audit log (OT-008) ---
+
+export type AuditEvent = Schemas['AuditEventResponse']
+export type AuditEventList = Schemas['AuditEventListResponse']
+/** A kind as listed; `other` is a kind this release of the server doesn't know. */
+export type AuditKindName = Schemas['AuditKindName']
+/** A kind the audit log can be filtered by. */
+export type AuditKindFilter = Schemas['AuditKindFilter']

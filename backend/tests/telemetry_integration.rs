@@ -203,6 +203,89 @@ impl EmailService for CapturingEmail {
 // X-Trace-Id correlation
 // ---------------------------------------------------------------------------
 
+/// Inserts an account with `role` and returns its ID.
+async fn insert_account(pool: &PgPool, role: &str) -> uuid::Uuid {
+    let id = uuid::Uuid::now_v7();
+    sqlx::query(
+        "INSERT INTO users (id, email, role, email_verified) VALUES ($1, $2, $3::user_role, true)",
+    )
+    .bind(id)
+    .bind(format!("telemetry-{id}@example.com"))
+    .bind(role)
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+/// A Super Admin's role change to `admin` for `target`, with session and CSRF.
+fn role_change_request(actor: uuid::Uuid, target: uuid::Uuid) -> Request<Body> {
+    let token = common::mint_session_jwt(actor, true, "super_admin", 15);
+    let csrf = common::mint_csrf_token(&actor.to_string());
+    Request::builder()
+        .method("PUT")
+        .uri(format!("/api/v1/admin/users/{target}/role"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(
+            header::COOKIE,
+            format!("__Host-auth_token={token}; __Host-csrf_token={csrf}"),
+        )
+        .header("x-csrf-token", csrf)
+        .body(Body::from(json!({ "role": "admin" }).to_string()))
+        .unwrap()
+}
+
+/// OT-008 task 1.10: an audit event is stored with its request's trace ID, and
+/// an event that can't be stored fails the action with a 5xx (which the 5xx
+/// alert counts) and an error log line carrying that trace ID.
+#[sqlx::test(migrations = "./migrations")]
+async fn audit_events_carry_the_trace_id_and_insert_failures_are_logged(pool: PgPool) {
+    let telemetry = Captured::install();
+    let app = common::create_test_app(pool.clone());
+    let actor = insert_account(&pool, "super_admin").await;
+
+    let (resp, _) = send(
+        &app,
+        role_change_request(actor, insert_account(&pool, "user").await),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let stored: Option<String> = sqlx::query_scalar("SELECT trace_id FROM audit_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, Some(trace_id_header(&resp)));
+
+    sqlx::query(
+        "ALTER TABLE audit_events ADD CONSTRAINT test_refuse_role_changed
+         CHECK (kind <> 'role_changed') NOT VALID",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let (resp, body) = send(
+        &app,
+        role_change_request(actor, insert_account(&pool, "user").await),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    let trace_id = trace_id_header(&resp);
+
+    let logs = telemetry.log_text();
+    let failure = logs
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find(|l| {
+            l["message"]
+                .as_str()
+                .is_some_and(|m| m.starts_with("audit event insert failed"))
+        })
+        .unwrap_or_else(|| panic!("no audit failure log line:\n{logs}"));
+    assert_eq!(failure["level"], "ERROR");
+    assert_eq!(failure["trace_id"], trace_id.as_str());
+    assert_eq!(failure["audit.kind"], "role_changed");
+}
+
 /// The `X-Trace-Id` header is the trace ID of the request's exported server
 /// span, and log lines written during the request carry the same ID.
 #[sqlx::test(migrations = "./migrations")]

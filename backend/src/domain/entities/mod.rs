@@ -1,4 +1,5 @@
 pub mod attempt_lockout;
+pub mod audit_event;
 pub mod email_verification_code;
 pub mod oauth_account;
 pub mod password_reset_code;
@@ -7,6 +8,7 @@ pub mod refresh_token;
 pub mod user;
 
 pub use attempt_lockout::{AttemptLockout, AttemptOutcome, Reissue};
+pub use audit_event::{Actor, AuditDetails, AuditEvent, AuditKind};
 pub use email_verification_code::{EmailVerificationCode, MagicToken};
 pub use oauth_account::{OAuthAccount, OAuthProvider};
 pub use password_reset_code::PasswordResetCode;

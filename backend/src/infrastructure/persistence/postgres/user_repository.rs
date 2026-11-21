@@ -1,3 +1,4 @@
+use super::audit_log::insert_audit_event;
 use super::connection::Database;
 use super::error::persist_err;
 use super::models::{DbUserRole, UserRow};
@@ -6,7 +7,7 @@ use crate::application::ports::outgoing::{
     AccountLifecycleRepository, SessionAuthorizationState, UserRepository,
 };
 use crate::domain::{
-    entities::{User, UserParts},
+    entities::{AuditEvent, User, UserParts},
     errors::DomainError,
     value_objects::{AccountStatus, Email, PendingEmailChange, UserId},
 };
@@ -195,6 +196,7 @@ impl UserRepository for PostgresUserRepository {
         &self,
         user: &User,
         removing_super_admin: bool,
+        event: &AuditEvent,
     ) -> Result<(), DomainError> {
         let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
 
@@ -241,6 +243,11 @@ impl UserRepository for PostgresUserRepository {
                 "User was modified concurrently; reload and retry".into(),
             ));
         }
+
+        // After the last-super-admin check and the versioned update, inside
+        // the transaction that holds the advisory lock: a refusal or conflict
+        // above returns before this, and a failure here rolls the change back.
+        insert_audit_event(&mut tx, event).await?;
 
         tx.commit().await.map_err(persist_err)?;
         Ok(())

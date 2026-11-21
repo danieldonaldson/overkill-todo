@@ -185,7 +185,16 @@
               <tbody>
                 {#each users as user (user.id)}
                   <tr class="border-b border-border/60">
-                    <td class="py-2 pr-4">{user.email}</td>
+                    <td class="py-2 pr-4">
+                      {user.email}
+                      {#if isSuperAdmin}
+                        <a
+                          href={`/dashboard/audit?account=${user.id}`}
+                          class="ml-2 text-xs text-muted-foreground"
+                          aria-label={`Audit log for ${user.email}`}>Audit log</a
+                        >
+                      {/if}
+                    </td>
                     <td class="py-2 pr-4">
                       {#if isSuperAdmin}
                         <select

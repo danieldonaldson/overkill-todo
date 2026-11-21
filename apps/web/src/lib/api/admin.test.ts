@@ -34,4 +34,19 @@ describe('admin api', () => {
       body: JSON.stringify({ role: 'admin' }),
     })
   })
+
+  it('lists audit events with filters, omitting empty ones', async () => {
+    const { client, request } = fakeClient()
+    const admin = createAdminApi(client)
+    await admin.listAuditEvents({ limit: 50, offset: 0, account_id: 'u1', kind: 'role_changed' })
+    expect(request).toHaveBeenCalledWith(
+      '/admin/audit-events?limit=50&offset=0&account_id=u1&kind=role_changed',
+      { method: 'GET', route: '/admin/audit-events' }
+    )
+    await admin.listAuditEvents({ account_id: '' })
+    expect(request).toHaveBeenLastCalledWith('/admin/audit-events', {
+      method: 'GET',
+      route: '/admin/audit-events',
+    })
+  })
 })

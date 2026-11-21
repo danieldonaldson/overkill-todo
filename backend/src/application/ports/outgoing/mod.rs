@@ -1,4 +1,5 @@
 pub mod account_lifecycle;
+pub mod audit_log_repository;
 pub mod client_report_sink;
 pub mod code_generator;
 
@@ -17,6 +18,9 @@ pub mod turnstile_service;
 pub mod user_repository;
 
 pub use account_lifecycle::AccountLifecycleRepository;
+pub use audit_log_repository::{
+    AuditAccount, AuditActorView, AuditEntry, AuditFilter, AuditLogRepository,
+};
 pub use client_report_sink::{
     ClientErrorReport, ClientIslandReport, ClientNavigationReport, ClientPageLoadReport,
     ClientReportSink, ClientVitalReport,
