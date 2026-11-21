@@ -8,6 +8,7 @@ use std::sync::Arc;
 use crate::application::ports::PasswordHasher;
 use crate::application::ports::UserRepository;
 use crate::application::ports::{RefreshTokenRepository, TokenService};
+use crate::domain::entities::AuditEvent;
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::UserId;
 
@@ -103,7 +104,9 @@ impl ChangePasswordUseCase {
 
         // Update user
         user.update_password(new_password_hash);
-        self.user_repository.save(&user).await?;
+        self.user_repository
+            .save_audited(&user, &AuditEvent::password_changed(*user_id))
+            .await?;
 
         // Log out every *other* device: a password change should evict any session
         // the user no longer controls, while keeping the current one alive so the
@@ -169,7 +172,11 @@ mod tests {
             .expect_find_by_id()
             .times(1)
             .returning(move |_| Ok(Some(user_clone.clone())));
-        mock_repo.expect_save().times(1).returning(|_| Ok(()));
+        mock_repo
+            .expect_save_audited()
+            .withf(move |_, event| *event == AuditEvent::password_changed(user_id))
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let mut mock_hasher = MockPasswordHasher::new();
         mock_hasher
@@ -223,7 +230,11 @@ mod tests {
             .expect_find_by_id()
             .times(1)
             .returning(move |_| Ok(Some(user_clone.clone())));
-        mock_repo.expect_save().times(1).returning(|_| Ok(()));
+        mock_repo
+            .expect_save_audited()
+            .withf(move |_, event| *event == AuditEvent::password_changed(user_id))
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let mut mock_hasher = MockPasswordHasher::new();
         mock_hasher

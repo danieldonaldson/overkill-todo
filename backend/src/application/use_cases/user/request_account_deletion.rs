@@ -11,6 +11,7 @@ use std::sync::Arc;
 use jiff::Timestamp;
 
 use crate::application::ports::{PasswordHasher, UserRepository};
+use crate::domain::entities::AuditEvent;
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{AccountStatus, UserId};
 
@@ -74,7 +75,9 @@ impl RequestAccountDeletionUseCase {
 
         // Refuses an already-deleted account.
         let scheduled_at = user.schedule_deletion(Timestamp::now())?;
-        self.user_repository.save(&user).await?;
+        self.user_repository
+            .save_audited(&user, &AuditEvent::deletion_requested(*user_id))
+            .await?;
 
         tracing::info!(user_id = %user_id, %scheduled_at, "Account deletion scheduled");
         Ok(scheduled_at)
@@ -105,7 +108,10 @@ mod tests {
         repo.expect_find_by_id()
             .times(1)
             .returning(move |_| Ok(Some(user.clone())));
-        repo.expect_save().times(1).returning(|_| Ok(()));
+        repo.expect_save_audited()
+            .withf(|u, e| *e == AuditEvent::deletion_requested(*u.id()))
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let mut hasher = MockPasswordHasher::new();
         hasher.expect_verify().times(1).returning(|_, _| Ok(true));
@@ -123,7 +129,7 @@ mod tests {
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user.clone())));
-        repo.expect_save().never();
+        repo.expect_save_audited().never();
 
         let uc =
             RequestAccountDeletionUseCase::new(Arc::new(repo), Arc::new(MockPasswordHasher::new()));
@@ -139,7 +145,7 @@ mod tests {
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user.clone())));
-        repo.expect_save().never();
+        repo.expect_save_audited().never();
 
         let mut hasher = MockPasswordHasher::new();
         hasher.expect_verify().returning(|_, _| Ok(false));
@@ -157,7 +163,10 @@ mod tests {
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user.clone())));
-        repo.expect_save().times(1).returning(|_| Ok(()));
+        repo.expect_save_audited()
+            .withf(|u, e| *e == AuditEvent::deletion_requested(*u.id()))
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let uc =
             RequestAccountDeletionUseCase::new(Arc::new(repo), Arc::new(MockPasswordHasher::new()));
@@ -174,7 +183,7 @@ mod tests {
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user.clone())));
         // No re-auth, no save when already scheduled.
-        repo.expect_save().never();
+        repo.expect_save_audited().never();
 
         let uc =
             RequestAccountDeletionUseCase::new(Arc::new(repo), Arc::new(MockPasswordHasher::new()));
@@ -196,7 +205,7 @@ mod tests {
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user.clone())));
-        repo.expect_save().never();
+        repo.expect_save_audited().never();
 
         let uc =
             RequestAccountDeletionUseCase::new(Arc::new(repo), Arc::new(MockPasswordHasher::new()));

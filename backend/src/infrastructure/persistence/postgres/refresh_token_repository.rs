@@ -3,9 +3,10 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use super::audit_log::insert_audit_event;
 use super::time::{ToDb, ToDomain};
 use crate::application::ports::RefreshTokenRepository;
-use crate::domain::entities::RefreshToken;
+use crate::domain::entities::{AuditEvent, RefreshToken};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{RefreshTokenId, UserId};
 use crate::infrastructure::persistence::postgres::connection::Database;
@@ -109,6 +110,33 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         .map_err(persist_err)?;
 
         Ok(result.rows_affected())
+    }
+
+    #[tracing::instrument(name = "repo.refresh_token.revoke_all_for_user_audited", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
+    async fn revoke_all_for_user_audited(
+        &self,
+        user_id: &UserId,
+        event: &AuditEvent,
+    ) -> Result<u64, DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+        let result = sqlx::query!(
+            r#"
+            UPDATE refresh_tokens
+            SET revoked_at = NOW()
+            WHERE user_id = $1 AND revoked_at IS NULL
+            "#,
+            user_id.as_uuid()
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+
+        let revoked = result.rows_affected();
+        if revoked > 0 {
+            insert_audit_event(&mut tx, event).await?;
+        }
+        tx.commit().await.map_err(persist_err)?;
+        Ok(revoked)
     }
 
     #[tracing::instrument(name = "repo.refresh_token.revoke_all_for_user_except", skip_all, fields(db.system = "postgresql", user_id = %user_id))]

@@ -147,7 +147,10 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
         .anonymize(anon_email, jiff::Timestamp::now())
         .unwrap();
     let anonymized_now = user_repo
-        .anonymize_account(&anonymized)
+        .anonymize_account(
+            &anonymized,
+            &overkill_todo::domain::entities::AuditEvent::account_deleted(*anonymized.id()),
+        )
         .await
         .expect("anonymize");
     assert!(anonymized_now, "a due account must be anonymized");
@@ -260,7 +263,10 @@ async fn anonymize_skips_account_cancelled_after_the_scan(pool: PgPool) {
         )
         .unwrap();
     let anonymized_now = user_repo
-        .anonymize_account(&anonymized)
+        .anonymize_account(
+            &anonymized,
+            &overkill_todo::domain::entities::AuditEvent::account_deleted(*anonymized.id()),
+        )
         .await
         .expect("anonymize");
 

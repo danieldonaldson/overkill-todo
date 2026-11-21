@@ -168,12 +168,18 @@ async fn login_oauth_only_user_returns_401(pool: PgPool) {
         .await
         .expect("save user");
     PostgresOAuthAccountRepository::new(db.clone())
-        .save(&OAuthAccount::new(
-            *user.id(),
-            OAuthProvider::Google,
-            "google-sub-1".to_string(),
-            Some(email.to_string()),
-        ))
+        .save(
+            &OAuthAccount::new(
+                *user.id(),
+                OAuthProvider::Google,
+                "google-sub-1".to_string(),
+                Some(email.to_string()),
+            ),
+            &overkill_todo::domain::entities::AuditEvent::sign_in_method_linked(
+                *user.id(),
+                OAuthProvider::Google,
+            ),
+        )
         .await
         .expect("save oauth account");
 

@@ -674,9 +674,13 @@ export interface components {
             account?: components["schemas"]["AuditAccountResponse"];
             kind: components["schemas"]["AuditActorKind"];
         };
-        /** @description The event's details: for a role change, the old and new role. */
+        /**
+         * @description The event's details: for a role change, the old and new role; for a
+         *     sign-in method, the provider.
+         */
         AuditDetailsResponse: {
             from_role?: components["schemas"]["RoleName"];
+            provider?: components["schemas"]["OAuthProviderName"];
             to_role?: components["schemas"]["RoleName"];
         };
         /** @description A page of audit events, newest first. */
@@ -708,12 +712,12 @@ export interface components {
          * @description A kind to filter the audit log by.
          * @enum {string}
          */
-        AuditKindFilter: "role_changed";
+        AuditKindFilter: "role_changed" | "password_changed" | "password_set" | "password_reset" | "sign_in_method_linked" | "sign_in_method_unlinked" | "deletion_requested" | "deletion_cancelled" | "account_deleted" | "data_exported" | "sessions_revoked_after_reuse";
         /**
          * @description The kind of an audit event, as listed.
          * @enum {string}
          */
-        AuditKindName: "role_changed" | "other";
+        AuditKindName: "role_changed" | "password_changed" | "password_set" | "password_reset" | "sign_in_method_linked" | "sign_in_method_unlinked" | "deletion_requested" | "deletion_cancelled" | "account_deleted" | "data_exported" | "sessions_revoked_after_reuse" | "other";
         /**
          * @description Response body for successful authentication and for token refresh.
          *

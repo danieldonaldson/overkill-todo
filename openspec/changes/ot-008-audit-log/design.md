@@ -146,13 +146,20 @@ CREATE INDEX ON audit_events (kind, id DESC);
   read back maps to a generic "Other event", never a 500, so an older
   release can read a newer release's events.
 
-### D3. Retention job (infrastructure, leader lock)
+### D3. Retention (infrastructure, leader lock)
 
-A daily `audit_retention` job under the leader lock in `main.rs`, with
-OT-001 job metrics and the existing job-not-running alert, deletes events
-past 7 years in batches of 10,000. For years it will delete nothing. It
-exists now so the policy is enforced from day one and the trigger's delete
-path is tested.
+Events past 7 years are deleted by a step in the existing hourly
+`database_maintenance` pass. It runs under the leader lock, deletes in batches
+of 1,000 per pass, and already has the job metrics and the `JobNotSucceeding`
+alert. For years it will delete nothing. It exists now so the policy is
+enforced from day one and the trigger's delete path is used.
+`audit_events_occurred_at_idx` keeps it from scanning the table.
+
+*Revised in slice 2:* this was planned as a separate daily `audit_retention`
+job with batches of 10,000. The maintenance module's own rule is that every
+table with a retention limit gets a step in that pass. Following it gives the
+same effect (up to 24,000 deletions a day) without a second job, schedule
+and alert.
 
 ### D4. API (infrastructure, OpenAPI)
 
@@ -187,6 +194,38 @@ path is tested.
 `just grant-admin` becomes one SQL statement: a CTE that updates the role
 and inserts the `role_changed` event (`actor_kind = 'operator'`, old and new
 role) in one statement, only when the role actually changed.
+
+### D7. Revised after slice 1 (task 2.1)
+
+Slice 1 supported the hypothesis for role changes, and D1–D6 stand. It also
+settled some details that slices 2 and 3 follow:
+
+- **Coverage guard location.** `atomicity_tests` lives in
+  `tests/audit_log_integration.rs`, not in the library. Library tests run
+  without a database (`just test`), so they can't name `#[sqlx::test]`s. A new
+  `AuditKind` now fails `just test-integration` (and so `just ci`) at compile
+  time.
+- **The write is `insert_audit_event(&mut conn, &event)`** in
+  `persistence/postgres/audit_log.rs`. It takes the trace ID from the current
+  span and logs a failed insert at ERROR before the action rolls back. Every
+  slice 2 adapter method calls it inside its own transaction.
+- **The read model is a port type** (`AuditEntry`, `AuditAccount`,
+  `AuditActorView`). The domain event stays write-only. Pages are chosen by ID
+  before the joins (see Hypothesis).
+- **Widening the kind list** follows the repo's constraint pattern: one
+  migration drops `audit_events_kind_check` and adds the wider one `NOT VALID`,
+  and a second migration validates it. Both are safe with the previous
+  release, because every existing row already passes.
+- **Sign-in method linked** is recorded on every new OAuth link: an explicit
+  link from Settings, the hybrid auto-link at sign-in, and a new account created
+  through Google. The account itself is the actor. An unlink is recorded only
+  when a row was actually deleted.
+- **Data exported** is the one event with no other write. The use case
+  records it (`AuditLogRepository::record`) after reading the data and before
+  returning it, so a failed insert fails the export. A response lost in transit
+  after that still counts as exported, which is accepted.
+- **Members' view** (D4) reuses the read model, with the actor reduced on the
+  server. Keyset paging by `id` uses the existing `(subject_id, id DESC)` index.
 
 ## Risks / Trade-offs
 

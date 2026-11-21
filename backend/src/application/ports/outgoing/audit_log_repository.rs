@@ -1,13 +1,14 @@
-//! Reading the audit log (OT-008).
+//! The audit log port (OT-008): reading events, and recording a standalone one.
 //!
-//! Writing has no port of its own: an event is stored by the repository method
-//! that makes its action's primary write (for example
-//! [`super::UserRepository::save_role_change`]), in the same transaction.
+//! Most events are written by the repository method that makes their action's
+//! primary write (for example [`super::UserRepository::save_role_change`]), in
+//! the same transaction. [`AuditLogRepository::record`] is only for an action
+//! that writes nothing else (data export).
 
 use async_trait::async_trait;
 use jiff::Timestamp;
 
-use crate::domain::entities::{AuditDetails, AuditKind};
+use crate::domain::entities::{AuditDetails, AuditEvent, AuditKind};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::UserId;
 
@@ -51,6 +52,9 @@ pub struct AuditEntry {
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait AuditLogRepository: Send + Sync {
+    /// Stores `event` on its own, for an action with no other write.
+    async fn record(&self, event: &AuditEvent) -> Result<(), DomainError>;
+
     /// Events matching `filter`, newest first.
     async fn list(
         &self,

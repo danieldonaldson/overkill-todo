@@ -20,7 +20,7 @@
 //! Threading an sqlx `Transaction` through these domain ports would add an
 //! abstraction that fights both sqlx and mockall for no correctness gain.
 
-use crate::domain::entities::User;
+use crate::domain::entities::{AuditEvent, User};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::UserId;
 use async_trait::async_trait;
@@ -58,5 +58,9 @@ pub trait AccountLifecycleRepository: Send + Sync {
     /// means the account was anonymized. It also sets `tokens_valid_after`, so
     /// access tokens issued before the purge stop working on routes that check
     /// session freshness.
-    async fn anonymize_account(&self, user: &User) -> Result<bool, DomainError>;
+    ///
+    /// `event` (account deleted) is stored in the same transaction, and only
+    /// when the scrub applies: `Ok(false)` writes no event (OT-008).
+    async fn anonymize_account(&self, user: &User, event: &AuditEvent)
+    -> Result<bool, DomainError>;
 }

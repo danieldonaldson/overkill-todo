@@ -4,6 +4,7 @@
 //! to set one for the first time, enabling email/password login.
 
 use crate::application::ports::{PasswordHasher, UserRepository};
+use crate::domain::entities::AuditEvent;
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::UserId;
 use std::sync::Arc;
@@ -62,7 +63,9 @@ impl SetPasswordUseCase {
 
         // Update user
         user.update_password(password_hash);
-        self.user_repository.save(&user).await?;
+        self.user_repository
+            .save_audited(&user, &AuditEvent::password_set(*user_id))
+            .await?;
 
         tracing::info!(user_id = %user_id, "Password set for OAuth-only user");
         Ok(())
@@ -117,7 +120,11 @@ mod tests {
             .expect_find_by_id()
             .times(1)
             .returning(move |_| Ok(Some(user_clone.clone())));
-        mock_repo.expect_save().times(1).returning(|_| Ok(()));
+        mock_repo
+            .expect_save_audited()
+            .withf(move |_, event| *event == AuditEvent::password_set(user_id))
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let use_case = SetPasswordUseCase::new(Arc::new(mock_repo), Arc::new(stub_hasher()));
         let result = use_case.execute(&user_id, "new_secure_password").await;
@@ -171,9 +178,9 @@ mod tests {
             .times(1)
             .returning(move |_| Ok(Some(user_clone.clone())));
         mock_repo
-            .expect_save()
+            .expect_save_audited()
             .times(1)
-            .returning(|_| Err(DomainError::Persistence("Database error".into())));
+            .returning(|_, _| Err(DomainError::Persistence("Database error".into())));
 
         let use_case = SetPasswordUseCase::new(Arc::new(mock_repo), Arc::new(stub_hasher()));
         let result = use_case.execute(&user_id, "new_password").await;

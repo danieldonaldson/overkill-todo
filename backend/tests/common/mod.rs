@@ -549,6 +549,7 @@ fn create_test_app_inner(
     let export_user_data_uc = Arc::new(ExportUserDataUseCase::new(
         user_repo.clone(),
         oauth_account_repo.clone(),
+        audit_log_repo.clone(),
     ));
     let request_account_deletion_uc = Arc::new(RequestAccountDeletionUseCase::new(
         user_repo.clone(),

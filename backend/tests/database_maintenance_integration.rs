@@ -166,3 +166,34 @@ async fn keeps_expired_code_rows_with_lockouts_until_idle(pool: PgPool) {
         assert_eq!(remaining, kept, "{table}");
     }
 }
+
+/// OT-008 retention: events past 7 years go, younger ones stay, and a pass
+/// with nothing to delete succeeds.
+#[sqlx::test(migrations = "./migrations")]
+async fn deletes_audit_events_only_past_seven_years(pool: PgPool) {
+    let db = Database::from_pool(pool.clone());
+    let report = db.purge_expired().await.unwrap();
+    assert_eq!(report.audit_events, 0);
+
+    // 7 years and a day ago (two leap days fall in any 7 years), and a day short.
+    for age_days in [7 * 365 + 2 + 1, 7 * 365 + 2 + 1, 7 * 365 - 1, 0] {
+        sqlx::query(
+            "INSERT INTO audit_events (occurred_at, kind, subject_id, actor_kind)
+             VALUES (now() - make_interval(days => $1), 'data_exported', $2, 'system')",
+        )
+        .bind(age_days)
+        .bind(Uuid::now_v7())
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let report = db.purge_expired().await.unwrap();
+    assert_eq!(report.audit_events, 2);
+    let left: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 2);
+    assert_eq!(db.purge_expired().await.unwrap().audit_events, 0);
+}

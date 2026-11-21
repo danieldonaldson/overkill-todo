@@ -12,11 +12,21 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use overkill_todo::application::ports::UserRepository;
-use overkill_todo::domain::entities::{Actor, AuditEvent, AuditKind, User};
+use jiff::{SignedDuration, Timestamp};
+use overkill_todo::application::ports::{
+    AccountLifecycleRepository, AuditLogRepository, OAuthAccountRepository, RefreshTokenRepository,
+    UserRepository,
+};
+use overkill_todo::application::use_cases::PurgeScheduledAccountsUseCase;
+use overkill_todo::domain::entities::{
+    Actor, AuditEvent, AuditKind, OAuthAccount, OAuthProvider, RefreshToken, User,
+};
 use overkill_todo::domain::errors::DomainError;
-use overkill_todo::domain::value_objects::{UserId, UserRole};
-use overkill_todo::infrastructure::persistence::postgres::{Database, PostgresUserRepository};
+use overkill_todo::domain::value_objects::{Email, UserId, UserRole};
+use overkill_todo::infrastructure::persistence::postgres::{
+    Database, PostgresAuditLogRepository, PostgresOAuthAccountRepository,
+    PostgresRefreshTokenRepository, PostgresUserRepository,
+};
 
 // ---------------------------------------------------------------------------
 // Coverage guard
@@ -33,6 +43,45 @@ fn atomicity_tests(kind: AuditKind) -> &'static [fn()] {
             role_change_version_conflict_leaves_no_event,
             failed_event_insert_rolls_back_the_role_change,
             concurrent_role_changes_give_one_event_per_applied_change,
+        ],
+        // Change and set both go through `save_audited`, as do deletion
+        // requests and cancellations.
+        AuditKind::PasswordChanged
+        | AuditKind::PasswordSet
+        | AuditKind::DeletionRequested
+        | AuditKind::DeletionCancelled => &[
+            save_audited_writes_the_event_with_the_save,
+            save_audited_version_conflict_leaves_no_event,
+            failed_event_insert_rolls_back_save_audited,
+        ],
+        AuditKind::PasswordReset => &[
+            password_reset_writes_exactly_one_event,
+            password_reset_of_a_missing_account_leaves_no_event,
+            failed_event_insert_rolls_back_the_password_reset,
+        ],
+        AuditKind::SignInMethodLinked => &[
+            link_writes_exactly_one_event,
+            duplicate_link_leaves_no_event,
+            failed_event_insert_rolls_back_the_link,
+        ],
+        AuditKind::SignInMethodUnlinked => &[
+            unlink_writes_exactly_one_event,
+            unlinking_nothing_leaves_no_event,
+            failed_event_insert_rolls_back_the_unlink,
+        ],
+        AuditKind::AccountDeleted => &[
+            purge_writes_one_event_and_keeps_earlier_ones,
+            purge_of_a_cancelled_deletion_leaves_no_event,
+            failed_event_insert_rolls_back_the_purge,
+        ],
+        AuditKind::DataExported => &[
+            export_record_writes_exactly_one_event,
+            failed_export_record_is_an_error,
+        ],
+        AuditKind::SessionsRevokedAfterReuse => &[
+            reuse_revocation_writes_exactly_one_event,
+            reuse_revocation_with_no_live_session_leaves_no_event,
+            failed_event_insert_rolls_back_the_reuse_revocation,
         ],
     }
 }
@@ -531,4 +580,682 @@ async fn deleted_account_shows_without_its_former_email(pool: PgPool) {
     assert_eq!(subject["id"], member.id().to_string());
     assert_eq!(subject["email"], Value::Null);
     assert_eq!(subject["deleted"], true);
+}
+
+// ---------------------------------------------------------------------------
+// Slice 2: the other account actions
+// ---------------------------------------------------------------------------
+
+fn db(pool: &PgPool) -> Arc<Database> {
+    Arc::new(Database::from_pool(pool.clone()))
+}
+
+/// Makes every event insert fail from here on, as if the table refused it.
+async fn refuse_every_event(pool: &PgPool) {
+    sqlx::query(
+        "ALTER TABLE audit_events ADD CONSTRAINT test_refuse_everything CHECK (false) NOT VALID",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Every stored event's kind, in order.
+async fn stored_kinds(pool: &PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT kind FROM audit_events ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+async fn stored_password_hash(pool: &PgPool, id: &UserId) -> Option<String> {
+    sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1")
+        .bind(id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn link_count(pool: &PgPool, id: &UserId) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM user_oauth_accounts WHERE user_id = $1")
+        .bind(id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+fn google_link(id: UserId, sub: &str) -> OAuthAccount {
+    OAuthAccount::new(id, OAuthProvider::Google, sub.into(), None)
+}
+
+// --- save_audited (password changed / set, deletion requested / cancelled)
+
+#[sqlx::test(migrations = "./migrations")]
+async fn save_audited_writes_the_event_with_the_save(pool: PgPool) {
+    let mut user = seed_with_role(&pool, UserRole::User).await;
+    let id = *user.id();
+    user.update_password("new-hash".into());
+
+    user_repo(&pool)
+        .save_audited(&user, &AuditEvent::password_changed(id))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        stored_password_hash(&pool, &id).await.as_deref(),
+        Some("new-hash")
+    );
+    assert_eq!(stored_kinds(&pool).await, vec!["password_changed"]);
+    let (_, subject, actor_kind, actor, _) = stored_events(&pool).await.remove(0);
+    assert_eq!(
+        (subject, actor_kind.as_str(), actor),
+        (*id.as_uuid(), "user", Some(*id.as_uuid()))
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn save_audited_version_conflict_leaves_no_event(pool: PgPool) {
+    let user = seed_with_role(&pool, UserRole::User).await;
+    let id = *user.id();
+    let mut stale = user.clone();
+    let mut fresh = user;
+    fresh.schedule_deletion(Timestamp::now()).unwrap();
+    user_repo(&pool).save(&fresh).await.unwrap();
+
+    stale.update_password("new-hash".into());
+    let err = user_repo(&pool)
+        .save_audited(&stale, &AuditEvent::password_changed(id))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::Conflict(_)), "{err:?}");
+    assert_eq!(stored_password_hash(&pool, &id).await, None);
+    assert_eq!(stored_kinds(&pool).await, Vec::<String>::new());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn failed_event_insert_rolls_back_save_audited(pool: PgPool) {
+    let mut user = seed_with_role(&pool, UserRole::User).await;
+    let id = *user.id();
+    refuse_every_event(&pool).await;
+    user.schedule_deletion(Timestamp::now()).unwrap();
+
+    let err = user_repo(&pool)
+        .save_audited(&user, &AuditEvent::deletion_requested(id))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::Persistence(_)), "{err:?}");
+    let stored = user_repo(&pool).find_by_id(&id).await.unwrap().unwrap();
+    assert_eq!(stored.deletion_scheduled_at(), None);
+    assert_eq!(stored.version(), user.version());
+}
+
+// --- password reset (update_password)
+
+#[sqlx::test(migrations = "./migrations")]
+async fn password_reset_writes_exactly_one_event(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+
+    user_repo(&pool)
+        .update_password(&id, "reset-hash", &AuditEvent::password_reset(id))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        stored_password_hash(&pool, &id).await.as_deref(),
+        Some("reset-hash")
+    );
+    assert_eq!(stored_kinds(&pool).await, vec!["password_reset"]);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn password_reset_of_a_missing_account_leaves_no_event(pool: PgPool) {
+    let ghost = UserId::new();
+    let err = user_repo(&pool)
+        .update_password(&ghost, "reset-hash", &AuditEvent::password_reset(ghost))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, DomainError::NotFound(_)), "{err:?}");
+    assert_eq!(stored_kinds(&pool).await, Vec::<String>::new());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn failed_event_insert_rolls_back_the_password_reset(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    refuse_every_event(&pool).await;
+
+    let err = user_repo(&pool)
+        .update_password(&id, "reset-hash", &AuditEvent::password_reset(id))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::Persistence(_)), "{err:?}");
+    assert_eq!(stored_password_hash(&pool, &id).await, None);
+}
+
+// --- sign-in methods
+
+#[sqlx::test(migrations = "./migrations")]
+async fn link_writes_exactly_one_event(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    let links = PostgresOAuthAccountRepository::new(db(&pool));
+
+    links
+        .save(
+            &google_link(id, "sub-1"),
+            &AuditEvent::sign_in_method_linked(id, OAuthProvider::Google),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(link_count(&pool, &id).await, 1);
+    assert_eq!(stored_kinds(&pool).await, vec!["sign_in_method_linked"]);
+    assert_eq!(
+        stored_events(&pool).await[0].4,
+        json!({ "provider": "google" })
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn duplicate_link_leaves_no_event(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    let links = PostgresOAuthAccountRepository::new(db(&pool));
+    let event = AuditEvent::sign_in_method_linked(id, OAuthProvider::Google);
+    links.save(&google_link(id, "sub-1"), &event).await.unwrap();
+
+    let err = links
+        .save(&google_link(id, "sub-1"), &event)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::Conflict(_)), "{err:?}");
+    assert_eq!(stored_kinds(&pool).await, vec!["sign_in_method_linked"]);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn failed_event_insert_rolls_back_the_link(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    refuse_every_event(&pool).await;
+
+    let err = PostgresOAuthAccountRepository::new(db(&pool))
+        .save(
+            &google_link(id, "sub-1"),
+            &AuditEvent::sign_in_method_linked(id, OAuthProvider::Google),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::Persistence(_)), "{err:?}");
+    assert_eq!(link_count(&pool, &id).await, 0);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn unlink_writes_exactly_one_event(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    let links = PostgresOAuthAccountRepository::new(db(&pool));
+    links
+        .save(
+            &google_link(id, "sub-1"),
+            &AuditEvent::sign_in_method_linked(id, OAuthProvider::Google),
+        )
+        .await
+        .unwrap();
+
+    let deleted = links
+        .delete_by_user_and_provider(
+            &id,
+            OAuthProvider::Google,
+            &AuditEvent::sign_in_method_unlinked(id, OAuthProvider::Google),
+        )
+        .await
+        .unwrap();
+
+    assert!(deleted);
+    assert_eq!(link_count(&pool, &id).await, 0);
+    assert_eq!(
+        stored_kinds(&pool).await,
+        vec!["sign_in_method_linked", "sign_in_method_unlinked"]
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn unlinking_nothing_leaves_no_event(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    let deleted = PostgresOAuthAccountRepository::new(db(&pool))
+        .delete_by_user_and_provider(
+            &id,
+            OAuthProvider::Google,
+            &AuditEvent::sign_in_method_unlinked(id, OAuthProvider::Google),
+        )
+        .await
+        .unwrap();
+    assert!(!deleted);
+    assert_eq!(stored_kinds(&pool).await, Vec::<String>::new());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn failed_event_insert_rolls_back_the_unlink(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    let links = PostgresOAuthAccountRepository::new(db(&pool));
+    links
+        .save(
+            &google_link(id, "sub-1"),
+            &AuditEvent::sign_in_method_linked(id, OAuthProvider::Google),
+        )
+        .await
+        .unwrap();
+    refuse_every_event(&pool).await;
+
+    let err = links
+        .delete_by_user_and_provider(
+            &id,
+            OAuthProvider::Google,
+            &AuditEvent::sign_in_method_unlinked(id, OAuthProvider::Google),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::Persistence(_)), "{err:?}");
+    assert_eq!(link_count(&pool, &id).await, 1);
+}
+
+// --- account deleted by the purge
+
+/// An account whose deletion grace period is over, anonymised as the purge
+/// would, ready for `anonymize_account`.
+async fn due_for_purge(pool: &PgPool) -> User {
+    let user = seed_with_role(pool, UserRole::User).await;
+    sqlx::query("UPDATE users SET deletion_scheduled_at = now() - interval '1 day' WHERE id = $1")
+        .bind(user.id().as_uuid())
+        .execute(pool)
+        .await
+        .unwrap();
+    let mut due = user_repo(pool)
+        .find_by_id(user.id())
+        .await
+        .unwrap()
+        .unwrap();
+    let anonymous = Email::new(&format!("deleted-{}@anonymized.local", user.id())).unwrap();
+    due.anonymize(anonymous, Timestamp::now()).unwrap();
+    due
+}
+
+async fn is_anonymised(pool: &PgPool, id: &UserId) -> bool {
+    sqlx::query_scalar("SELECT deleted_at IS NOT NULL FROM users WHERE id = $1")
+        .bind(id.as_uuid())
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn purge_writes_one_event_and_keeps_earlier_ones(pool: PgPool) {
+    let due = due_for_purge(&pool).await;
+    let id = *due.id();
+    // An earlier event about the account, which must survive its deletion.
+    user_repo(&pool)
+        .update_password(&id, "h", &AuditEvent::password_reset(id))
+        .await
+        .unwrap();
+
+    let applied = user_repo(&pool)
+        .anonymize_account(&due, &AuditEvent::account_deleted(id))
+        .await
+        .unwrap();
+
+    assert!(applied);
+    assert!(is_anonymised(&pool, &id).await);
+    assert_eq!(
+        stored_kinds(&pool).await,
+        vec!["password_reset", "account_deleted"]
+    );
+    let deleted = &stored_events(&pool).await[1];
+    assert_eq!(
+        (deleted.1, deleted.2.as_str(), deleted.3),
+        (*id.as_uuid(), "system", None)
+    );
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn purge_of_a_cancelled_deletion_leaves_no_event(pool: PgPool) {
+    let due = due_for_purge(&pool).await;
+    let id = *due.id();
+    // The Member cancels after the purge listed the account.
+    sqlx::query("UPDATE users SET deletion_scheduled_at = NULL WHERE id = $1")
+        .bind(id.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let applied = user_repo(&pool)
+        .anonymize_account(&due, &AuditEvent::account_deleted(id))
+        .await
+        .unwrap();
+
+    assert!(!applied);
+    assert!(!is_anonymised(&pool, &id).await);
+    assert_eq!(stored_kinds(&pool).await, Vec::<String>::new());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn failed_event_insert_rolls_back_the_purge(pool: PgPool) {
+    let due = due_for_purge(&pool).await;
+    let id = *due.id();
+    refuse_every_event(&pool).await;
+
+    let err = user_repo(&pool)
+        .anonymize_account(&due, &AuditEvent::account_deleted(id))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::Persistence(_)), "{err:?}");
+    assert!(!is_anonymised(&pool, &id).await);
+}
+
+// --- data exported
+
+#[sqlx::test(migrations = "./migrations")]
+async fn export_record_writes_exactly_one_event(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    PostgresAuditLogRepository::new(db(&pool))
+        .record(&AuditEvent::data_exported(id))
+        .await
+        .unwrap();
+    assert_eq!(stored_kinds(&pool).await, vec!["data_exported"]);
+}
+
+/// The export use case returns this error instead of the data (unit-tested in
+/// `export_user_data.rs`), so no export happens unrecorded.
+#[sqlx::test(migrations = "./migrations")]
+async fn failed_export_record_is_an_error(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    refuse_every_event(&pool).await;
+    let err = PostgresAuditLogRepository::new(db(&pool))
+        .record(&AuditEvent::data_exported(id))
+        .await
+        .unwrap_err();
+    assert!(matches!(err, DomainError::Persistence(_)), "{err:?}");
+}
+
+// --- sessions signed out after token reuse
+
+async fn seed_session(pool: &PgPool, id: UserId, hash: &str) {
+    let token = RefreshToken::new(
+        id,
+        hash.into(),
+        "device".into(),
+        Timestamp::now() + SignedDuration::from_hours(24),
+    );
+    PostgresRefreshTokenRepository::new(db(pool))
+        .save(&token)
+        .await
+        .unwrap();
+}
+
+async fn live_sessions(pool: &PgPool, id: &UserId) -> i64 {
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(id.as_uuid())
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn reuse_revocation_writes_exactly_one_event(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    seed_session(&pool, id, "h1").await;
+    seed_session(&pool, id, "h2").await;
+
+    let revoked = PostgresRefreshTokenRepository::new(db(&pool))
+        .revoke_all_for_user_audited(&id, &AuditEvent::sessions_revoked_after_reuse(id))
+        .await
+        .unwrap();
+
+    assert_eq!(revoked, 2);
+    assert_eq!(live_sessions(&pool, &id).await, 0);
+    assert_eq!(
+        stored_kinds(&pool).await,
+        vec!["sessions_revoked_after_reuse"]
+    );
+    assert_eq!(stored_events(&pool).await[0].2, "system");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn reuse_revocation_with_no_live_session_leaves_no_event(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    let revoked = PostgresRefreshTokenRepository::new(db(&pool))
+        .revoke_all_for_user_audited(&id, &AuditEvent::sessions_revoked_after_reuse(id))
+        .await
+        .unwrap();
+    assert_eq!(revoked, 0);
+    assert_eq!(stored_kinds(&pool).await, Vec::<String>::new());
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn failed_event_insert_rolls_back_the_reuse_revocation(pool: PgPool) {
+    let id = *seed_with_role(&pool, UserRole::User).await.id();
+    seed_session(&pool, id, "h1").await;
+    refuse_every_event(&pool).await;
+
+    let err = PostgresRefreshTokenRepository::new(db(&pool))
+        .revoke_all_for_user_audited(&id, &AuditEvent::sessions_revoked_after_reuse(id))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, DomainError::Persistence(_)), "{err:?}");
+    assert_eq!(live_sessions(&pool, &id).await, 1);
+}
+
+// ---------------------------------------------------------------------------
+// Minimal personal data (task 2.10)
+// ---------------------------------------------------------------------------
+
+async fn send_json(app: &axum::Router, req: Request<Body>) -> (StatusCode, Option<String>, Value) {
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let auth = common::cookie_value(&resp, "__Host-auth_token");
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    (
+        status,
+        auth,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+fn json_request(
+    method: &str,
+    uri: &str,
+    body: &Value,
+    session: Option<(&str, &str)>,
+) -> Request<Body> {
+    let mut req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-device-fingerprint", "test-device-abc123");
+    if let Some((token, csrf)) = session {
+        req = req
+            .header(
+                header::COOKIE,
+                format!("__Host-auth_token={token}; __Host-csrf_token={csrf}"),
+            )
+            .header("x-csrf-token", csrf);
+    }
+    req.body(Body::from(body.to_string())).unwrap()
+}
+
+/// A Member signs up, links Google, changes their password, exports their
+/// data and deletes their account. None of the events this leaves holds their
+/// email, name, password or hash, any code or token, or a client address.
+#[sqlx::test(migrations = "./migrations")]
+async fn events_after_a_full_account_lifecycle_hold_no_personal_data(pool: PgPool) {
+    let app = common::create_test_app(pool.clone());
+    let email = "e2e-lifecycle-pii@example.com";
+    let (first, second) = ("hunter2hunter2", "brandnewpass99");
+    let google_sub = "google-sub-8675309";
+    let google_email = "lifecycle.google@gmail.example";
+
+    // Sign up (the test app's verification code is fixed).
+    send_json(
+        &app,
+        json_request(
+            "POST",
+            "/api/v1/auth/register",
+            &json!({ "email": email }),
+            None,
+        ),
+    )
+    .await;
+    let (_, _, verified) = send_json(
+        &app,
+        json_request(
+            "POST",
+            "/api/v1/auth/verify-email",
+            &json!({ "email": email, "code": "123456" }),
+            None,
+        ),
+    )
+    .await;
+    let signup_token = verified["signup_token"]
+        .as_str()
+        .unwrap_or_else(|| panic!("no signup token: {verified}"))
+        .to_string();
+    let (status, token, body) = send_json(
+        &app,
+        json_request(
+            "POST",
+            "/api/v1/auth/complete-signup",
+            &json!({ "signup_token": signup_token, "email": email, "password": first }),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let token = token.unwrap();
+    let csrf = body["csrf_token"].as_str().unwrap().to_string();
+    let user = user_repo(&pool)
+        .find_by_email(email)
+        .await
+        .unwrap()
+        .unwrap();
+    let id = *user.id();
+
+    // Link Google (the provider exchange itself is out of scope here).
+    PostgresOAuthAccountRepository::new(db(&pool))
+        .save(
+            &OAuthAccount::new(
+                id,
+                OAuthProvider::Google,
+                google_sub.into(),
+                Some(google_email.into()),
+            ),
+            &AuditEvent::sign_in_method_linked(id, OAuthProvider::Google),
+        )
+        .await
+        .unwrap();
+
+    // Change the password.
+    let (status, _, body) = send_json(
+        &app,
+        json_request(
+            "POST",
+            "/api/v1/users/password/change",
+            &json!({ "current_password": first, "new_password": second }),
+            Some((&token, &csrf)),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let hash = stored_password_hash(&pool, &id).await.unwrap();
+
+    // Sign in again, export, then ask for deletion.
+    let (status, token, body) = send_json(
+        &app,
+        json_request(
+            "POST",
+            "/api/v1/auth/login",
+            &json!({ "email": email, "password": second }),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let token = token.unwrap();
+    let csrf = body["csrf_token"].as_str().unwrap().to_string();
+    let export = Request::builder()
+        .uri("/api/v1/users/me/export")
+        .header(header::COOKIE, format!("__Host-auth_token={token}"))
+        .body(Body::empty())
+        .unwrap();
+    let (status, _, body) = send_json(&app, export).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, _, body) = send_json(
+        &app,
+        json_request(
+            "DELETE",
+            "/api/v1/users/me",
+            &json!({ "password": second, "confirmation": "DELETE" }),
+            Some((&token, &csrf)),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // The grace period ends and the purge deletes the account.
+    sqlx::query("UPDATE users SET deletion_scheduled_at = now() - interval '1 day' WHERE id = $1")
+        .bind(id.as_uuid())
+        .execute(&pool)
+        .await
+        .unwrap();
+    let purged = PurgeScheduledAccountsUseCase::new(Arc::new(user_repo(&pool)))
+        .run_once()
+        .await
+        .unwrap();
+    assert_eq!(purged, 1);
+
+    assert_eq!(
+        stored_kinds(&pool).await,
+        vec![
+            "sign_in_method_linked",
+            "password_changed",
+            "data_exported",
+            "deletion_requested",
+            "account_deleted",
+        ]
+    );
+    let rows: Vec<String> = sqlx::query_scalar("SELECT row_to_json(e)::text FROM audit_events e")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let mut forbidden = vec![
+        email,
+        "lifecycle-pii",
+        first,
+        second,
+        &hash,
+        "123456",
+        &signup_token,
+        &token,
+        &csrf,
+        google_sub,
+        google_email,
+        "127.0.0.1",
+        "test-device-abc123",
+    ];
+    for name in [user.first_name(), user.last_name()] {
+        if !name.is_empty() {
+            forbidden.push(name);
+        }
+    }
+    for row in &rows {
+        for secret in &forbidden {
+            assert!(
+                !row.contains(secret),
+                "an audit event holds {secret:?}: {row}"
+            );
+        }
+    }
 }

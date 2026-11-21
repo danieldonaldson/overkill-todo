@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use crate::application::ports::AccountLifecycleRepository;
-use crate::domain::entities::User;
+use crate::domain::entities::{AuditEvent, User};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::Email;
 
@@ -72,7 +72,11 @@ impl PurgeScheduledAccountsUseCase {
         let anonymous_email = Email::new(&format!("deleted-{user_id}@anonymized.local"))?;
         let mut anonymized = user.clone();
         anonymized.anonymize(anonymous_email, jiff::Timestamp::now())?;
-        if !self.lifecycle.anonymize_account(&anonymized).await? {
+        if !self
+            .lifecycle
+            .anonymize_account(&anonymized, &AuditEvent::account_deleted(*user_id))
+            .await?
+        {
             return Ok(false);
         }
 
@@ -95,9 +99,12 @@ mod tests {
             .returning(|| Ok(vec![UserBuilder::new().build(), UserBuilder::new().build()]));
         lifecycle
             .expect_anonymize_account()
-            .withf(|u| u.email().as_str().ends_with("@anonymized.local"))
+            .withf(|u, e| {
+                u.email().as_str().ends_with("@anonymized.local")
+                    && *e == AuditEvent::account_deleted(*u.id())
+            })
             .times(2)
-            .returning(|_| Ok(true));
+            .returning(|_, _| Ok(true));
 
         let purged = PurgeScheduledAccountsUseCase::new(Arc::new(lifecycle))
             .run_once()
@@ -116,7 +123,7 @@ mod tests {
         lifecycle
             .expect_anonymize_account()
             .times(2)
-            .returning(move |_| {
+            .returning(move |_, _| {
                 calls += 1;
                 if calls == 1 {
                     Err(DomainError::Persistence("db blip".into()))
@@ -141,7 +148,7 @@ mod tests {
         lifecycle
             .expect_anonymize_account()
             .times(1)
-            .returning(|_| Ok(false));
+            .returning(|_, _| Ok(false));
 
         let purged = PurgeScheduledAccountsUseCase::new(Arc::new(lifecycle))
             .run_once()

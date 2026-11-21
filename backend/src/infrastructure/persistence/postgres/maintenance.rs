@@ -69,10 +69,30 @@ impl DatabaseMaintenance for Database {
         .await?
         .rows_affected();
 
+        // OT-008 retention: audit events are kept for 7 years, then deleted.
+        // The append-only trigger allows exactly this delete and refuses any
+        // younger row, so the condition here and there must agree.
+        let audit_events = sqlx::query!(
+            r"
+            DELETE FROM audit_events
+            WHERE id IN (
+                SELECT id FROM audit_events
+                WHERE occurred_at < NOW() - INTERVAL '7 years'
+                ORDER BY occurred_at
+                LIMIT $1
+            )
+            ",
+            MAINTENANCE_BATCH_SIZE
+        )
+        .execute(pool)
+        .await?
+        .rows_affected();
+
         Ok(MaintenanceReport {
             refresh_tokens,
             email_verification_codes,
             password_reset_codes,
+            audit_events,
         })
     }
 }

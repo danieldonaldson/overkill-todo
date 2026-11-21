@@ -252,7 +252,7 @@
                     <dt class="text-muted-foreground">By</dt>
                     <dd class="break-all">{auditActorLabel(event.actor)}</dd>
                     {#if details}
-                      <dt class="text-muted-foreground">Change</dt>
+                      <dt class="text-muted-foreground">Details</dt>
                       <dd>{details}</dd>
                     {/if}
                   </dl>

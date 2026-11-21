@@ -3,7 +3,7 @@
 use crate::application::ports::UserRepository;
 use crate::application::ports::{RefreshTokenRepository, TokenService};
 use crate::domain::entities::User;
-use crate::domain::entities::{RefreshToken, RefreshTokenStatus};
+use crate::domain::entities::{AuditEvent, RefreshToken, RefreshTokenStatus};
 use crate::domain::errors::DomainError;
 use jiff::{SignedDuration, Timestamp};
 use std::sync::Arc;
@@ -127,7 +127,10 @@ impl RefreshTokenUseCase {
                     "Revoked refresh token reuse detected — revoking all sessions for user"
                 );
                 self.refresh_token_repository
-                    .revoke_all_for_user(refresh_token.user_id())
+                    .revoke_all_for_user_audited(
+                        refresh_token.user_id(),
+                        &AuditEvent::sessions_revoked_after_reuse(*refresh_token.user_id()),
+                    )
                     .await?;
                 return Err(RefreshError::Reused);
             }
@@ -285,7 +288,7 @@ mod tests {
             .times(1)
             .withf(move |id, new| id == &old_id && new.device_fingerprint() == FINGERPRINT)
             .returning(|_, _| Ok(()));
-        repo.expect_revoke_all_for_user().never();
+        repo.expect_revoke_all_for_user_audited().never();
 
         let mut user_repo = MockUserRepository::new();
         user_repo
@@ -308,7 +311,7 @@ mod tests {
     async fn rejects_unknown_token() {
         let mut repo = MockRefreshTokenRepository::new();
         repo.expect_find_by_hash().times(1).returning(|_| Ok(None));
-        repo.expect_revoke_all_for_user().never();
+        repo.expect_revoke_all_for_user_audited().never();
 
         let uc = RefreshTokenUseCase::new(
             Arc::new(repo),
@@ -331,10 +334,12 @@ mod tests {
         repo.expect_find_by_hash()
             .times(1)
             .returning(move |_| Ok(Some(token.clone())));
-        repo.expect_revoke_all_for_user()
+        repo.expect_revoke_all_for_user_audited()
             .times(1)
-            .withf(move |uid| uid == &user_id)
-            .returning(|_| Ok(3));
+            .withf(move |uid, event| {
+                uid == &user_id && *event == AuditEvent::sessions_revoked_after_reuse(user_id)
+            })
+            .returning(|_, _| Ok(3));
         repo.expect_rotate().never();
 
         let uc = RefreshTokenUseCase::new(
@@ -358,7 +363,7 @@ mod tests {
         repo.expect_find_by_hash()
             .times(1)
             .returning(move |_| Ok(Some(token.clone())));
-        repo.expect_revoke_all_for_user().never();
+        repo.expect_revoke_all_for_user_audited().never();
         repo.expect_rotate().never();
 
         let uc = RefreshTokenUseCase::new(
@@ -381,7 +386,7 @@ mod tests {
             .times(1)
             .returning(move |_| Ok(Some(token.clone())));
         repo.expect_rotate().never();
-        repo.expect_revoke_all_for_user().never();
+        repo.expect_revoke_all_for_user_audited().never();
 
         let uc = RefreshTokenUseCase::new(
             Arc::new(repo),

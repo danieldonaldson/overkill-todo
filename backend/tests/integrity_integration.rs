@@ -13,6 +13,7 @@
 
 mod common;
 
+use overkill_todo::domain::entities::AuditEvent;
 use std::sync::Arc;
 
 use jiff::{SignedDuration, Timestamp};
@@ -112,7 +113,12 @@ async fn oauth_account_duplicate_link_maps_23505_to_conflict(pool: PgPool) {
         "sub-xyz".to_string(),
         Some("oauth-dup@example.com".to_string()),
     );
-    repo.save(&account).await.expect("first link");
+    repo.save(
+        &account,
+        &AuditEvent::sign_in_method_linked(user_id, OAuthProvider::Google),
+    )
+    .await
+    .expect("first link");
 
     // Linking the same (provider, provider_user_id) again is a 23505 unique
     // violation that persist_err must turn into a Conflict.
@@ -122,7 +128,13 @@ async fn oauth_account_duplicate_link_maps_23505_to_conflict(pool: PgPool) {
         "sub-xyz".to_string(),
         Some("oauth-dup@example.com".to_string()),
     );
-    let err = repo.save(&dup).await.unwrap_err();
+    let err = repo
+        .save(
+            &dup,
+            &AuditEvent::sign_in_method_linked(user_id, OAuthProvider::Google),
+        )
+        .await
+        .unwrap_err();
     assert!(
         matches!(err, DomainError::Conflict(_)),
         "a duplicate OAuth link must Conflict (23505 arm): {err:?}"

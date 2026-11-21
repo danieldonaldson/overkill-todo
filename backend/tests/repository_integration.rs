@@ -7,6 +7,7 @@
 
 mod common;
 
+use overkill_todo::domain::entities::AuditEvent;
 use std::sync::Arc;
 
 use jiff::{SignedDuration, Timestamp};
@@ -88,7 +89,12 @@ async fn oauth_account_save_find_count_delete(pool: PgPool) {
         "sub-123".to_string(),
         Some("oauth-repo@example.com".to_string()),
     );
-    repo.save(&account).await.unwrap();
+    repo.save(
+        &account,
+        &AuditEvent::sign_in_method_linked(user_id, OAuthProvider::Google),
+    )
+    .await
+    .unwrap();
 
     // Every lookup path now finds it.
     let by_user = repo.find_by_user_id(&user_id).await.unwrap();
@@ -106,20 +112,32 @@ async fn oauth_account_save_find_count_delete(pool: PgPool) {
     // Deleting a provider that isn't linked is a no-op (false).
     assert!(
         !repo
-            .delete_by_user_and_provider(&user_id, OAuthProvider::Apple)
+            .delete_by_user_and_provider(
+                &user_id,
+                OAuthProvider::Apple,
+                &AuditEvent::sign_in_method_unlinked(user_id, OAuthProvider::Apple)
+            )
             .await
             .unwrap()
     );
 
     // Deleting the linked provider reports a row was removed, and is idempotent.
     assert!(
-        repo.delete_by_user_and_provider(&user_id, OAuthProvider::Google)
-            .await
-            .unwrap()
+        repo.delete_by_user_and_provider(
+            &user_id,
+            OAuthProvider::Google,
+            &AuditEvent::sign_in_method_unlinked(user_id, OAuthProvider::Google)
+        )
+        .await
+        .unwrap()
     );
     assert!(
         !repo
-            .delete_by_user_and_provider(&user_id, OAuthProvider::Google)
+            .delete_by_user_and_provider(
+                &user_id,
+                OAuthProvider::Google,
+                &AuditEvent::sign_in_method_unlinked(user_id, OAuthProvider::Google)
+            )
             .await
             .unwrap()
     );
@@ -275,7 +293,13 @@ async fn user_targeted_writes_report_not_found_for_missing_row(pool: PgPool) {
         "verifying a missing user must be NotFound, got {verify:?}"
     );
 
-    let update = repo.update_password(&ghost, "irrelevant-hash").await;
+    let update = repo
+        .update_password(
+            &ghost,
+            "irrelevant-hash",
+            &overkill_todo::domain::entities::AuditEvent::password_reset(ghost),
+        )
+        .await;
     assert!(
         matches!(
             update,

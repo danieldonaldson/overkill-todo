@@ -7,9 +7,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use super::schema_enums::RoleName;
+use super::schema_enums::{OAuthProviderName, RoleName};
 use crate::application::ports::outgoing::{AuditAccount, AuditActorView, AuditEntry};
-use crate::domain::entities::{AuditDetails, AuditKind};
+use crate::domain::entities::{AuditDetails, AuditKind, OAuthProvider};
 use crate::domain::value_objects::UserRole;
 
 /// Default and maximum page sizes for the audit log.
@@ -21,6 +21,16 @@ pub const MAX_AUDIT_LIMIT: i64 = 100;
 #[serde(rename_all = "snake_case")]
 pub enum AuditKindName {
     RoleChanged,
+    PasswordChanged,
+    PasswordSet,
+    PasswordReset,
+    SignInMethodLinked,
+    SignInMethodUnlinked,
+    DeletionRequested,
+    DeletionCancelled,
+    AccountDeleted,
+    DataExported,
+    SessionsRevokedAfterReuse,
     /// A kind this server release doesn't know (written by a newer one).
     Other,
 }
@@ -29,6 +39,16 @@ impl From<Option<AuditKind>> for AuditKindName {
     fn from(kind: Option<AuditKind>) -> Self {
         match kind {
             Some(AuditKind::RoleChanged) => Self::RoleChanged,
+            Some(AuditKind::PasswordChanged) => Self::PasswordChanged,
+            Some(AuditKind::PasswordSet) => Self::PasswordSet,
+            Some(AuditKind::PasswordReset) => Self::PasswordReset,
+            Some(AuditKind::SignInMethodLinked) => Self::SignInMethodLinked,
+            Some(AuditKind::SignInMethodUnlinked) => Self::SignInMethodUnlinked,
+            Some(AuditKind::DeletionRequested) => Self::DeletionRequested,
+            Some(AuditKind::DeletionCancelled) => Self::DeletionCancelled,
+            Some(AuditKind::AccountDeleted) => Self::AccountDeleted,
+            Some(AuditKind::DataExported) => Self::DataExported,
+            Some(AuditKind::SessionsRevokedAfterReuse) => Self::SessionsRevokedAfterReuse,
             None => Self::Other,
         }
     }
@@ -39,12 +59,32 @@ impl From<Option<AuditKind>> for AuditKindName {
 #[serde(rename_all = "snake_case")]
 pub enum AuditKindFilter {
     RoleChanged,
+    PasswordChanged,
+    PasswordSet,
+    PasswordReset,
+    SignInMethodLinked,
+    SignInMethodUnlinked,
+    DeletionRequested,
+    DeletionCancelled,
+    AccountDeleted,
+    DataExported,
+    SessionsRevokedAfterReuse,
 }
 
 impl From<AuditKindFilter> for AuditKind {
     fn from(kind: AuditKindFilter) -> Self {
         match kind {
             AuditKindFilter::RoleChanged => Self::RoleChanged,
+            AuditKindFilter::PasswordChanged => Self::PasswordChanged,
+            AuditKindFilter::PasswordSet => Self::PasswordSet,
+            AuditKindFilter::PasswordReset => Self::PasswordReset,
+            AuditKindFilter::SignInMethodLinked => Self::SignInMethodLinked,
+            AuditKindFilter::SignInMethodUnlinked => Self::SignInMethodUnlinked,
+            AuditKindFilter::DeletionRequested => Self::DeletionRequested,
+            AuditKindFilter::DeletionCancelled => Self::DeletionCancelled,
+            AuditKindFilter::AccountDeleted => Self::AccountDeleted,
+            AuditKindFilter::DataExported => Self::DataExported,
+            AuditKindFilter::SessionsRevokedAfterReuse => Self::SessionsRevokedAfterReuse,
         }
     }
 }
@@ -116,7 +156,15 @@ const fn role_name(role: UserRole) -> RoleName {
     }
 }
 
-/// The event's details: for a role change, the old and new role.
+const fn provider_name(provider: OAuthProvider) -> OAuthProviderName {
+    match provider {
+        OAuthProvider::Google => OAuthProviderName::Google,
+        OAuthProvider::Apple => OAuthProviderName::Apple,
+    }
+}
+
+/// The event's details: for a role change, the old and new role; for a
+/// sign-in method, the provider.
 #[derive(Debug, Default, Serialize, ToSchema)]
 pub struct AuditDetailsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -125,6 +173,9 @@ pub struct AuditDetailsResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     pub to_role: Option<RoleName>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub provider: Option<OAuthProviderName>,
 }
 
 impl From<AuditDetails> for AuditDetailsResponse {
@@ -134,6 +185,11 @@ impl From<AuditDetails> for AuditDetailsResponse {
             AuditDetails::RoleChanged { from, to } => Self {
                 from_role: Some(role_name(from)),
                 to_role: Some(role_name(to)),
+                ..Self::default()
+            },
+            AuditDetails::SignInMethod { provider } => Self {
+                provider: Some(provider_name(provider)),
+                ..Self::default()
             },
         }
     }

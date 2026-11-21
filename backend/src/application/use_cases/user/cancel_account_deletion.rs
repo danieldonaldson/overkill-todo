@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use crate::application::ports::UserRepository;
+use crate::domain::entities::AuditEvent;
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{AccountStatus, UserId};
 
@@ -44,7 +45,9 @@ impl CancelAccountDeletionUseCase {
 
         // Refuses an already-deleted account.
         user.cancel_deletion(jiff::Timestamp::now())?;
-        self.user_repository.save(&user).await?;
+        self.user_repository
+            .save_audited(&user, &AuditEvent::deletion_cancelled(*user_id))
+            .await?;
 
         tracing::info!(user_id = %user_id, "Scheduled account deletion cancelled");
         Ok(())
@@ -79,10 +82,12 @@ mod tests {
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user.clone())));
-        repo.expect_save()
+        repo.expect_save_audited()
             .times(1)
-            .withf(|u| u.deletion_scheduled_at().is_none())
-            .returning(|_| Ok(()));
+            .withf(|u, e| {
+                u.deletion_scheduled_at().is_none() && *e == AuditEvent::deletion_cancelled(*u.id())
+            })
+            .returning(|_, _| Ok(()));
 
         let uc = CancelAccountDeletionUseCase::new(Arc::new(repo));
         assert!(uc.execute(&user_id).await.is_ok());
@@ -96,7 +101,7 @@ mod tests {
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user.clone())));
-        repo.expect_save().never();
+        repo.expect_save_audited().never();
 
         let uc = CancelAccountDeletionUseCase::new(Arc::new(repo));
         assert!(uc.execute(&user_id).await.is_ok());
@@ -112,7 +117,7 @@ mod tests {
         let mut repo = MockUserRepository::new();
         repo.expect_find_by_id()
             .returning(move |_| Ok(Some(user.clone())));
-        repo.expect_save().never();
+        repo.expect_save_audited().never();
 
         let uc = CancelAccountDeletionUseCase::new(Arc::new(repo));
         let err = uc.execute(&user_id).await.unwrap_err();

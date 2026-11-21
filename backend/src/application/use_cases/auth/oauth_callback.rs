@@ -6,7 +6,7 @@ use crate::application::dto::OAuthUserInfo;
 use crate::application::ports::OAuthAccountRepository;
 use crate::application::ports::UserRepository;
 use crate::domain::entities::User;
-use crate::domain::entities::{OAuthAccount, OAuthProvider};
+use crate::domain::entities::{AuditEvent, OAuthAccount, OAuthProvider};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{Email, UserId};
 
@@ -143,7 +143,12 @@ impl OAuthCallbackUseCase {
                     user_info.sub,
                     user_info.email,
                 );
-                self.oauth_repo.save(&oauth_account).await?;
+                self.oauth_repo
+                    .save(
+                        &oauth_account,
+                        &AuditEvent::sign_in_method_linked(*existing_user.id(), provider),
+                    )
+                    .await?;
                 tracing::info!(
                     user_id = %existing_user.id(),
                     provider = %provider.as_str(),
@@ -199,7 +204,12 @@ impl OAuthCallbackUseCase {
 
         // Link OAuth account to new user
         let oauth_account = OAuthAccount::new(*user.id(), provider, user_info.sub, user_info.email);
-        self.oauth_repo.save(&oauth_account).await?;
+        self.oauth_repo
+            .save(
+                &oauth_account,
+                &AuditEvent::sign_in_method_linked(*user.id(), provider),
+            )
+            .await?;
 
         tracing::info!(
             user_id = %user.id(),
@@ -236,7 +246,12 @@ impl OAuthCallbackUseCase {
 
         // Link OAuth account
         let oauth_account = OAuthAccount::new(user_id, provider, user_info.sub, user_info.email);
-        self.oauth_repo.save(&oauth_account).await?;
+        self.oauth_repo
+            .save(
+                &oauth_account,
+                &AuditEvent::sign_in_method_linked(user_id, provider),
+            )
+            .await?;
 
         tracing::info!(
             user_id = %user_id,
@@ -342,7 +357,13 @@ mod tests {
             .expect_find_by_email()
             .returning(move |_| Ok(Some(user_clone.clone())));
 
-        mock_oauth_repo.expect_save().returning(|_| Ok(()));
+        mock_oauth_repo
+            .expect_save()
+            .withf(|account, event| {
+                *event == AuditEvent::sign_in_method_linked(*account.user_id(), account.provider())
+            })
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let use_case =
             OAuthCallbackUseCase::new(Arc::new(mock_user_repo), Arc::new(mock_oauth_repo));
@@ -415,7 +436,13 @@ mod tests {
 
         mock_user_repo.expect_save().returning(|_| Ok(()));
 
-        mock_oauth_repo.expect_save().returning(|_| Ok(()));
+        mock_oauth_repo
+            .expect_save()
+            .withf(|account, event| {
+                *event == AuditEvent::sign_in_method_linked(*account.user_id(), account.provider())
+            })
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let use_case =
             OAuthCallbackUseCase::new(Arc::new(mock_user_repo), Arc::new(mock_oauth_repo));
@@ -488,7 +515,13 @@ mod tests {
             .expect_find_by_id()
             .returning(move |_| Ok(Some(user_clone.clone())));
 
-        mock_oauth_repo.expect_save().returning(|_| Ok(()));
+        mock_oauth_repo
+            .expect_save()
+            .withf(|account, event| {
+                *event == AuditEvent::sign_in_method_linked(*account.user_id(), account.provider())
+            })
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let use_case =
             OAuthCallbackUseCase::new(Arc::new(mock_user_repo), Arc::new(mock_oauth_repo));

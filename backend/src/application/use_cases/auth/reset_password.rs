@@ -4,7 +4,7 @@ use crate::application::ports::UserRepository;
 use crate::application::ports::{
     JwtService, PasswordHasher, PasswordResetRepository, RefreshTokenRepository,
 };
-use crate::domain::entities::User;
+use crate::domain::entities::{AuditEvent, User};
 use crate::domain::errors::DomainError;
 use jiff::Timestamp;
 use std::sync::Arc;
@@ -104,7 +104,11 @@ impl ResetPasswordUseCase {
 
         // Update the password
         self.user_repo
-            .update_password(user.id(), &new_password_hash)
+            .update_password(
+                user.id(),
+                &new_password_hash,
+                &AuditEvent::password_reset(*user.id()),
+            )
             .await?;
 
         // Revoke every existing refresh token for this user. Password reset is the
@@ -183,9 +187,11 @@ mod tests {
             .returning(move |_| Ok(Some(user.clone())));
         mock_user_repo
             .expect_update_password()
-            .withf(|_, hash| hash == "hashed:new_password")
+            .withf(move |_, hash, event| {
+                hash == "hashed:new_password" && *event == AuditEvent::password_reset(user_id)
+            })
             .times(1)
-            .returning(|_, _| Ok(()));
+            .returning(|_, _, _| Ok(()));
         // ...and cut off access tokens already issued to it.
         mock_user_repo
             .expect_revoke_sessions_issued_before()

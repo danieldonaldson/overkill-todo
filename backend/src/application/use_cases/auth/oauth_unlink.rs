@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::application::ports::OAuthAccountRepository;
 use crate::application::ports::UserRepository;
-use crate::domain::entities::OAuthProvider;
+use crate::domain::entities::{AuditEvent, OAuthProvider};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::UserId;
 
@@ -70,7 +70,11 @@ impl OAuthUnlinkUseCase {
         // Perform unlink
         let deleted = self
             .oauth_repo
-            .delete_by_user_and_provider(user_id, provider)
+            .delete_by_user_and_provider(
+                user_id,
+                provider,
+                &AuditEvent::sign_in_method_unlinked(*user_id, provider),
+            )
             .await?;
 
         if !deleted {
@@ -124,7 +128,11 @@ mod tests {
             .returning(|_| Ok(1));
         mock_oauth_repo
             .expect_delete_by_user_and_provider()
-            .returning(|_, _| Ok(true));
+            .withf(|user_id, provider, event| {
+                *event == AuditEvent::sign_in_method_unlinked(*user_id, *provider)
+            })
+            .times(1)
+            .returning(|_, _, _| Ok(true));
 
         let use_case = OAuthUnlinkUseCase::new(Arc::new(mock_user_repo), Arc::new(mock_oauth_repo));
 
@@ -148,7 +156,11 @@ mod tests {
             .returning(|_| Ok(2)); // Has 2 OAuth providers
         mock_oauth_repo
             .expect_delete_by_user_and_provider()
-            .returning(|_, _| Ok(true));
+            .withf(|user_id, provider, event| {
+                *event == AuditEvent::sign_in_method_unlinked(*user_id, *provider)
+            })
+            .times(1)
+            .returning(|_, _, _| Ok(true));
 
         let use_case = OAuthUnlinkUseCase::new(Arc::new(mock_user_repo), Arc::new(mock_oauth_repo));
 
@@ -208,7 +220,7 @@ mod tests {
             .returning(|_| Ok(1));
         mock_oauth_repo
             .expect_delete_by_user_and_provider()
-            .returning(|_, _| Ok(false)); // Provider wasn't linked
+            .returning(|_, _, _| Ok(false)); // Provider wasn't linked
 
         let use_case = OAuthUnlinkUseCase::new(Arc::new(mock_user_repo), Arc::new(mock_oauth_repo));
 

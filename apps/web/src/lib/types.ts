@@ -16,6 +16,8 @@ export type UserRole = Schemas['RoleName']
  * supports but the UI doesn't show.
  */
 export type OAuthProvider = Extract<Schemas['OAuthProviderName'], 'google'>
+/** Every provider the API knows (for display of recorded events). */
+export type OAuthProviderName = Schemas['OAuthProviderName']
 
 /** Whether a role grants admin-panel access (admin or super-admin). */
 export function isAdminRole(role: UserRole | undefined | null): boolean {

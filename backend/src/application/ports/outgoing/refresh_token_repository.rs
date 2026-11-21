@@ -1,6 +1,6 @@
 //! Refresh token repository port.
 
-use crate::domain::entities::RefreshToken;
+use crate::domain::entities::{AuditEvent, RefreshToken};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{RefreshTokenId, UserId};
 use async_trait::async_trait;
@@ -32,6 +32,16 @@ pub trait RefreshTokenRepository: Send + Sync {
     /// Useful for "logout all devices" functionality or when
     /// a security concern requires invalidating all sessions.
     async fn revoke_all_for_user(&self, user_id: &UserId) -> Result<u64, DomainError>;
+
+    /// [`Self::revoke_all_for_user`] for the token-reuse defence: when any
+    /// session was revoked, `event` is stored in the same transaction; when
+    /// none was active (a replay after an earlier sign-out), nothing is
+    /// written (OT-008).
+    async fn revoke_all_for_user_audited(
+        &self,
+        user_id: &UserId,
+        event: &AuditEvent,
+    ) -> Result<u64, DomainError>;
 
     /// Revokes all of a user's tokens *except* the one whose hash is
     /// `keep_token_hash`.

@@ -3,9 +3,10 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
+use super::audit_log::insert_audit_event;
 use super::time::{ToDb, ToDomain};
 use crate::application::ports::OAuthAccountRepository;
-use crate::domain::entities::{OAuthAccount, OAuthProvider};
+use crate::domain::entities::{AuditEvent, OAuthAccount, OAuthProvider};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::UserId;
 use crate::infrastructure::persistence::postgres::connection::Database;
@@ -81,7 +82,8 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
     }
 
     #[tracing::instrument(name = "repo.oauth.save", skip_all, fields(db.system = "postgresql"))]
-    async fn save(&self, account: &OAuthAccount) -> Result<(), DomainError> {
+    async fn save(&self, account: &OAuthAccount, event: &AuditEvent) -> Result<(), DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
         sqlx::query!(
             r#"
             INSERT INTO user_oauth_accounts (id, user_id, provider, provider_user_id, provider_email, linked_at)
@@ -94,11 +96,12 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
             account.provider_email(),
             account.linked_at().to_db(),
         )
-        .execute(self.db.pool())
+        .execute(&mut *tx)
         .await
         .map_err(persist_err)?;
 
-        Ok(())
+        insert_audit_event(&mut tx, event).await?;
+        tx.commit().await.map_err(persist_err)
     }
 
     #[tracing::instrument(name = "repo.oauth.delete_by_user_and_provider", skip_all, fields(db.system = "postgresql"))]
@@ -106,7 +109,9 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
         &self,
         user_id: &UserId,
         provider: OAuthProvider,
+        event: &AuditEvent,
     ) -> Result<bool, DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
         let result = sqlx::query!(
             r#"
             DELETE FROM user_oauth_accounts
@@ -115,11 +120,17 @@ impl OAuthAccountRepository for PostgresOAuthAccountRepository {
             user_id.as_uuid(),
             DbOAuthProvider::from(provider) as _,
         )
-        .execute(self.db.pool())
+        .execute(&mut *tx)
         .await
         .map_err(persist_err)?;
 
-        Ok(result.rows_affected() > 0)
+        // Nothing unlinked, nothing audited (the transaction rolls back unused).
+        if result.rows_affected() == 0 {
+            return Ok(false);
+        }
+        insert_audit_event(&mut tx, event).await?;
+        tx.commit().await.map_err(persist_err)?;
+        Ok(true)
     }
 
     #[tracing::instrument(name = "repo.oauth.delete_all_for_user", skip_all, fields(db.system = "postgresql"))]

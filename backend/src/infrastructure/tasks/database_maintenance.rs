@@ -33,6 +33,7 @@ pub async fn run(db: Arc<impl DatabaseMaintenance>, interval: Duration, metrics:
                     refresh_tokens = report.refresh_tokens,
                     email_verification_codes = report.email_verification_codes,
                     password_reset_codes = report.password_reset_codes,
+                    audit_events = report.audit_events,
                     "Database maintenance pass changed rows"
                 );
             }

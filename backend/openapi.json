@@ -2037,10 +2037,13 @@
       },
       "AuditDetailsResponse": {
         "type": "object",
-        "description": "The event's details: for a role change, the old and new role.",
+        "description": "The event's details: for a role change, the old and new role; for a\nsign-in method, the provider.",
         "properties": {
           "from_role": {
             "$ref": "#/components/schemas/RoleName"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/OAuthProviderName"
           },
           "to_role": {
             "$ref": "#/components/schemas/RoleName"
@@ -2117,7 +2120,17 @@
         "type": "string",
         "description": "A kind to filter the audit log by.",
         "enum": [
-          "role_changed"
+          "role_changed",
+          "password_changed",
+          "password_set",
+          "password_reset",
+          "sign_in_method_linked",
+          "sign_in_method_unlinked",
+          "deletion_requested",
+          "deletion_cancelled",
+          "account_deleted",
+          "data_exported",
+          "sessions_revoked_after_reuse"
         ]
       },
       "AuditKindName": {
@@ -2125,6 +2138,16 @@
         "description": "The kind of an audit event, as listed.",
         "enum": [
           "role_changed",
+          "password_changed",
+          "password_set",
+          "password_reset",
+          "sign_in_method_linked",
+          "sign_in_method_unlinked",
+          "deletion_requested",
+          "deletion_cancelled",
+          "account_deleted",
+          "data_exported",
+          "sessions_revoked_after_reuse",
           "other"
         ]
       },

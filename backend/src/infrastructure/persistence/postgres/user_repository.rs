@@ -51,61 +51,77 @@ impl PostgresUserRepository {
     }
 }
 
+/// The optimistic-concurrency upsert behind [`UserRepository::save`], on any
+/// executor so [`UserRepository::save_audited`] can run it in a transaction.
+async fn save_on<'e>(executor: impl sqlx::PgExecutor<'e>, user: &User) -> Result<(), DomainError> {
+    // Optimistic concurrency: a fresh user INSERTs at version 0; an update
+    // takes the `ON CONFLICT` branch and applies ONLY when the persisted
+    // `version` still equals the value this entity was loaded at, bumping it
+    // by one. A concurrent writer that already advanced the row makes the
+    // `WHERE` fail, so the statement touches 0 rows and we surface a
+    // `Conflict` instead of silently clobbering the other write.
+    let result = sqlx::query!(
+        r#"
+        INSERT INTO users (id, email, password_hash, first_name, last_name, email_verified, pending_email, pending_email_requested_at, deleted_at, deletion_scheduled_at, role, created_at, updated_at, version)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        ON CONFLICT (id) DO UPDATE SET
+            email = EXCLUDED.email,
+            password_hash = EXCLUDED.password_hash,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name,
+            email_verified = EXCLUDED.email_verified,
+            pending_email = EXCLUDED.pending_email,
+            pending_email_requested_at = EXCLUDED.pending_email_requested_at,
+            deleted_at = EXCLUDED.deleted_at,
+            deletion_scheduled_at = EXCLUDED.deletion_scheduled_at,
+            role = EXCLUDED.role,
+            updated_at = EXCLUDED.updated_at,
+            version = users.version + 1
+        WHERE users.version = $14
+        "#,
+        user.id().as_uuid(),
+        user.email().as_str(),
+        user.password_hash(),
+        user.first_name(),
+        user.last_name(),
+        user.email_verified(),
+        user.pending_email().map(Email::as_str),
+        user.pending_email_requested_at().to_db(),
+        user.deleted_at().to_db(),
+        user.deletion_scheduled_at().to_db(),
+        DbUserRole::from(user.role()) as _,
+        user.created_at().to_db(),
+        user.updated_at().to_db(),
+        user.version(),
+    )
+    .execute(executor)
+    .await
+    .map_err(persist_err)?;
+
+    if result.rows_affected() == 0 {
+        return Err(DomainError::Conflict(
+            "User was modified concurrently; reload and retry".into(),
+        ));
+    }
+
+    Ok(())
+}
+
 #[async_trait]
 impl UserRepository for PostgresUserRepository {
     #[tracing::instrument(name = "repo.user.save", skip_all, fields(db.system = "postgresql", user_id = %user.id()))]
     async fn save(&self, user: &User) -> Result<(), DomainError> {
-        // Optimistic concurrency: a fresh user INSERTs at version 0; an update
-        // takes the `ON CONFLICT` branch and applies ONLY when the persisted
-        // `version` still equals the value this entity was loaded at, bumping it
-        // by one. A concurrent writer that already advanced the row makes the
-        // `WHERE` fail, so the statement touches 0 rows and we surface a
-        // `Conflict` instead of silently clobbering the other write.
-        let result = sqlx::query!(
-            r#"
-            INSERT INTO users (id, email, password_hash, first_name, last_name, email_verified, pending_email, pending_email_requested_at, deleted_at, deletion_scheduled_at, role, created_at, updated_at, version)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-            ON CONFLICT (id) DO UPDATE SET
-                email = EXCLUDED.email,
-                password_hash = EXCLUDED.password_hash,
-                first_name = EXCLUDED.first_name,
-                last_name = EXCLUDED.last_name,
-                email_verified = EXCLUDED.email_verified,
-                pending_email = EXCLUDED.pending_email,
-                pending_email_requested_at = EXCLUDED.pending_email_requested_at,
-                deleted_at = EXCLUDED.deleted_at,
-                deletion_scheduled_at = EXCLUDED.deletion_scheduled_at,
-                role = EXCLUDED.role,
-                updated_at = EXCLUDED.updated_at,
-                version = users.version + 1
-            WHERE users.version = $14
-            "#,
-            user.id().as_uuid(),
-            user.email().as_str(),
-            user.password_hash(),
-            user.first_name(),
-            user.last_name(),
-            user.email_verified(),
-            user.pending_email().map(Email::as_str),
-            user.pending_email_requested_at().to_db(),
-            user.deleted_at().to_db(),
-            user.deletion_scheduled_at().to_db(),
-            DbUserRole::from(user.role()) as _,
-            user.created_at().to_db(),
-            user.updated_at().to_db(),
-            user.version(),
-        )
-        .execute(self.db.pool())
-        .await
-        .map_err(persist_err)?;
+        save_on(self.db.pool(), user).await
+    }
 
-        if result.rows_affected() == 0 {
-            return Err(DomainError::Conflict(
-                "User was modified concurrently; reload and retry".into(),
-            ));
-        }
-
-        Ok(())
+    #[tracing::instrument(name = "repo.user.save_audited", skip_all, fields(db.system = "postgresql", user_id = %user.id(), audit.kind = event.kind().as_str()))]
+    async fn save_audited(&self, user: &User, event: &AuditEvent) -> Result<(), DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+        // A version conflict returns before the event, and a failed event
+        // insert rolls the save back.
+        save_on(&mut *tx, user).await?;
+        insert_audit_event(&mut tx, event).await?;
+        tx.commit().await.map_err(persist_err)
     }
 
     #[tracing::instrument(name = "repo.user.find_by_id", skip_all, fields(db.system = "postgresql", user_id = %id))]
@@ -297,7 +313,13 @@ impl UserRepository for PostgresUserRepository {
     }
 
     #[tracing::instrument(name = "repo.user.update_password", skip_all, fields(db.system = "postgresql", user_id = %id))]
-    async fn update_password(&self, id: &UserId, password_hash: &str) -> Result<(), DomainError> {
+    async fn update_password(
+        &self,
+        id: &UserId,
+        password_hash: &str,
+        event: &AuditEvent,
+    ) -> Result<(), DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
         let result = sqlx::query!(
             r#"
             UPDATE users
@@ -307,17 +329,18 @@ impl UserRepository for PostgresUserRepository {
             id.as_uuid(),
             password_hash
         )
-        .execute(self.db.pool())
+        .execute(&mut *tx)
         .await
         .map_err(persist_err)?;
 
         // See mark_email_verified: a vanished row must not look like a successful
-        // password change.
+        // password change (and must not be audited as one).
         if result.rows_affected() == 0 {
             return Err(DomainError::NotFound("User not found".into()));
         }
 
-        Ok(())
+        insert_audit_event(&mut tx, event).await?;
+        tx.commit().await.map_err(persist_err)
     }
 
     #[tracing::instrument(name = "repo.user.revoke_sessions_issued_before", skip_all, fields(db.system = "postgresql", user_id = %id))]
@@ -395,7 +418,11 @@ impl AccountLifecycleRepository for PostgresUserRepository {
     }
 
     #[tracing::instrument(name = "repo.user.anonymize_account", skip_all, fields(db.system = "postgresql", user_id = %user.id()))]
-    async fn anonymize_account(&self, user: &User) -> Result<bool, DomainError> {
+    async fn anonymize_account(
+        &self,
+        user: &User,
+        event: &AuditEvent,
+    ) -> Result<bool, DomainError> {
         // INVARIANT: every step below runs in ONE transaction. The user
         // row is scrubbed *and* all secret-bearing child rows (refresh tokens,
         // OAuth links, verification/reset codes) are deleted
@@ -479,6 +506,10 @@ impl AccountLifecycleRepository for PostgresUserRepository {
         .execute(&mut *tx)
         .await
         .map_err(persist_err)?;
+
+        // 6. Record the deletion (OT-008). Only reached when the scrub applied;
+        // the account's earlier events stay, attached to the anonymised row.
+        insert_audit_event(&mut tx, event).await?;
 
         tx.commit().await.map_err(persist_err)?;
 

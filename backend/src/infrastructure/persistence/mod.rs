@@ -131,13 +131,18 @@ pub struct MaintenanceReport {
     pub refresh_tokens: u64,
     pub email_verification_codes: u64,
     pub password_reset_codes: u64,
+    /// Audit events past their 7-year retention (OT-008).
+    pub audit_events: u64,
 }
 
 impl MaintenanceReport {
     /// Total rows deleted by a pass.
     #[must_use]
     pub const fn total(&self) -> u64 {
-        self.refresh_tokens + self.email_verification_codes + self.password_reset_codes
+        self.refresh_tokens
+            + self.email_verification_codes
+            + self.password_reset_codes
+            + self.audit_events
     }
 }
 
@@ -166,7 +171,8 @@ mod tests {
             refresh_tokens: 1,
             email_verification_codes: 2,
             password_reset_codes: 3,
+            audit_events: 4,
         };
-        assert_eq!(report.total(), 6);
+        assert_eq!(report.total(), 10);
     }
 }

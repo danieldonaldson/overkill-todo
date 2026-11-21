@@ -18,7 +18,7 @@ use super::time::ToDomain;
 use crate::application::ports::outgoing::{
     AuditAccount, AuditActorView, AuditEntry, AuditFilter, AuditLogRepository,
 };
-use crate::domain::entities::{AuditDetails, AuditEvent, AuditKind};
+use crate::domain::entities::{AuditDetails, AuditEvent, AuditKind, OAuthProvider};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{UserId, UserRole};
 use crate::infrastructure::telemetry::http::current_trace_id;
@@ -29,6 +29,7 @@ fn details_json(details: AuditDetails) -> Value {
         AuditDetails::RoleChanged { from, to } => {
             json!({ "from": from.to_db_str(), "to": to.to_db_str() })
         }
+        AuditDetails::SignInMethod { provider } => json!({ "provider": provider.as_str() }),
     }
 }
 
@@ -41,7 +42,24 @@ fn details_from_json(kind: Option<AuditKind>, details: &Value) -> AuditDetails {
             (Some(from), Some(to)) => AuditDetails::RoleChanged { from, to },
             _ => AuditDetails::None,
         },
-        None => AuditDetails::None,
+        Some(AuditKind::SignInMethodLinked | AuditKind::SignInMethodUnlinked) => details
+            .get("provider")
+            .and_then(Value::as_str)
+            .and_then(OAuthProvider::parse)
+            .map_or(AuditDetails::None, |provider| AuditDetails::SignInMethod {
+                provider,
+            }),
+        Some(
+            AuditKind::PasswordChanged
+            | AuditKind::PasswordSet
+            | AuditKind::PasswordReset
+            | AuditKind::DeletionRequested
+            | AuditKind::DeletionCancelled
+            | AuditKind::AccountDeleted
+            | AuditKind::DataExported
+            | AuditKind::SessionsRevokedAfterReuse,
+        )
+        | None => AuditDetails::None,
     }
 }
 
@@ -104,6 +122,12 @@ const fn account(id: Uuid, email: Option<String>) -> AuditAccount {
 
 #[async_trait]
 impl AuditLogRepository for PostgresAuditLogRepository {
+    #[tracing::instrument(name = "repo.audit_log.record", skip_all, fields(db.system = "postgresql", audit.kind = event.kind().as_str()))]
+    async fn record(&self, event: &AuditEvent) -> Result<(), DomainError> {
+        let mut conn = self.db.pool().acquire().await.map_err(persist_err)?;
+        insert_audit_event(&mut conn, event).await
+    }
+
     #[tracing::instrument(name = "repo.audit_log.list", skip_all, fields(db.system = "postgresql", limit, offset))]
     async fn list(
         &self,
@@ -192,6 +216,22 @@ mod tests {
         };
         let kind = Some(AuditKind::RoleChanged);
         assert_eq!(details_from_json(kind, &details_json(details)), details);
+    }
+
+    #[test]
+    fn sign_in_method_details_round_trip() {
+        let details = AuditDetails::SignInMethod {
+            provider: OAuthProvider::Google,
+        };
+        for kind in [
+            AuditKind::SignInMethodLinked,
+            AuditKind::SignInMethodUnlinked,
+        ] {
+            assert_eq!(
+                details_from_json(Some(kind), &details_json(details)),
+                details
+            );
+        }
     }
 
     #[test]

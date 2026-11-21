@@ -24,6 +24,10 @@ pub trait UserRepository: Send + Sync {
     /// Persists a new user to the database.
     async fn save(&self, user: &User) -> Result<(), DomainError>;
 
+    /// [`Self::save`] and `event` in one transaction: the event exists if and
+    /// only if the save took effect (OT-008).
+    async fn save_audited(&self, user: &User, event: &AuditEvent) -> Result<(), DomainError>;
+
     /// Finds a user by their unique ID.
     async fn find_by_id(&self, id: &UserId) -> Result<Option<User>, DomainError>;
 
@@ -65,8 +69,13 @@ pub trait UserRepository: Send + Sync {
     /// Marks a user's email as verified.
     async fn mark_email_verified(&self, id: &UserId) -> Result<(), DomainError>;
 
-    /// Updates a user's password hash.
-    async fn update_password(&self, id: &UserId, password_hash: &str) -> Result<(), DomainError>;
+    /// Updates a user's password hash, storing `event` in the same transaction.
+    async fn update_password(
+        &self,
+        id: &UserId,
+        password_hash: &str,
+        event: &AuditEvent,
+    ) -> Result<(), DomainError>;
 
     /// Moves the user's session cutoff (`tokens_valid_after`) forward to
     /// `cutoff`, never back. Access tokens issued at or before that second are
