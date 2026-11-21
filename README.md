@@ -45,6 +45,7 @@ just ci      # everything CI checks, locally
 ```
 
 Make yourself an admin after signing up: `just grant-admin you@example.com`.
+It records the change in the audit log as done by the operator.
 In dev, verification codes print in the backend log.
 
 Tokens are signed with HMAC-SHA-512 keys (`JWT_SIGNING_KEY`, plus
@@ -334,6 +335,17 @@ session, never from the report).
   just decode-stack dev stack.txt         # after a local `pnpm --filter @overkill-todo/web build`
   just decode-stack <sha> < stack.txt     # fetches and caches that release's maps (needs `gh`)
   ```
+
+### Audit log
+
+Role changes, password changes, sets and resets, Google links and unlinks,
+account deletion (requested, cancelled and carried out), data exports and the
+token-reuse sign-out are recorded in `audit_events` (OT-008). Each is stored
+in the same transaction as its action. Events name accounts by ID only, can't
+be changed or deleted by the app, and are deleted after 7 years. Super Admins
+read them at `/dashboard/audit`, and each Member sees their own under Security
+activity in Settings. How it works and how to add a kind:
+[`backend/ARCHITECTURE.md`](backend/ARCHITECTURE.md#audit-log).
 
 ### Web analytics
 

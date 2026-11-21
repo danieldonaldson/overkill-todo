@@ -264,6 +264,46 @@ application and domain layers only use `tracing` macros.
   CSRF, untraced (`UNTRACED_ROUTES`) but still in request metrics, capped at
   16 KB (413), and attributes a report only from the session.
 
+## Audit log
+
+`audit_events` (OT-008) is a permanent record of privileged and
+security-relevant account actions: role changed (in the app or by
+`just grant-admin`), password changed, set or reset, sign-in method linked or
+unlinked, deletion requested, cancelled or carried out by the purge, data
+exported, and all sessions signed out after a reused session token.
+
+- **Event if and only if the action took effect.** A use case builds the
+  domain `AuditEvent` and passes it to the repository method that makes the
+  action's primary write (`save_role_change`, `save_audited`,
+  `update_password`, the OAuth link save/delete, `anonymize_account`,
+  `revoke_all_for_user_audited`). That method inserts it with
+  `insert_audit_event` in its own transaction. A refusal, conflict or "nothing
+  to do" (for example unlinking a provider that isn't linked) returns before
+  the insert, and a failed insert rolls the action back and surfaces as a 5xx.
+  Export writes nothing else, so it uses `AuditLogRepository::record` before
+  returning the data.
+- **Adding a kind.** Add the `AuditKind` variant, widen
+  `audit_events_kind_check` in a new migration (`NOT VALID`, then validate),
+  and name the `#[sqlx::test]`s proving its atomicity in `atomicity_tests` in
+  `tests/audit_log_integration.rs`. There's no wildcard arm, so a kind without
+  tests doesn't compile.
+- **Minimal personal data.** Events identify people by account ID only. Kind,
+  actor and details are closed types (old and new role, OAuth provider), so
+  nothing free-form can be stored. Readers show the account's current email,
+  or "Deleted account" once it's anonymised.
+- **Append-only, 7 years.** Triggers refuse every `UPDATE`, every `TRUNCATE`
+  and any `DELETE` of an event younger than 7 years, even though the app owns
+  the table (a `REVOKE` wouldn't hold against the owner). The hourly
+  `database_maintenance` pass deletes events past 7 years. The guard doesn't
+  stop the table owner or a superuser from dropping the trigger or restoring a
+  backup. That would show up as a migration in review; a separate, less
+  privileged runtime role is the later hardening step.
+- **Reading.** Super Admins: `GET /api/v1/admin/audit-events`, filterable by
+  account (affected or acting) and kind. Pages are chosen by ID before the
+  joins. A Member: `GET /api/v1/users/me/security-activity`, their own events
+  only, with the actor reduced on the server to `you`, `system` or
+  `administrator`.
+
 ## Auth flow overview
 
 - **Registration:** email + password → Argon2id hash → unverified user → email code.
