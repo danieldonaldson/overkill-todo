@@ -8,6 +8,8 @@ vulnerabilities:
     statement: >-
       golang.org/x/net/html DoS, in the Caddy binary of the web image (caddy 2.11.9 ships
       x/net v0.60.0). Fixed upstream in caddyserver/caddy#8368 (x/net v0.62.0, merged
-      2026-11-06) but not yet released. Drop this once Dependabot bumps the image to the
-      Caddy release that includes it.
-    expired_at: 2026-11-21
+      2026-11-06) but still unreleased as of 2026-11-21 (latest is v2.11.9). Not reachable
+      here: the Caddyfile uses no HTML-parsing directive (templates, markdown, browse,
+      reverse_proxy). Drop this once Dependabot bumps the image to the Caddy release that
+      includes it.
+    expired_at: 2026-12-05
