@@ -53,5 +53,5 @@ reuse; Only their own events; New account; Activity fails to load.
 
 ## 4. Feature done
 
-- [ ] 4.1 Document the audit log (what's recorded, the 7-year retention, the append-only guard and its limits, the `grant-admin` change, Members' Security activity) in `backend/ARCHITECTURE.md` and `README.md`.
-- [ ] 4.2 Archive the change.
+- [x] 4.1 Document the audit log (what's recorded, the 7-year retention, the append-only guard and its limits, the `grant-admin` change, Members' Security activity) in `backend/ARCHITECTURE.md` and `README.md`.
+- [x] 4.2 Archive the change.
