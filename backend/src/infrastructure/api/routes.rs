@@ -328,6 +328,7 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         .routes(routes!(profile_handler::change_password))
         .routes(routes!(profile_handler::set_password))
         .routes(routes!(profile_handler::export_data))
+        .routes(routes!(profile_handler::security_activity))
         .routes(routes!(profile_handler::request_deletion))
         .routes(routes!(profile_handler::cancel_deletion))
         // Account-sensitive actions (password, export, deletion): reject

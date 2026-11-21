@@ -261,6 +261,14 @@ test.describe('wrong guesses', () => {
 // answering with the original account and is called once, so what Settings
 // shows after the move comes from the record, not from a fresh check.
 test.describe('account changes persist across moves', () => {
+  // Settings loads Security activity on its own (OT-008); answer it so its
+  // section shows its empty state rather than an error alert.
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/v1/users/me/security-activity*', (route) =>
+      route.fulfill({ json: { events: [] } })
+    )
+  })
+
   test('setting a password is remembered after moving to Home and back', async ({ page }) => {
     await seedSession(page)
     await seedCsrfCookie(page)

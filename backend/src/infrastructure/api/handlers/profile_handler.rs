@@ -12,17 +12,21 @@ use crate::{
     application::{
         dto::{
             AccountDeletionResponse, AccountExportResponse, ChangePasswordRequest,
-            LinkedOAuthAccountExport, RequestDeletionRequest, SetPasswordRequest,
+            LinkedOAuthAccountExport, RequestDeletionRequest, SecurityActivityQuery,
+            SecurityActivityResponse, SetPasswordRequest,
         },
         use_cases::{
             CancelAccountDeletionUseCase, ChangePasswordUseCase, ExportUserDataUseCase,
-            RequestAccountDeletionUseCase, SetPasswordUseCase,
+            ListSecurityActivityUseCase, RequestAccountDeletionUseCase, SetPasswordUseCase,
         },
     },
     domain::{entities::User, errors::DomainError},
     infrastructure::api::error::AppError,
     infrastructure::api::handlers::session::extract_refresh_token_cookie,
-    infrastructure::api::{extractors::ValidatedJson, middleware::AuthUser},
+    infrastructure::api::{
+        extractors::{ApiQuery, ValidatedJson},
+        middleware::AuthUser,
+    },
 };
 
 /// Dependencies for profile handlers.
@@ -32,6 +36,7 @@ pub struct ProfileHandlerDeps {
     pub export_user_data_use_case: Arc<ExportUserDataUseCase>,
     pub request_account_deletion_use_case: Arc<RequestAccountDeletionUseCase>,
     pub cancel_account_deletion_use_case: Arc<CancelAccountDeletionUseCase>,
+    pub list_security_activity_use_case: Arc<ListSecurityActivityUseCase>,
 }
 
 /// Change password (for users who already have a password)
@@ -160,6 +165,38 @@ pub async fn export_data(
         .execute(&auth_user.user_id)
         .await?;
     Ok(Json(build_export(user, &oauth)))
+}
+
+/// The signed-in Member's own Security activity, newest first (OT-008).
+///
+/// Only events about the caller's account; who acted is reduced to `you`,
+/// `system` or `administrator`, never naming a staff account.
+#[utoipa::path(
+    get,
+    path = "/me/security-activity",
+    tag = "Profile",
+    params(
+        ("limit" = Option<i64>, Query, description = "Max events (default 20, max 50)"),
+        ("before_id" = Option<i64>, Query, description = "Only events older than this one (the previous page's next_before_id)")
+    ),
+    responses(
+        (status = 200, description = "A page of the caller's security activity", body = SecurityActivityResponse),
+        (status = 401, description = "Not authenticated")
+    )
+)]
+/// # Errors
+/// Returns an error if the audit log is unreachable.
+#[tracing::instrument(name = "handler.security_activity", skip_all)]
+pub async fn security_activity(
+    State(deps): State<Arc<ProfileHandlerDeps>>,
+    auth_user: AuthUser,
+    ApiQuery(query): ApiQuery<SecurityActivityQuery>,
+) -> Result<Json<SecurityActivityResponse>, AppError> {
+    let page = deps
+        .list_security_activity_use_case
+        .execute(&auth_user.user_id, query.limit(), query.before_id)
+        .await?;
+    Ok(Json(page.into()))
 }
 
 /// Request account deletion (soft, 14-day grace period).

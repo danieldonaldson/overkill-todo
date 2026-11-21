@@ -16,9 +16,9 @@ use super::connection::Database;
 use super::error::persist_err;
 use super::time::ToDomain;
 use crate::application::ports::outgoing::{
-    AuditAccount, AuditActorView, AuditEntry, AuditFilter, AuditLogRepository,
+    AuditAccount, AuditActorView, AuditEntry, AuditFilter, AuditLogRepository, SubjectEntry,
 };
-use crate::domain::entities::{AuditDetails, AuditEvent, AuditKind, OAuthProvider};
+use crate::domain::entities::{Actor, AuditDetails, AuditEvent, AuditKind, OAuthProvider};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::{UserId, UserRole};
 use crate::infrastructure::telemetry::http::current_trace_id;
@@ -201,6 +201,50 @@ impl AuditLogRepository for PostgresAuditLogRepository {
         .fetch_one(self.db.pool())
         .await
         .map_err(persist_err)
+    }
+
+    #[tracing::instrument(name = "repo.audit_log.list_for_subject", skip_all, fields(db.system = "postgresql", limit, paged = before_id.is_some()))]
+    async fn list_for_subject(
+        &self,
+        subject: UserId,
+        limit: i64,
+        before_id: Option<i64>,
+    ) -> Result<Vec<SubjectEntry>, DomainError> {
+        // Served by the (subject_id, id DESC) index.
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, occurred_at, kind, actor_kind, actor_id, details
+            FROM audit_events
+            WHERE subject_id = $1 AND ($2::bigint IS NULL OR id < $2)
+            ORDER BY id DESC
+            LIMIT $3
+            "#,
+            subject.as_uuid(),
+            before_id,
+            limit,
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| {
+                let kind = AuditKind::parse(&row.kind);
+                let actor = match (row.actor_kind.as_str(), row.actor_id) {
+                    ("user", Some(id)) => Actor::User(UserId::from_uuid(id)),
+                    ("operator", _) => Actor::Operator,
+                    _ => Actor::System,
+                };
+                SubjectEntry {
+                    id: row.id,
+                    occurred_at: row.occurred_at.to_domain(),
+                    kind,
+                    actor,
+                    details: details_from_json(kind, &row.details),
+                }
+            })
+            .collect())
     }
 }
 

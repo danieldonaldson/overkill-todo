@@ -8,7 +8,7 @@
 use async_trait::async_trait;
 use jiff::Timestamp;
 
-use crate::domain::entities::{AuditDetails, AuditEvent, AuditKind};
+use crate::domain::entities::{Actor, AuditDetails, AuditEvent, AuditKind};
 use crate::domain::errors::DomainError;
 use crate::domain::value_objects::UserId;
 
@@ -49,6 +49,19 @@ pub struct AuditEntry {
     pub details: AuditDetails,
 }
 
+/// One event about a single account, as read back for that account's own
+/// Security activity. Carries no emails: the actor is reduced further before
+/// it leaves the server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubjectEntry {
+    pub id: i64,
+    pub occurred_at: Timestamp,
+    /// `None` for a kind this release doesn't know (written by a newer one).
+    pub kind: Option<AuditKind>,
+    pub actor: Actor,
+    pub details: AuditDetails,
+}
+
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait AuditLogRepository: Send + Sync {
@@ -65,4 +78,13 @@ pub trait AuditLogRepository: Send + Sync {
 
     /// How many events match `filter`.
     async fn count(&self, filter: AuditFilter) -> Result<i64, DomainError>;
+
+    /// Up to `limit` events whose affected account is `subject`, newest
+    /// first, older than `before_id` when given (keyset paging).
+    async fn list_for_subject(
+        &self,
+        subject: UserId,
+        limit: i64,
+        before_id: Option<i64>,
+    ) -> Result<Vec<SubjectEntry>, DomainError>;
 }

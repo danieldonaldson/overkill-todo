@@ -3,6 +3,7 @@ import type {
   AccountExportResponse,
   ChangePasswordRequest,
   RequestDeletionRequest,
+  SecurityActivityPage,
   SetPasswordRequest,
 } from '../types'
 import { HttpClient } from './client'
@@ -33,6 +34,21 @@ export function createUsersApi(client: HttpClient) {
         method: 'DELETE',
         body: JSON.stringify(data),
       }),
+
+    /** The signed-in Member's own Security activity, newest first (OT-008). */
+    securityActivity: (params?: {
+      limit?: number
+      before_id?: number
+    }): Promise<SecurityActivityPage> => {
+      const query = new URLSearchParams()
+      if (params?.limit != null) query.set('limit', String(params.limit))
+      if (params?.before_id != null) query.set('before_id', String(params.before_id))
+      const qs = query.toString()
+      return client.request(`/users/me/security-activity${qs ? `?${qs}` : ''}`, {
+        method: 'GET',
+        route: '/users/me/security-activity',
+      })
+    },
 
     /** Cancel a pending account deletion during the grace period. */
     cancelDeletion: (): Promise<AccountDeletionResponse> =>

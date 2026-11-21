@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use super::schema_enums::{OAuthProviderName, RoleName};
 use crate::application::ports::outgoing::{AuditAccount, AuditActorView, AuditEntry};
+use crate::application::use_cases::user::{ActivityActor, ActivityEntry, ActivityPage};
 use crate::domain::entities::{AuditDetails, AuditKind, OAuthProvider};
 use crate::domain::value_objects::UserRole;
 
@@ -254,6 +255,97 @@ impl ListAuditEventsQuery {
             .clamp(1, MAX_AUDIT_LIMIT);
         let offset = self.offset.unwrap_or(0).max(0);
         (limit, offset)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// A Member's own Security activity (`GET /api/v1/users/me/security-activity`)
+// ---------------------------------------------------------------------------
+
+/// Default and maximum page sizes for Security activity.
+pub const DEFAULT_ACTIVITY_LIMIT: i64 = 20;
+pub const MAX_ACTIVITY_LIMIT: i64 = 50;
+
+/// Who acted, as a Member is told: never which staff account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityActorName {
+    /// The Member themselves.
+    You,
+    /// An automatic action.
+    System,
+    /// Another account or the operator.
+    Administrator,
+}
+
+impl From<ActivityActor> for ActivityActorName {
+    fn from(actor: ActivityActor) -> Self {
+        match actor {
+            ActivityActor::You => Self::You,
+            ActivityActor::System => Self::System,
+            ActivityActor::Administrator => Self::Administrator,
+        }
+    }
+}
+
+/// One event in a Member's Security activity.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SecurityActivityEventResponse {
+    pub id: i64,
+    pub occurred_at: Timestamp,
+    pub kind: AuditKindName,
+    pub actor: ActivityActorName,
+    pub details: AuditDetailsResponse,
+}
+
+impl From<ActivityEntry> for SecurityActivityEventResponse {
+    fn from(entry: ActivityEntry) -> Self {
+        Self {
+            id: entry.id,
+            occurred_at: entry.occurred_at,
+            kind: entry.kind.into(),
+            actor: entry.actor.into(),
+            details: entry.details.into(),
+        }
+    }
+}
+
+/// A page of the signed-in Member's Security activity, newest first.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct SecurityActivityResponse {
+    pub events: Vec<SecurityActivityEventResponse>,
+    /// Pass as `before_id` to load the next page; absent on the last page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub next_before_id: Option<i64>,
+}
+
+impl From<ActivityPage> for SecurityActivityResponse {
+    fn from(page: ActivityPage) -> Self {
+        Self {
+            events: page.entries.into_iter().map(Into::into).collect(),
+            next_before_id: page.next_before_id,
+        }
+    }
+}
+
+/// Query parameters for Security activity.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct SecurityActivityQuery {
+    #[serde(default)]
+    pub limit: Option<i64>,
+    /// Only events older than this one (the previous page's `next_before_id`).
+    #[serde(default)]
+    pub before_id: Option<i64>,
+}
+
+impl SecurityActivityQuery {
+    /// The page size: default 20, within `[1, MAX_ACTIVITY_LIMIT]`.
+    #[must_use]
+    pub fn limit(&self) -> i64 {
+        self.limit
+            .unwrap_or(DEFAULT_ACTIVITY_LIMIT)
+            .clamp(1, MAX_ACTIVITY_LIMIT)
     }
 }
 

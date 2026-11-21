@@ -12,6 +12,7 @@
   import { Alert, AlertDescription } from '$lib/components/ui/alert'
   import { Button } from '$lib/components/ui/button'
   import { FormInput } from '$lib/components/ui/form-input'
+  import SecurityActivity from './SecurityActivity.svelte'
   import { api } from '../../lib/api'
   import { session } from '../../lib/auth/session.svelte'
   import { track } from '../../lib/analytics'
@@ -37,6 +38,8 @@
   let deletePassword = $state('')
   let requestingDeletion = $state(false)
   let cancelingDeletion = $state(false)
+  // Bumped after an action that adds to Security activity, so it reloads.
+  let activityKey = $state(0)
 
   const googleLinked = $derived(user?.oauth_providers?.includes('google') ?? false)
   const deletionScheduledAt = $derived(user?.deletion_scheduled_at ?? null)
@@ -67,10 +70,12 @@
           new_password: newPassword,
         })
         message = 'Password changed.'
+        activityKey += 1
       } else {
         await api.users.setPassword({ new_password: newPassword })
         session.patch({ has_password: true })
         message = 'Password set.'
+        activityKey += 1
       }
       currentPassword = ''
       newPassword = ''
@@ -106,6 +111,7 @@
         ),
       })
       message = 'Google account unlinked.'
+      activityKey += 1
     } catch (unlinkError: unknown) {
       error = unlinkError instanceof Error ? unlinkError.message : 'Failed to unlink Google'
     } finally {
@@ -129,6 +135,7 @@
       anchor.remove()
       URL.revokeObjectURL(url)
       message = 'Your data export has been downloaded.'
+      activityKey += 1
     } catch (exportError: unknown) {
       error = exportError instanceof Error ? exportError.message : 'Failed to export your data'
     } finally {
@@ -161,6 +168,7 @@
       deleteConfirmation = ''
       deletePassword = ''
       message = 'Account deletion scheduled. You can cancel during the grace period.'
+      activityKey += 1
     } catch (deletionError: unknown) {
       error = deletionError instanceof Error ? deletionError.message : 'Failed to schedule deletion'
     } finally {
@@ -177,6 +185,7 @@
       await api.users.cancelDeletion()
       session.patch({ deletion_scheduled_at: null })
       message = 'Account deletion cancelled.'
+      activityKey += 1
     } catch (cancelError: unknown) {
       error = cancelError instanceof Error ? cancelError.message : 'Failed to cancel deletion'
     } finally {
@@ -433,6 +442,8 @@
           {/if}
         </div>
       </section>
+
+      <SecurityActivity refreshKey={activityKey} />
 
       <!-- Session -->
       <section

@@ -1677,6 +1677,95 @@
         ]
       }
     },
+    "/api/v1/users/me/security-activity": {
+      "get": {
+        "tags": [
+          "Profile"
+        ],
+        "summary": "The signed-in Member's own Security activity, newest first (OT-008).",
+        "description": "Only events about the caller's account; who acted is reduced to `you`,\n`system` or `administrator`, never naming a staff account.\n# Errors\nReturns an error if the audit log is unreachable.",
+        "operationId": "security_activity",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Max events (default 20, max 50)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "before_id",
+            "in": "query",
+            "description": "Only events older than this one (the previous page's next_before_id)",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of the caller's security activity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SecurityActivityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed or invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified (`email_not_verified`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/users/password/change": {
       "post": {
         "tags": [
@@ -1921,6 +2010,15 @@
             "format": "date-time"
           }
         }
+      },
+      "ActivityActorName": {
+        "type": "string",
+        "description": "Who acted, as a Member is told: never which staff account.",
+        "enum": [
+          "you",
+          "system",
+          "administrator"
+        ]
       },
       "AdminUserListResponse": {
         "type": "object",
@@ -2897,6 +2995,56 @@
           "admin",
           "super_admin"
         ]
+      },
+      "SecurityActivityEventResponse": {
+        "type": "object",
+        "description": "One event in a Member's Security activity.",
+        "required": [
+          "id",
+          "occurred_at",
+          "kind",
+          "actor",
+          "details"
+        ],
+        "properties": {
+          "actor": {
+            "$ref": "#/components/schemas/ActivityActorName"
+          },
+          "details": {
+            "$ref": "#/components/schemas/AuditDetailsResponse"
+          },
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AuditKindName"
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SecurityActivityResponse": {
+        "type": "object",
+        "description": "A page of the signed-in Member's Security activity, newest first.",
+        "required": [
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SecurityActivityEventResponse"
+            }
+          },
+          "next_before_id": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pass as `before_id` to load the next page; absent on the last page."
+          }
+        }
       },
       "SetPasswordRequest": {
         "type": "object",

@@ -5,6 +5,7 @@ import type {
   AuditKindFilter,
   AuditKindName,
   OAuthProviderName,
+  SecurityActivityEvent,
   UserRole,
 } from './types'
 
@@ -48,6 +49,27 @@ const ROLE_LABELS: Record<UserRole, string> = {
   user: 'Member',
   admin: 'Admin',
   super_admin: 'Super Admin',
+}
+
+/** Who acted, as a Member is told (never which staff account). */
+const ACTIVITY_ACTOR_PHRASES: Record<SecurityActivityEvent['actor'], string> = {
+  you: 'By you',
+  system: 'Automatically',
+  administrator: 'By an administrator',
+}
+
+/**
+ * A Member's view of one event: what happened, and who did it.
+ * For example "Role changed from Member to Admin" / "By an administrator".
+ */
+export function activityLine(event: SecurityActivityEvent): { title: string; by: string } {
+  const label = AUDIT_KIND_LABELS[event.kind]
+  const { from_role, to_role, provider } = event.details
+  let title = label
+  if (from_role && to_role)
+    title = `${label} from ${ROLE_LABELS[from_role]} to ${ROLE_LABELS[to_role]}`
+  else if (provider) title = `${label}: ${PROVIDER_LABELS[provider]}`
+  return { title, by: ACTIVITY_ACTOR_PHRASES[event.actor] }
 }
 
 /** The event's details as a phrase, or `null` when it has none. */

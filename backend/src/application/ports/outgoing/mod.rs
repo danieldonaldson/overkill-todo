@@ -19,7 +19,7 @@ pub mod user_repository;
 
 pub use account_lifecycle::AccountLifecycleRepository;
 pub use audit_log_repository::{
-    AuditAccount, AuditActorView, AuditEntry, AuditFilter, AuditLogRepository,
+    AuditAccount, AuditActorView, AuditEntry, AuditFilter, AuditLogRepository, SubjectEntry,
 };
 pub use client_report_sink::{
     ClientErrorReport, ClientIslandReport, ClientNavigationReport, ClientPageLoadReport,

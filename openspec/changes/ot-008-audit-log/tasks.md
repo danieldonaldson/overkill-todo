@@ -47,9 +47,9 @@ Delivers these scenarios: Member sees their password change; Member sees a
 staff role change anonymously; Member sees sessions signed out after token
 reuse; Only their own events; New account; Activity fails to load.
 
-- [ ] 3.1 API (D4): `AuditLogRepository::list_for_subject(subject, limit, before_id)` and `GET /api/v1/users/me/security-activity?limit&before_id` in the profile group (signed in, verified, fresh session), `ApiQuery`, keyset paging, 20 per page. The actor is reduced on the server to `you`, `system` or `administrator`. Integration tests: only the caller's events; a role change by a Super Admin shows no staff account ID or email anywhere in the body; paging with `before_id`; Visitor refused. Run `just api-types`.
-- [ ] 3.2 Web: a Security activity section in `SettingsPanel`, loaded by its own request with its own error and retry, so the rest of Settings works when it fails; "No activity yet" when empty; "Load more". Labels from `lib/audit.ts`. Vitest: list, actor phrases, empty, error and retry with the rest of Settings still usable, load more. Playwright with the API mocked: a Member changes their password and sees it at the top. Check at 360 px.
-- [ ] 3.3 `just ci` green.
+- [x] 3.1 API (D4): `AuditLogRepository::list_for_subject(subject, limit, before_id)` and `GET /api/v1/users/me/security-activity?limit&before_id` in the profile group (signed in, verified, fresh session), `ApiQuery`, keyset paging, 20 per page. The actor is reduced on the server to `you`, `system` or `administrator`. Integration tests: only the caller's events; a role change by a Super Admin shows no staff account ID or email anywhere in the body; paging with `before_id`; Visitor refused. Run `just api-types`.
+- [x] 3.2 Web: a Security activity section in `SettingsPanel`, loaded by its own request with its own error and retry, so the rest of Settings works when it fails; "No activity yet" when empty; "Load more". Labels from `lib/audit.ts`. Vitest: list, actor phrases, empty, error and retry with the rest of Settings still usable, load more. Playwright with the API mocked: a Member changes their password and sees it at the top. Check at 360 px.
+- [x] 3.3 `just ci` green.
 
 ## 4. Feature done
 

@@ -24,5 +24,6 @@ pub use telemetry::RecordClientTelemetryUseCase;
 
 pub use user::{
     CancelAccountDeletionUseCase, ChangePasswordUseCase, ExportUserDataUseCase,
-    PurgeScheduledAccountsUseCase, RequestAccountDeletionUseCase, SetPasswordUseCase,
+    ListSecurityActivityUseCase, PurgeScheduledAccountsUseCase, RequestAccountDeletionUseCase,
+    SetPasswordUseCase,
 };

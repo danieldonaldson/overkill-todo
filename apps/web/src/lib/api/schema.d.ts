@@ -546,6 +546,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/users/me/security-activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The signed-in Member's own Security activity, newest first (OT-008).
+         * @description Only events about the caller's account; who acted is reduced to `you`,
+         *     `system` or `administrator`, never naming a staff account.
+         *     # Errors
+         *     Returns an error if the audit log is unreachable.
+         */
+        get: operations["security_activity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/password/change": {
         parameters: {
             query?: never;
@@ -631,6 +654,11 @@ export interface components {
             /** Format: date-time */
             updated_at: string;
         };
+        /**
+         * @description Who acted, as a Member is told: never which staff account.
+         * @enum {string}
+         */
+        ActivityActorName: "you" | "system" | "administrator";
         /** @description A page of users for the admin listing. */
         AdminUserListResponse: {
             /** Format: int64 */
@@ -1043,6 +1071,25 @@ export interface components {
          * @enum {string}
          */
         RoleName: "user" | "admin" | "super_admin";
+        /** @description One event in a Member's Security activity. */
+        SecurityActivityEventResponse: {
+            actor: components["schemas"]["ActivityActorName"];
+            details: components["schemas"]["AuditDetailsResponse"];
+            /** Format: int64 */
+            id: number;
+            kind: components["schemas"]["AuditKindName"];
+            /** Format: date-time */
+            occurred_at: string;
+        };
+        /** @description A page of the signed-in Member's Security activity, newest first. */
+        SecurityActivityResponse: {
+            events: components["schemas"]["SecurityActivityEventResponse"][];
+            /**
+             * Format: int64
+             * @description Pass as `before_id` to load the next page; absent on the last page.
+             */
+            next_before_id?: number;
+        };
         /** @description Request to set password (for OAuth-only users without a password). */
         SetPasswordRequest: {
             /** @description New password (8-256 characters). */
@@ -2463,6 +2510,67 @@ export interface operations {
             };
             /** @description User not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    security_activity: {
+        parameters: {
+            query?: {
+                /** @description Max events (default 20, max 50) */
+                limit?: number;
+                /** @description Only events older than this one (the previous page's next_before_id) */
+                before_id?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of the caller's security activity */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SecurityActivityResponse"];
+                };
+            };
+            /** @description Malformed or invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Email address not verified (`email_not_verified`) */
+            403: {
                 headers: {
                     [name: string]: unknown;
                 };

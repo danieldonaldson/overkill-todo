@@ -15,12 +15,13 @@ use overkill_todo::{
         },
         use_cases::{
             CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
-            ExportUserDataUseCase, GetCurrentUserUseCase, ListAuditEventsUseCase, ListUsersUseCase,
-            LoginUserUseCase, OAuthCallbackUseCase, OAuthUnlinkUseCase, RefreshTokenUseCase,
-            RegisterUserUseCase, RequestAccountDeletionUseCase, RequestPasswordResetUseCase,
-            ResendVerificationUseCase, ResetPasswordUseCase, RevokeTokenUseCase,
-            SendVerificationCodeUseCase, SetPasswordUseCase, SetUserRoleUseCase,
-            ValidateResetCodeUseCase, VerifyEmailUseCase, VerifyMagicLinkUseCase,
+            ExportUserDataUseCase, GetCurrentUserUseCase, ListAuditEventsUseCase,
+            ListSecurityActivityUseCase, ListUsersUseCase, LoginUserUseCase, OAuthCallbackUseCase,
+            OAuthUnlinkUseCase, RefreshTokenUseCase, RegisterUserUseCase,
+            RequestAccountDeletionUseCase, RequestPasswordResetUseCase, ResendVerificationUseCase,
+            ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
+            SetPasswordUseCase, SetUserRoleUseCase, ValidateResetCodeUseCase, VerifyEmailUseCase,
+            VerifyMagicLinkUseCase,
             telemetry::{
                 RecordClientTelemetryUseCase, record_client_telemetry::DEFAULT_MAX_EVENTS_PER_SEC,
             },
@@ -599,6 +600,9 @@ fn create_test_app_inner(
         export_user_data_use_case: export_user_data_uc,
         request_account_deletion_use_case: request_account_deletion_uc,
         cancel_account_deletion_use_case: cancel_account_deletion_uc,
+        list_security_activity_use_case: Arc::new(ListSecurityActivityUseCase::new(
+            audit_log_repo.clone(),
+        )),
     });
 
     let admin_deps = Arc::new(AdminHandlerDeps {

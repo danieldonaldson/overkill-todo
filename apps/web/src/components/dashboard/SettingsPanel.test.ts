@@ -14,6 +14,7 @@ vi.mock('../../lib/api', () => ({
       exportData: vi.fn(),
       requestDeletion: vi.fn(),
       cancelDeletion: vi.fn(),
+      securityActivity: vi.fn(),
     },
     oauth: {
       startLink: vi.fn(),
@@ -64,6 +65,7 @@ function setCurrentUser(user: User) {
 describe('SettingsPanel', () => {
   beforeEach(() => {
     resetSession()
+    vi.mocked(api.users.securityActivity).mockResolvedValue({ events: [] })
   })
 
   it('loads and displays account details', async () => {
@@ -320,5 +322,48 @@ describe('SettingsPanel timing', () => {
     await vi.waitFor(() => expect(session.status).toBe('unreachable'))
     await expect.element(screen.getByTestId('settings-skeleton')).toBeInTheDocument()
     await vi.waitFor(() => expect(markReady).toHaveBeenCalledTimes(1))
+  })
+
+  it('keeps the rest of Settings working when Security activity fails to load', async () => {
+    setCurrentUser(passwordUser)
+    vi.mocked(api.users.securityActivity).mockRejectedValue(new Error('Service unavailable'))
+    vi.mocked(api.users.changePassword).mockResolvedValue(undefined)
+    const screen = await render(SettingsPanel)
+
+    const activity = screen.getByTestId('security-activity')
+    await expect.element(activity.getByText(/couldn't load your security activity/i)).toBeVisible()
+    await screen.getByLabelText(/current password/i).fill('oldpassword123')
+    await screen.getByLabelText(/^new password/i).fill('newpassword123')
+    await screen.getByRole('button', { name: /change password/i }).click()
+
+    await expect.element(screen.getByText('Password changed.')).toBeInTheDocument()
+  })
+
+  it('reloads Security activity after a password change', async () => {
+    setCurrentUser(passwordUser)
+    vi.mocked(api.users.securityActivity).mockResolvedValue({ events: [] })
+    vi.mocked(api.users.changePassword).mockResolvedValue(undefined)
+    const screen = await render(SettingsPanel)
+    await expect.element(screen.getByText('No activity yet.')).toBeInTheDocument()
+
+    vi.mocked(api.users.securityActivity).mockResolvedValue({
+      events: [
+        {
+          id: 1,
+          occurred_at: '2026-11-21T10:00:00Z',
+          kind: 'password_changed',
+          actor: 'you',
+          details: {},
+        },
+      ],
+    })
+    await screen.getByLabelText(/current password/i).fill('oldpassword123')
+    await screen.getByLabelText(/^new password/i).fill('newpassword123')
+    await screen.getByRole('button', { name: /change password/i }).click()
+
+    await expect
+      .element(screen.getByTestId('security-activity').getByText('Password changed'))
+      .toBeInTheDocument()
+    expect(api.users.securityActivity).toHaveBeenCalledTimes(2)
   })
 })

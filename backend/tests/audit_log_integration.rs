@@ -1259,3 +1259,141 @@ async fn events_after_a_full_account_lifecycle_hold_no_personal_data(pool: PgPoo
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/users/me/security-activity (slice 3)
+// ---------------------------------------------------------------------------
+
+/// The signed-in `member`'s Security activity at `query`.
+async fn activity_of(pool: &PgPool, member: &User, query: &str) -> (StatusCode, Value) {
+    // A session issued now, with the account's current role, as after
+    // signing in again.
+    let role: String = sqlx::query_scalar(
+        "UPDATE users SET tokens_valid_after = now() - interval '1 minute' WHERE id = $1
+         RETURNING role::text",
+    )
+    .bind(member.id().as_uuid())
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let token = common::mint_session_jwt(*member.id().as_uuid(), true, &role, 15);
+    let req = Request::builder()
+        .uri(format!("/api/v1/users/me/security-activity{query}"))
+        .header(header::COOKIE, format!("__Host-auth_token={token}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = common::create_test_app(pool.clone())
+        .oneshot(req)
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn member_sees_a_staff_role_change_without_the_staff_account(pool: PgPool) {
+    let staff = seed_with_role(&pool, UserRole::SuperAdmin).await;
+    let member = seed_with_role(&pool, UserRole::User).await;
+    promote_via_api(&pool, &staff, &member).await;
+    let id = *member.id();
+    user_repo(&pool)
+        .update_password(&id, "h", &AuditEvent::password_reset(id))
+        .await
+        .unwrap();
+
+    let (status, body) = activity_of(&pool, &member, "").await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["events"][0]["kind"], "password_reset");
+    assert_eq!(body["events"][0]["actor"], "you");
+    assert_eq!(body["events"][1]["kind"], "role_changed");
+    assert_eq!(body["events"][1]["actor"], "administrator");
+    assert_eq!(
+        body["events"][1]["details"],
+        json!({ "from_role": "user", "to_role": "admin" })
+    );
+    assert!(body.get("next_before_id").is_none(), "{body}");
+    let text = body.to_string();
+    assert!(!text.contains(&staff.id().to_string()), "{text}");
+    assert!(!text.contains(staff.email().as_str()), "{text}");
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn security_activity_holds_only_the_callers_events(pool: PgPool) {
+    let member = seed_with_role(&pool, UserRole::User).await;
+    let other = seed_with_role(&pool, UserRole::User).await;
+    let audit = PostgresAuditLogRepository::new(db(&pool));
+    audit
+        .record(&AuditEvent::data_exported(*other.id()))
+        .await
+        .unwrap();
+    audit
+        .record(&AuditEvent::sessions_revoked_after_reuse(*member.id()))
+        .await
+        .unwrap();
+
+    let (_, body) = activity_of(&pool, &member, "").await;
+    assert_eq!(body["events"].as_array().unwrap().len(), 1);
+    assert_eq!(body["events"][0]["kind"], "sessions_revoked_after_reuse");
+    assert_eq!(body["events"][0]["actor"], "system");
+
+    // No parameter selects another account: unknown ones are ignored.
+    let (_, body) = activity_of(&pool, &member, &format!("?user_id={}", other.id())).await;
+    assert_eq!(body["events"].as_array().unwrap().len(), 1);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn security_activity_pages_with_before_id(pool: PgPool) {
+    let member = seed_with_role(&pool, UserRole::User).await;
+    let audit = PostgresAuditLogRepository::new(db(&pool));
+    for _ in 0..5 {
+        audit
+            .record(&AuditEvent::data_exported(*member.id()))
+            .await
+            .unwrap();
+    }
+
+    let (_, first) = activity_of(&pool, &member, "?limit=2").await;
+    let ids = |page: &Value| -> Vec<i64> {
+        page["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["id"].as_i64().unwrap())
+            .collect()
+    };
+    assert_eq!(ids(&first).len(), 2);
+    let next = first["next_before_id"].as_i64().unwrap();
+    assert_eq!(next, ids(&first)[1]);
+
+    let (_, second) = activity_of(&pool, &member, &format!("?limit=2&before_id={next}")).await;
+    let (_, third) = activity_of(
+        &pool,
+        &member,
+        &format!("?limit=2&before_id={}", second["next_before_id"]),
+    )
+    .await;
+    let mut all = [ids(&first), ids(&second), ids(&third)].concat();
+    assert_eq!(all.len(), 5);
+    assert!(third.get("next_before_id").is_none());
+    let sorted = {
+        all.sort_by(|a, b| b.cmp(a));
+        all.clone()
+    };
+    assert_eq!(all, sorted);
+}
+
+#[sqlx::test(migrations = "./migrations")]
+async fn security_activity_is_empty_for_a_new_account_and_refused_to_visitors(pool: PgPool) {
+    let member = seed_with_role(&pool, UserRole::User).await;
+    let (status, body) = activity_of(&pool, &member, "").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "events": [] }));
+
+    let (status, _) = get_as(&pool, None, "/api/v1/users/me/security-activity").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}

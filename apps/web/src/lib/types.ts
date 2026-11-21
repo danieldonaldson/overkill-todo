@@ -85,3 +85,6 @@ export type AuditEventList = Schemas['AuditEventListResponse']
 export type AuditKindName = Schemas['AuditKindName']
 /** A kind the audit log can be filtered by. */
 export type AuditKindFilter = Schemas['AuditKindFilter']
+/** One event in a Member's own Security activity. */
+export type SecurityActivityEvent = Schemas['SecurityActivityEventResponse']
+export type SecurityActivityPage = Schemas['SecurityActivityResponse']
