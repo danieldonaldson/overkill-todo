@@ -85,3 +85,14 @@ checks.positive_data_acceptance.enabled = false
 include-path = "/api/v1/auth/oauth/{provider}"
 include-method = "GET"
 checks.positive_data_acceptance.enabled = false
+
+# A 16 KB body limit (MAX_BODY_BYTES) runs before validation, so an invalid
+# body that is also oversized gets a 413, not a 400. That is still a rejection:
+# the defaults plus 413. Scoped here because no other route has a limit small
+# enough for the fuzzer to hit.
+[[operations]]
+include-path = "/api/v1/client-telemetry"
+include-method = "POST"
+checks.negative_data_rejection.expected-statuses = [
+  "400", "401", "403", "404", "405", "406", "409", "413", "415", "422", "428", "429", "5xx",
+]
