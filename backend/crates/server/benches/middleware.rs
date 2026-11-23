@@ -98,21 +98,8 @@ fn stack(c: &mut Criterion) {
         });
     });
 
-    // Bearer path: auth middleware verifies the JWT, then the email gate.
-    g.bench_function("get_bearer_auth", |b| {
-        b.to_async(&rt).iter(|| {
-            send(
-                &app,
-                Request::get("/api/v1/users/me/export")
-                    .header(header::AUTHORIZATION, format!("Bearer {unverified}"))
-                    .body(Body::empty())
-                    .unwrap(),
-                StatusCode::FORBIDDEN,
-            )
-        });
-    });
-
-    // Cookie path, as the browser sends it.
+    // Auth is cookie-only (OT-011): the middleware verifies the JWT, then the
+    // email gate stops the request.
     g.bench_function("get_cookie_auth", |b| {
         b.to_async(&rt).iter(|| {
             send(

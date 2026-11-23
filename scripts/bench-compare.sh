@@ -66,7 +66,14 @@ if [ $backend = 1 ]; then
     if [ "$found" = 0 ]; then echo "no backend benches in $2; skipping"; return; fi
     echo "── backend benches: $2"
     # shellcheck disable=SC2086 # criterion_args is a flag list.
-    (cd "$1/backend" && cargo bench --locked "${args[@]}" -- --save-baseline "$2" $criterion_args)
+    if ! (cd "$1/backend" && cargo bench --locked "${args[@]}" -- --save-baseline "$2" $criterion_args); then
+      # A broken bench on the base can't be fixed from the PR that repairs it,
+      # so warn and compare whatever finished. The PR side must still pass.
+      case $2 in
+        bench-base-*) echo "::warning::backend benches failed on the base side ($2); comparing the benches that finished" ;;
+        *) return 1 ;;
+      esac
+    fi
   }
   for r in $(seq "$rounds"); do
     run_side "$worktree" "bench-base-$r"
