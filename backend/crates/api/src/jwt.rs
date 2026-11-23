@@ -2,11 +2,9 @@
 
 use super::error::AppError;
 use jiff::{SignedDuration, Timestamp};
-use jsonwebtoken::Validation;
-use jsonwebtoken::errors::ErrorKind;
-use std::sync::LazyLock;
 
-use platform::crypto::TokenKeyring;
+pub use platform::crypto::{TOKEN_AUDIENCE, TOKEN_ISSUER};
+use platform::crypto::{TokenKeyring, TokenType, TokenVerifyError, token};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -14,21 +12,10 @@ use uuid::Uuid;
 ///
 /// INVARIANT: every session JWT carries `typ == SESSION_TOKEN_TYPE` and
 /// [`verify_jwt`] rejects anything else. Signup/reset tokens are signed with the
-/// *same* RSA key but carry a different `typ` (`"signup"`/`"reset"`); without this
-/// check they would be accepted as logged-in sessions (token-type confusion).
-pub const SESSION_TOKEN_TYPE: &str = "session";
-
-/// Issuer (`iss`) asserted on every session JWT and required by [`verify_jwt`].
-///
-/// INVARIANT: combined with [`TOKEN_AUDIENCE`], this scopes a token to *this*
-/// service. A token minted by (or for) another service — even one signed with a
-/// shared key — carries a different `iss`/`aud` and is rejected, closing the
-/// cross-service token-reuse gap.
-pub const TOKEN_ISSUER: &str = "overkill-todo";
-
-/// Audience (`aud`) asserted on every session JWT and required by [`verify_jwt`].
-/// See [`TOKEN_ISSUER`].
-pub const TOKEN_AUDIENCE: &str = "overkill-todo-api";
+/// *same* HMAC-SHA-512 keyring but carry a different `typ` (`"signup"`/`"reset"`);
+/// without this check they would be accepted as logged-in sessions (token-type
+/// confusion).
+pub const SESSION_TOKEN_TYPE: &str = TokenType::Session.as_str();
 
 /// JWT claims payload.
 ///
@@ -93,15 +80,14 @@ impl Claims {
     }
 }
 
-/// The session-token validation, built once: HS512 only, issuer and audience
-/// pinned so a token scoped to another service (or to none) is refused.
-static SESSION_VALIDATION: LazyLock<Validation> = LazyLock::new(|| {
-    let mut validation = TokenKeyring::validation();
-    validation.set_issuer(&[TOKEN_ISSUER]);
-    validation.set_audience(&[TOKEN_AUDIENCE]);
-    validation.set_required_spec_claims(&["exp", "iss", "aud"]);
-    validation
-});
+#[derive(Serialize, Deserialize)]
+struct SessionPayload {
+    sub: String,
+    #[serde(default)]
+    verified: bool,
+    #[serde(default = "default_role")]
+    role: String,
+}
 
 /// Creates a signed session token for the given user.
 ///
@@ -124,9 +110,15 @@ pub fn create_jwt(
     keys: &TokenKeyring,
     expiration_minutes: i64,
 ) -> Result<String, AppError> {
-    let claims = Claims::new(user_id, email_verified, role, expiration_minutes);
+    let now = Timestamp::now();
+    let exp = now + SignedDuration::from_mins(expiration_minutes);
+    let payload = SessionPayload {
+        sub: user_id.to_string(),
+        verified: email_verified,
+        role: role.to_string(),
+    };
 
-    keys.sign(&claims)
+    token::issue(keys, TokenType::Session, &payload, now, exp)
         .map_err(|e| AppError::Internal(format!("Failed to create JWT: {e}")))
 }
 
@@ -138,25 +130,32 @@ pub fn create_jwt(
 /// but expired, otherwise `token_invalid` with one fixed message (wrong
 /// algorithm, unknown or missing key, bad signature, wrong issuer, audience or
 /// type, or malformed).
-pub fn verify_jwt(token: &str, keys: &TokenKeyring) -> Result<Claims, AppError> {
-    let claims: Claims = keys.verify(token, &SESSION_VALIDATION).map_err(|e| {
-        if *e.kind() == ErrorKind::ExpiredSignature {
-            AppError::token_expired()
-        } else {
-            // The reason stays in debug logs; the token itself is never logged.
-            tracing::debug!(reason = ?e.kind(), "session token rejected");
-            AppError::token_rejected()
-        }
-    })?;
+pub fn verify_jwt(token_str: &str, keys: &TokenKeyring) -> Result<Claims, AppError> {
+    let verified = token::verify::<SessionPayload>(keys, token_str, TokenType::Session).map_err(
+        |err| match err {
+            TokenVerifyError::Expired => AppError::token_expired(),
+            TokenVerifyError::WrongType { expected, actual } => {
+                // The reason stays in debug logs; the token itself is never logged.
+                tracing::debug!(expected = %expected, actual = %actual, "session token rejected: wrong type");
+                AppError::token_rejected()
+            }
+            TokenVerifyError::Invalid(e) => {
+                tracing::debug!(reason = ?e.kind(), "session token rejected");
+                AppError::token_rejected()
+            }
+        },
+    )?;
 
-    // INVARIANT: reject single-purpose tokens (signup/reset) presented as a
-    // session. They are signed with the same key but carry a different `typ`.
-    if claims.typ != SESSION_TOKEN_TYPE {
-        tracing::debug!("session token rejected: not a session token");
-        return Err(AppError::token_rejected());
-    }
-
-    Ok(claims)
+    Ok(Claims {
+        sub: verified.payload.sub,
+        typ: verified.typ.as_str().to_string(),
+        iss: verified.iss,
+        aud: verified.aud,
+        verified: verified.payload.verified,
+        role: verified.payload.role,
+        exp: verified.exp,
+        iat: verified.iat,
+    })
 }
 
 #[cfg(test)]

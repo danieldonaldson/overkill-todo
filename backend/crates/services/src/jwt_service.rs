@@ -1,32 +1,20 @@
 //! JWT service implementation.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 use jiff::Timestamp;
-use jsonwebtoken::Validation;
 use serde::{Deserialize, Serialize};
 
 use application::ports::JwtService;
 use domain::errors::DomainError;
 use domain::value_objects::{ResetCodeId, UserId};
-use platform::crypto::{Crypto, TOKEN_REJECTED_MESSAGE as REJECTED, TokenKeyring};
+use platform::crypto::{Crypto, TOKEN_REJECTED_MESSAGE as REJECTED, TokenType, token};
 
-/// The signup/reset validation, built once.
-static ONE_TIME_VALIDATION: LazyLock<Validation> = LazyLock::new(|| {
-    let mut validation = TokenKeyring::validation();
-    validation.set_required_spec_claims(&["sub", "exp", "typ"]);
-    validation
-});
-
-/// JWT claims for signup/reset tokens.
+/// Payload for signup/reset tokens.
 #[derive(Debug, Serialize, Deserialize)]
-struct TokenClaims {
+struct OneTimePayload {
     /// Subject (user ID)
     sub: String,
-    /// Expiration time
-    exp: i64,
-    /// Token type
-    typ: String,
     /// JWT ID — for reset tokens, the reset-code row this token authorizes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     jti: Option<String>,
@@ -48,39 +36,41 @@ impl CryptoJwtService {
         &self,
         user_id: &UserId,
         expires_at: Timestamp,
-        token_type: &str,
+        token_type: TokenType,
         jti: Option<String>,
     ) -> Result<String, DomainError> {
-        let claims = TokenClaims {
+        let payload = OneTimePayload {
             sub: user_id.to_string(),
-            exp: expires_at.as_second(),
-            typ: token_type.to_string(),
             jti,
         };
 
-        self.crypto
-            .tokens()
-            .sign(&claims)
-            .map_err(|e| DomainError::Persistence(format!("Failed to create JWT: {e}")))
+        token::issue(
+            self.crypto.tokens(),
+            token_type,
+            &payload,
+            Timestamp::now(),
+            expires_at,
+        )
+        .map_err(|e| DomainError::Persistence(format!("Failed to create JWT: {e}")))
     }
 
-    fn validate_token(&self, token: &str, expected_type: &str) -> Result<TokenClaims, DomainError> {
-        let claims: TokenClaims = self
-            .crypto
-            .tokens()
-            .verify(token, &ONE_TIME_VALIDATION)
-            .map_err(|e| {
-                // The reason stays in debug logs; the token is never logged.
-                tracing::debug!(reason = ?e.kind(), expected_type, "one-time token rejected");
-                DomainError::Authorization(REJECTED.into())
-            })?;
+    fn validate_token(
+        &self,
+        token_str: &str,
+        expected_type: TokenType,
+    ) -> Result<OneTimePayload, DomainError> {
+        let verified = token::verify::<OneTimePayload>(
+            self.crypto.tokens(),
+            token_str,
+            expected_type,
+        )
+        .map_err(|err| {
+            // The reason stays in debug logs; the token is never logged.
+            tracing::debug!(?err, expected_type = %expected_type, "one-time token rejected");
+            DomainError::Authorization(REJECTED.into())
+        })?;
 
-        if claims.typ != expected_type {
-            tracing::debug!(expected_type, "one-time token rejected: wrong type");
-            return Err(DomainError::Authorization(REJECTED.into()));
-        }
-
-        Ok(claims)
+        Ok(verified.payload)
     }
 }
 
@@ -97,7 +87,7 @@ impl JwtService for CryptoJwtService {
         user_id: &UserId,
         expires_at: Timestamp,
     ) -> Result<String, DomainError> {
-        self.create_token(user_id, expires_at, "signup", None)
+        self.create_token(user_id, expires_at, TokenType::Signup, None)
     }
 
     fn create_reset_token(
@@ -109,18 +99,18 @@ impl JwtService for CryptoJwtService {
         self.create_token(
             user_id,
             expires_at,
-            "reset",
+            TokenType::Reset,
             Some(reset_code_id.to_string()),
         )
     }
 
     fn validate_signup_token(&self, token: &str) -> Result<UserId, DomainError> {
-        let claims = self.validate_token(token, "signup")?;
+        let claims = self.validate_token(token, TokenType::Signup)?;
         Ok(UserId::from_uuid(parse_token_uuid(&claims.sub, "user ID")?))
     }
 
     fn validate_reset_token(&self, token: &str) -> Result<(UserId, ResetCodeId), DomainError> {
-        let claims = self.validate_token(token, "reset")?;
+        let claims = self.validate_token(token, TokenType::Reset)?;
         let user_id = UserId::from_uuid(parse_token_uuid(&claims.sub, "user ID")?);
         let jti = claims
             .jti
@@ -229,8 +219,11 @@ mod tests {
     #[test]
     fn reset_token_from_a_retired_key_is_rejected() {
         let old = Crypto::for_testing_with_tokens(
-            TokenKeyring::from_config(&platform::crypto::keyring_test_entry("retired", 7), None)
-                .unwrap(),
+            platform::crypto::TokenKeyring::from_config(
+                &platform::crypto::keyring_test_entry("retired", 7),
+                None,
+            )
+            .unwrap(),
         );
         let token = CryptoJwtService::new(Arc::new(old))
             .create_reset_token(
@@ -240,5 +233,60 @@ mod tests {
             )
             .unwrap();
         assert_rejected(test_service().validate_reset_token(&token));
+    }
+
+    #[test]
+    fn one_time_tokens_reject_foreign_audience_and_issuer() {
+        #[derive(Serialize)]
+        struct RawOneTime {
+            sub: String,
+            typ: &'static str,
+            iss: &'static str,
+            aud: &'static str,
+            iat: i64,
+            exp: i64,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            jti: Option<String>,
+        }
+
+        let crypto = Arc::new(Crypto::for_testing());
+        let service = CryptoJwtService::new(Arc::clone(&crypto));
+        let now = Timestamp::now();
+        let exp = (now + SignedDuration::from_hours(1)).as_second();
+
+        for (typ, is_signup) in [("signup", true), ("reset", false)] {
+            let foreign_aud = crypto
+                .tokens()
+                .sign(&RawOneTime {
+                    sub: UserId::new().to_string(),
+                    typ,
+                    iss: platform::crypto::TOKEN_ISSUER,
+                    aud: "foreign-audience",
+                    iat: now.as_second(),
+                    exp,
+                    jti: (!is_signup).then(|| ResetCodeId::new().to_string()),
+                })
+                .unwrap();
+            let foreign_iss = crypto
+                .tokens()
+                .sign(&RawOneTime {
+                    sub: UserId::new().to_string(),
+                    typ,
+                    iss: "foreign-issuer",
+                    aud: platform::crypto::TOKEN_AUDIENCE,
+                    iat: now.as_second(),
+                    exp,
+                    jti: (!is_signup).then(|| ResetCodeId::new().to_string()),
+                })
+                .unwrap();
+
+            if is_signup {
+                assert_rejected(service.validate_signup_token(&foreign_aud));
+                assert_rejected(service.validate_signup_token(&foreign_iss));
+            } else {
+                assert_rejected(service.validate_reset_token(&foreign_aud));
+                assert_rejected(service.validate_reset_token(&foreign_iss));
+            }
+        }
     }
 }

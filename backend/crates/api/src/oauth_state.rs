@@ -1,22 +1,23 @@
 //! OAuth state JWT helpers for CSRF protection.
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use std::sync::LazyLock;
 
 use jiff::{SignedDuration, Timestamp};
-use jsonwebtoken::Validation;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 use super::error::AppError;
 use application::dto::OAuthStateClaims;
-use platform::crypto::TokenKeyring;
+use platform::crypto::{TokenKeyring, TokenType, token};
 
-/// The OAuth-state validation, built once.
-static STATE_VALIDATION: LazyLock<Validation> = LazyLock::new(|| {
-    let mut validation = TokenKeyring::validation();
-    validation.set_required_spec_claims(&["exp"]);
-    validation
-});
+#[derive(Serialize, Deserialize)]
+struct OAuthStatePayload {
+    nonce: String,
+    mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_id: Option<String>,
+    provider: String,
+}
 
 fn generate_nonce() -> String {
     let mut bytes = [0u8; 16];
@@ -39,22 +40,21 @@ pub fn create_oauth_state(
     mode: &str,
     user_id: Option<&str>,
 ) -> Result<(String, String), AppError> {
-    let exp = Timestamp::now() + SignedDuration::from_mins(5);
+    let iat = Timestamp::now();
+    let exp = iat + SignedDuration::from_mins(5);
     let nonce = generate_nonce();
 
-    let claims = OAuthStateClaims {
+    let payload = OAuthStatePayload {
         nonce: nonce.clone(),
         mode: mode.to_string(),
         user_id: user_id.map(String::from),
         provider: provider.to_string(),
-        exp: exp.as_second(),
     };
 
-    let token = keys
-        .sign(&claims)
+    let jwt = token::issue(keys, TokenType::OAuthState, &payload, iat, exp)
         .map_err(|e| AppError::Internal(format!("Failed to create OAuth state: {e}")))?;
 
-    Ok((token, nonce))
+    Ok((jwt, nonce))
 }
 
 /// Verify and decode an OAuth state JWT.
@@ -63,12 +63,20 @@ pub fn create_oauth_state(
 ///
 /// Returns `AppError::Validation` if the JWT is invalid or expired.
 pub fn verify_oauth_state(keys: &TokenKeyring, state: &str) -> Result<OAuthStateClaims, AppError> {
-    keys.verify::<OAuthStateClaims>(state, &STATE_VALIDATION)
-        .map_err(|e| {
+    let verified =
+        token::verify::<OAuthStatePayload>(keys, state, TokenType::OAuthState).map_err(|err| {
             // The decoder's reason stays in the logs; clients get a fixed message.
-            tracing::debug!(reason = ?e.kind(), "OAuth state rejected");
+            tracing::debug!(?err, "OAuth state rejected");
             AppError::Validation("Invalid OAuth state".into())
-        })
+        })?;
+
+    Ok(OAuthStateClaims {
+        nonce: verified.payload.nonce,
+        mode: verified.payload.mode,
+        user_id: verified.payload.user_id,
+        provider: verified.payload.provider,
+        exp: verified.exp,
+    })
 }
 
 #[cfg(test)]
@@ -134,14 +142,15 @@ mod tests {
     #[test]
     fn expired_oauth_state_is_refused() {
         let keys = TokenKeyring::for_testing();
-        let expired = OAuthStateClaims {
+        let past = Timestamp::now() - SignedDuration::from_mins(5);
+        let iat = past - SignedDuration::from_mins(5);
+        let expired = OAuthStatePayload {
             nonce: "n".into(),
             mode: "login".into(),
             user_id: None,
             provider: "google".into(),
-            exp: (Timestamp::now() - SignedDuration::from_mins(5)).as_second(),
         };
-        let state = keys.sign(&expired).unwrap();
+        let state = token::issue(&keys, TokenType::OAuthState, &expired, iat, past).unwrap();
         assert_invalid_state(verify_oauth_state(&keys, &state));
     }
 
@@ -152,5 +161,36 @@ mod tests {
                 .unwrap();
         let (state, _) = create_oauth_state(&other, "google", "login", None).unwrap();
         assert_invalid_state(verify_oauth_state(&TokenKeyring::for_testing(), &state));
+    }
+
+    #[test]
+    fn oauth_state_rejects_foreign_audience() {
+        #[derive(Serialize)]
+        struct ForeignAudState {
+            nonce: &'static str,
+            mode: &'static str,
+            provider: &'static str,
+            typ: &'static str,
+            iss: &'static str,
+            aud: &'static str,
+            iat: i64,
+            exp: i64,
+        }
+
+        let keys = TokenKeyring::for_testing();
+        let now = Timestamp::now();
+        let state = keys
+            .sign(&ForeignAudState {
+                nonce: "n",
+                mode: "login",
+                provider: "google",
+                typ: TokenType::OAuthState.as_str(),
+                iss: platform::crypto::TOKEN_ISSUER,
+                aud: "other-audience",
+                iat: now.as_second(),
+                exp: (now + SignedDuration::from_mins(5)).as_second(),
+            })
+            .unwrap();
+        assert_invalid_state(verify_oauth_state(&keys, &state));
     }
 }

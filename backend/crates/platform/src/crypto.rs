@@ -30,10 +30,12 @@ use sha2::{Digest, Sha256};
 use crate::config::CryptoSettings;
 
 mod keyring;
+pub mod token;
 /// A `<kid>:<base64 secret>` entry with a fixed test secret. Test use only.
 #[cfg(any(test, feature = "test-support"))]
 pub use keyring::test_entry as keyring_test_entry;
 pub use keyring::{KeyringError, TOKEN_REJECTED_MESSAGE, TokenKeyring};
+pub use token::{TOKEN_AUDIENCE, TOKEN_ISSUER, TokenType, TokenVerifyError, VerifiedToken};
 
 /// Wire-format prefix for AES-256-GCM-encrypted secrets. The scheme tag plus
 /// version let us migrate to a new algorithm or rotate keys later without

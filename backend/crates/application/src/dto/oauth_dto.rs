@@ -42,7 +42,7 @@ pub struct OAuthCallbackQuery {
 }
 
 /// Claims stored in the OAuth state JWT (CSRF/session binding for the redirect
-/// dance). Produced and verified by `infrastructure::api::oauth_state`.
+/// dance). Produced and verified by `api::oauth_state`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OAuthStateClaims {
     pub nonce: String,
