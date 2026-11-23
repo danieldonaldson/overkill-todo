@@ -190,7 +190,7 @@ the riskiest unknown.
 
 ## 2. Feature done
 
-- [ ] 2.1 After slice 1, revise design.md with what it showed, then add the
+- [x] 2.1 After slice 1, revise design.md with what it showed, then add the
   remaining slices here, in this order:
   - (a) Untangle the cross-adapter edges (D3) and extract `platform`
     (D1). Before the move:
@@ -242,6 +242,6 @@ the riskiest unknown.
     `cargo build --workspace -v`, then confirm only `persistence-postgres`
     and `server` show `Compiling`
   - do the same for one handler, expecting only `api` and `server`
-- [ ] 2.2 Record the final Hypothesis timings and conclusion (whether finer
+- [x] 2.2 Record the final Hypothesis timings and conclusion (whether finer
   splits are worth it) in design.md.
-- [ ] 2.3 Archive the change.
+- [x] 2.3 Archive the change.

@@ -585,15 +585,15 @@ caught").
 
   | Measurement (`RUSTC_WRAPPER=""`, `SQLX_OFFLINE=true`) | Phase 0 baseline | After slice 1 | After slice 2 (final) |
   |---|---|---|---|
-  | `clean cargo build` | 53.80s | 55.38s | — |
-  | `touch` handler → `cargo build` (`auth_handler.rs`) | 3.28s | 3.09s | — |
-  | `touch` repo → `cargo build` (`user_repository.rs`) | 3.25s | 3.15s | — |
-  | `touch` domain → `cargo build` (`user.rs`) | 3.23s | 3.77s | — |
-  | `just test --no-run` | 37.58s | 36.08s | — |
-  | `just test-integration --no-run` | 34.44s | 35.31s | — |
-  | Docker release build, cold (`--no-cache`) | 358.50s | 438.57s | — |
-  | Docker release build, warm (`touch` / BuildKit cache) | 3.10s | 1.84s | — |
-  | Docker release build, warm (1-line edit in `auth_handler.rs`) | — | 219.19s | — |
+  | `clean cargo build` | 53.80s | 55.38s | 47.80s |
+  | `touch` handler → `cargo build` (`auth_handler.rs`) | 3.28s | 3.09s | 2.15s |
+  | `touch` repo → `cargo build` (`user_repository.rs`) | 3.25s | 3.15s | 2.04s |
+  | `touch` domain → `cargo build` (`user.rs`) | 3.23s | 3.77s | 2.96s |
+  | `just test --no-run` | 37.58s | 36.08s | 30.46s |
+  | `just test-integration --no-run` | 34.44s | 35.31s | 23.12s |
+  | Docker release build, cold (`--no-cache`) | 358.50s | 438.57s | 393.95s |
+  | Docker release build, warm (`touch` / BuildKit cache) | 3.10s | 1.84s | 4.16s |
+  | Docker release build, warm (1-line edit in `auth_handler.rs`) | — | 219.19s | 174.84s |
 
   **Slice 1 notes:** Dev compile/rebuild times stay essentially flat (`~3.1–3.8s`
   for single-file edits, `55.38s` clean vs `53.80s` baseline), as expected while
@@ -606,6 +606,21 @@ caught").
   `touch` hits layer cache (`1.84s` vs `3.10s`); a real 1-line edit to
   `auth_handler.rs` keeps `cargo chef cook` `CACHED` and compiles only the four
   workspace crates + fat LTO (`219.19s`). D7 stands for Slice 2.
+
+  **Final conclusion:** With all 8 crates separated, adapter-only incremental
+  rebuilds drop cleanly below baseline: touching `auth_handler.rs` falls from
+  `3.28s` to `2.15s` (-34.5%, recompiling only `api` + `server`), and touching
+  `user_repository.rs` falls from `3.25s` to `2.04s` (-37.2%, recompiling only
+  `persistence-postgres` + `server`). Full workspace test compilation also
+  improves (`just test --no-run`: `30.46s` vs `37.58s`; `just test-integration
+  --no-run`: `23.12s` vs `34.44s`), and clean `cargo build` speeds up to
+  `47.80s` (vs `53.80s`). The cold release Docker build (`393.95s` vs
+  `358.50s` baseline, `+9.9%`) stays within the ±10% budget while warm source
+  edits drop from `219.19s` (Slice 1) to `174.84s` with `cargo-chef` caching
+  third-party crates. Both compile isolation and strict inward dependency
+  enforcement are achieved at this 8-crate boundary; finer splits (`services`
+  sub-crates or moving `telemetry` out of `platform`) are not warranted right
+  now.
 
 - **How we'll know:** if adapter-only edits don't improve after the last
   slice, the change still stands on enforcement (spec requirements 1–2). We
