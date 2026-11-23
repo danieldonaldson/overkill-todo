@@ -11,13 +11,12 @@ use axum::{
 use application::ports::outgoing::{SessionAuthorizationState, UserRepository};
 use domain::value_objects::{UserId, UserRole};
 
-use crate::infrastructure::{
-    api::{
-        cookies::{AUTH_COOKIE, extract_cookie},
-        error::AppError,
-        verify_jwt,
-    },
-    crypto::{Crypto, TokenKeyring},
+use platform::crypto::{Crypto, TokenKeyring};
+
+use crate::infrastructure::api::{
+    cookies::{AUTH_COOKIE, extract_cookie},
+    error::AppError,
+    verify_jwt,
 };
 
 #[derive(Clone, Debug)]

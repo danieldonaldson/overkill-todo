@@ -16,8 +16,8 @@ use crate::infrastructure::api::cookies::{
 };
 use crate::infrastructure::api::error::AppError;
 use crate::infrastructure::api::{create_jwt, generate_csrf_token};
-use crate::infrastructure::crypto::Crypto;
 use domain::entities::User;
+use platform::crypto::Crypto;
 
 /// Header carrying the client's device fingerprint, used to bind refresh tokens.
 const DEVICE_FINGERPRINT_HEADER: &str = "x-device-fingerprint";

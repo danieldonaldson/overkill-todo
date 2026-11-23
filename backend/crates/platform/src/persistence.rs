@@ -1,50 +1,10 @@
-//! Persistence layer.
+//! Driver-neutral persistence traits, error wrapper, and maintenance constants.
 //!
-//! This module root is driver-neutral: the traits every driver adapter
-//! implements for database plumbing (readiness, pool gauges, leader election,
-//! maintenance), the opaque [`DatabaseError`] they fail with, and the plain
-//! data they return. Repositories are reached through the application's
-//! outgoing ports instead.
-//!
-//! The driver is chosen at compile time. Adapters live in submodules
-//! (`postgres` is the sqlx one); [`Database`] names the selected adapter's
-//! handle, and each adapter hands back a [`Persistence`] bundle. Plumbing
-//! consumers are generic over these traits (or use [`Database`] and call only
-//! trait methods), so dispatch is static. Nothing outside this module imports
-//! `persistence::postgres` except `main.rs` wiring and tests.
+//! Concrete driver adapters (such as Postgres/sqlx) implement [`DatabaseHealth`],
+//! [`LeaderLocks`], and [`DatabaseMaintenance`]. Repositories are reached through
+//! `application::ports::outgoing` instead.
 
 use std::future::Future;
-use std::sync::Arc;
-
-use application::ports::outgoing::{
-    AccountLifecycleRepository, AuditLogRepository, EmailVerificationRepository,
-    OAuthAccountRepository, PasswordResetRepository, RefreshTokenRepository, UserRepository,
-};
-
-pub mod postgres;
-
-pub use postgres::STATEMENT_LOG_DIRECTIVE;
-
-/// The selected driver's database handle. It implements [`DatabaseHealth`],
-/// [`LeaderLocks`] and [`DatabaseMaintenance`]; callers outside the adapter
-/// use only those trait methods.
-pub type Database = postgres::Database;
-
-/// Every persistence handle the app needs.
-///
-/// Repositories are `Arc<dyn Port>` because that is what the use cases take
-/// (and mock). The plumbing handle is the concrete selected [`Database`].
-#[derive(Clone)]
-pub struct Persistence {
-    pub users: Arc<dyn UserRepository>,
-    pub account_lifecycle: Arc<dyn AccountLifecycleRepository>,
-    pub audit_log: Arc<dyn AuditLogRepository>,
-    pub oauth_accounts: Arc<dyn OAuthAccountRepository>,
-    pub refresh_tokens: Arc<dyn RefreshTokenRepository>,
-    pub email_verifications: Arc<dyn EmailVerificationRepository>,
-    pub password_resets: Arc<dyn PasswordResetRepository>,
-    pub db: Arc<Database>,
-}
 
 /// A database failure from an infrastructure-internal operation (leader lock,
 /// maintenance, health probe, startup) that has no domain meaning.

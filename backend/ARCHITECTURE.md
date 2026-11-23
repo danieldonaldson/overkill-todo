@@ -12,25 +12,23 @@ crates/
 │   │   └── outgoing/ # Traits implemented by adapters (repos, services)
 │   └── use_cases/    # Business logic — depends on port traits, not adapters
 ├── shared/src/       # Dependency-free leaf (error fingerprinting, redaction rules)
+├── platform/         # Config, crypto, TLS, telemetry, driver-neutral persistence traits
 └── server/           # Composition root, infrastructure adapters, binary, tests, benches
     ├── src/
     │   ├── main.rs
     │   └── infrastructure/
     │       ├── api/          # Axum handlers, routes, middleware (HTTP adapter)
-    │       ├── config/       # Settings loaded from env vars
-    │       ├── crypto.rs     # `Crypto` handle: Argon2 params, JWT keys, CSRF secret, cipher
     │       ├── oauth/        # Google OAuth client
-    │       ├── persistence/  # Driver-neutral DB traits; postgres/ = sqlx adapter (only sqlx user)
+    │       ├── persistence/  # postgres/ = sqlx adapter (only sqlx user)
     │       ├── services/     # Concrete service impls (argon2, JWT, token gen, …)
-    │       ├── tasks/        # Background jobs and leader election
-    │       └── telemetry/    # Tracing, logs, metrics
+    │       └── tasks/        # Background jobs and leader election
     ├── tests/        # Full-stack integration tests + crate_graph gate
     ├── benches/      # Criterion benchmarks
     └── examples/     # export_openapi
 ```
 
-Dependencies only point inward: `server (infrastructure) → application → domain`,
-with `shared` as a leaf (used by `application` and `server`). The crate-graph
+Dependencies only point inward: `server (infrastructure) → platform → application → domain`,
+with `shared` as a leaf (used by `application`, `platform`, and `server`). The crate-graph
 gate (`crates/server/tests/crate_graph.rs`) enforces this at the workspace level
 and locks `domain` and `application` third-party dependencies to an allowlist.
 The domain imports no `sqlx` or `serde`: Postgres enum mappings live in

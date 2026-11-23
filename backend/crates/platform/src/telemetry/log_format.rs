@@ -259,7 +259,7 @@ mod tests {
     use tracing_subscriber::EnvFilter;
 
     use super::*;
-    use crate::infrastructure::telemetry::{LogFormat, subscriber, tracer_provider};
+    use crate::telemetry::{LogFormat, subscriber, tracer_provider};
 
     #[derive(Clone, Default)]
     struct Capture(Arc<Mutex<Vec<u8>>>);
@@ -306,7 +306,7 @@ mod tests {
         let sub = subscriber(
             &provider,
             EnvFilter::new(format!("{}=info", env!("CARGO_CRATE_NAME"))),
-            crate::infrastructure::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
+            crate::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
             LogFormat::Json,
             capture.clone(),
             service(),
@@ -363,7 +363,7 @@ mod tests {
         let sub = subscriber(
             &provider,
             EnvFilter::new(format!("{}=info", env!("CARGO_CRATE_NAME"))),
-            crate::infrastructure::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
+            crate::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
             LogFormat::Json,
             capture.clone(),
             service(),
@@ -382,7 +382,7 @@ mod tests {
         let sub = subscriber(
             &provider,
             EnvFilter::new(format!("{}=info", env!("CARGO_CRATE_NAME"))),
-            crate::infrastructure::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
+            crate::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
             LogFormat::Json,
             capture.clone(),
             service(),

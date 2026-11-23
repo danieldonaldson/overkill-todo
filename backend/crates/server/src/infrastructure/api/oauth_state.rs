@@ -8,8 +8,8 @@ use jsonwebtoken::Validation;
 use rand::Rng;
 
 use super::error::AppError;
-use crate::infrastructure::crypto::TokenKeyring;
 use application::dto::OAuthStateClaims;
+use platform::crypto::TokenKeyring;
 
 /// The OAuth-state validation, built once.
 static STATE_VALIDATION: LazyLock<Validation> = LazyLock::new(|| {
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn oauth_state_does_not_carry_device_fingerprint() {
-        let crypto = crate::infrastructure::crypto::Crypto::for_testing();
+        let crypto = platform::crypto::Crypto::for_testing();
 
         let (state, nonce) = create_oauth_state(crypto.tokens(), "google", "login", None).unwrap();
         let claims = verify_oauth_state(crypto.tokens(), &state).unwrap();
@@ -147,11 +147,9 @@ mod tests {
 
     #[test]
     fn oauth_state_from_an_untrusted_key_is_refused() {
-        let other = TokenKeyring::from_config(
-            &crate::infrastructure::crypto::keyring_test_entry("other", 9),
-            None,
-        )
-        .unwrap();
+        let other =
+            TokenKeyring::from_config(&platform::crypto::keyring_test_entry("other", 9), None)
+                .unwrap();
         let (state, _) = create_oauth_state(&other, "google", "login", None).unwrap();
         assert_invalid_state(verify_oauth_state(&TokenKeyring::for_testing(), &state));
     }

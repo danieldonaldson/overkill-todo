@@ -23,11 +23,9 @@ use domain::errors::DomainError;
 use opentelemetry_sdk::trace::{
     InMemorySpanExporter, SdkTracerProvider, SimpleSpanProcessor, SpanData,
 };
+use platform::telemetry::{self, LogFormat, ServiceInfo};
 use serde_json::{Value, json};
-use server::infrastructure::{
-    persistence::postgres::connection::with_statement_logging,
-    telemetry::{self, LogFormat, ServiceInfo},
-};
+use server::infrastructure::persistence::postgres::connection::with_statement_logging;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
 

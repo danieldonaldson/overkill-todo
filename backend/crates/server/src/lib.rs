@@ -12,4 +12,11 @@ pub mod infrastructure;
 ///
 /// Checked against `cargo metadata` by `tests/crate_graph.rs` so a new crate's
 /// logs and spans can't silently go missing.
-pub const APP_TARGETS: &[&str] = &["shared", "domain", "application", "server", "overkill_todo"];
+pub const APP_TARGETS: &[&str] = &[
+    "shared",
+    "domain",
+    "application",
+    "platform",
+    "server",
+    "overkill_todo",
+];

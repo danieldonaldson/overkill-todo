@@ -21,7 +21,7 @@ use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{NamedGroup, ServerConfig, ServerConnection, StreamOwned};
 
-use server::infrastructure::tls;
+use platform::tls;
 
 /// Self-signed P-256 certificate for `localhost`. Test use only.
 const CERT_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIBdDCCARqgAwIBAgIUfYkdELFT85fNc65dlylposxuI8gwCgYIKoZIzj0EAwIw\nFDESMBAGA1UEAwwJbG9jYWxob3N0MCAXDTI2MTExMzA3MjIxNVoYDzIxMjYxMDIw\nMDcyMjE1WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwWTATBgcqhkjOPQIBBggqhkjO\nPQMBBwNCAASTFc/2lsiVsxdIeFnm/DgwGGMySAXBOu8os2ToQ+ExucJ59E72Ktp6\nOn4xB6M6AAuTYcVKsfNqmslsKvao5adpo0gwRjAdBgNVHQ4EFgQUQeyRCxERr3zv\nOwAn4m3/hok/GwowDwYDVR0TAQH/BAUwAwEB/zAUBgNVHREEDTALgglsb2NhbGhv\nc3QwCgYIKoZIzj0EAwIDSAAwRQIhAJBuVgxaqOpd3dkylKcbGB9eH5ALFulv/zCb\nS7USKrWEAiB6Kl0fpWRHpLWTWyHHydAT1xnMh4RSwSrpVGQTD55vIQ==\n-----END CERTIFICATE-----";

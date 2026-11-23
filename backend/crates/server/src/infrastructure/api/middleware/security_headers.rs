@@ -7,7 +7,7 @@ use axum::{
     response::Response,
 };
 
-use crate::infrastructure::config::is_dev_mode;
+use platform::config::is_dev_mode;
 
 // `Strict-Transport-Security` is only emitted outside dev mode, where TLS is
 // present. 2 years, includeSubDomains — a conventional production value.

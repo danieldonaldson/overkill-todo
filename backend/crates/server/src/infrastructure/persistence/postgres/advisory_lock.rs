@@ -26,7 +26,7 @@ impl LeaderLocks for Database {
     /// lock isn't granted (or the query fails) the connection goes straight
     /// back to the pool.
     async fn try_lock(&self, key: i64) -> Result<Option<AdvisoryLock>, DatabaseError> {
-        let mut conn = self.pool().acquire().await?;
+        let mut conn = self.pool().acquire().await.map_err(DatabaseError::new)?;
 
         let acquired = sqlx::query_scalar!("SELECT pg_try_advisory_lock($1)", key)
             .fetch_one(&mut *conn)
@@ -43,7 +43,8 @@ impl LeaderLock for AdvisoryLock {
     async fn ping(&mut self) -> Result<(), DatabaseError> {
         sqlx::query_scalar!("SELECT 1")
             .fetch_one(&mut *self.conn)
-            .await?;
+            .await
+            .map_err(DatabaseError::new)?;
         Ok(())
     }
 

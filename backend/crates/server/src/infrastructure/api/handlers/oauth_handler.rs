@@ -18,7 +18,6 @@ use crate::infrastructure::api::extractors::{ApiJson, ApiPath, ApiQuery};
 use crate::infrastructure::api::handlers::session::build_session;
 use crate::infrastructure::api::middleware::{AuthUser, OptionalAuthUser};
 use crate::infrastructure::api::{create_oauth_state, verify_oauth_state};
-use crate::infrastructure::crypto::Crypto;
 #[cfg(not(debug_assertions))]
 use application::dto::OAuthCallbackQuery;
 #[cfg(debug_assertions)]
@@ -34,6 +33,7 @@ use application::use_cases::{
 };
 use domain::entities::OAuthProvider;
 use domain::value_objects::UserId;
+use platform::crypto::Crypto;
 
 /// Check if test bypass mode is enabled.
 #[cfg(debug_assertions)]

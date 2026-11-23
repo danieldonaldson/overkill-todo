@@ -293,7 +293,7 @@ impl OAuthProviderClient for GoogleOAuthClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::crypto::TEST_RSA_PRIVATE_KEY;
+    use platform::crypto::TEST_RSA_PRIVATE_KEY;
 
     /// An RS256 signer standing in for Google's key.
     fn google_test_key() -> EncodingKey {

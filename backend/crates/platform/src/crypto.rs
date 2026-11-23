@@ -27,12 +27,12 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use rand::Rng;
 use sha2::{Digest, Sha256};
 
-use crate::infrastructure::config::CryptoSettings;
+use crate::config::CryptoSettings;
 
 mod keyring;
 /// A `<kid>:<base64 secret>` entry with a fixed test secret. Test use only.
-#[cfg(test)]
-pub(crate) use keyring::test_entry as keyring_test_entry;
+#[cfg(any(test, feature = "test-support"))]
+pub use keyring::test_entry as keyring_test_entry;
 pub use keyring::{KeyringError, TOKEN_REJECTED_MESSAGE, TokenKeyring};
 
 /// Wire-format prefix for AES-256-GCM-encrypted secrets. The scheme tag plus
@@ -163,7 +163,7 @@ impl Crypto {
     /// # Panics
     ///
     /// Panics if the hardcoded test keys or parameters are malformed (they are not).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn for_testing() -> Self {
         let params = Params::new(4096, 1, 1, None).expect("test Argon2 params are valid");
@@ -190,7 +190,7 @@ impl Crypto {
 
     /// [`Crypto::for_testing`] with a different token keyring, e.g. to sign
     /// with a key another instance doesn't trust. Test use only.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn for_testing_with_tokens(tokens: TokenKeyring) -> Self {
         Self {
@@ -326,7 +326,7 @@ impl Crypto {
 /// # Examples
 ///
 /// ```
-/// use server::infrastructure::crypto::generate_secure_token;
+/// use platform::crypto::generate_secure_token;
 ///
 /// let token = generate_secure_token();
 /// assert_eq!(token.len(), 43); // 32 bytes -> 43 base64 chars
@@ -346,7 +346,7 @@ pub fn generate_secure_token() -> String {
 /// # Examples
 ///
 /// ```
-/// use server::infrastructure::crypto::sha256_hex;
+/// use platform::crypto::sha256_hex;
 ///
 /// let hash = sha256_hex("my_secret_token");
 /// assert_eq!(hash.len(), 64);
@@ -361,8 +361,8 @@ pub fn sha256_hex(input: &str) -> String {
 /// An RSA private key (PEM) for tests that need a classical RS256 signer: the
 /// Google ID-token tests (Google signs with RS256) and the tests proving our
 /// own verification refuses RS256. Test use only.
-#[cfg(test)]
-pub(crate) const TEST_RSA_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrrWYCApN+866p\nxXEZHqkl9DTa/nQKcx1LPwryXBqAEfZen+gf038DjbmmzqggEbYTx62aUTiSAEs0\nNoouFy/+B9UUepaOMkQN/JqtxwdQjGSFb9++WCM6+5X7iXoyzjRg0VFqyA6LGGs7\nx1uxStvifhOcmFxLBXPD5shVYlT7KoERRv1FGsX4vbfuAjAku4MDuq7FDmc2a86P\nDGEcmrqGiEKlHrJgEPdYa8/OHxE6/Qy/UgQUjN0sQS7OjwbP5ef+93s8JE03JbLo\nljuerCLR5JVJmgZ4IQOOh5bdCR+/K3ZbyETOG+5Sop3iHMLwGCBls9BKK0eBYaPd\n9pGqzifzAgMBAAECggEADWV4gkulKtDlHkZT7vvfgyCtRzF36KDW9lozBnp9buT3\n7qZXvLQKQ0K56/RQVkBLjvuT5mjUG0B+ndJrsfEJQ69kxzZRrULq4JSHlWvkfDqY\nVXlHYlkKVr3vFDPEH1bL64op6kU2LVB4fa+uzgTjZ6ci7KNPAGOqhuzpURBdRUQI\n5UGDNcZPl5jWBRb9Jtjjkaxtvm2qSXC7jeV6rvcjkQhWHJFL2xrhT1IRKj8bUrLD\n21aLTM+mLW2iCuDSfOC3pWfZoQEhNkdVqsKFnKVOPIGRDysPqeRfloE9uMT7YK95\nT/aRksVvPE+bEDbKvdTsuOvvTKY2HRu2St+KbKtXkQKBgQDqpIArr6eftuInb2a8\ndYIuIWfI6UV9ernc9uXglo9JNGgXqcMI7wzaP35EkqAFROiXg29jjkUgQw8BDqwt\n437ic+Wf5+EYq8hQ8L0ig+zstt3FQ3v2i/teBZqOUsoCElXeYxR4DNbQCEbYAEs4\nzGRoqrBCQ2wwEbp0wxNswTKGvwKBgQC7TbhHQeA1es2RMvfZHIzO/8IoSyUV1F9/\nVDgX+pcUZ0FZfb2OMIDwb1w/1A+84NnC63iSI9E/6Rr6XSCNJk9eJBMBoZ2AD/4s\ngDLI2iAUrQHtuNIhshPAbCaW6AVw46fwtCDALFhXK3rw12nezrgYWfehODqZH0R/\nke9kxuD/zQKBgCY3WLDE0TZQIRFvMXpsYSGGS1MLu0eun2r/w30KyJeRs4p3Gc7w\nsFUzlisw/mMdUAytWY0LdPLGOUFg1GY88UOMwM+EgsLz55JXQ1bFyebb+c7RKPWE\n4xHzM7MOhNxFhDrORF0xKiOD1ZYEpju//nKVqlOAi7Rgjs/JnfZOmR4dAoGAXcX0\na6B8iunXf0lgMs+LY5tCbn/oqjwwL4RPrRmlh+6GFjLQsx5vf3CRY9dcpbiA7YiM\nTcYm3fNrsUrsoB49ACnZZiiuvM3E+CyawFoMU62mWIj+kyYfo2fCDi1NhA5GJ0lX\nWD8bX1ECdQ+0Dnu6SV7JjmqjU8QGvEOo8fBr90UCgYEAxvr4swdT46qEm8kWHU3I\ng7yR2rbNYP9TUqg2YKTX3B1Ab9uX1S9c9gg2RdPp5Mxs4XSqVfqJr+yfZP3lSyUa\nT6l2cr36CBT9QNCpHNsfnv4ar+RDqxxojd1+5RFJU4Kg9cWbwB/oIB0g5T1q0HqJ\npqUx9x2LMNqJelwDx/57zt4=\n-----END PRIVATE KEY-----";
+#[cfg(any(test, feature = "test-support"))]
+pub const TEST_RSA_PRIVATE_KEY: &str = "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCrrWYCApN+866p\nxXEZHqkl9DTa/nQKcx1LPwryXBqAEfZen+gf038DjbmmzqggEbYTx62aUTiSAEs0\nNoouFy/+B9UUepaOMkQN/JqtxwdQjGSFb9++WCM6+5X7iXoyzjRg0VFqyA6LGGs7\nx1uxStvifhOcmFxLBXPD5shVYlT7KoERRv1FGsX4vbfuAjAku4MDuq7FDmc2a86P\nDGEcmrqGiEKlHrJgEPdYa8/OHxE6/Qy/UgQUjN0sQS7OjwbP5ef+93s8JE03JbLo\nljuerCLR5JVJmgZ4IQOOh5bdCR+/K3ZbyETOG+5Sop3iHMLwGCBls9BKK0eBYaPd\n9pGqzifzAgMBAAECggEADWV4gkulKtDlHkZT7vvfgyCtRzF36KDW9lozBnp9buT3\n7qZXvLQKQ0K56/RQVkBLjvuT5mjUG0B+ndJrsfEJQ69kxzZRrULq4JSHlWvkfDqY\nVXlHYlkKVr3vFDPEH1bL64op6kU2LVB4fa+uzgTjZ6ci7KNPAGOqhuzpURBdRUQI\n5UGDNcZPl5jWBRb9Jtjjkaxtvm2qSXC7jeV6rvcjkQhWHJFL2xrhT1IRKj8bUrLD\n21aLTM+mLW2iCuDSfOC3pWfZoQEhNkdVqsKFnKVOPIGRDysPqeRfloE9uMT7YK95\nT/aRksVvPE+bEDbKvdTsuOvvTKY2HRu2St+KbKtXkQKBgQDqpIArr6eftuInb2a8\ndYIuIWfI6UV9ernc9uXglo9JNGgXqcMI7wzaP35EkqAFROiXg29jjkUgQw8BDqwt\n437ic+Wf5+EYq8hQ8L0ig+zstt3FQ3v2i/teBZqOUsoCElXeYxR4DNbQCEbYAEs4\nzGRoqrBCQ2wwEbp0wxNswTKGvwKBgQC7TbhHQeA1es2RMvfZHIzO/8IoSyUV1F9/\nVDgX+pcUZ0FZfb2OMIDwb1w/1A+84NnC63iSI9E/6Rr6XSCNJk9eJBMBoZ2AD/4s\ngDLI2iAUrQHtuNIhshPAbCaW6AVw46fwtCDALFhXK3rw12nezrgYWfehODqZH0R/\nke9kxuD/zQKBgCY3WLDE0TZQIRFvMXpsYSGGS1MLu0eun2r/w30KyJeRs4p3Gc7w\nsFUzlisw/mMdUAytWY0LdPLGOUFg1GY88UOMwM+EgsLz55JXQ1bFyebb+c7RKPWE\n4xHzM7MOhNxFhDrORF0xKiOD1ZYEpju//nKVqlOAi7Rgjs/JnfZOmR4dAoGAXcX0\na6B8iunXf0lgMs+LY5tCbn/oqjwwL4RPrRmlh+6GFjLQsx5vf3CRY9dcpbiA7YiM\nTcYm3fNrsUrsoB49ACnZZiiuvM3E+CyawFoMU62mWIj+kyYfo2fCDi1NhA5GJ0lX\nWD8bX1ECdQ+0Dnu6SV7JjmqjU8QGvEOo8fBr90UCgYEAxvr4swdT46qEm8kWHU3I\ng7yR2rbNYP9TUqg2YKTX3B1Ab9uX1S9c9gg2RdPp5Mxs4XSqVfqJr+yfZP3lSyUa\nT6l2cr36CBT9QNCpHNsfnv4ar+RDqxxojd1+5RFJU4Kg9cWbwB/oIB0g5T1q0HqJ\npqUx9x2LMNqJelwDx/57zt4=\n-----END PRIVATE KEY-----";
 
 #[cfg(test)]
 mod tests {

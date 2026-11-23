@@ -6,7 +6,7 @@
 
 use axum::{extract::Request, middleware::Next, response::Response};
 
-use crate::infrastructure::telemetry::http::current_trace_id;
+use platform::telemetry::current_trace_id;
 
 pub const TRACE_ID_HEADER: &str = "X-Trace-Id";
 

@@ -8,8 +8,8 @@ use opentelemetry_sdk::metrics::{
 };
 use std::sync::Arc;
 
+use platform::telemetry::metrics::{METER_NAME, register_db_pool_gauges};
 use server::infrastructure::persistence::postgres::Database;
-use server::infrastructure::telemetry::metrics::{METER_NAME, register_db_pool_gauges};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
 /// `(state attribute or "", value)` for each point of the `u64` gauge `name`

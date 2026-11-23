@@ -8,7 +8,7 @@
 //! makes it anonymous, never a 401.
 //!
 //! Not traced, and not instrumented: the route is on the span skip list
-//! (`telemetry::http::UNTRACED_ROUTES`). Bad input is answered with the standard
+//! (`api::middleware::http_telemetry::UNTRACED_ROUTES`). Bad input is answered with the standard
 //! 400 and logged nowhere, so junk can't flood the logs.
 
 use std::sync::Arc;

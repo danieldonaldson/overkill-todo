@@ -83,7 +83,7 @@ fn derive_origin(base_url: &str) -> Result<String, String> {
     }
 
     let origin = format!("{}://{authority}", scheme.to_ascii_lowercase());
-    if origin.parse::<axum::http::HeaderValue>().is_err() {
+    if origin.parse::<http::HeaderValue>().is_err() {
         return Err(format!(
             "FRONTEND_BASE_URL does not yield a valid origin (got {trimmed:?})"
         ));
@@ -225,7 +225,7 @@ pub struct BotProtectionSettings {
 
 /// Crypto / JWT material. Consumed wholesale by [`Crypto::from_settings`].
 ///
-/// [`Crypto::from_settings`]: crate::infrastructure::crypto::Crypto::from_settings
+/// [`Crypto::from_settings`]: crate::crypto::Crypto::from_settings
 #[derive(Debug, Clone)]
 pub struct CryptoSettings {
     pub argon2_memory_cost: u32,

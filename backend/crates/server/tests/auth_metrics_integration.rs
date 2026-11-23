@@ -22,7 +22,7 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SimpleSpanProcessor};
-use server::infrastructure::telemetry::{
+use platform::telemetry::{
     self, LogFormat, ServiceInfo,
     metrics::{AuthMetrics, METER_NAME},
 };

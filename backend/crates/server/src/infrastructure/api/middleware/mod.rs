@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod csrf;
+pub mod http_telemetry;
 pub mod security_headers;
 pub mod trace_id;
 pub mod verification;

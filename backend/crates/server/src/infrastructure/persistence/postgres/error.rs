@@ -11,14 +11,7 @@
 //! Kept here in the persistence module (rather than as a `From<sqlx::Error>` impl on
 //! `DomainError`) so the domain layer keeps no dependency on `sqlx`.
 
-use crate::infrastructure::persistence::DatabaseError;
 use domain::errors::DomainError;
-
-impl From<sqlx::Error> for DatabaseError {
-    fn from(error: sqlx::Error) -> Self {
-        Self::new(error)
-    }
-}
 
 /// Maps a [`sqlx::Error`] to a [`DomainError`], preserving constraint classification.
 ///

@@ -6,7 +6,7 @@ use jsonwebtoken::Validation;
 use jsonwebtoken::errors::ErrorKind;
 use std::sync::LazyLock;
 
-use crate::infrastructure::crypto::TokenKeyring;
+use platform::crypto::TokenKeyring;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -163,8 +163,8 @@ pub fn verify_jwt(token: &str, keys: &TokenKeyring) -> Result<Claims, AppError> 
 mod tests {
     use super::*;
     use crate::infrastructure::api::error::auth_codes;
-    use crate::infrastructure::crypto::TEST_RSA_PRIVATE_KEY;
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use platform::crypto::TEST_RSA_PRIVATE_KEY;
     use proptest::prelude::*;
 
     fn keys() -> TokenKeyring {
@@ -224,11 +224,9 @@ mod tests {
     /// SECURITY: a token signed by a key the verifier doesn't trust is refused.
     #[test]
     fn test_token_from_an_untrusted_key_rejected() {
-        let other = TokenKeyring::from_config(
-            &crate::infrastructure::crypto::keyring_test_entry("other", 9),
-            None,
-        )
-        .unwrap();
+        let other =
+            TokenKeyring::from_config(&platform::crypto::keyring_test_entry("other", 9), None)
+                .unwrap();
         let token = create_jwt(Uuid::now_v7(), true, "user", &other, 15).expect("creates");
         assert_rejected(verify_jwt(&token, &keys()));
     }

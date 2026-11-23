@@ -18,6 +18,7 @@ use application::{
     },
 };
 use domain::entities::OAuthProvider;
+use platform::{config::Settings, crypto::Crypto, telemetry};
 use server::infrastructure::{
     api::{
         RouterDeps, create_router,
@@ -27,8 +28,6 @@ use server::infrastructure::{
             profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
         },
     },
-    config::Settings,
-    crypto::Crypto,
     oauth::GoogleOAuthClient,
     persistence::{self, Persistence},
     services::{
@@ -36,7 +35,6 @@ use server::infrastructure::{
         CryptoTokenService, HickoryMxValidator, NoOpMxValidator, NoOpTurnstileService,
         RandomCodeGenerator, SmtpEmailService,
     },
-    telemetry,
 };
 
 /// Use mimalloc (secure mode) as the global allocator. Reduces fragmentation
@@ -92,8 +90,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
 
     // Before any TLS client (Google, Turnstile, SMTP) is built: post-quantum
     // key exchange first (OT-009).
-    server::infrastructure::tls::install()
-        .map_err(|e| anyhow::anyhow!("TLS provider setup failed: {e}"))?;
+    platform::tls::install().map_err(|e| anyhow::anyhow!("TLS provider setup failed: {e}"))?;
 
     let settings = Settings::from_env()?;
 

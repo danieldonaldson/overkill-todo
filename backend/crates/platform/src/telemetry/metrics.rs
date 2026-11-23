@@ -9,7 +9,7 @@
 use super::{ServiceInfo, resource};
 use std::sync::Arc;
 
-use crate::infrastructure::persistence::DatabaseHealth;
+use crate::persistence::DatabaseHealth;
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram, Meter},
@@ -48,7 +48,7 @@ pub fn global_meter() -> Meter {
 }
 
 /// Request metrics, recorded once per request by
-/// [`super::http::record_request_metrics`].
+/// `api::middleware::http_telemetry::record_request_metrics`.
 #[derive(Clone)]
 pub struct HttpMetrics {
     duration: Histogram<f64>,
@@ -73,7 +73,7 @@ impl HttpMetrics {
     }
 
     /// Record one request. `route` must be a route template (or
-    /// [`super::http::UNMATCHED_ROUTE`]), never a raw path, so the label set
+    /// `UNMATCHED_ROUTE`), never a raw path, so the label set
     /// stays bounded.
     pub fn record(&self, route: &str, method: &str, status: u16, seconds: f64) {
         self.duration.record(
@@ -336,8 +336,12 @@ pub fn register_db_pool_gauges(meter: &Meter, db: &Arc<impl DatabaseHealth + 'st
 }
 
 /// Helpers for reading metrics back in tests.
-#[cfg(test)]
-pub(crate) mod testing {
+#[cfg(any(test, feature = "test-support"))]
+#[allow(
+    clippy::missing_panics_doc,
+    reason = "test-only metrics inspection helpers"
+)]
+pub mod testing {
     use opentelemetry::KeyValue;
     use opentelemetry_sdk::metrics::{
         InMemoryMetricExporter, PeriodicReader, SdkMeterProvider,
@@ -345,10 +349,11 @@ pub(crate) mod testing {
     };
 
     use super::meter_provider;
-    use crate::infrastructure::telemetry::ServiceInfo;
+    use crate::telemetry::ServiceInfo;
 
     /// A provider backed by an in-memory exporter. Call
     /// `provider.force_flush()` before reading the exporter.
+    #[must_use]
     pub fn in_memory() -> (SdkMeterProvider, InMemoryMetricExporter) {
         let service = ServiceInfo {
             name: "t".into(),
@@ -387,11 +392,13 @@ pub(crate) mod testing {
     }
 
     /// Unit of the metric called `name`, if exported.
+    #[must_use]
     pub fn unit(exporter: &InMemoryMetricExporter, name: &str) -> Option<String> {
         with_metric(exporter, name, |m| m.unit().to_owned())
     }
 
     /// `(attributes, count)` for each data point of the `f64` histogram `name`.
+    #[must_use]
     pub fn f64_histogram_points(
         exporter: &InMemoryMetricExporter,
         name: &str,
@@ -409,6 +416,7 @@ pub(crate) mod testing {
 
     /// `(attributes, bucket counts)` for each data point of the `f64`
     /// histogram `name`, sorted by attributes, with its bucket boundaries.
+    #[must_use]
     pub fn f64_histogram_buckets(
         exporter: &InMemoryMetricExporter,
         name: &str,
@@ -433,6 +441,7 @@ pub(crate) mod testing {
 
     /// `(attributes, value)` for each data point of the `u64` sum `name`,
     /// sorted by attributes.
+    #[must_use]
     pub fn u64_sum_points(exporter: &InMemoryMetricExporter, name: &str) -> Vec<(Attrs, u64)> {
         let mut points = with_metric(exporter, name, |m| {
             let AggregatedMetrics::U64(MetricData::Sum(sum)) = m.data() else {

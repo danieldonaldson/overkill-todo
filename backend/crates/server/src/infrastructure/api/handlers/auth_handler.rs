@@ -19,19 +19,20 @@ use application::{
 };
 use domain::errors::DomainError;
 
-use crate::infrastructure::{
-    api::{
-        cookies::{clear_csrf_cookie, clear_jwt_cookie, clear_refresh_cookie},
-        error::AppError,
-        extractors::ValidatedJson,
-        handlers::{
-            session::{build_session, extract_refresh_token_cookie, require_device_fingerprint},
-            verify_turnstile,
-        },
-        middleware::AuthUser,
-    },
+use platform::{
     crypto::Crypto,
     telemetry::metrics::{AuthFlow, AuthMetrics, AuthOutcome, BotCheckForm, SessionAnomaly},
+};
+
+use crate::infrastructure::api::{
+    cookies::{clear_csrf_cookie, clear_jwt_cookie, clear_refresh_cookie},
+    error::AppError,
+    extractors::ValidatedJson,
+    handlers::{
+        session::{build_session, extract_refresh_token_cookie, require_device_fingerprint},
+        verify_turnstile,
+    },
+    middleware::AuthUser,
 };
 
 /// How long registration will wait for the verification email to be handed to

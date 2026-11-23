@@ -25,7 +25,7 @@ use opentelemetry::{
 };
 use tracing::{Instrument, field::Empty};
 
-use crate::infrastructure::telemetry::metrics::global_meter;
+use platform::telemetry::metrics::global_meter;
 
 /// `job.run.duration` bucket bounds in seconds: 10 ms … 5 min.
 const RUN_DURATION_BUCKETS: &[f64] = &[
@@ -175,10 +175,8 @@ mod tests {
 
     use super::*;
     use crate::infrastructure::tasks::account_purger;
-    use crate::infrastructure::telemetry::metrics::testing::{
-        Attrs, f64_histogram_points, in_memory,
-    };
-    use crate::infrastructure::telemetry::{
+    use platform::telemetry::metrics::testing::{Attrs, f64_histogram_points, in_memory};
+    use platform::telemetry::{
         LogFormat, ServiceInfo, metrics::METER_NAME, subscriber, tracer_provider,
     };
 
@@ -225,7 +223,7 @@ mod tests {
         let sub = subscriber(
             &provider,
             EnvFilter::new(format!("{}=info", env!("CARGO_CRATE_NAME"))),
-            crate::infrastructure::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
+            platform::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
             LogFormat::Json,
             capture.clone(),
             service,

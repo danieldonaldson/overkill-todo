@@ -271,7 +271,7 @@ impl TokenKeyring {
     /// # Panics
     ///
     /// Never: the fixed test keys are well-formed.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     #[must_use]
     pub fn for_testing() -> Self {
         Self::from_config(&test_entry("test-a", 1), Some(&test_entry("test-b", 2)))
@@ -281,7 +281,7 @@ impl TokenKeyring {
 
 /// A `<kid>:<base64 secret>` entry with a fixed 64-byte test secret derived from
 /// `fill`. Test use only.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[must_use]
 pub fn test_entry(kid: &str, fill: u8) -> String {
     use base64::Engine;

@@ -23,14 +23,11 @@ use utoipa_axum::{router::OpenApiRouter, routes};
 use utoipa_swagger_ui::SwaggerUi;
 
 use super::openapi::ApiDoc;
+use super::state::ReadinessCheck;
 #[cfg(feature = "swagger-ui")]
-use crate::infrastructure::config::is_dev_mode;
-use crate::infrastructure::crypto::Crypto;
-use crate::infrastructure::persistence::Database;
-use crate::infrastructure::telemetry::{
-    http::{http_trace_layer, record_request_metrics},
-    metrics::HttpMetrics,
-};
+use platform::config::is_dev_mode;
+use platform::crypto::Crypto;
+use platform::telemetry::metrics::HttpMetrics;
 
 use super::{
     extractors::{AdminUser, SuperAdminUser},
@@ -45,8 +42,10 @@ use super::{
     },
     middleware::csrf::is_excluded_path,
     middleware::{
-        auth_middleware, csrf_middleware, require_fresh_session, require_verified_email,
-        security_headers_middleware, trace_id_middleware,
+        auth_middleware, csrf_middleware,
+        http_telemetry::{http_trace_layer, record_request_metrics},
+        require_fresh_session, require_verified_email, security_headers_middleware,
+        trace_id_middleware,
     },
     openapi::{
         CSRF_HEADER_SCHEME, SESSION_COOKIE_SCHEME, add_response_if_missing, for_each_operation,
@@ -68,8 +67,8 @@ pub struct RouterDeps {
     pub profile: Arc<ProfileHandlerDeps>,
     pub admin: Arc<AdminHandlerDeps>,
     pub client_telemetry: Arc<ClientTelemetryHandlerDeps>,
-    /// Database handle for the `/health/ready` probe.
-    pub db: Arc<Database>,
+    /// Database readiness check for the `/health/ready` probe.
+    pub db: Arc<dyn ReadinessCheck>,
     /// User repository handle for the admin-group [`require_fresh_session`]
     /// middleware, which rejects tokens superseded by a privilege change.
     pub users: Arc<dyn UserRepository>,

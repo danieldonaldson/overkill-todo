@@ -284,8 +284,8 @@ mod tests {
     use super::*;
     use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 
-    use crate::infrastructure::telemetry::metrics::testing::Attrs;
-    use crate::infrastructure::telemetry::metrics::{METER_NAME, testing};
+    use crate::telemetry::metrics::testing::Attrs;
+    use crate::telemetry::metrics::{METER_NAME, testing};
     use application::dto::{
         ClientErrorKind, IslandStage, NavOutcome, ViewTransitionResult, VitalName,
     };

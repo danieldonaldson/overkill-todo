@@ -29,8 +29,8 @@ use tower_http::{
 use tracing::{Span, field::Empty};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-use super::metrics::HttpMetrics;
-use super::redact::redact_query;
+use platform::telemetry::metrics::HttpMetrics;
+use platform::telemetry::redact::redact_query;
 
 /// Route label for requests that matched no route (keeps span names and, later,
 /// metric labels bounded no matter how many distinct paths are probed).
@@ -166,16 +166,6 @@ pub async fn record_request_metrics(
     response
 }
 
-/// Trace ID (32 lowercase hex) of the current span, if it has a valid
-/// OpenTelemetry context.
-#[must_use]
-pub fn current_trace_id() -> Option<String> {
-    let cx = Span::current().context();
-    let span_ref = cx.span();
-    let sc = span_ref.span_context();
-    sc.is_valid().then(|| sc.trace_id().to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use axum::{
@@ -190,7 +180,7 @@ mod tests {
     use tracing_subscriber::EnvFilter;
 
     use super::*;
-    use crate::infrastructure::telemetry::{LogFormat, ServiceInfo, subscriber, tracer_provider};
+    use platform::telemetry::{LogFormat, ServiceInfo, export_filter, subscriber, tracer_provider};
 
     #[expect(
         clippy::disallowed_methods,
@@ -225,7 +215,7 @@ mod tests {
         let sub = subscriber(
             &provider,
             EnvFilter::new("off"),
-            crate::infrastructure::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
+            export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
             LogFormat::Json,
             std::io::sink,
             service,
@@ -340,7 +330,7 @@ mod metrics_tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::infrastructure::telemetry::metrics::{
+    use platform::telemetry::metrics::{
         METER_NAME,
         testing::{Attrs, f64_histogram_points, in_memory},
     };

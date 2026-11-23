@@ -88,11 +88,11 @@ assumptions:
 - Attackers: A1, A3, A4
 - Strength: tested, property-tested
 - Checks:
-  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::refuses_alg_none`
-  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::refuses_hs256_under_the_right_key`
-  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::refuses_a_missing_or_unknown_kid_without_trying_other_keys`
-  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::refuses_any_change_to_header_claims_or_signature`
-  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::prop_random_input_never_verifies`
+  - `backend/crates/platform/src/crypto/keyring.rs::refuses_alg_none`
+  - `backend/crates/platform/src/crypto/keyring.rs::refuses_hs256_under_the_right_key`
+  - `backend/crates/platform/src/crypto/keyring.rs::refuses_a_missing_or_unknown_kid_without_trying_other_keys`
+  - `backend/crates/platform/src/crypto/keyring.rs::refuses_any_change_to_header_claims_or_signature`
+  - `backend/crates/platform/src/crypto/keyring.rs::prop_random_input_never_verifies`
   - `backend/crates/server/src/infrastructure/api/jwt.rs::test_rs256_token_rejected`
   - `backend/crates/server/src/infrastructure/api/jwt.rs::test_wrong_issuer_rejected`
   - `backend/crates/server/src/infrastructure/api/jwt.rs::test_wrong_audience_rejected`
@@ -642,7 +642,7 @@ browsers treat as secure; Safari may need HTTPS for local development.
 - Strength: tested
 - Checks:
   - `backend/crates/server/tests/telemetry_integration.rs::auth_flows_leave_no_secrets_in_telemetry`
-  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::startup_log_names_the_keys_and_holds_no_secrets`
+  - `backend/crates/platform/src/crypto/keyring.rs::startup_log_names_the_keys_and_holds_no_secrets`
 
 ### P-34: The browser report endpoint takes identity only from the session, changes no state and returns nothing
 
@@ -761,8 +761,8 @@ they're left to the proptests.
 - Strength: tested, property-tested
 - Checks:
   - `backend/crates/server/tests/profile_integration.rs::me_with_garbage_token_returns_401`
-  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::refuses_malformed_tokens`
-  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::prop_random_segments_never_verify`
+  - `backend/crates/platform/src/crypto/keyring.rs::refuses_malformed_tokens`
+  - `backend/crates/platform/src/crypto/keyring.rs::prop_random_segments_never_verify`
   - `backend/crates/server/src/infrastructure/api/cookies.rs::extract_cookie_returns_none_for_non_utf8_header`
   - `backend/crates/server/tests/oauth_integration.rs::callback_with_malformed_user_id_in_state_is_rejected`
 - Gap: Sampled. Fuzzing every operation is OT-011 (API fuzzing); link its checks here when it lands.

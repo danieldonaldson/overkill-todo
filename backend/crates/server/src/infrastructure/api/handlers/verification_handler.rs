@@ -26,20 +26,21 @@ use application::{
 };
 use domain::{entities::attempt_lockout::RESEND_COOLDOWN_MINUTES, errors::DomainError};
 
-use crate::infrastructure::{
-    api::{
-        error::{AppError, VerificationOrStandardError},
-        extractors::{ApiQuery, ValidatedJson},
-        handlers::{
-            session::{
-                build_session, extract_device_fingerprint, require_device_fingerprint,
-                wait_until_after_second_of,
-            },
-            verify_turnstile,
-        },
-    },
+use platform::{
     crypto::Crypto,
     telemetry::metrics::{AuthFlow, AuthMetrics, AuthOutcome, BotCheckForm, LockableCode},
+};
+
+use crate::infrastructure::api::{
+    error::{AppError, VerificationOrStandardError},
+    extractors::{ApiQuery, ValidatedJson},
+    handlers::{
+        session::{
+            build_session, extract_device_fingerprint, require_device_fingerprint,
+            wait_until_after_second_of,
+        },
+        verify_turnstile,
+    },
 };
 
 /// Dependencies for verification-related handlers.

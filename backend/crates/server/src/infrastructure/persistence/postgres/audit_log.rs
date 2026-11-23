@@ -15,13 +15,13 @@ use uuid::Uuid;
 use super::connection::Database;
 use super::error::persist_err;
 use super::time::ToDomain;
-use crate::infrastructure::telemetry::http::current_trace_id;
 use application::ports::outgoing::{
     AuditAccount, AuditActorView, AuditEntry, AuditFilter, AuditLogRepository, SubjectEntry,
 };
 use domain::entities::{Actor, AuditDetails, AuditEvent, AuditKind, OAuthProvider};
 use domain::errors::DomainError;
 use domain::value_objects::{UserId, UserRole};
+use platform::telemetry::current_trace_id;
 
 fn details_json(details: AuditDetails) -> Value {
     match details {

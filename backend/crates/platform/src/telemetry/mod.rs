@@ -10,14 +10,16 @@
 //! a meter provider with no reader makes instruments no-ops.
 
 pub mod client_reports;
-pub mod http;
 pub mod log_format;
 pub mod metrics;
 pub mod redact;
 
 use std::time::Duration;
 
-use opentelemetry::{KeyValue, trace::TracerProvider as _};
+use opentelemetry::{
+    KeyValue,
+    trace::{TraceContextExt, TracerProvider as _},
+};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     Resource,
@@ -28,16 +30,27 @@ use opentelemetry_sdk::{
 use opentelemetry_semantic_conventions::resource::{
     DEPLOYMENT_ENVIRONMENT_NAME, SERVICE_NAME, SERVICE_VERSION,
 };
-use tracing::Subscriber;
+use tracing::{Span, Subscriber};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 use tracing_subscriber::{
     EnvFilter, Layer, fmt::MakeWriter, layer::SubscriberExt, registry::LookupSpan,
     util::SubscriberInitExt,
 };
 
-use crate::infrastructure::config::TelemetrySettings;
+use crate::config::TelemetrySettings;
 pub use log_format::ServiceInfo;
 use log_format::{JsonFields, JsonFormat, TraceIdLayer, pretty_fields};
 use redact::RedactingSpanProcessor;
+
+/// Trace ID (32 lowercase hex) of the current span, if it has a valid
+/// OpenTelemetry context.
+#[must_use]
+pub fn current_trace_id() -> Option<String> {
+    let cx = Span::current().context();
+    let span_ref = cx.span();
+    let sc = span_ref.span_context();
+    sc.is_valid().then(|| sc.trace_id().to_string())
+}
 
 /// Instrumentation scope name for spans created through `tracing`.
 const TRACER_NAME: &str = "overkill-todo";

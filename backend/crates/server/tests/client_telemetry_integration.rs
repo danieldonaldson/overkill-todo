@@ -26,11 +26,11 @@ use opentelemetry_sdk::metrics::{
     data::{AggregatedMetrics, MetricData, ScopeMetrics, SumDataPoint},
 };
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SimpleSpanProcessor};
-use serde_json::{Value, json};
-use server::infrastructure::api::cookies::AUTH_COOKIE;
-use server::infrastructure::telemetry::{
+use platform::telemetry::{
     self, LogFormat, ServiceInfo, client_reports::TelemetryClientReportSink, metrics::METER_NAME,
 };
+use serde_json::{Value, json};
+use server::infrastructure::api::cookies::AUTH_COOKIE;
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;

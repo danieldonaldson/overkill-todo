@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use server::infrastructure::crypto::Crypto;
+use platform::crypto::Crypto;
 
 const FINGERPRINT: &str = "test-device-rotation";
 const PASSWORD: &str = "hunter2hunter2";

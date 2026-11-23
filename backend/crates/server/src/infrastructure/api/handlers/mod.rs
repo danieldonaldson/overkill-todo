@@ -13,8 +13,8 @@ pub mod session;
 pub mod verification_handler;
 
 use crate::infrastructure::api::error::AppError;
-use crate::infrastructure::telemetry::metrics::{AuthMetrics, BotCheckForm, BotCheckReason};
 use application::ports::TurnstileService;
+use platform::telemetry::metrics::{AuthMetrics, BotCheckForm, BotCheckReason};
 
 /// Verify a Turnstile token for an incoming request.
 ///

@@ -30,7 +30,8 @@ impl DatabaseMaintenance for Database {
             MAINTENANCE_BATCH_SIZE
         )
         .execute(pool)
-        .await?
+        .await
+        .map_err(DatabaseError::new)?
         .rows_affected();
 
         let email_verification_codes = sqlx::query!(
@@ -48,7 +49,8 @@ impl DatabaseMaintenance for Database {
             LOCKOUT_MEMORY_DAYS
         )
         .execute(pool)
-        .await?
+        .await
+        .map_err(DatabaseError::new)?
         .rows_affected();
 
         let password_reset_codes = sqlx::query!(
@@ -66,7 +68,8 @@ impl DatabaseMaintenance for Database {
             LOCKOUT_MEMORY_DAYS
         )
         .execute(pool)
-        .await?
+        .await
+        .map_err(DatabaseError::new)?
         .rows_affected();
 
         // OT-008 retention: audit events are kept for 7 years, then deleted.
@@ -85,7 +88,8 @@ impl DatabaseMaintenance for Database {
             MAINTENANCE_BATCH_SIZE
         )
         .execute(pool)
-        .await?
+        .await
+        .map_err(DatabaseError::new)?
         .rows_affected();
 
         Ok(MaintenanceReport {

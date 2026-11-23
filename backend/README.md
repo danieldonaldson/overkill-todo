@@ -11,6 +11,7 @@ Cargo workspace under `crates/`:
 - `crates/domain/` — entities, value objects, domain errors (no I/O)
 - `crates/application/` — use cases, DTOs, incoming and outgoing port traits
 - `crates/shared/` — dependency-free utilities (error fingerprinting, redaction)
+- `crates/platform/` — config, crypto, TLS, telemetry, driver-neutral persistence traits
 - `crates/server/` — `infrastructure/` adapters, binary (`main.rs`), integration tests (`tests/`), benches, examples
 
 ## Run

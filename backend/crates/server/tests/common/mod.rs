@@ -45,9 +45,9 @@ use server::infrastructure::{
 };
 use sqlx::PgPool;
 
-use server::infrastructure::crypto::Crypto;
-use server::infrastructure::telemetry::client_reports::TelemetryClientReportSink;
-use server::infrastructure::telemetry::metrics::AuthMetrics;
+use platform::crypto::Crypto;
+use platform::telemetry::client_reports::TelemetryClientReportSink;
+use platform::telemetry::metrics::AuthMetrics;
 
 static TEST_CRYPTO: OnceLock<Arc<Crypto>> = OnceLock::new();
 
@@ -73,7 +73,7 @@ pub fn test_token_key(kid: &str, fill: u8) -> String {
 pub fn crypto_with_token_keys(signing: &str, trusted: Option<&str>) -> Arc<Crypto> {
     // `Crypto::for_testing()` is library-test-only (`cfg(test)`) and not
     // reachable from this integration-test crate, so build the slice here.
-    let crypto = server::infrastructure::config::CryptoSettings {
+    let crypto = platform::config::CryptoSettings {
         argon2_memory_cost: 4096,
         argon2_time_cost: 1,
         argon2_parallelism: 1,

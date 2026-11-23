@@ -2603,6 +2603,42 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
+name = "platform"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "application",
+ "argon2",
+ "base64 0.23.1",
+ "config",
+ "domain",
+ "dotenvy",
+ "hex",
+ "http",
+ "jiff 1.0.0",
+ "jsonwebtoken",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
+ "proptest",
+ "rand 0.10.4",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "shared",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "plotters"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3463,17 +3499,14 @@ dependencies = [
 name = "server"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "anyhow",
  "application",
  "argon2",
  "async-trait",
  "axum",
  "base64 0.23.1",
- "config",
  "criterion",
  "domain",
- "dotenvy",
  "hex",
  "hickory-resolver",
  "hmac",
@@ -3484,13 +3517,11 @@ dependencies = [
  "lettre",
  "mimalloc",
  "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry-semantic-conventions",
  "opentelemetry_sdk",
+ "platform",
  "proptest",
  "rand 0.10.4",
  "reqwest",
- "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.1",

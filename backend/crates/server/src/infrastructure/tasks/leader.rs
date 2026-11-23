@@ -26,7 +26,7 @@ use opentelemetry::{
 };
 
 use crate::infrastructure::persistence::{LeaderLock, LeaderLocks};
-use crate::infrastructure::telemetry::metrics::global_meter;
+use platform::telemetry::metrics::global_meter;
 
 /// The `leader.is_leader` gauge. Cheap to clone.
 #[derive(Clone)]

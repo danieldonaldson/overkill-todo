@@ -22,7 +22,9 @@ impl Database {
     /// # Errors
     /// Returns an error if the connection string is invalid or the pool cannot be created.
     pub async fn new(database_url: &str, max_connections: u32) -> Result<Self, DatabaseError> {
-        let pool = create_pool(database_url, max_connections).await?;
+        let pool = create_pool(database_url, max_connections)
+            .await
+            .map_err(DatabaseError::new)?;
         Ok(Self { pool })
     }
 
@@ -54,7 +56,8 @@ impl DatabaseHealth for Database {
     async fn ping(&self) -> Result<(), DatabaseError> {
         sqlx::query!("SELECT 1 as ping")
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_err(DatabaseError::new)?;
         Ok(())
     }
 

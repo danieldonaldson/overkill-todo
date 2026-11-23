@@ -20,6 +20,7 @@ const RANKS: &[(&str, u8)] = &[
     ("shared", 0),
     ("domain", 0),
     ("application", 1),
+    ("platform", 2),
     ("server", 4),
 ];
 
@@ -27,7 +28,8 @@ const ALLOWED_EDGES: &[(&str, &[&str])] = &[
     ("shared", &[]),
     ("domain", &[]),
     ("application", &["domain", "shared"]),
-    ("server", &["shared", "domain", "application"]),
+    ("platform", &["shared", "domain", "application"]),
+    ("server", &["shared", "domain", "application", "platform"]),
 ];
 
 const DOMAIN_NORMAL_DEPS: &[&str] = &["jiff", "thiserror", "uuid"];

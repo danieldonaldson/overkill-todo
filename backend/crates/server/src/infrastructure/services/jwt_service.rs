@@ -6,10 +6,10 @@ use jiff::Timestamp;
 use jsonwebtoken::Validation;
 use serde::{Deserialize, Serialize};
 
-use crate::infrastructure::crypto::{Crypto, TOKEN_REJECTED_MESSAGE as REJECTED, TokenKeyring};
 use application::ports::JwtService;
 use domain::errors::DomainError;
 use domain::value_objects::{ResetCodeId, UserId};
+use platform::crypto::{Crypto, TOKEN_REJECTED_MESSAGE as REJECTED, TokenKeyring};
 
 /// The signup/reset validation, built once.
 static ONE_TIME_VALIDATION: LazyLock<Validation> = LazyLock::new(|| {
@@ -243,11 +243,8 @@ mod tests {
     #[test]
     fn reset_token_from_a_retired_key_is_rejected() {
         let old = Crypto::for_testing_with_tokens(
-            TokenKeyring::from_config(
-                &crate::infrastructure::crypto::keyring_test_entry("retired", 7),
-                None,
-            )
-            .unwrap(),
+            TokenKeyring::from_config(&platform::crypto::keyring_test_entry("retired", 7), None)
+                .unwrap(),
         );
         let token = CryptoJwtService::new(Arc::new(old))
             .create_reset_token(

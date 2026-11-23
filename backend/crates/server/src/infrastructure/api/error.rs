@@ -2,12 +2,12 @@
 
 use domain::errors::DomainError;
 
-use crate::infrastructure::config::is_dev_mode;
 use axum::{
     Json,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use platform::config::is_dev_mode;
 use serde::Serialize;
 use shared::fingerprint::generate_error_fingerprint;
 use utoipa::ToSchema;
@@ -130,7 +130,7 @@ impl AppError {
     pub fn token_rejected() -> Self {
         Self::Authorization {
             code: auth_codes::TOKEN_INVALID,
-            message: crate::infrastructure::crypto::TOKEN_REJECTED_MESSAGE.into(),
+            message: platform::crypto::TOKEN_REJECTED_MESSAGE.into(),
         }
     }
 
