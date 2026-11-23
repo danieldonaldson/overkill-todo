@@ -19,7 +19,7 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
 
 ## Backend rules
 
-- Dependencies point inward only: `server` (tasks, wiring) → adapters (`persistence-postgres`, `services`, `api`) → `platform` → `application` → `domain`, with `shared` as a leaf. Adapters never depend on each other; `domain` has no I/O crates.
+- Dependencies point inward only: `server` (tasks, wiring) → adapters (`persistence-postgres`, `services`, `api`) → `{application, platform}`, with `application → {domain, shared}` and `platform → {shared}`. Adapters never depend on each other; `platform` is pure infrastructure (`shared`-only) and `domain` has no I/O crates.
 - New external service = outgoing port + real adapter (`crates/services/src/`) + no-op adapter, chosen in
   `crates/server/src/main.rs`, with production refusing the no-op.
 - `sqlx::query!` / `query_as!` only (`crates/persistence-postgres/src/`). Migrations are forward-only and must stay

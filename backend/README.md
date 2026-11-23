@@ -11,9 +11,9 @@ Cargo workspace under `crates/`:
 - `crates/domain/` — entities, value objects, domain errors (no I/O)
 - `crates/application/` — use cases, DTOs, incoming and outgoing port traits
 - `crates/shared/` — dependency-free utilities (error fingerprinting, redaction)
-- `crates/platform/` — config, crypto, TLS, telemetry, driver-neutral persistence traits
+- `crates/platform/` — pure infrastructure (`shared`-only): config, crypto & JWT rules, TLS, telemetry, driver-neutral persistence traits
 - `crates/persistence-postgres/` — sqlx Postgres adapter (only normal `sqlx` user)
-- `crates/services/` — external service & OAuth adapters (SMTP, Argon2, JWT, Turnstile, MX, Google OAuth)
+- `crates/services/` — external service, OAuth & browser-report sink adapters (SMTP, Argon2, JWT, Turnstile, MX, Google OAuth, client telemetry)
 - `crates/api/` — HTTP API adapter (Axum handlers, middleware, extractors, router, OpenAPI + `export_openapi`)
 - `crates/server/` — composition root (`main.rs`), background `tasks/`, integration tests (`tests/`), benches
 

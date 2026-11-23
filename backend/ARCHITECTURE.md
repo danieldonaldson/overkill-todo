@@ -12,9 +12,9 @@ crates/
 │   │   └── outgoing/         # Traits implemented by adapters (repos, services)
 │   └── use_cases/            # Business logic — depends on port traits, not adapters
 ├── shared/src/               # Dependency-free leaf (error fingerprinting, redaction rules)
-├── platform/                 # Config, crypto, TLS, telemetry, driver-neutral persistence traits
+├── platform/                 # Pure infrastructure (config, crypto/token rules, TLS, telemetry, persistence plumbing traits) — depends only on shared
 ├── persistence-postgres/     # sqlx Postgres adapter (only sqlx normal-dependency user)
-├── services/                 # External service & Google OAuth adapters
+├── services/                 # External service, Google OAuth & browser-report sink adapters
 ├── api/                      # HTTP adapter (handlers, middleware, extractors, router, OpenAPI)
 │   └── examples/             # export_openapi
 └── server/                   # Composition root, background tasks, binary, tests, benches
@@ -26,8 +26,9 @@ crates/
     └── benches/              # Criterion benchmarks
 ```
 
-Dependencies only point inward: `server → {persistence-postgres, services, api} → platform → application → domain`,
-with `shared` as a leaf (used by `application`, `platform`, `api`, and `server`). Adapters never depend on each other. The crate-graph
+Dependencies only point inward: `server → {persistence-postgres, services, api} → {application, platform}`,
+with `application → {domain, shared}` and `platform → {shared}` (`domain` has no workspace dependencies).
+Adapters never depend on each other, and `platform` is pure infrastructure below the adapters rather than depending on `application`. The crate-graph
 gate (`crates/server/tests/crate_graph.rs`) enforces this at the workspace level
 and locks `domain` and `application` third-party dependencies to an allowlist.
 The domain imports no `sqlx` or `serde`: Postgres enum mappings live in
@@ -36,10 +37,11 @@ The domain imports no `sqlx` or `serde`: Postgres enum mappings live in
 
 **`sqlx` is confined to `crates/persistence-postgres/`**, and only
 `main.rs` wiring, tests, and benches name that crate (`tests/` and `benches/`
-also allow `#[sqlx::test]` and `PgPool`/`PgPoolOptions`). Driver-neutral
-plumbing traits live in `platform::persistence`. The driver is chosen at compile
+also allow `#[sqlx::test]` and `PgPool`/`PgPoolOptions`). **Architectural decision — driver-neutral plumbing vs. repository ports:**
+plumbing interfaces with no business meaning live in `platform::persistence`, whereas
+all business repository ports remain in `application::ports::outgoing`. The driver is chosen at compile
 time, so dispatch is static: `server::Database` aliases `persistence_postgres::Database`,
-and other infrastructure modules use `platform::persistence` traits, either as
+and other modules use `platform::persistence` traits, either as
 generic bounds or as trait methods on that alias. The traits are `LeaderLocks` /
 `LeaderLock` (leader election in `tasks/leader.rs`), `DatabaseMaintenance`
 (`tasks/database_maintenance.rs`) and `DatabaseHealth` (`/health/ready` and the
@@ -54,10 +56,12 @@ means pointing the `server::Database` alias and the `open` call in `main.rs` at 
 
 `shared/` is a true leaf: it imports nothing from any layer and holds only
 `fingerprint` and `redact` (the field-name and URL-query rules, shared by the
-telemetry exits and the browser-report use case). `Crypto` lives in `infrastructure/crypto.rs` because it is built from
-`CryptoSettings` and holds key material. The HTTP-facing `AppError` (with its
+telemetry exits and the browser-report use case). `Crypto` and shared JWT envelope
+validation (`platform::crypto::token`) live in `crates/platform/src/crypto/` because `Crypto` is built from
+`CryptoSettings`, holds key material, and guarantees identical `typ`/`iss`/`aud`/`iat`/`exp`
+rules across all four token kinds (`Session`, `Signup`, `Reset`, `OAuthState`). The HTTP-facing `AppError` (with its
 `IntoResponse`/`From` mappings) and the helpers that produce it — `csrf`, `jwt`,
-`oauth_state` — live in `crates/api` (they import `axum`/`jsonwebtoken`).
+`oauth_state` — live in `crates/api` (they import `axum`/`jsonwebtoken`, delegating token signing and verification to `platform::crypto::token`).
 
 Handlers stay thin: they parse the request, run edge admission (Turnstile, device
 fingerprint), call one use case, and turn its result into cookies and a response.
@@ -66,11 +70,13 @@ reset) happen in use cases. The session access JWT and CSRF token are an HTTP
 concern, so `build_session` mints them in `crates/api`, next to the
 middleware that verifies them.
 
-DTOs (`application/dto/`) are likewise not a purely inward layer: every DTO derives
-`serde` (`Serialize`/`Deserialize`) and `utoipa::ToSchema`, and request DTOs add
-`validator::Validate` with `#[validate(...)]` attributes. **Input validation lives
-at the DTO boundary** (enforced by the `ValidatedJson` extractor), so the DTO layer
-intentionally carries serialization/OpenAPI/validation concerns.
+**Architectural decision — OpenAPI and validation metadata on `application` DTOs:**
+DTOs (`crates/application/src/dto/`) derive `serde` (`Serialize`/`Deserialize`) and
+`utoipa::ToSchema` on purpose, and request DTOs add `validator::Validate` with
+`#[validate(...)]` attributes. Keeping one shared contract between the use cases,
+the OpenAPI description (`crates/api`), and the `ValidatedJson` extractor avoids
+duplicating every request/response struct across `application` and `api`; `crate_graph.rs`
+explicitly allowlists these schema/validation dependencies in `application`.
 
 ## Routes and the API description
 
@@ -210,7 +216,7 @@ Never read crypto env vars directly in library code — always go through an inj
 
 ## Telemetry
 
-`infrastructure/telemetry/` holds everything OpenTelemetry-specific. The
+`crates/platform/src/telemetry/` holds everything OpenTelemetry-specific (`services/src/client_reports.rs` adapts browser reports onto it). The
 application and domain layers only use `tracing` macros.
 
 - **Adapters.** `telemetry::init` picks real or no-op: with
@@ -260,7 +266,7 @@ application and domain layers only use `tracing` macros.
   `use_cases/telemetry/scrub.rs` (the browser's copy shares
   `tests/fixtures/client_scrub_cases.json`), fingerprints errors, and keeps a
   per-replica budget (`CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC`). The
-  `ClientReportSink` adapter in `telemetry/client_reports.rs` logs
+  `ClientReportSink` adapter in `crates/services/src/client_reports.rs` logs
   `client_error` events and counts errors from the site's own scripts
   (`browser.error`), page loads (`browser.page_load`, `authenticated` from the
   session) and dropped events, and records Web Vitals, navigations and island
@@ -464,8 +470,8 @@ in `models/auth_protocols.spthy`, and proven against an active network attacker.
   still attacked.
 
 - Argon2id for all passwords; tunable cost params from config.
-- Our tokens (session, signup, reset, OAuth state) are HS512 under a named key (`kid`), quantum-safe; only HS512 is accepted on decode, and only from a configured key, never by trying others. Keys rotate via `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS` (OT-009).
-- Outgoing TLS (Google, Turnstile, SMTP) offers post-quantum X25519MLKEM768 first, via the process-wide provider installed at the top of `main` (`infrastructure/tls.rs`); `tests/tls_key_exchange.rs` fails if it's lost (OT-009).
+- Our tokens (session, signup, reset, OAuth state) are HS512 under a named key (`kid`), quantum-safe; only HS512 is accepted on decode, and only from a configured key, never by trying others. Keys rotate via `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS` (OT-009), and `crates/platform/src/crypto/token.rs` enforces uniform `typ`, `iss`, `aud`, `iat`, and `exp` rules (plus `sub` on user-bound tokens) across all four token kinds. Note for first production rollout: any signup, reset, or OAuth-state tokens minted before centralized `iss`/`aud`/`typ` enforcement won't verify after deploy.
+- Outgoing TLS (Google, Turnstile, SMTP) offers post-quantum X25519MLKEM768 first, via the process-wide provider installed at the top of `main` (`crates/platform/src/tls.rs`); `tests/tls_key_exchange.rs` fails if it's lost (OT-009).
 - Refresh tokens stored as SHA-256 hashes; raw token never persisted.
 - Refresh rotation is atomic (single DB transaction).
 - Revoked refresh-token reuse triggers full-family revocation. The reuse/revoked
