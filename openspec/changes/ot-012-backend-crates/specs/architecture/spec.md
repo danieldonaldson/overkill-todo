@@ -13,13 +13,20 @@ see unchanged.
 
 The backend SHALL be built as separate units, so that the domain layer can use
 no other layer and no I/O library, and the application layer can use only the
-domain layer and no adapter. Breaking either rule SHALL fail to compile, not
-merely fail review.
+domain layer, the shared utilities and no adapter. Breaking either rule SHALL
+fail to compile or fail the gate, not merely fail review. The gate SHALL limit
+the inner layers' third-party libraries to an allowed list, so a library can't
+simply be added to an inner layer's manifest.
 
 #### Scenario: Domain code reaching outward does not compile
 
 - **WHEN** domain code refers to the application layer, an adapter, the HTTP framework or the database driver
 - **THEN** the backend fails to build, and the error points at that reference
+
+#### Scenario: Adding an outer library to an inner layer fails the gate
+
+- **WHEN** a library that isn't on the inner layer's allowed list (for example, the HTTP framework or the database driver) is added as a dependency of the domain or application layer
+- **THEN** the full gate and CI fail, naming the layer and the library
 
 #### Scenario: Application code reaching into an adapter does not compile
 
@@ -36,7 +43,7 @@ list.
 
 #### Scenario: An adapter depending on another adapter fails the gate
 
-- **WHEN** a dependency is added from one adapter to another (for example, from the HTTP adapter to the database adapter)
+- **WHEN** a dependency, including a test-only one, is added from one adapter to another (for example, from the HTTP adapter to the database adapter)
 - **THEN** the full gate and CI fail, naming the two units
 
 #### Scenario: SQL runs only in the database adapter
@@ -114,7 +121,7 @@ be covered without editing the gate.
 #### Scenario: A stale offline query cache is still caught
 
 - **WHEN** a query changes in any unit and the offline query cache is not regenerated
-- **THEN** the full gate and CI fail, saying how to regenerate it
+- **THEN** the full gate and CI fail, naming the developer command that regenerates it
 
 ### Requirement: Developer commands and generated files stay where they are
 

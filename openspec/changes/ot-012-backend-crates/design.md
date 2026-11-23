@@ -236,7 +236,8 @@ Commands still run from `backend/`, so `dotenvy` finds `.env` as before.
   compile-checked too, in line with the "`query!` only" rule. A schema change
   then breaks only this crate, never the HTTP tests. `server` enables
   the feature only from `[dev-dependencies]`, so the fixtures never reach the
-  release graph.
+  release graph. The fixtures are `pub` items in a library, so `dead_code`
+  never flags one that no test calls. The edge gate (D6) checks that instead.
 - **`sqlx` stays a dev-dependency of `server`,** because
   `#[sqlx::test]` (a fresh database per test) and `PgPool` expand to
   `::sqlx` paths. Server compiles no SQL, so there's one `sqlx.toml` (the
@@ -252,14 +253,33 @@ Commands still run from `backend/`, so `dotenvy` finds `.env` as before.
 
 ### D6. Gate check for crate edges
 
-A test in `server` (`tests/crate_graph.rs`) runs `cargo metadata`
-and checks every workspace→workspace dependency (normal and build;
-dev-dependencies may also point at `testkit`) against a table in the test.
-The same test scans every crate's sources, tests and benches outside
-`persistence-postgres` and fails on any `sqlx::query*` call or
-macro, naming the file and line. Server's dev-dependency on `sqlx` exists
-only for `#[sqlx::test]`, so nothing in the dependency graph stops it
-running SQL.
+A test in `server` (`tests/crate_graph.rs`) runs
+`cargo metadata --no-deps --offline --locked` (the declared dependencies are
+enough, and it needs no network) and checks four things:
+
+- **Workspace edges.** Every workspace→workspace dependency, of every kind
+  (normal, build and dev), is checked against a table in the test. Dev
+  edges follow the same rank rules as the others. The one extra they allow is
+  `testkit`.
+- **Third-party dependencies of the inner layers.** `domain` and
+  `application` each have an allowlist of the third-party crates they may
+  depend on, taken from what they use at the split (domain: `jiff`, `uuid`,
+  `thiserror`). A new entry needs a deliberate edit to the test. Without
+  this, adding `axum.workspace = true` to domain's manifest would compile, and
+  the "Domain code reaching outward does not compile" scenario would not hold.
+  `sqlx` may be a normal dependency only of `persistence-postgres`, and a dev
+  dependency only of `server`.
+- **SQL outside the database adapter.** The test scans the sources, tests
+  and benches of every crate except `persistence-postgres`. It fails on any
+  `sqlx::` path or `use sqlx` import that isn't on a short allowlist
+  (`sqlx::test`, `sqlx::PgPool`, `sqlx::postgres::PgPoolOptions` where
+  the harness needs it), naming the file and line. That catches
+  `query*`/`query_as*`, and also `raw_sql`, `Executor::execute(&pool, "…")`
+  and imported `query(…)`. Server's dev-dependency on `sqlx` exists only for
+  `#[sqlx::test]`, so nothing in the dependency graph stops it running SQL.
+- **Unused fixtures.** Every `pub fn` in `persistence-postgres`'s `testing`
+  module is called somewhere in another crate's tests or benches.
+
 Each crate in the table has a rank:
 
 | Rank | Crates |
@@ -282,6 +302,9 @@ It runs under `just test-integration`, which is already in `just ci`.
 - Alternative: cargo-deny `[bans]` with `wrappers`. It's already in the
   gate, but it can't express "new crate must be listed" or "table can't point
   outward", and rules for the workspace's own crates read oddly there.
+  `wrappers` could limit `sqlx` by itself, but an allowlist for domain and
+  application can't be written that way. Keeping every rule in one test
+  gives one place to look and better error messages.
 - Alternative: a `just` recipe with `jq`. It adds a tool dependency, and a
   Rust test reports failures better.
 
@@ -295,6 +318,13 @@ is. The dev stage keeps the rule that `.cargo/config.toml` lands before the
 dependency build. The final `COPY . .` and `cargo build` stay. The release
 build becomes `cargo auditable build --release --locked -p server
 --no-default-features`.
+
+`cargo chef cook` must use the same profile, package and feature flags as
+the build that follows it (`--release --locked -p server
+--no-default-features` in the release stage, and the dev stage's flags in
+the dev stage). If they differ, the cached deps are built with a different
+feature set (for example with swagger-ui), and the real build recompiles
+them.
 
 - Alternative: a script that generates stubs from `cargo metadata`. Fewer
   tools, but more of our own code to keep correct.
@@ -319,12 +349,17 @@ All of these go through `just`, so commands keep their names (spec:
 | `just lint` | `cargo clippy --workspace --all-targets` |
 | `just fmt-check` | `cargo fmt --all --check` |
 | coverage | `cargo llvm-cov nextest --workspace --tests` |
-| `just verify` | `cargo kani -p domain` (proofs live only in domain) |
+| `just verify` | `cargo kani --workspace` (proofs live only in domain today; a crate that adds proofs is covered with no recipe change) |
 | `just dev` | `cargo watch -x 'run -p server'` |
 | bench | `cargo bench -p server --bench …` |
 
 `cargo deny check` and `cargo machete` already walk the workspace. Machete
 false positives move to each crate's `[package.metadata.cargo-machete]`.
+
+`just db-prepare-check` wraps `cargo sqlx prepare --check`. When the check
+fails, the recipe prints `run 'just db-prepare' and commit backend/.sqlx/`,
+because sqlx's own hint names `cargo sqlx prepare`, not the recipe (spec: "A
+stale offline query cache is still caught").
 
 ## Hypothesis
 
@@ -359,8 +394,9 @@ false positives move to each crate's `[package.metadata.cargo-machete]`.
   warm and cold image builds measured against the baseline.
 - [Fixtures become a second, test-only repository API that grows without
   limit] → one fixture per distinct test need, named for what it does, in a
-  module that only the `test-support` feature compiles. A fixture no test
-  uses is an unused-code warning, which `-D warnings` turns into an error.
+  module that only the `test-support` feature compiles. The edge gate (D6)
+  fails on a fixture that no test calls. `dead_code` can't do this, because
+  the fixtures are `pub`.
 - [Wider `pub` surface invites cross-crate reach-ins] → the edge check (D6)
   limits who can depend on whom. Narrowing visibility is later cleanup.
 - [Gains smaller than hoped, because most feature edits touch application] →

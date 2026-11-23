@@ -25,7 +25,8 @@ single crate.
   telemetry), and a server that wires them together and owns the binary.
 - Dependencies between crates point inward only. A gate check also rejects
   any crate dependency that isn't on the allowed list, including one adapter
-  depending on another.
+  depending on another, and any third-party library the inner layers aren't
+  allowed to use.
 - The few places where adapters reach into each other are untangled, so each
   adapter depends only on the inner layers and the platform crate.
 - Tests move to the crate whose code they exercise. Full-stack HTTP tests stay
