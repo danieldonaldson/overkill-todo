@@ -1,5 +1,57 @@
 # Architecture
 
+## Where does X go?
+
+| Adding…                                   | Goes in                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Business rule, entity, value object       | `crates/domain/`                                                                                  |
+| Use case                                  | `crates/application/src/use_cases/` + incoming port (see [Adding a use case](#adding-a-use-case)) |
+| Request/response shape                    | `crates/application/src/dto/`, then `just api-types`                                              |
+| Endpoint, middleware, extractor, cookie   | `crates/api/src/` (`handlers/`, `middleware/`, `extractors/`), mounted in `routes.rs`             |
+| SQL query or repository                   | outgoing port in `application` + `crates/persistence-postgres/src/`, then `just db-prepare`       |
+| Migration                                 | `backend/migrations/` (forward-only, expand/contract)                                             |
+| External service (email, captcha, OAuth…) | outgoing port in `application` + real and no-op adapters in `crates/services/src/`                |
+| Setting / env var                         | `crates/platform/src/config/settings.rs`                                                          |
+| Token kind or token claim rule            | `crates/platform/src/crypto/token.rs` (never build a `Validation` in an adapter)                  |
+| Key material, hashing primitive           | `crates/platform/src/crypto/`                                                                     |
+| Metric, span or log plumbing              | `crates/platform/src/telemetry/`                                                                  |
+| Background or leader-only job             | `crates/server/src/infrastructure/tasks/`, started in `main.rs`                                   |
+| Wiring (which adapter is used)            | `crates/server/src/main.rs`                                                                       |
+| DB setup in a server test or bench        | a fixture in `crates/persistence-postgres/src/testing.rs`, never raw SQL                          |
+| Full-stack HTTP test                      | `crates/server/tests/`                                                                            |
+
+If the code needs a crate the target doesn't depend on, it's in the wrong
+place. Move it, don't add the edge: `crates/server/tests/crate_graph.rs` will
+refuse the edge anyway.
+
+### Workspace gotchas
+
+- **`RUST_LOG` uses crate names.** Each crate logs under its own name
+  (`api`, `services`, `persistence_postgres`…), and `main.rs` under
+  `overkill_todo`. `RUST_LOG=overkill_todo=debug` now covers only startup and
+  shutdown; use e.g. `api=debug,application=debug`. The default filter is
+  built from `server::APP_TARGETS`, and a new crate must be added there (the
+  gate checks).
+- **Test helpers sit behind `test-support`.** `UserBuilder` (`domain`),
+  `LogCapture` (`application`), the keyring/crypto and metrics test helpers
+  (`platform`) and the DB fixtures (`persistence-postgres`) are compiled only
+  under `#[cfg(any(test, feature = "test-support"))]`. If a helper is "not
+  found" in another crate's tests, add
+  `<crate> = { path = "../<crate>", features = ["test-support"] }` to that
+  crate's `[dev-dependencies]`.
+- **New third-party dependency in `domain` or `application`** fails the gate
+  until it's added to that crate's allowlist in `crate_graph.rs`. That's
+  deliberate. Ask whether it belongs in an adapter first.
+- **sqlx config is split.** `sqlx.toml` lives in `crates/persistence-postgres/`,
+  but the offline cache is `backend/.sqlx/` at the workspace root
+  (`just db-prepare` writes it).
+- **Unused fixtures fail the gate.** Every `pub fn` in
+  `persistence-postgres/src/testing.rs` must be called from another crate's
+  tests or benches.
+- **The release build disables default features** (`-p server
+--no-default-features`, which drops Swagger UI). CI runs clippy that way too,
+  so code under `#[cfg(not(feature = "swagger-ui"))]` is linted.
+
 ## Hexagonal layout
 
 ```

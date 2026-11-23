@@ -1,6 +1,6 @@
 //! Redaction rules for secrets in field names and URL queries (OT-001).
 //!
-//! Applied at every telemetry exit by `infrastructure::telemetry::redact`, and
+//! Applied at every telemetry exit by `platform::telemetry::redact`, and
 //! to browser reports by the application layer (OT-006). Dependency-free.
 
 /// Replacement for every redacted value.

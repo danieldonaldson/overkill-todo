@@ -246,7 +246,7 @@ pub struct CryptoSettings {
     pub secrets_encryption_key_b64: String,
 }
 
-/// Telemetry export settings (OpenTelemetry). See `infrastructure::telemetry`.
+/// Telemetry export settings (OpenTelemetry). See `platform::telemetry`.
 #[derive(Debug, Clone)]
 pub struct TelemetrySettings {
     /// OTLP/HTTP base URL of the collector (e.g. `http://otel-collector:4318`).

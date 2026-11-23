@@ -348,11 +348,11 @@ mod tests {
     use super::REGISTRATION_SEND_BUDGET;
     use std::time::Duration;
 
-    /// `DEFAULT_REQUEST_TIMEOUT` in `infrastructure/api/routes.rs`. Keep in step
+    /// `DEFAULT_REQUEST_TIMEOUT` in `crates/api/src/routes.rs`. Keep in step
     /// if either moves.
     const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-    /// `SEND_TIMEOUT` in `infrastructure/services/email_service.rs` — the cap on
+    /// `SEND_TIMEOUT` in `crates/services/src/email_service.rs` — the cap on
     /// a single SMTP attempt. Keep in step if either moves.
     const SEND_TIMEOUT: Duration = Duration::from_secs(8);
 

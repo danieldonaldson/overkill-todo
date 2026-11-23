@@ -5,7 +5,7 @@
 //! A local rustls server accepts only the groups each test names and reports
 //! which one was negotiated. The client is a reqwest client built the way the
 //! Google and Turnstile adapters build theirs, after the process-wide provider
-//! from `infrastructure::tls` is installed as `main` does. lettre (SMTP) takes
+//! from `platform::tls` is installed as `main` does. lettre (SMTP) takes
 //! the same process default.
 
 use std::io::{Read, Write};

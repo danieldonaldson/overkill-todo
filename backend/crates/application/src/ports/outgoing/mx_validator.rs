@@ -15,7 +15,7 @@ use domain::errors::DomainError;
 ///
 /// # Implementors
 ///
-/// - `infrastructure::services::HickoryMxValidator`
+/// - `services::mx_validator::HickoryMxValidator`
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait MxValidator: Send + Sync {

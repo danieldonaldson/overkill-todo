@@ -555,7 +555,7 @@ mod tests {
         assert!(cookie.contains("Path=/;"));
     }
 
-    // Cookie construction is covered by tests in `infrastructure::api::cookies`.
+    // Cookie construction is covered by tests in `api::cookies`.
 
     // =========================================================================
     // is_test_bypass_enabled tests

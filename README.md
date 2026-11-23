@@ -256,8 +256,8 @@ just obs-wipe            # delete stored traces, logs and metrics (keeps Grafana
   `just obs-check` (part of `just ci`) validates the collector config,
   Alertmanager configs and alert-rule tests.
 - **Log filtering (`RUST_LOG`).** `RUST_LOG` targets workspace crate names
-  (e.g. `server=debug,application=debug,domain=debug`; `api=debug` after the
-  full crate split) instead of `overkill_todo`.
+  (e.g. `api=debug,application=debug,persistence_postgres=debug`) instead of
+  `overkill_todo`, which now covers only `main.rs` startup and shutdown.
 
 ### Browser errors
 

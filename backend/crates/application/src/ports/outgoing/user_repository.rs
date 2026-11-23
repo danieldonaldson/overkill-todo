@@ -17,7 +17,7 @@ pub struct SessionAuthorizationState {
 ///
 /// # Implementors
 ///
-/// - `infrastructure::persistence::postgres::PostgresUserRepository`
+/// - `persistence_postgres::user_repository::PostgresUserRepository`
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait UserRepository: Send + Sync {

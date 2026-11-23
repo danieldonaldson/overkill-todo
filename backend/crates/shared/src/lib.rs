@@ -3,9 +3,9 @@
 //! - [`fingerprint`] - Error fingerprinting for grouping similar errors
 //! - [`redact`] - Field-name and URL-query redaction rules for telemetry
 //!
-//! This module is a leaf: it imports nothing from `domain`, `application`, or
-//! `infrastructure`. Key material and cryptographic primitives live in
-//! `infrastructure::crypto`, since they are built from infrastructure settings.
+//! This crate is a leaf: it depends on no other workspace crate. Key material
+//! and cryptographic primitives live in `platform::crypto`, since they are
+//! built from platform settings.
 
 pub mod fingerprint;
 pub mod redact;

@@ -468,7 +468,7 @@ mod tests {
         assert_eq!(service.from.to_string(), "App <noreply@example.com>");
     }
 
-    /// `DEFAULT_REQUEST_TIMEOUT` in `infrastructure/api/routes.rs`. The resend
+    /// `DEFAULT_REQUEST_TIMEOUT` in `crates/api/src/routes.rs`. The resend
     /// endpoint awaits this whole sequence inside a request, so it has to fit.
     /// (Registration awaits it too, but under the tighter
     /// `REGISTRATION_SEND_BUDGET` in `api/handlers/auth_handler.rs`.) Keep in
