@@ -34,7 +34,9 @@ single crate.
 - Developer commands (`just …`), committed generated files (the offline query
   cache and the API description) and the release image stay where they are and
   behave as they do now.
-- No API, schema, frontend or runtime behaviour changes.
+- No API, schema, frontend or runtime behaviour changes. Default logs and
+  traces stay the same. The one change for operators is that a hand-set
+  `RUST_LOG` names the new crates rather than `overkill_todo`.
 
 ## Capabilities
 
@@ -58,6 +60,10 @@ None.
   invocations and the sqlx offline-cache preparation.
 - Docs: `backend/ARCHITECTURE.md`, `CLAUDE.md` (backend rules, commands) and
   `README.md` where they name paths.
+- Security and model tooling that names backend file paths: the threat model
+  (`docs/security/threat-model.md`), the Tamarin model's `Checks:` lines and
+  `scripts/threat-model-check.sh`, and `scripts/models.sh`. The same goes
+  for the bench workflow and `scripts/bench-compare.sh`.
 - No change to the API description, database schema, frontend or deploy
   config.
 
@@ -74,8 +80,8 @@ None.
 
 ## Dependencies
 
-OT-008 (audit log) must be finished and merged first. It touches every layer,
-and moving files under an open change would mean a painful rebase.
+OT-008 (audit log) had to be finished first, because it touches every layer.
+It was archived on 2026-11-21 (`f935763`), so nothing blocks this change.
 
 ## Appetite
 

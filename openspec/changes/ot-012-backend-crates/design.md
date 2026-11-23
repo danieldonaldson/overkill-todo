@@ -38,7 +38,46 @@ before writing this (2026-11-20):
 - **Paths others depend on:** the frontend guard and `CLAUDE.md` name
   `backend/tests/fixtures/client_islands.json`. Two application unit tests
   `include_str!` fixtures by relative path, and one test walks
-  `../apps/web/src/pages` from `CARGO_MANIFEST_DIR`.
+  `../apps/web/src/pages` from `CARGO_MANIFEST_DIR`. Outside `backend/`
+  these name backend paths or run single-crate cargo commands:
+  - `docs/security/threat-model.md`: about 170 `backend/src`/`backend/tests`
+    paths
+  - `models/auth_protocols.spthy`: `// Checks: backend/tests/<file>.rs::<fn>`
+    lines
+  - `scripts/threat-model-check.sh`: enforces the
+    `backend/tests/*.rs::*` shape
+  - `scripts/models.sh`: `cargo nextest run --test model_conformance`
+  - `.github/workflows/bench.yml`: path filters on `backend/src/**`,
+    `backend/benches/**` and `backend/tests/common/**`
+  - `scripts/bench-compare.sh`: checks `backend/benches/<b>.rs`. It
+    also compares a base checkout against the PR, so for one PR the two
+    sides have different layouts.
+  - `.husky/pre-commit`: `backend/(src|tests)/` triggers, and the
+    `backend/src/(application/dto|infrastructure/api)/` API-spec reminder
+  - the dev stage of `backend/Dockerfile`: `touch src/main.rs src/lib.rs`
+  - `.github/workflows/ci.yml`: release-feature clippy and a direct
+    `cargo sqlx prepare --check`
+
+  `model_conformance` reads its traces from `MODEL_TRACES_DIR`, not a
+  relative path.
+- **Log and trace targets are the crate name.** The default and export
+  filters (`telemetry/mod.rs`), and test filters in `tasks/job.rs`,
+  `telemetry/log_format.rs` and three telemetry integration tests, hardcode
+  `overkill_todo=…`. After the split, events carry `domain::…`, `api::…` and
+  so on, and those filters would silently drop every app log and span.
+- **Some platform code uses axum.** The HTTP span/metrics middleware in
+  `telemetry/http.rs` uses axum and tower-http, and `config/settings.rs`
+  parses CORS origins with `axum::http::HeaderValue`. `current_trace_id`
+  in the same file uses only tracing and OpenTelemetry.
+- **`Persistence` holds the concrete driver.** Its `db: Arc<Database>`
+  field names the postgres alias, and only `main.rs` uses the struct.
+- **Cross-crate test helpers are `#[cfg(test)]`:** `Crypto::for_testing`,
+  `Crypto::for_testing_with_tokens`, `TEST_RSA_PRIVATE_KEY` (used by the
+  api and Google OAuth tests) and `telemetry::metrics::testing` (used by the
+  tasks tests). `#[cfg(test)]` items aren't visible to other crates' tests.
+- **The `http` bench builds its own database.** It uses
+  `sqlx::migrate::MigrateDatabase`, `PgPool::connect` and
+  `sqlx::migrate!("./migrations")`, as well as runtime queries.
 
 ## Goals / Non-Goals
 
@@ -99,7 +138,21 @@ never depend on each other.
 | `server` | `main.rs`, `infrastructure/tasks/`, wiring | all of the above |
 
 The driver-neutral persistence root covers `DatabaseHealth`, `LeaderLocks`,
-`DatabaseMaintenance`, `DatabaseError`, `Persistence` and `PoolStats`.
+`DatabaseMaintenance`, `DatabaseError` and `PoolStats`. `Persistence`
+holds the concrete `Database`, so it moves to `persistence-postgres`: it's what
+that adapter hands the server, which is its only user.
+
+`platform` does not depend on axum or tower-http:
+
+- The HTTP span/metrics middleware in `telemetry/http.rs` moves to `api`.
+  `current_trace_id` and the untraced-route list stay in
+  `platform::telemetry`, because the postgres audit adapter and the api
+  `trace_id` middleware both read them.
+- `config/settings.rs` checks CORS origins with `http::HeaderValue` (the
+  `http` crate) in place of the axum re-export.
+
+Otherwise D4's "a query edit reruns its repository tests without building
+axum" wouldn't hold, since `persistence-postgres` depends on `platform`.
 
 - **Why `platform`:** config, crypto and telemetry are needed by every adapter.
   The neutral persistence traits are needed by api (readiness), telemetry
@@ -139,6 +192,11 @@ Everything else other tools name stays at its path:
 
 Commands still run from `backend/`, so `dotenvy` finds `.env` as before.
 
+- `[workspace.package]` holds `version`, `edition = "2024"` and
+  `publish = false`, and every member inherits them. So
+  `env!("CARGO_PKG_VERSION")` (the reported service version, read in
+  `config/settings.rs`) stays the single workspace version wherever config
+  lives.
 - Third-party versions move to `[workspace.dependencies]`, and members use
   `foo.workspace = true`. Version bumps stay one-line.
 - The clippy groups (pedantic, nursery, `allow_attributes_without_reason`) and
@@ -170,6 +228,23 @@ Commands still run from `backend/`, so `dotenvy` finds `.env` as before.
   No change needed.
 - **The `jwt_service` vs `create_jwt` cross-check** spans two adapters, so it
   moves to `server`'s tests.
+- **Log and trace filters name every workspace crate.** `server` holds the
+  list of workspace crate names (`APP_TARGETS`) and passes it to
+  `telemetry::init`. Init builds the default and export filters from that
+  list (`domain=info,application=info,…,tower_http=info`) plus the
+  driver's directive, so platform never names the other crates.
+  - `crate_graph.rs` (D6) fails if a workspace member isn't in
+    `APP_TARGETS`, so a new crate's logs can't silently go missing.
+  - Server's tests and tasks build their filters from the same list. Tests
+    inside one crate filter on that crate's own name
+    (`env!("CARGO_CRATE_NAME")`).
+  - Changed for operators: a hand-set `RUST_LOG=overkill_todo=debug` no
+    longer matches anything. `RUST_LOG` names crates now
+    (`RUST_LOG=api=debug`). The README and `.env.example` say so. No
+    deployed config sets it (checked 2026-11-23), and no deploy exists yet.
+  - Alternative rejected: lib names prefixed `overkill_todo_*`. That keeps
+    the old filter matching by prefix, but splits each crate between two
+    names (lib vs. dependency key).
 
 ### D4. Tests go to the lowest crate that has everything they use
 
@@ -177,8 +252,15 @@ Commands still run from `backend/`, so `dotenvy` finds `.env` as before.
   mockall mocks stay in `application`, behind `cfg_attr(test, …)`,
   because nothing outside it uses them.
 - **Adapter-level integration tests** go to that adapter's `tests/` when they
-  need only the adapter and inner crates (dev-dependency on `platform` for
-  `Crypto::for_testing`, which is already a plain `pub fn`).
+  need only the adapter and inner crates. They take a dev-dependency on
+  `platform` with its `test-support` feature, for `Crypto::for_testing`.
+- **`platform` gets a `test-support` feature.** Today
+  `Crypto::for_testing`, `Crypto::for_testing_with_tokens`,
+  `TEST_RSA_PRIVATE_KEY` and `telemetry::metrics::testing` are
+  `#[cfg(test)]`, so other crates' tests can't see them. They move behind
+  `#[cfg(any(test, feature = "test-support"))]`, and the feature also
+  enables `opentelemetry_sdk/testing`. Like every `test-support` feature,
+  it's enabled only from `[dev-dependencies]`.
   - Postgres adapter: `attempt_lockout`, `database_maintenance`,
     `model_conformance`, and `repository_integration` if its use of `common`
     is only crypto.
@@ -200,7 +282,10 @@ Commands still run from `backend/`, so `dotenvy` finds `.env` as before.
   duplicate appears. Test-only constructors that must cross crates go behind
   a `test-support` feature, enabled only from `[dev-dependencies]`.
 - **Benches:** all four stay together in `server/benches/`. They
-  share `common` and span adapters, so `just bench` is unchanged.
+  share `common` and span adapters, so `just bench` is unchanged. The
+  `http` bench's database setup (create, connect, migrate) and its runtime
+  queries move into `persistence-postgres::testing` (D5), so `server`
+  never calls `sqlx::migrate!` or `MigrateDatabase`.
 - **The `export_openapi` example** moves to `api/examples/`.
   `api_routes()` takes no values, so `just api-types` stops building the
   postgres and services crates.
@@ -279,6 +364,8 @@ enough, and it needs no network) and checks four things:
   `#[sqlx::test]`, so nothing in the dependency graph stops it running SQL.
 - **Unused fixtures.** Every `pub fn` in `persistence-postgres`'s `testing`
   module is called somewhere in another crate's tests or benches.
+- **Log targets.** Every workspace member is listed in server's
+  `APP_TARGETS` (D3).
 
 Each crate in the table has a rank:
 
@@ -352,6 +439,36 @@ All of these go through `just`, so commands keep their names (spec:
 | `just verify` | `cargo kani --workspace` (proofs live only in domain today; a crate that adds proofs is covered with no recipe change) |
 | `just dev` | `cargo watch -x 'run -p server'` |
 | bench | `cargo bench -p server --bench …` |
+| `just dev` fallback (no cargo-watch) | `cargo run -p server` |
+| `just models` (`scripts/models.sh`) | `cargo nextest run -p <crate> --test model_conformance` (`server` in slice 1, `persistence-postgres` from slice (b)) |
+| CI release-feature clippy | `cargo clippy -p server --lib --bins --no-default-features` |
+| CI offline-cache check | `just db-prepare-check`, so CI prints the same message as the gate |
+| Dockerfile dev stage | `cargo build --locked -p server` after cook (no `touch src/…`), and `CMD cargo watch -x 'run -p server'` |
+
+A bare `cargo run` / `bench` / `clippy` at a virtual workspace root
+selects every member, so most of these would still run. Naming `-p`
+keeps each one's scope the same as today and stops it from breaking when a
+second binary or bench appears.
+
+**Path-matching scripts and docs** are re-pointed in the slice that moves
+the files they name, and again in each later slice that moves those files:
+
+- `docs/security/threat-model.md` and the `// Checks:` lines in
+  `models/auth_protocols.spthy` name `backend/crates/<crate>/tests/<file>.rs::<fn>`
+  and `backend/crates/<crate>/src/…`.
+- `scripts/threat-model-check.sh` accepts
+  `backend/crates/*/tests/*.rs::*` and resolves the file under that crate.
+- `.husky/pre-commit` triggers on `backend/crates/` (any `src/`,
+  `tests/` or `benches/`). The API-spec reminder matches the DTO and api
+  module paths in their current crate (`crates/application/src/dto/`, and
+  `crates/server/src/infrastructure/api/` until slice (c) moves it to
+  `crates/api/`).
+- `.github/workflows/bench.yml` filters on `backend/crates/**`, and its
+  warm-cache build runs `cargo bench --locked --no-run -p server`.
+- `scripts/bench-compare.sh` finds each side's bench at
+  `backend/crates/server/benches/<b>.rs` or, for a base before the split,
+  `backend/benches/<b>.rs`, and adds `-p server` only when the
+  workspace layout is found.
 
 `cargo deny check` and `cargo machete` already walk the workspace. Machete
 false positives move to each crate's `[package.metadata.cargo-machete]`.
@@ -401,8 +518,8 @@ stale offline query cache is still caught").
   limits who can depend on whom. Narrowing visibility is later cleanup.
 - [Gains smaller than hoped, because most feature edits touch application] →
   measured (Hypothesis). Enforcement is the primary value anyway.
-- [Path-relative references (fixtures, web pages walk, migrations, Quint
-  traces) silently miss] → every such test asserts its input exists and is
+- [Path-relative references (fixtures, web pages walk, migrations) silently
+  miss] → every such test asserts its input exists and is
   non-empty. A dropped test count is caught by the nextest list comparison.
 - [Parallel worktrees (`just wt-new`) mid-move get hard rebases] → don't keep
   worktrees open across a move commit. Each slice lands quickly.

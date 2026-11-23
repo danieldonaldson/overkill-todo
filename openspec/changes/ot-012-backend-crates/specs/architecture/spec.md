@@ -79,7 +79,19 @@ inner layers.
 ### Requirement: Restructuring the backend changes no observable behaviour
 
 Splitting the backend into units SHALL leave unchanged everything an API
-client, the web app or the operator can observe.
+client, the web app or the operator can observe. The one exception: a
+hand-set log filter names each unit rather than the old single crate, and the
+operator docs SHALL say so.
+
+#### Scenario: Logs and traces are unchanged
+
+- **WHEN** the server runs with its default log and export filters after the split
+- **THEN** every log line and span it wrote or exported before the split is still written or exported, at the same level
+
+#### Scenario: A new unit's logs aren't dropped
+
+- **WHEN** a new backend unit is added without being added to the default log filters
+- **THEN** the full gate and CI fail, naming the unit
 
 #### Scenario: The API description is unchanged
 
