@@ -326,7 +326,7 @@ impl Crypto {
 /// # Examples
 ///
 /// ```
-/// use overkill_todo::infrastructure::crypto::generate_secure_token;
+/// use server::infrastructure::crypto::generate_secure_token;
 ///
 /// let token = generate_secure_token();
 /// assert_eq!(token.len(), 43); // 32 bytes -> 43 base64 chars
@@ -346,7 +346,7 @@ pub fn generate_secure_token() -> String {
 /// # Examples
 ///
 /// ```
-/// use overkill_todo::infrastructure::crypto::sha256_hex;
+/// use server::infrastructure::crypto::sha256_hex;
 ///
 /// let hash = sha256_hex("my_secret_token");
 /// assert_eq!(hash.len(), 64);

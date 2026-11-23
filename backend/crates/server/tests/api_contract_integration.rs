@@ -48,7 +48,7 @@ async fn assert_standard_400(resp: axum::http::Response<Body>) {
     assert!(body["message"].is_string(), "missing message: {body}");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn malformed_json_body_gets_standard_error(pool: PgPool) {
     // No content type: axum's `Json` alone would answer 415 with plain text.
     let req = Request::builder()
@@ -60,7 +60,7 @@ async fn malformed_json_body_gets_standard_error(pool: PgPool) {
     assert_standard_400(resp).await;
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn missing_query_parameter_gets_standard_error(pool: PgPool) {
     let req = Request::builder()
         .uri("/api/v1/auth/verify-magic")
@@ -70,7 +70,7 @@ async fn missing_query_parameter_gets_standard_error(pool: PgPool) {
     assert_standard_400(resp).await;
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn malformed_query_parameter_gets_standard_error(pool: PgPool) {
     let admin = insert_user_with_role(&pool, "admin").await;
     let token = common::mint_session_jwt(admin, true, "admin", 15);
@@ -83,7 +83,7 @@ async fn malformed_query_parameter_gets_standard_error(pool: PgPool) {
     assert_standard_400(resp).await;
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn malformed_path_parameter_gets_standard_error(pool: PgPool) {
     let super_admin = insert_user_with_role(&pool, "super_admin").await;
     let token = common::mint_session_jwt(super_admin, true, "super_admin", 15);
@@ -105,7 +105,7 @@ async fn malformed_path_parameter_gets_standard_error(pool: PgPool) {
 
 /// Outside dev mode the description and its explorer aren't served, even in a
 /// build with the `swagger-ui` feature (the test app never sets `DEV_MODE`).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn description_is_not_served_outside_dev_mode(pool: PgPool) {
     let app = common::create_test_app(pool);
     for path in ["/docs", "/docs/", "/api-doc/openapi.json"] {

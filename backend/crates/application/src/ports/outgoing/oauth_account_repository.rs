@@ -1,9 +1,9 @@
 //! OAuth account repository port for persisting OAuth provider links.
 
-use crate::domain::entities::{AuditEvent, OAuthAccount, OAuthProvider};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
 use async_trait::async_trait;
+use domain::entities::{AuditEvent, OAuthAccount, OAuthProvider};
+use domain::errors::DomainError;
+use domain::value_objects::UserId;
 
 /// Repository for OAuth account persistence operations.
 #[cfg_attr(test, mockall::automock)]

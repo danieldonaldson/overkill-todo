@@ -5,17 +5,17 @@ use jiff::Timestamp;
 use std::sync::Arc;
 
 use super::time::{ToDb, ToDomain};
-use crate::application::ports::EmailVerificationRepository;
-use crate::domain::entities::EmailVerificationCode;
-use crate::domain::entities::attempt_lockout::{
-    AttemptOutcome, IssueOutcome, LOCK_WINDOWS_MINUTES, LOCKOUT_MEMORY_DAYS, MAX_ATTEMPTS,
-    RESEND_COOLDOWN_MINUTES,
-};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{UserId, VerificationCodeId};
 use crate::infrastructure::persistence::postgres::connection::Database;
 use crate::infrastructure::persistence::postgres::error::persist_err;
 use crate::infrastructure::persistence::postgres::models::EmailVerificationCodeRow;
+use application::ports::EmailVerificationRepository;
+use domain::entities::EmailVerificationCode;
+use domain::entities::attempt_lockout::{
+    AttemptOutcome, IssueOutcome, LOCK_WINDOWS_MINUTES, LOCKOUT_MEMORY_DAYS, MAX_ATTEMPTS,
+    RESEND_COOLDOWN_MINUTES,
+};
+use domain::errors::DomainError;
+use domain::value_objects::{UserId, VerificationCodeId};
 
 pub struct PostgresEmailVerificationRepository {
     db: Arc<Database>,
@@ -255,7 +255,7 @@ impl EmailVerificationRepository for PostgresEmailVerificationRepository {
         // can't silently diverge from the entity's `EXPIRY_HOURS`.
         let magic_token_expires_at = Timestamp::now()
             + jiff::SignedDuration::from_hours(
-                crate::domain::entities::email_verification_code::EXPIRY_HOURS,
+                domain::entities::email_verification_code::EXPIRY_HOURS,
             );
         sqlx::query!(
             r#"

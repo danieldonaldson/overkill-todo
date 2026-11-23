@@ -65,7 +65,7 @@ async fn user_id(pool: &PgPool, email: &str) -> uuid::Uuid {
 // ---------------------------------------------------------------------------
 
 /// Verifying an unknown email returns 404.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn verify_email_unknown_user_returns_404(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -80,7 +80,7 @@ async fn verify_email_unknown_user_returns_404(pool: PgPool) {
 }
 
 /// A wrong code returns 400 with `code_invalid` and a decremented attempts count.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn verify_email_wrong_code_reports_remaining_attempts(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-wrongcode@example.com";
@@ -101,7 +101,7 @@ async fn verify_email_wrong_code_reports_remaining_attempts(pool: PgPool) {
 }
 
 /// An expired code returns 400 with `code_expired`.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn verify_email_expired_code_returns_code_expired(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-expired@example.com";
@@ -128,7 +128,7 @@ async fn verify_email_expired_code_returns_code_expired(pool: PgPool) {
 }
 
 /// A code at the attempt cap returns 400 with `code_locked`.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn verify_email_locked_code_returns_code_locked(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-locked@example.com";
@@ -186,7 +186,7 @@ async fn assert_already_verified_without_credentials(resp: axum::http::Response<
 /// SECURITY regression: an already-verified account is reported as such but
 /// never handed a session. The already-verified branch runs before any code is
 /// checked, so issuing credentials there let anyone who knew the email log in.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn verify_email_on_verified_account_does_not_log_in(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-victim@example.com";
@@ -217,7 +217,7 @@ async fn verify_email_on_verified_account_does_not_log_in(pool: PgPool) {
 /// SECURITY regression: a verified account without a password (signup left
 /// unfinished, or OAuth-only) must not get a signup token from a guessed code;
 /// that token would let the attacker set the account's password.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn verify_email_on_verified_passwordless_account_issues_no_signup_token(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-unfinished@example.com";
@@ -237,7 +237,7 @@ async fn verify_email_on_verified_passwordless_account_issues_no_signup_token(po
 
 /// A user who verified but never set a password (and lost the signup token)
 /// recovers through forgot-password, which proves email ownership afresh.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn unfinished_signup_recovers_via_password_reset(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-unfinished@example.com";
@@ -292,7 +292,7 @@ async fn unfinished_signup_recovers_via_password_reset(pool: PgPool) {
 
 /// Resend succeeds once the cooldown window has elapsed (simulated by aging
 /// `last_sent_at`), returning a fresh cooldown for the frontend timer.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn resend_after_cooldown_succeeds(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-resend-ok@example.com";
@@ -347,7 +347,7 @@ async fn code_counters(pool: &PgPool, id: uuid::Uuid) -> (i32, i32) {
 /// Every account-dependent outcome — unknown email, already verified, inside
 /// the cooldown, code locked — answers exactly like a successful resend, so the
 /// endpoint can't be used to check whether an email has an account.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn resend_answers_identically_whatever_the_account_state(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
 
@@ -396,7 +396,7 @@ async fn resend_answers_identically_whatever_the_account_state(pool: PgPool) {
 
 /// A locked code is not replaced by a resend inside its lock window, even
 /// though the response says nothing about it.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn resend_while_locked_issues_no_new_code(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-resend-locked@example.com";
@@ -420,7 +420,7 @@ async fn resend_while_locked_issues_no_new_code(pool: PgPool) {
 /// Re-registering an unfinished signup must not hand out a fresh code (and five
 /// fresh guesses) while the current one is locked. This used to bypass the
 /// attempt cap entirely.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reregistering_does_not_reset_a_locked_code(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-reregister-locked@example.com";
@@ -443,7 +443,7 @@ async fn reregistering_does_not_reset_a_locked_code(pool: PgPool) {
 
 /// Replacing a locked code counts as a lockout, and the next lock lasts twice
 /// as long: 20 minutes after a second lock is still inside its 30-minute window.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn lock_window_doubles_after_each_lockout(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-lockout-escalation@example.com";
@@ -476,7 +476,7 @@ async fn lock_window_doubles_after_each_lockout(pool: PgPool) {
 
 /// Registering an email that already has a complete account answers exactly
 /// like a new signup (the owner is emailed instead of sent a code).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn register_existing_account_answers_like_a_new_signup(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-register-existing@example.com";
@@ -575,7 +575,7 @@ async fn email_verified(pool: &PgPool, id: uuid::Uuid) -> bool {
 
 /// The legacy GET link only forwards the token to the frontend confirmation
 /// page (in the fragment). It must not verify anything: mail scanners fetch it.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn magic_link_get_redirects_without_side_effects(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-magic-get@example.com";
@@ -603,7 +603,7 @@ async fn magic_link_get_redirects_without_side_effects(pool: PgPool) {
 
 /// Confirming a valid link verifies the email and returns a signup token in the
 /// body (never in a URL).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn magic_link_confirm_returns_signup_token(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-magic@example.com";
@@ -628,7 +628,7 @@ async fn magic_link_confirm_returns_signup_token(pool: PgPool) {
 }
 
 /// An unknown token is rejected with a structured error.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn magic_link_invalid_token_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -644,7 +644,7 @@ async fn magic_link_invalid_token_is_rejected(pool: PgPool) {
 }
 
 /// An expired token is rejected and verifies nothing.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn magic_link_expired_token_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-magic-expired@example.com";
@@ -667,7 +667,7 @@ async fn magic_link_expired_token_is_rejected(pool: PgPool) {
 
 /// forgot-password always returns success (no email enumeration), even for an
 /// unknown email.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn forgot_password_unknown_email_returns_success(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -700,7 +700,7 @@ async fn export_status(app: &axum::Router, session: &str) -> StatusCode {
 
 /// Full password-reset flow: complete signup, request reset, verify the dev
 /// reset code, then reset the password and auto-login.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn password_reset_flow_succeeds(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-reset@example.com";
@@ -808,7 +808,7 @@ async fn password_reset_flow_succeeds(pool: PgPool) {
 }
 
 /// verify-reset-code with a wrong code returns an error (400).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn verify_reset_code_wrong_code_fails(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-reset-wrong@example.com";
@@ -851,7 +851,7 @@ async fn verify_reset_code_wrong_code_fails(pool: PgPool) {
 }
 
 /// reset-password with a bogus token is rejected.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reset_password_invalid_token_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -878,7 +878,7 @@ async fn reset_password_invalid_token_is_rejected(pool: PgPool) {
 /// The code is the only way to finish signup — there is no password or session
 /// yet — so reporting success would strand the caller on a "check your email"
 /// screen with nothing ever arriving.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn register_reports_a_verification_email_that_could_not_be_delivered(pool: PgPool) {
     let app = common::create_test_app_with_email_service(
         pool.clone(),
@@ -902,7 +902,7 @@ async fn register_reports_a_verification_email_that_could_not_be_delivered(pool:
 /// attempted, so a failed delivery would otherwise bar the user from the one
 /// recovery path for the full 5-minute cooldown — locked out by an email that
 /// never went anywhere.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn resend_is_available_immediately_after_a_failed_registration_send(pool: PgPool) {
     // Fail only the registration send; the resend that follows succeeds.
     let app = common::create_test_app_with_email_service(
@@ -953,7 +953,7 @@ async fn resend_is_available_immediately_after_a_failed_registration_send(pool: 
 /// verification-gated endpoint, but can once verified + signed up.
 ///
 /// `GET /api/v1/users/me/export` is behind `require_verified_email`.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn verification_gate_blocks_then_allows(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-gate@example.com";

@@ -25,13 +25,13 @@ mod common;
 
 use std::sync::Arc;
 
+use application::ports::outgoing::UserRepository;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use axum::{Extension, Router, routing::get};
-use overkill_todo::application::ports::outgoing::UserRepository;
-use overkill_todo::infrastructure::api::routes::{admin_guards, super_admin_guards};
-use overkill_todo::infrastructure::persistence::postgres::{self, Database};
 use serde_json::Value;
+use server::infrastructure::api::routes::{admin_guards, super_admin_guards};
+use server::infrastructure::persistence::postgres::{self, Database};
 use sqlx::PgPool;
 use tower::ServiceExt;
 use utoipa_axum::router::OpenApiRouter;
@@ -70,7 +70,7 @@ const PUBLIC_ROUTES: &[&str] = &[
 
 /// Every `"METHOD /path"` in the API description.
 fn operations() -> Vec<(String, String)> {
-    let spec = serde_json::to_value(overkill_todo::infrastructure::api::openapi::openapi())
+    let spec = serde_json::to_value(server::infrastructure::api::openapi::openapi())
         .expect("API description serialises");
     let mut ops = Vec::new();
     for (path, item) in spec["paths"].as_object().expect("description has paths") {
@@ -142,7 +142,7 @@ fn with_session(
         .header("x-csrf-token", csrf)
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn every_non_public_route_refuses_a_visitor(pool: PgPool) {
     let app = common::create_test_app(pool);
     let stranger = Uuid::now_v7();
@@ -190,7 +190,7 @@ async fn every_non_public_route_refuses_a_visitor(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn every_admin_route_refuses_a_member(pool: PgPool) {
     let member = insert_user(&pool, "user").await;
     let token = common::mint_session_jwt(member, true, "user", 15);
@@ -271,7 +271,7 @@ async fn probe_status(
     (status, code(resp).await)
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn admin_guards_refuse_members_without_any_handler_check(pool: PgPool) {
     let member = insert_user(&pool, "user").await;
     let admin = insert_user(&pool, "admin").await;
@@ -310,7 +310,7 @@ async fn admin_guards_refuse_members_without_any_handler_check(pool: PgPool) {
 /// A Member just promoted to Admin still holds a token naming the old role. The
 /// admin routes must answer 401 (so the client refreshes and retries with the
 /// new role), not a 403 from the stale role, which the client wouldn't retry.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_just_promoted_member_is_sent_to_refresh_not_refused(pool: PgPool) {
     let promoted = insert_user(&pool, "admin").await;
     let stale_token = common::mint_session_jwt(promoted, true, "user", 15);

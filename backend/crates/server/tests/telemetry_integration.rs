@@ -4,7 +4,7 @@
 //!
 //! Each test installs the production subscriber stack (`telemetry::subscriber`)
 //! as the thread-default, with an in-memory span exporter and a captured log
-//! writer. `#[sqlx::test]` runs on a current-thread runtime, so everything the
+//! writer. `#[sqlx::test(migrations = "../../migrations")]` runs on a current-thread runtime, so everything the
 //! request does is recorded by that subscriber.
 
 mod common;
@@ -13,26 +13,23 @@ use std::fmt::Write as _;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
+use application::ports::EmailService;
 use axum::{
     Router,
     body::Body,
     http::{Request, Response, StatusCode, header},
 };
+use domain::errors::DomainError;
 use opentelemetry_sdk::trace::{
     InMemorySpanExporter, SdkTracerProvider, SimpleSpanProcessor, SpanData,
 };
-use overkill_todo::{
-    application::ports::EmailService,
-    domain::errors::DomainError,
-    infrastructure::{
-        persistence::postgres::connection::with_statement_logging,
-        telemetry::{self, LogFormat, ServiceInfo},
-    },
-};
 use serde_json::{Value, json};
+use server::infrastructure::{
+    persistence::postgres::connection::with_statement_logging,
+    telemetry::{self, LogFormat, ServiceInfo},
+};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use tower::ServiceExt;
-use tracing_subscriber::EnvFilter;
 
 // ---------------------------------------------------------------------------
 // Capture harness
@@ -79,7 +76,15 @@ impl Captured {
         let logs = LogCapture::default();
         let subscriber = telemetry::subscriber(
             &provider,
-            EnvFilter::new("overkill_todo=debug,tower_http=debug,sqlx=debug"),
+            telemetry::targets_filter(
+                server::APP_TARGETS,
+                "debug",
+                &["tower_http=debug", "sqlx=debug"],
+            ),
+            telemetry::export_filter(
+                server::APP_TARGETS,
+                &[server::infrastructure::persistence::STATEMENT_LOG_DIRECTIVE],
+            ),
             LogFormat::Json,
             logs.clone(),
             service,
@@ -117,7 +122,7 @@ impl Captured {
     }
 }
 
-/// The `#[sqlx::test]` database with production statement logging, so SQL
+/// The `#[sqlx::test(migrations = "../../migrations")]` database with production statement logging, so SQL
 /// text reaches the spans exactly as it does in a deployed backend.
 async fn production_pool(pool: &PgPool) -> PgPool {
     let options = with_statement_logging((*pool.connect_options()).clone());
@@ -238,7 +243,7 @@ fn role_change_request(actor: uuid::Uuid, target: uuid::Uuid) -> Request<Body> {
 /// OT-008 task 1.10: an audit event is stored with its request's trace ID, and
 /// an event that can't be stored fails the action with a 5xx (which the 5xx
 /// alert counts) and an error log line carrying that trace ID.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn audit_events_carry_the_trace_id_and_insert_failures_are_logged(pool: PgPool) {
     let telemetry = Captured::install();
     let app = common::create_test_app(pool.clone());
@@ -288,7 +293,7 @@ async fn audit_events_carry_the_trace_id_and_insert_failures_are_logged(pool: Pg
 
 /// The `X-Trace-Id` header is the trace ID of the request's exported server
 /// span, and log lines written during the request carry the same ID.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn x_trace_id_matches_exported_trace_and_logs(pool: PgPool) {
     let telemetry = Captured::install();
     let app = common::create_test_app(pool);
@@ -330,7 +335,7 @@ async fn x_trace_id_matches_exported_trace_and_logs(pool: PgPool) {
 /// span carry the `traceparent`'s trace ID. Clients can't use this to pick a
 /// trace ID, because the edge strips their `traceparent` before starting its own
 /// span. That half is checked on the full stack (tasks 3.2, 3.8).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn edge_traceparent_is_continued(pool: PgPool) {
     let telemetry = Captured::install();
     let app = common::create_test_app(pool);
@@ -360,7 +365,7 @@ async fn edge_traceparent_is_continued(pool: PgPool) {
 
 /// A sign-in records at least one `repo.*` span inside the request's trace,
 /// descending from the server span.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_trace_contains_repository_spans(pool: PgPool) {
     let telemetry = Captured::install();
     let app = common::create_test_app(production_pool(&pool).await);
@@ -429,7 +434,7 @@ async fn login_trace_contains_repository_spans(pool: PgPool) {
 /// Register → verify by code → set password → sign in → refresh → forgot /
 /// reset password → magic link: no telemetry contains the email address, the
 /// passwords, the codes, the tokens, the CSRF token or any cookie value.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 #[allow(
     clippy::too_many_lines,
     reason = "one end-to-end flow; splitting it would hide which step leaked"

@@ -15,7 +15,7 @@
 //!    replaced (OT-001's [`redact_query`]).
 //! 4. **Length:** cut to `max_chars` characters.
 
-use crate::shared::redact::redact_query;
+use shared::redact::redact_query;
 
 /// Replacement for an email address.
 pub const EMAIL_PLACEHOLDER: &str = "[EMAIL]";
@@ -187,7 +187,7 @@ mod tests {
         expected: String,
     }
 
-    const FIXTURE: &str = include_str!("../../../../tests/fixtures/client_scrub_cases.json");
+    const FIXTURE: &str = include_str!("../../../../../tests/fixtures/client_scrub_cases.json");
 
     fn cases() -> Vec<Case> {
         serde_json::from_str(FIXTURE).expect("client_scrub_cases.json is valid")

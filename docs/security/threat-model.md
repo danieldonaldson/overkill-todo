@@ -88,38 +88,38 @@ assumptions:
 - Attackers: A1, A3, A4
 - Strength: tested, property-tested
 - Checks:
-  - `backend/src/infrastructure/crypto/keyring.rs::refuses_alg_none`
-  - `backend/src/infrastructure/crypto/keyring.rs::refuses_hs256_under_the_right_key`
-  - `backend/src/infrastructure/crypto/keyring.rs::refuses_a_missing_or_unknown_kid_without_trying_other_keys`
-  - `backend/src/infrastructure/crypto/keyring.rs::refuses_any_change_to_header_claims_or_signature`
-  - `backend/src/infrastructure/crypto/keyring.rs::prop_random_input_never_verifies`
-  - `backend/src/infrastructure/api/jwt.rs::test_rs256_token_rejected`
-  - `backend/src/infrastructure/api/jwt.rs::test_wrong_issuer_rejected`
-  - `backend/src/infrastructure/api/jwt.rs::test_wrong_audience_rejected`
-  - `backend/src/infrastructure/api/jwt.rs::test_non_session_typ_rejected`
-  - `backend/tests/security_integration.rs::expired_jwt_is_rejected`
-  - `backend/tests/security_integration.rs::tampered_jwt_signature_is_rejected`
+  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::refuses_alg_none`
+  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::refuses_hs256_under_the_right_key`
+  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::refuses_a_missing_or_unknown_kid_without_trying_other_keys`
+  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::refuses_any_change_to_header_claims_or_signature`
+  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::prop_random_input_never_verifies`
+  - `backend/crates/server/src/infrastructure/api/jwt.rs::test_rs256_token_rejected`
+  - `backend/crates/server/src/infrastructure/api/jwt.rs::test_wrong_issuer_rejected`
+  - `backend/crates/server/src/infrastructure/api/jwt.rs::test_wrong_audience_rejected`
+  - `backend/crates/server/src/infrastructure/api/jwt.rs::test_non_session_typ_rejected`
+  - `backend/crates/server/tests/security_integration.rs::expired_jwt_is_rejected`
+  - `backend/crates/server/tests/security_integration.rs::tampered_jwt_signature_is_rejected`
 
 ### P-02: Sign-in, sign-up and recovery answer the same way whether or not an account exists
 
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/src/application/use_cases/auth/login_user.rs::unknown_email_runs_dummy_verify_and_is_invalid_credentials`
-  - `backend/src/application/use_cases/auth/login_user.rs::passwordless_account_runs_dummy_verify_and_is_invalid_credentials`
-  - `backend/tests/handler_branches_integration.rs::login_signup_incomplete_returns_generic_401`
-  - `backend/tests/verification_integration.rs::register_existing_account_answers_like_a_new_signup`
-  - `backend/tests/verification_integration.rs::forgot_password_unknown_email_returns_success`
-  - `backend/tests/verification_integration.rs::resend_answers_identically_whatever_the_account_state`
+  - `backend/crates/application/src/use_cases/auth/login_user.rs::unknown_email_runs_dummy_verify_and_is_invalid_credentials`
+  - `backend/crates/application/src/use_cases/auth/login_user.rs::passwordless_account_runs_dummy_verify_and_is_invalid_credentials`
+  - `backend/crates/server/tests/handler_branches_integration.rs::login_signup_incomplete_returns_generic_401`
+  - `backend/crates/server/tests/verification_integration.rs::register_existing_account_answers_like_a_new_signup`
+  - `backend/crates/server/tests/verification_integration.rs::forgot_password_unknown_email_returns_success`
+  - `backend/crates/server/tests/verification_integration.rs::resend_answers_identically_whatever_the_account_state`
 
 ### P-03: Password guessing is slowed by bot protection and hashing cost
 
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/tests/turnstile_integration.rs::missing_token_is_rejected_on_every_protected_endpoint`
-  - `backend/tests/turnstile_integration.rs::failed_verification_is_rejected_on_every_protected_endpoint`
-  - `backend/tests/turnstile_integration.rs::upstream_failure_fails_closed_without_leaking_details`
+  - `backend/crates/server/tests/turnstile_integration.rs::missing_token_is_rejected_on_every_protected_endpoint`
+  - `backend/crates/server/tests/turnstile_integration.rs::failed_verification_is_rejected_on_every_protected_endpoint`
+  - `backend/crates/server/tests/turnstile_integration.rs::upstream_failure_fails_closed_without_leaking_details`
 - Gap: There is no per-account or per-address limit on password attempts in the application. Bot protection and argon2 cost are the only brakes, and a solver farm gets past bot protection. Rate limiting is expected at the edge (Traefik) at first deploy. Until then this is an accepted gap, not a covered property.
 
 ### P-04: A session issued before a password reset, account purge or role change is refused on `/auth/me`, Google unlink, account-sensitive and admin routes
@@ -127,13 +127,13 @@ assumptions:
 - Attackers: A3
 - Strength: tested
 - Checks:
-  - `backend/src/infrastructure/api/middleware/auth.rs::changed_role_invalidates_session`
-  - `backend/src/infrastructure/api/middleware/auth.rs::token_from_cutoff_second_remains_revoked_after_role_cycle`
-  - `backend/tests/admin_integration.rs::demoted_admin_token_is_rejected`
-  - `backend/src/application/use_cases/auth/reset_password.rs::test_reset_password_success`
-  - `backend/src/application/use_cases/user/change_password.rs::test_change_password_without_refresh_token_revokes_all`
-  - `backend/tests/verification_integration.rs::password_reset_flow_succeeds`
-  - `backend/tests/auth_properties_integration.rs::a_password_reset_ends_earlier_sessions`
+  - `backend/crates/server/src/infrastructure/api/middleware/auth.rs::changed_role_invalidates_session`
+  - `backend/crates/server/src/infrastructure/api/middleware/auth.rs::token_from_cutoff_second_remains_revoked_after_role_cycle`
+  - `backend/crates/server/tests/admin_integration.rs::demoted_admin_token_is_rejected`
+  - `backend/crates/application/src/use_cases/auth/reset_password.rs::test_reset_password_success`
+  - `backend/crates/application/src/use_cases/user/change_password.rs::test_change_password_without_refresh_token_revokes_all`
+  - `backend/crates/server/tests/verification_integration.rs::password_reset_flow_succeeds`
+  - `backend/crates/server/tests/auth_properties_integration.rs::a_password_reset_ends_earlier_sessions`
 
 Ordinary routes would trust a token until it expires, but there are none
 today: `/auth/me`, Google unlink, the profile routes and the admin routes all
@@ -145,9 +145,9 @@ session for up to `JWT_EXPIRATION_MINUTES`.
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/src/infrastructure/api/middleware/verification.rs::test_unverified_user_gets_403`
-  - `backend/tests/security_integration.rs::unverified_session_blocked_by_verification_gate`
-  - `backend/tests/verification_integration.rs::verification_gate_blocks_then_allows`
+  - `backend/crates/server/src/infrastructure/api/middleware/verification.rs::test_unverified_user_gets_403`
+  - `backend/crates/server/tests/security_integration.rs::unverified_session_blocked_by_verification_gate`
+  - `backend/crates/server/tests/verification_integration.rs::verification_gate_blocks_then_allows`
 
 ### Authorisation
 
@@ -156,10 +156,10 @@ session for up to `JWT_EXPIRATION_MINUTES`.
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/tests/route_guards_integration.rs::every_non_public_route_refuses_a_visitor`
-  - `backend/tests/route_guards_integration.rs::every_public_route_still_exists`
-  - `backend/tests/profile_integration.rs::export_data_without_token_returns_401`
-  - `backend/tests/auth_integration.rs::me_without_token_returns_401`
+  - `backend/crates/server/tests/route_guards_integration.rs::every_non_public_route_refuses_a_visitor`
+  - `backend/crates/server/tests/route_guards_integration.rs::every_public_route_still_exists`
+  - `backend/crates/server/tests/profile_integration.rs::export_data_without_token_returns_401`
+  - `backend/crates/server/tests/auth_integration.rs::me_without_token_returns_401`
 
 The route-guard test walks every operation in the API description, so a new
 route is checked automatically. The public list in that test is the one place
@@ -170,12 +170,12 @@ a route is declared public.
 - Attackers: A2
 - Strength: tested
 - Checks:
-  - `backend/tests/route_guards_integration.rs::every_admin_route_refuses_a_member`
-  - `backend/tests/route_guards_integration.rs::admin_guards_refuse_members_without_any_handler_check`
-  - `backend/tests/route_guards_integration.rs::a_just_promoted_member_is_sent_to_refresh_not_refused`
-  - `backend/src/infrastructure/api/extractors/admin.rs::admin_user_with_plain_user_role_is_access_denied`
-  - `backend/src/infrastructure/api/extractors/admin.rs::super_admin_user_with_admin_role_is_access_denied`
-  - `backend/tests/admin_integration.rs::list_users_forbidden_for_non_admin`
+  - `backend/crates/server/tests/route_guards_integration.rs::every_admin_route_refuses_a_member`
+  - `backend/crates/server/tests/route_guards_integration.rs::admin_guards_refuse_members_without_any_handler_check`
+  - `backend/crates/server/tests/route_guards_integration.rs::a_just_promoted_member_is_sent_to_refresh_not_refused`
+  - `backend/crates/server/src/infrastructure/api/extractors/admin.rs::admin_user_with_plain_user_role_is_access_denied`
+  - `backend/crates/server/src/infrastructure/api/extractors/admin.rs::super_admin_user_with_admin_role_is_access_denied`
+  - `backend/crates/server/tests/admin_integration.rs::list_users_forbidden_for_non_admin`
 
 The role is enforced twice: by `require_admin()` or `require_super_admin()`
 on the route group (`admin_guards` / `super_admin_guards` in `routes.rs`), and
@@ -193,17 +193,17 @@ Admin. An unknown stored role is rejected rather than defaulted.
 - Attackers: A2
 - Strength: proven, tested, property-tested
 - Checks:
-  - `backend/src/domain/value_objects/user_role.rs::role_changes_never_escalate`
-  - `backend/src/domain/value_objects/user_role.rs::a_super_admin_never_removes_their_own_role`
-  - `backend/src/domain/value_objects/user_role.rs::only_exact_role_names_are_accepted`
-  - `backend/src/domain/value_objects/user_role.rs::prop_user_manages_none`
-  - `backend/src/domain/value_objects/user_role.rs::prop_super_admin_manages_all`
-  - `backend/src/domain/value_objects/user_role.rs::prop_invalid_db_str_returns_none`
-  - `backend/src/domain/value_objects/user_role.rs::prop_user_role_db_roundtrip`
-  - `backend/src/application/use_cases/admin/manage_users.rs::set_user_role_forbids_admin_managing_admin`
-  - `backend/src/application/use_cases/admin/manage_users.rs::set_user_role_forbids_self_demotion`
-  - `backend/src/application/use_cases/admin/manage_users.rs::set_user_role_forbids_demoting_last_super_admin`
-  - `backend/tests/admin_integration.rs::role_change_forbidden_for_admin`
+  - `backend/crates/domain/src/value_objects/user_role.rs::role_changes_never_escalate`
+  - `backend/crates/domain/src/value_objects/user_role.rs::a_super_admin_never_removes_their_own_role`
+  - `backend/crates/domain/src/value_objects/user_role.rs::only_exact_role_names_are_accepted`
+  - `backend/crates/domain/src/value_objects/user_role.rs::prop_user_manages_none`
+  - `backend/crates/domain/src/value_objects/user_role.rs::prop_super_admin_manages_all`
+  - `backend/crates/domain/src/value_objects/user_role.rs::prop_invalid_db_str_returns_none`
+  - `backend/crates/domain/src/value_objects/user_role.rs::prop_user_role_db_roundtrip`
+  - `backend/crates/application/src/use_cases/admin/manage_users.rs::set_user_role_forbids_admin_managing_admin`
+  - `backend/crates/application/src/use_cases/admin/manage_users.rs::set_user_role_forbids_self_demotion`
+  - `backend/crates/application/src/use_cases/admin/manage_users.rs::set_user_role_forbids_demoting_last_super_admin`
+  - `backend/crates/server/tests/admin_integration.rs::role_change_forbidden_for_admin`
 
 **Proven** (Kani, `just verify`) for every actor role, current role, new role
 and whether the actor is changing their own account:
@@ -225,8 +225,8 @@ the other accounts, so the repository enforces it in SQL, and it's tested
 - Attackers: A2
 - Strength: tested
 - Checks:
-  - `backend/tests/auth_properties_integration.rs::a_member_reaches_only_their_own_account`
-  - `backend/tests/profile_integration.rs::export_data_returns_user_profile`
+  - `backend/crates/server/tests/auth_properties_integration.rs::a_member_reaches_only_their_own_account`
+  - `backend/crates/server/tests/profile_integration.rs::export_data_returns_user_profile`
 
 Every account route acts on the account named by the session. The isolation
 test calls each `/users` route, and Google unlink, as one Member, with another
@@ -243,20 +243,20 @@ appears in a response.
 - Attackers: A1
 - Strength: proven, tested
 - Checks:
-  - `backend/src/domain/entities/attempt_lockout.rs::lock_window_is_between_15_minutes_and_24_hours`
-  - `backend/src/domain/entities/attempt_lockout.rs::lock_window_never_shrinks_as_lockouts_grow`
-  - `backend/src/domain/entities/attempt_lockout.rs::lock_window_doubles_per_earlier_lockout_up_to_24_hours`
-  - `backend/src/domain/entities/attempt_lockout.rs::locked_inside_the_window_is_never_reissued`
-  - `backend/src/domain/entities/attempt_lockout.rs::unlocked_inside_the_cooldown_is_refused`
-  - `backend/src/domain/entities/attempt_lockout.rs::reissued_once_every_wait_has_passed`
-  - `backend/src/domain/entities/attempt_lockout.rs::reported_waits_are_never_negative`
-  - `backend/src/domain/entities/attempt_lockout.rs::a_lock_with_under_a_second_left_still_holds`
-  - `backend/src/domain/entities/attempt_lockout.rs::lock_duration_doubles_per_earlier_lockout`
-  - `backend/src/domain/entities/attempt_lockout.rs::lock_duration_is_capped`
-  - `backend/src/domain/entities/attempt_lockout.rs::reissue_lock_outranks_cooldown`
-  - `backend/src/domain/entities/attempt_lockout.rs::resend_cooldown`
-  - `backend/tests/verification_integration.rs::verify_email_locked_code_returns_code_locked`
-  - `backend/tests/verification_integration.rs::lock_window_doubles_after_each_lockout`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::lock_window_is_between_15_minutes_and_24_hours`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::lock_window_never_shrinks_as_lockouts_grow`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::lock_window_doubles_per_earlier_lockout_up_to_24_hours`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::locked_inside_the_window_is_never_reissued`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::unlocked_inside_the_cooldown_is_refused`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::reissued_once_every_wait_has_passed`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::reported_waits_are_never_negative`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::a_lock_with_under_a_second_left_still_holds`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::lock_duration_doubles_per_earlier_lockout`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::lock_duration_is_capped`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::reissue_lock_outranks_cooldown`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::resend_cooldown`
+  - `backend/crates/server/tests/verification_integration.rs::verify_email_locked_code_returns_code_locked`
+  - `backend/crates/server/tests/verification_integration.rs::lock_window_doubles_after_each_lockout`
 
 **Proven** (Kani, `just verify`) over every `i32` attempt count and lockout
 count, and every send and current time from 2000 to 2200 to the microsecond,
@@ -290,16 +290,16 @@ ended.
 - Checks:
   - `models/attempt_claim.qnt::lockIsNeverLiftedInsideItsWindow`
   - `models/attempt_claim.qnt::noReissueInsideTheCooldown`
-  - `backend/tests/model_conformance.rs::email_codes_follow_the_attempt_claim_model`
-  - `backend/tests/model_conformance.rs::reset_codes_follow_the_attempt_claim_model`
-  - `backend/tests/reissue_race_integration.rs::resend_racing_the_locking_guess_keeps_the_lock`
-  - `backend/tests/reissue_race_integration.rs::reregister_racing_the_locking_guess_keeps_the_lock`
-  - `backend/tests/reissue_race_integration.rs::reset_request_racing_the_locking_guess_keeps_the_lock`
-  - `backend/tests/verification_integration.rs::resend_while_locked_issues_no_new_code`
-  - `backend/tests/verification_integration.rs::reregistering_does_not_reset_a_locked_code`
-  - `backend/tests/repository_integration.rs::password_reset_save_upsert_consume`
-  - `backend/tests/repository_integration.rs::set_last_sent_at_moves_only_the_named_unlocked_code`
-  - `backend/src/domain/entities/attempt_lockout.rs::lock_window_table_matches_the_policy`
+  - `backend/crates/server/tests/model_conformance.rs::email_codes_follow_the_attempt_claim_model`
+  - `backend/crates/server/tests/model_conformance.rs::reset_codes_follow_the_attempt_claim_model`
+  - `backend/crates/server/tests/reissue_race_integration.rs::resend_racing_the_locking_guess_keeps_the_lock`
+  - `backend/crates/server/tests/reissue_race_integration.rs::reregister_racing_the_locking_guess_keeps_the_lock`
+  - `backend/crates/server/tests/reissue_race_integration.rs::reset_request_racing_the_locking_guess_keeps_the_lock`
+  - `backend/crates/server/tests/verification_integration.rs::resend_while_locked_issues_no_new_code`
+  - `backend/crates/server/tests/verification_integration.rs::reregistering_does_not_reset_a_locked_code`
+  - `backend/crates/server/tests/repository_integration.rs::password_reset_save_upsert_consume`
+  - `backend/crates/server/tests/repository_integration.rs::set_last_sent_at_moves_only_the_named_unlocked_code`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::lock_window_table_matches_the_policy`
   - `just models`
 
 Each issuing path (`resend_verification`, `request_password_reset`,
@@ -339,11 +339,11 @@ attacker who timed a resend with each 5th guess got about 5 guesses per
 - Checks:
   - `models/attempt_claim.qnt::atMostFiveWrongGuessesPerCode`
   - `models/attempt_claim.qnt::goneCodeIsNeverReportedLocked`
-  - `backend/tests/model_conformance.rs::email_codes_follow_the_attempt_claim_model`
-  - `backend/tests/model_conformance.rs::reset_codes_follow_the_attempt_claim_model`
-  - `backend/tests/attempt_lockout_integration.rs::register_attempt_caps_under_concurrency`
-  - `backend/tests/attempt_lockout_integration.rs::register_attempt_reports_not_found_without_row`
-  - `backend/tests/attempt_lockout_integration.rs::claim_naming_a_replaced_code_finds_no_code`
+  - `backend/crates/server/tests/model_conformance.rs::email_codes_follow_the_attempt_claim_model`
+  - `backend/crates/server/tests/model_conformance.rs::reset_codes_follow_the_attempt_claim_model`
+  - `backend/crates/server/tests/attempt_lockout_integration.rs::register_attempt_caps_under_concurrency`
+  - `backend/crates/server/tests/attempt_lockout_integration.rs::register_attempt_reports_not_found_without_row`
+  - `backend/crates/server/tests/attempt_lockout_integration.rs::claim_naming_a_replaced_code_finds_no_code`
   - `just models`
 - Gap: Accepted (2026-11-16). The model treats each statement as atomic. The claim's "does the code still exist" check reads the statement's snapshot, so a guess whose claim waits on a concurrent replacement or deletion of its code can still be told "locked" rather than "no code". The message is the only effect: no slot is taken and nothing is compared. Fixing it would need a stricter isolation level on every guess, for a wording difference.
 
@@ -364,7 +364,7 @@ the old claim and must keep its counterexample (5 steps).
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/tests/attempt_lockout_integration.rs::register_attempt_caps_under_concurrency`
+  - `backend/crates/server/tests/attempt_lockout_integration.rs::register_attempt_caps_under_concurrency`
 
 The counter is incremented only in SQL, by the repositories' attempt claim
 (`SET attempts = attempts + 1 … WHERE attempts < $2`). It stops at the cap of
@@ -381,9 +381,9 @@ it was deleted rather than kept as a second counter that doesn't matter.
 - Strength: modelled, tested
 - Checks:
   - `models/refresh_rotation.qnt::atMostOneSuccessorPerToken`
-  - `backend/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
-  - `backend/tests/refresh_token_integration.rs::concurrent_rotate_lets_exactly_one_winner`
-  - `backend/src/application/use_cases/auth/refresh_token.rs::rotates_token_on_valid_refresh`
+  - `backend/crates/server/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
+  - `backend/crates/server/tests/refresh_token_integration.rs::concurrent_rotate_lets_exactly_one_winner`
+  - `backend/crates/application/src/use_cases/auth/refresh_token.rs::rotates_token_on_valid_refresh`
   - `just models`
 
 **Modelled** (Quint, `just models`): every interleaving of 3 refresh requests
@@ -401,13 +401,13 @@ Logins aren't modelled: they mint unrelated tokens.
 - Checks:
   - `models/refresh_rotation.qnt::reuseAfterRotationIsDetected`
   - `models/refresh_rotation.qnt::reuseRevokesEverySession`
-  - `backend/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
-  - `backend/src/application/use_cases/auth/refresh_token.rs::revoked_reuse_revokes_all_even_when_also_expired`
-  - `backend/src/domain/entities/refresh_token.rs::a_revoked_token_is_never_accepted`
-  - `backend/src/domain/entities/refresh_token.rs::revoking_twice_keeps_the_first_time`
-  - `backend/src/domain/entities/refresh_token.rs::test_status_revoked_outranks_expired`
-  - `backend/src/domain/entities/refresh_token.rs::test_revoke_is_idempotent`
-  - `backend/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session`
+  - `backend/crates/server/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
+  - `backend/crates/application/src/use_cases/auth/refresh_token.rs::revoked_reuse_revokes_all_even_when_also_expired`
+  - `backend/crates/domain/src/entities/refresh_token.rs::a_revoked_token_is_never_accepted`
+  - `backend/crates/domain/src/entities/refresh_token.rs::revoking_twice_keeps_the_first_time`
+  - `backend/crates/domain/src/entities/refresh_token.rs::test_status_revoked_outranks_expired`
+  - `backend/crates/domain/src/entities/refresh_token.rs::test_revoke_is_idempotent`
+  - `backend/crates/server/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session`
   - `models/auth_protocols.spthy::stolen_reuse_ends_every_session`
   - `just models`
   - `just protocols`
@@ -442,9 +442,9 @@ says.
 - Checks:
   - `models/auth_protocols.spthy::refresh_needs_the_fingerprint`
   - `models/auth_protocols.spthy::fingerprint_known_only_if_stolen`
-  - `backend/tests/auth_properties_integration.rs::a_refresh_token_is_refused_from_another_device`
-  - `backend/src/application/use_cases/auth/refresh_token.rs::rejects_device_fingerprint_mismatch`
-  - `backend/src/domain/entities/refresh_token.rs::test_validate_fingerprint_mismatch`
+  - `backend/crates/server/tests/auth_properties_integration.rs::a_refresh_token_is_refused_from_another_device`
+  - `backend/crates/application/src/use_cases/auth/refresh_token.rs::rejects_device_fingerprint_mismatch`
+  - `backend/crates/domain/src/entities/refresh_token.rs::test_validate_fingerprint_mismatch`
   - `just protocols`
 
 **Modelled** (Tamarin, `just protocols`; attacker and assumptions under
@@ -460,8 +460,8 @@ fingerprint only ever travels inside TLS.
   - `models/auth_protocols.spthy::browser_tokens_stay_secret`
   - `models/auth_protocols.spthy::replayed_sign_in_gains_nothing`
   - `models/auth_protocols.spthy::refresh_replay_gains_nothing`
-  - `backend/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session`
-  - `backend/tests/refresh_token_integration.rs::concurrent_rotate_lets_exactly_one_winner`
+  - `backend/crates/server/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session`
+  - `backend/crates/server/tests/refresh_token_integration.rs::concurrent_rotate_lets_exactly_one_winner`
   - `just protocols`
 
 **Modelled** (Tamarin, `just protocols`; attacker and assumptions under
@@ -480,9 +480,9 @@ channel.
 - Attackers: A3
 - Strength: tested
 - Checks:
-  - `backend/tests/profile_integration.rs::logout_clears_session_cookie`
-  - `backend/src/application/use_cases/auth/revoke_token.rs::test_revoke_existing_token`
-  - `backend/tests/auth_properties_integration.rs::a_refresh_token_is_refused_after_logout`
+  - `backend/crates/server/tests/profile_integration.rs::logout_clears_session_cookie`
+  - `backend/crates/application/src/use_cases/auth/revoke_token.rs::test_revoke_existing_token`
+  - `backend/crates/server/tests/auth_properties_integration.rs::a_refresh_token_is_refused_after_logout`
 - Gap: If revoking the refresh token fails (a database error), logout still clears the cookies and reports success, and the token stays valid until it expires or rotates. Logout logs a warning when this happens, but it doesn't guarantee revocation. The impact is low, since the token was in an `HttpOnly` cookie that has just been cleared.
 
 ### P-18: Retiring a signing key ends its sessions and links, and rotating keeps them
@@ -490,23 +490,23 @@ channel.
 - Attackers: A3
 - Strength: tested
 - Checks:
-  - `backend/tests/token_keys_integration.rs::tokens_from_the_previous_key_keep_working_after_rotation`
-  - `backend/tests/token_keys_integration.rs::retiring_a_key_signs_its_sessions_in_again_silently`
-  - `backend/tests/token_keys_integration.rs::retiring_a_key_invalidates_its_reset_links`
+  - `backend/crates/server/tests/token_keys_integration.rs::tokens_from_the_previous_key_keep_working_after_rotation`
+  - `backend/crates/server/tests/token_keys_integration.rs::retiring_a_key_signs_its_sessions_in_again_silently`
+  - `backend/crates/server/tests/token_keys_integration.rs::retiring_a_key_invalidates_its_reset_links`
 
 ### P-19: One-time codes and magic links are accepted only before they expire and while unlocked
 
 - Attackers: A1, A3
 - Strength: proven, tested
 - Checks:
-  - `backend/src/domain/entities/attempt_lockout.rs::a_code_is_refused_from_its_expiry_instant`
-  - `backend/src/domain/entities/attempt_lockout.rs::a_magic_link_is_live_only_before_its_own_expiry`
-  - `backend/tests/verification_integration.rs::verify_email_expired_code_returns_code_expired`
-  - `backend/src/application/use_cases/auth/verify_email.rs::code_expiring_during_the_check_is_refused`
-  - `backend/src/application/use_cases/auth/validate_reset_code.rs::code_expiring_during_the_check_is_refused`
-  - `backend/tests/verification_integration.rs::magic_link_expired_token_is_rejected`
-  - `backend/src/domain/entities/password_reset_code.rs::test_expired_code`
-  - `backend/src/domain/entities/email_verification_code.rs::test_is_magic_token_expired`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::a_code_is_refused_from_its_expiry_instant`
+  - `backend/crates/domain/src/entities/attempt_lockout.rs::a_magic_link_is_live_only_before_its_own_expiry`
+  - `backend/crates/server/tests/verification_integration.rs::verify_email_expired_code_returns_code_expired`
+  - `backend/crates/application/src/use_cases/auth/verify_email.rs::code_expiring_during_the_check_is_refused`
+  - `backend/crates/application/src/use_cases/auth/validate_reset_code.rs::code_expiring_during_the_check_is_refused`
+  - `backend/crates/server/tests/verification_integration.rs::magic_link_expired_token_is_rejected`
+  - `backend/crates/domain/src/entities/password_reset_code.rs::test_expired_code`
+  - `backend/crates/domain/src/entities/email_verification_code.rs::test_is_magic_token_expired`
 
 **Proven** (Kani, `just verify`) for every expiry and current time from 2000
 to 2200, to the microsecond: a code is expired exactly from its expiry instant
@@ -526,11 +526,11 @@ it's the SQL attempt claim, modelled in P-12.
 - Attackers: A1, A4
 - Strength: modelled, tested, property-tested
 - Checks:
-  - `backend/tests/security_integration.rs::csrf_header_cookie_mismatch_rejected`
-  - `backend/tests/security_integration.rs::csrf_cookie_without_header_rejected`
-  - `backend/tests/security_integration.rs::csrf_token_bound_to_other_user_rejected`
-  - `backend/src/infrastructure/api/csrf.rs::test_verify_rejects_other_user`
-  - `backend/src/infrastructure/api/csrf.rs::prop_arbitrary_strings_fail`
+  - `backend/crates/server/tests/security_integration.rs::csrf_header_cookie_mismatch_rejected`
+  - `backend/crates/server/tests/security_integration.rs::csrf_cookie_without_header_rejected`
+  - `backend/crates/server/tests/security_integration.rs::csrf_token_bound_to_other_user_rejected`
+  - `backend/crates/server/src/infrastructure/api/csrf.rs::test_verify_rejects_other_user`
+  - `backend/crates/server/src/infrastructure/api/csrf.rs::prop_arbitrary_strings_fail`
   - `models/auth_protocols.spthy::cross_site_pages_cannot_change_state`
   - `models/auth_protocols.spthy::cross_site_changes_need_a_token_signed_for_the_member`
   - `just protocols`
@@ -564,9 +564,9 @@ do:
 - Checks:
   - `models/auth_protocols.spthy::exempt_routes_cannot_be_driven_cross_site`
   - `just protocols`
-  - `backend/tests/auth_properties_integration.rs::csrf_exempt_routes_cannot_be_driven_cross_site`
-  - `backend/tests/auth_properties_integration.rs::cors_grants_no_other_origin`
-  - `backend/src/infrastructure/api/middleware/csrf.rs::test_excluded_paths`
+  - `backend/crates/server/tests/auth_properties_integration.rs::csrf_exempt_routes_cannot_be_driven_cross_site`
+  - `backend/crates/server/tests/auth_properties_integration.rs::cors_grants_no_other_origin`
+  - `backend/crates/server/src/infrastructure/api/middleware/csrf.rs::test_excluded_paths`
 - Gap: Accepted. Logout takes no body and no custom header. A cross-site form can POST to it, and what stops it ending the session is the browser not sending or setting `SameSite=Lax` cookies on a cross-site POST (P-24). A server test can't observe that browser behaviour, and the model leaves logout out. The impact would be a forced sign-out, not access.
 
 **Modelled** (Tamarin, `just protocols`; attacker and assumptions under
@@ -584,13 +584,13 @@ exempt route acts on such a request; if a route accepted a simple body
   - `models/auth_protocols.spthy::google_sign_in_completes_where_it_started`
   - `models/auth_protocols.spthy::no_login_csrf`
   - `just protocols`
-  - `backend/tests/oauth_integration.rs::callback_without_state_cookie_is_rejected`
-  - `backend/tests/oauth_integration.rs::callback_with_another_flows_nonce_is_rejected`
-  - `backend/tests/oauth_integration.rs::callback_with_forged_state_is_rejected`
-  - `backend/tests/oauth_integration.rs::callback_for_different_provider_than_state_is_rejected`
-  - `backend/src/infrastructure/api/oauth_state.rs::tampered_oauth_state_is_refused`
-  - `backend/src/infrastructure/api/oauth_state.rs::expired_oauth_state_is_refused`
-  - `backend/tests/oauth_integration.rs::auth_cookies_are_host_only`
+  - `backend/crates/server/tests/oauth_integration.rs::callback_without_state_cookie_is_rejected`
+  - `backend/crates/server/tests/oauth_integration.rs::callback_with_another_flows_nonce_is_rejected`
+  - `backend/crates/server/tests/oauth_integration.rs::callback_with_forged_state_is_rejected`
+  - `backend/crates/server/tests/oauth_integration.rs::callback_for_different_provider_than_state_is_rejected`
+  - `backend/crates/server/src/infrastructure/api/oauth_state.rs::tampered_oauth_state_is_refused`
+  - `backend/crates/server/src/infrastructure/api/oauth_state.rs::expired_oauth_state_is_refused`
+  - `backend/crates/server/tests/oauth_integration.rs::auth_cookies_are_host_only`
 
 **Modelled** (Tamarin, `just protocols`; attacker and assumptions under
 [Protocol model](#protocol-model)). A Google sign-in completes in a browser
@@ -610,21 +610,21 @@ shows the code sets every cookie with the prefix.
 - Attackers: A1, A2
 - Strength: tested
 - Checks:
-  - `backend/tests/oauth_integration.rs::link_identity_owned_by_another_user_redirects_already_linked`
-  - `backend/tests/oauth_integration.rs::link_with_unverified_provider_email_is_refused`
-  - `backend/tests/oauth_integration.rs::login_with_unverified_account_email_redirects_with_conflict`
-  - `backend/tests/oauth_integration.rs::login_with_unverified_provider_email_creates_no_account`
-  - `backend/tests/oauth_integration.rs::verify_email_cannot_take_over_oauth_only_account`
+  - `backend/crates/server/tests/oauth_integration.rs::link_identity_owned_by_another_user_redirects_already_linked`
+  - `backend/crates/server/tests/oauth_integration.rs::link_with_unverified_provider_email_is_refused`
+  - `backend/crates/server/tests/oauth_integration.rs::login_with_unverified_account_email_redirects_with_conflict`
+  - `backend/crates/server/tests/oauth_integration.rs::login_with_unverified_provider_email_creates_no_account`
+  - `backend/crates/server/tests/oauth_integration.rs::verify_email_cannot_take_over_oauth_only_account`
 
 ### P-24: Auth cookies are `__Host-` prefixed (so only this host, over HTTPS, can set them), `Secure`, `Path=/`, `SameSite=Lax`, and `HttpOnly` except the CSRF cookie
 
 - Attackers: A1, A4
 - Strength: tested
 - Checks:
-  - `backend/src/infrastructure/api/cookies.rs::every_cookie_meets_the_host_prefix_rules`
-  - `backend/src/infrastructure/api/cookies.rs::only_the_csrf_cookie_is_readable_by_scripts`
-  - `backend/src/infrastructure/api/cookies.rs::extract_cookie_ignores_the_unprefixed_name`
-  - `backend/tests/oauth_integration.rs::auth_cookies_are_host_only`
+  - `backend/crates/server/src/infrastructure/api/cookies.rs::every_cookie_meets_the_host_prefix_rules`
+  - `backend/crates/server/src/infrastructure/api/cookies.rs::only_the_csrf_cookie_is_readable_by_scripts`
+  - `backend/crates/server/src/infrastructure/api/cookies.rs::extract_cookie_ignores_the_unprefixed_name`
+  - `backend/crates/server/tests/oauth_integration.rs::auth_cookies_are_host_only`
   - `apps/web/tests/integration/signup.spec.ts`
 
 `Path=/` is what the prefix requires, so the session and refresh cookies are
@@ -641,8 +641,8 @@ browsers treat as secure; Safari may need HTTPS for local development.
 - Attackers: A3
 - Strength: tested
 - Checks:
-  - `backend/tests/telemetry_integration.rs::auth_flows_leave_no_secrets_in_telemetry`
-  - `backend/src/infrastructure/crypto/keyring.rs::startup_log_names_the_keys_and_holds_no_secrets`
+  - `backend/crates/server/tests/telemetry_integration.rs::auth_flows_leave_no_secrets_in_telemetry`
+  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::startup_log_names_the_keys_and_holds_no_secrets`
 
 ### P-34: The browser report endpoint takes identity only from the session, changes no state and returns nothing
 
@@ -653,11 +653,11 @@ the sender's own session, bounded by the recording budget.
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/tests/client_telemetry_integration.rs::a_user_id_in_the_body_is_ignored`
-  - `backend/tests/client_telemetry_integration.rs::an_expired_or_invalid_session_is_anonymous_never_a_401`
-  - `backend/tests/client_telemetry_integration.rs::a_visitor_report_is_logged_with_no_user_id_and_an_empty_204`
-  - `backend/tests/client_telemetry_integration.rs::reports_over_the_budget_get_a_204_and_are_counted_not_recorded`
-  - `backend/src/application/use_cases/telemetry/scrub.rs::every_fixture_case_scrubs_to_its_expected_output`
+  - `backend/crates/server/tests/client_telemetry_integration.rs::a_user_id_in_the_body_is_ignored`
+  - `backend/crates/server/tests/client_telemetry_integration.rs::an_expired_or_invalid_session_is_anonymous_never_a_401`
+  - `backend/crates/server/tests/client_telemetry_integration.rs::a_visitor_report_is_logged_with_no_user_id_and_an_empty_204`
+  - `backend/crates/server/tests/client_telemetry_integration.rs::reports_over_the_budget_get_a_204_and_are_counted_not_recorded`
+  - `backend/crates/application/src/use_cases/telemetry/scrub.rs::every_fixture_case_scrubs_to_its_expected_output`
 - Gap: No per-client rate limit; the budget is global per replica. A
   Cloudflare rule per client IP is planned for the first deploy (OT-006 task 2.1).
 
@@ -666,8 +666,8 @@ the sender's own session, bounded by the recording budget.
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/src/infrastructure/api/error.rs::test_into_response_internal_redacted_in_prod`
-  - `backend/src/infrastructure/api/error.rs::test_into_response_database_redacted_in_prod`
+  - `backend/crates/server/src/infrastructure/api/error.rs::test_into_response_internal_redacted_in_prod`
+  - `backend/crates/server/src/infrastructure/api/error.rs::test_into_response_database_redacted_in_prod`
 
 ### P-27: A database copy gives no usable credentials
 
@@ -681,7 +681,7 @@ test.)
 - Attackers: A5
 - Strength: tested
 - Checks:
-  - `backend/tests/auth_properties_integration.rs::a_database_copy_holds_no_usable_credentials`
+  - `backend/crates/server/tests/auth_properties_integration.rs::a_database_copy_holds_no_usable_credentials`
 
 The test runs sign-up, verification, sign-in, refresh and a password reset.
 It dumps every row of every table while each code is still live (using a code
@@ -696,16 +696,16 @@ dump.
 - Attackers: A2
 - Strength: proven, tested
 - Checks:
-  - `backend/src/domain/value_objects/account_status.rs::a_deleted_account_stays_deleted`
-  - `backend/src/domain/value_objects/account_status.rs::rescheduling_keeps_the_original_date`
-  - `backend/src/domain/value_objects/account_status.rs::a_pending_deletion_is_not_purged_early`
-  - `backend/src/domain/value_objects/account_status.rs::the_columns_round_trip_and_deleted_wins`
-  - `backend/src/domain/entities/user.rs::test_deleted_is_terminal`
-  - `backend/src/domain/entities/user.rs::test_schedule_deletion_is_idempotent`
-  - `backend/src/domain/entities/user.rs::test_schedule_deletion_sets_future_timestamp`
-  - `backend/src/domain/entities/user.rs::test_is_ready_for_deletion_when_scheduled_in_past`
-  - `backend/tests/account_deletion_integration.rs::deleted_account_cannot_be_pending_deletion`
-  - `backend/tests/account_deletion_integration.rs::anonymize_skips_account_cancelled_after_the_scan`
+  - `backend/crates/domain/src/value_objects/account_status.rs::a_deleted_account_stays_deleted`
+  - `backend/crates/domain/src/value_objects/account_status.rs::rescheduling_keeps_the_original_date`
+  - `backend/crates/domain/src/value_objects/account_status.rs::a_pending_deletion_is_not_purged_early`
+  - `backend/crates/domain/src/value_objects/account_status.rs::the_columns_round_trip_and_deleted_wins`
+  - `backend/crates/domain/src/entities/user.rs::test_deleted_is_terminal`
+  - `backend/crates/domain/src/entities/user.rs::test_schedule_deletion_is_idempotent`
+  - `backend/crates/domain/src/entities/user.rs::test_schedule_deletion_sets_future_timestamp`
+  - `backend/crates/domain/src/entities/user.rs::test_is_ready_for_deletion_when_scheduled_in_past`
+  - `backend/crates/server/tests/account_deletion_integration.rs::deleted_account_cannot_be_pending_deletion`
+  - `backend/crates/server/tests/account_deletion_integration.rs::anonymize_skips_account_cancelled_after_the_scan`
 
 **Proven** (Kani, `just verify`) for every status and every time, in any
 order (the transitions only copy and compare times, so the proofs run them
@@ -728,19 +728,19 @@ purge job picks due accounts and guards its write with the same rule in SQL
 - Attackers: A3
 - Strength: tested
 - Checks:
-  - `backend/tests/profile_integration.rs::request_deletion_wrong_password_is_rejected`
-  - `backend/tests/profile_integration.rs::request_deletion_without_confirmation_returns_400`
+  - `backend/crates/server/tests/profile_integration.rs::request_deletion_wrong_password_is_rejected`
+  - `backend/crates/server/tests/profile_integration.rs::request_deletion_without_confirmation_returns_400`
 
 ### P-30: Addresses differing only in case or surrounding whitespace are one identity
 
 - Attackers: A1
 - Strength: proven, property-tested
 - Checks:
-  - `backend/src/domain/value_objects/email.rs::normalising_twice_changes_nothing`
-  - `backend/src/domain/value_objects/email.rs::case_and_whitespace_variants_are_one_identity`
-  - `backend/src/domain/value_objects/email.rs::prop_ascii_normalize_matches_trim_to_lowercase`
-  - `backend/src/domain/value_objects/email.rs::prop_email_normalized_to_lowercase`
-  - `backend/src/domain/value_objects/email.rs::prop_email_whitespace_trimmed`
+  - `backend/crates/domain/src/value_objects/email.rs::normalising_twice_changes_nothing`
+  - `backend/crates/domain/src/value_objects/email.rs::case_and_whitespace_variants_are_one_identity`
+  - `backend/crates/domain/src/value_objects/email.rs::prop_ascii_normalize_matches_trim_to_lowercase`
+  - `backend/crates/domain/src/value_objects/email.rs::prop_email_normalized_to_lowercase`
+  - `backend/crates/domain/src/value_objects/email.rs::prop_email_whitespace_trimmed`
 - Gap: Proven for ASCII addresses of up to 8 bytes only (design D7). Longer and Unicode addresses are property-tested, not proven.
 
 **Proven** (Kani, `just verify`) for every ASCII input of up to 8 bytes, and
@@ -760,11 +760,11 @@ they're left to the proptests.
 - Attackers: A1
 - Strength: tested, property-tested
 - Checks:
-  - `backend/tests/profile_integration.rs::me_with_garbage_token_returns_401`
-  - `backend/src/infrastructure/crypto/keyring.rs::refuses_malformed_tokens`
-  - `backend/src/infrastructure/crypto/keyring.rs::prop_random_segments_never_verify`
-  - `backend/src/infrastructure/api/cookies.rs::extract_cookie_returns_none_for_non_utf8_header`
-  - `backend/tests/oauth_integration.rs::callback_with_malformed_user_id_in_state_is_rejected`
+  - `backend/crates/server/tests/profile_integration.rs::me_with_garbage_token_returns_401`
+  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::refuses_malformed_tokens`
+  - `backend/crates/server/src/infrastructure/crypto/keyring.rs::prop_random_segments_never_verify`
+  - `backend/crates/server/src/infrastructure/api/cookies.rs::extract_cookie_returns_none_for_non_utf8_header`
+  - `backend/crates/server/tests/oauth_integration.rs::callback_with_malformed_user_id_in_state_is_rejected`
 - Gap: Sampled. Fuzzing every operation is OT-011 (API fuzzing); link its checks here when it lands.
 
 ### P-32: Malformed bodies, queries and paths get the JSON 400 before any handler logic
@@ -772,9 +772,9 @@ they're left to the proptests.
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/tests/api_contract_integration.rs::malformed_json_body_gets_standard_error`
-  - `backend/tests/api_contract_integration.rs::malformed_query_parameter_gets_standard_error`
-  - `backend/tests/api_contract_integration.rs::malformed_path_parameter_gets_standard_error`
+  - `backend/crates/server/tests/api_contract_integration.rs::malformed_json_body_gets_standard_error`
+  - `backend/crates/server/tests/api_contract_integration.rs::malformed_query_parameter_gets_standard_error`
+  - `backend/crates/server/tests/api_contract_integration.rs::malformed_path_parameter_gets_standard_error`
 - Gap: Sampled. Fuzzing every operation is OT-011 (API fuzzing); link its checks here when it lands.
 
 ## Spec coverage
@@ -811,6 +811,6 @@ OT-010:
    saying what is missing and where it's planned.
 4. In a Tamarin model, a rule that encodes a check the code must make names
    the integration test that shows the code makes it, in a comment block right
-   above the rule (`// Checks: backend/tests/<file>.rs::<fn>`). The gate
+   above the rule (`// Checks: backend/crates/<crate>/tests/<file>.rs::<fn>`). The gate
    resolves those too.
 5. Run `just threat-model-check`.

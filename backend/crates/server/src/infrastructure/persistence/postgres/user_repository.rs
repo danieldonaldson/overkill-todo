@@ -3,15 +3,15 @@ use super::connection::Database;
 use super::error::persist_err;
 use super::models::{DbUserRole, UserRow};
 use super::time::{ToDb, ToDomain};
-use crate::application::ports::outgoing::{
+use application::ports::outgoing::{
     AccountLifecycleRepository, SessionAuthorizationState, UserRepository,
 };
-use crate::domain::{
+use async_trait::async_trait;
+use domain::{
     entities::{AuditEvent, User, UserParts},
     errors::DomainError,
     value_objects::{AccountStatus, Email, PendingEmailChange, UserId},
 };
-use async_trait::async_trait;
 use jiff::Timestamp;
 use std::sync::Arc;
 

@@ -129,7 +129,7 @@ jobs:
           tool: nextest,sqlx-cli,cargo-deny,cargo-machete,cargo-llvm-cov
 
       - name: Format
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       # Advisories (RustSec), licenses, bans, sources. advisories.yml also runs the
       # advisory part weekly, since new advisories land without any code change.
@@ -141,14 +141,14 @@ jobs:
         run: cargo machete
 
       - name: Clippy
-        run: cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -D clippy::allow_attributes_without_reason
+        run: cargo clippy --workspace --all-targets -- -D warnings
         env:
           SQLX_OFFLINE: 'true'
 
       # The release image builds with --no-default-features (no Swagger UI). Check that
       # combination here too, or a break would first surface in the image job on main.
       - name: Clippy (release features)
-        run: cargo clippy --lib --bins --no-default-features -- -D warnings -W clippy::pedantic -W clippy::nursery -D clippy::allow_attributes_without_reason
+        run: cargo clippy --workspace --lib --bins --no-default-features -- -D warnings
         env:
           SQLX_OFFLINE: 'true'
 
@@ -156,7 +156,7 @@ jobs:
       # `just api-types` (backend/openapi.json is generated from the route tree).
       - name: API spec current
         run: |
-          cargo run --quiet --example export_openapi > openapi.json
+          cargo run --quiet -p server --example export_openapi > openapi.json
           git diff --exit-code -- openapi.json || { echo "::error file=backend/openapi.json::Stale. Run: just api-types"; exit 1; }
         env:
           SQLX_OFFLINE: 'true'
@@ -167,7 +167,7 @@ jobs:
       # Runs lib (unit) + integration tests instrumented, so coverage reflects both.
       # No separate unit-test step: it would only add another full, uninstrumented build.
       - name: Integration tests (with coverage)
-        run: cargo llvm-cov nextest --locked --tests --lcov --output-path target/lcov.info
+        run: cargo llvm-cov nextest --locked --workspace --tests --lcov --output-path target/lcov.info
 
       - name: Coverage summary
         if: always()
@@ -186,7 +186,7 @@ jobs:
 
       # Fails when a query changed without `just db-prepare`.
       - name: Check SQLx offline cache
-        run: cargo sqlx prepare --check -- --all-targets
+        run: cargo sqlx prepare --workspace --check -- --all-targets || { echo "::error::SQLx offline cache is stale. Run 'just db-prepare' and commit backend/.sqlx/"; exit 1; }
 
   web:
     name: Web
@@ -299,7 +299,7 @@ jobs:
           kani-version: ${{ steps.pin.outputs.kani }}
           working-directory: backend
           # Harnesses in parallel, as `just verify` does.
-          args: '-j --output-format=terse'
+          args: '--workspace -j --output-format=terse'
 
   # Quint concurrency models (`just models`, OT-010): Apalache's bounded checks, the old
   # code's counterexamples, then the exported traces replayed against Postgres. Node,

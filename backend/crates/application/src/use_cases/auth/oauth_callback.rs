@@ -2,13 +2,13 @@
 
 use std::sync::Arc;
 
-use crate::application::dto::OAuthUserInfo;
-use crate::application::ports::OAuthAccountRepository;
-use crate::application::ports::UserRepository;
-use crate::domain::entities::User;
-use crate::domain::entities::{AuditEvent, OAuthAccount, OAuthProvider};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{Email, UserId};
+use crate::dto::OAuthUserInfo;
+use crate::ports::OAuthAccountRepository;
+use crate::ports::UserRepository;
+use domain::entities::User;
+use domain::entities::{AuditEvent, OAuthAccount, OAuthProvider};
+use domain::errors::DomainError;
+use domain::value_objects::{Email, UserId};
 
 /// Result of OAuth callback processing.
 #[derive(Debug)]
@@ -266,8 +266,8 @@ impl OAuthCallbackUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
+    use crate::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
 
     fn create_test_user(verified: bool) -> User {
         let mut user = User::new(

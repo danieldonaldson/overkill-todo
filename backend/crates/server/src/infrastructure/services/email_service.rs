@@ -9,11 +9,11 @@ use lettre::message::{Mailbox, MultiPart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
-use crate::application::ports::EmailService;
-use crate::domain::errors::DomainError;
 use crate::infrastructure::services::email_templates::{
     RenderedEmail, account_exists_email, password_reset_email, verification_email,
 };
+use application::ports::EmailService;
+use domain::errors::DomainError;
 
 /// Number of SMTP send attempts before giving up (1 initial + retries).
 const MAX_SEND_ATTEMPTS: u32 = 3;

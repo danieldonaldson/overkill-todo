@@ -1,10 +1,10 @@
 //! Use case for refreshing authentication tokens.
 
-use crate::application::ports::UserRepository;
-use crate::application::ports::{RefreshTokenRepository, TokenService};
-use crate::domain::entities::User;
-use crate::domain::entities::{AuditEvent, RefreshToken, RefreshTokenStatus};
-use crate::domain::errors::DomainError;
+use crate::ports::UserRepository;
+use crate::ports::{RefreshTokenRepository, TokenService};
+use domain::entities::User;
+use domain::entities::{AuditEvent, RefreshToken, RefreshTokenStatus};
+use domain::errors::DomainError;
 use jiff::{SignedDuration, Timestamp};
 use std::sync::Arc;
 
@@ -190,7 +190,7 @@ impl RefreshTokenUseCase {
     /// Returns an error if token creation or repository operations fail.
     pub async fn create_for_user(
         &self,
-        user_id: &crate::domain::value_objects::UserId,
+        user_id: &domain::value_objects::UserId,
         device_fingerprint: &str,
     ) -> Result<String, DomainError> {
         let token_plaintext = self.token_service.generate_token();
@@ -214,11 +214,11 @@ impl RefreshTokenUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::refresh_token_repository::MockRefreshTokenRepository;
-    use crate::application::ports::outgoing::token_service::MockTokenService;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::UserBuilder;
-    use crate::domain::value_objects::{RefreshTokenId, UserId};
+    use crate::ports::outgoing::refresh_token_repository::MockRefreshTokenRepository;
+    use crate::ports::outgoing::token_service::MockTokenService;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::UserBuilder;
+    use domain::value_objects::{RefreshTokenId, UserId};
 
     const FINGERPRINT: &str = "device-fingerprint";
 

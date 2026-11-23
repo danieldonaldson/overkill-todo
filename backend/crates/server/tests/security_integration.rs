@@ -134,7 +134,7 @@ fn change_password_req(
 
 /// An authenticated mutating request whose CSRF header does not match the cookie
 /// is rejected with 403 `csrf_invalid`.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn csrf_header_cookie_mismatch_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = establish_session(&app, "e2e-csrf-mismatch@example.com", "hunter2hunter2").await;
@@ -154,7 +154,7 @@ async fn csrf_header_cookie_mismatch_rejected(pool: PgPool) {
 
 /// An authenticated mutating request with the CSRF cookie present but the header
 /// missing is rejected with 403.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn csrf_cookie_without_header_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = establish_session(&app, "e2e-csrf-noheader@example.com", "hunter2hunter2").await;
@@ -175,7 +175,7 @@ async fn csrf_cookie_without_header_rejected(pool: PgPool) {
 /// A well-formed, internally-consistent CSRF token (header == cookie, valid
 /// signature) that is bound to a DIFFERENT user must not satisfy this user's
 /// request: the middleware binds verification to the authenticated principal.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn csrf_token_bound_to_other_user_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
     let victim = establish_session(&app, "e2e-csrf-victim@example.com", "hunter2hunter2").await;
@@ -209,7 +209,7 @@ async fn csrf_token_bound_to_other_user_rejected(pool: PgPool) {
 // ---------------------------------------------------------------------------
 
 /// An expired session JWT presented as the session cookie is rejected with 401.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn expired_jwt_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -233,7 +233,7 @@ async fn expired_jwt_is_rejected(pool: PgPool) {
 /// The session cookie is the only credential: a valid session JWT sent as an
 /// `Authorization: Bearer` header gets 401 `token_missing`, exactly as if no
 /// session were sent, while the same JWT as the cookie succeeds (OT-011).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn bearer_token_is_not_accepted(pool: PgPool) {
     let id = sqlx::query!(
         "INSERT INTO users (email, role, email_verified) VALUES ($1, 'user', true) RETURNING id",
@@ -275,7 +275,7 @@ async fn bearer_token_is_not_accepted(pool: PgPool) {
 }
 
 /// A JWT whose signature has been corrupted is rejected with 401.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn tampered_jwt_signature_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -316,7 +316,7 @@ async fn tampered_jwt_signature_is_rejected(pool: PgPool) {
 /// `MAX_ATTEMPTS - 1` (one slot left), a CORRECT code must still succeed and the
 /// stored attempt count must be back at `MAX_ATTEMPTS - 1` afterwards — proving
 /// the slot was released rather than consumed.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn correct_reset_code_releases_attempt_slot(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-lockout-reset@example.com";
@@ -397,7 +397,7 @@ async fn correct_reset_code_releases_attempt_slot(pool: PgPool) {
 // ---------------------------------------------------------------------------
 
 /// Every response carries an `X-Trace-Id` header from the trace-id middleware.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn responses_carry_trace_id_header(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -423,7 +423,7 @@ async fn responses_carry_trace_id_header(pool: PgPool) {
 /// A session whose JWT carries `verified = false` is blocked from a gated route
 /// (`GET /api/v1/users/me/export`) with 403 `email_not_verified`, even though the token
 /// itself is valid and authenticates the principal.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn unverified_session_blocked_by_verification_gate(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -452,7 +452,7 @@ async fn unverified_session_blocked_by_verification_gate(pool: PgPool) {
 
 /// A described path requested with a method it doesn't serve gets a 405 with
 /// the standard JSON error body (found by the API fuzzer, OT-011).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn wrong_method_gets_json_405(pool: PgPool) {
     let app = common::create_test_app(pool);
     for (method, uri) in [

@@ -5,9 +5,9 @@
 //! 2. User verifies email → signup token issued
 //! 3. User sets password using signup token → account complete
 
-use crate::application::ports::{JwtService, PasswordHasher, UserRepository};
-use crate::domain::entities::User;
-use crate::domain::errors::DomainError;
+use crate::ports::{JwtService, PasswordHasher, UserRepository};
+use domain::entities::User;
+use domain::errors::DomainError;
 use jiff::{SignedDuration, Timestamp};
 use std::sync::Arc;
 
@@ -123,11 +123,11 @@ impl CompleteSignupUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::jwt_service::MockJwtService;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::UserBuilder;
-    use crate::domain::value_objects::UserId;
+    use crate::ports::outgoing::jwt_service::MockJwtService;
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::UserBuilder;
+    use domain::value_objects::UserId;
 
     const EMAIL: &str = "signup@example.com";
 

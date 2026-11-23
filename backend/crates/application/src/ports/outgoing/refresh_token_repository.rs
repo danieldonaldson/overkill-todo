@@ -1,9 +1,9 @@
 //! Refresh token repository port.
 
-use crate::domain::entities::{AuditEvent, RefreshToken};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{RefreshTokenId, UserId};
 use async_trait::async_trait;
+use domain::entities::{AuditEvent, RefreshToken};
+use domain::errors::DomainError;
+use domain::value_objects::{RefreshTokenId, UserId};
 
 /// Repository trait for refresh token persistence operations.
 ///

@@ -8,7 +8,7 @@
 use std::io::Write;
 
 fn main() -> std::io::Result<()> {
-    let spec = overkill_todo::infrastructure::api::openapi::openapi();
+    let spec = server::infrastructure::api::openapi::openapi();
     let json = spec.to_pretty_json().map_err(std::io::Error::other)?;
     let mut stdout = std::io::stdout().lock();
     stdout.write_all(json.as_bytes())?;

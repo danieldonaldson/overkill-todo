@@ -12,15 +12,15 @@ mod common;
 use std::hint::black_box;
 use std::sync::Arc;
 
+use application::ports::PasswordHasher;
 use criterion::{Criterion, criterion_group, criterion_main};
-use overkill_todo::application::ports::PasswordHasher;
-use overkill_todo::infrastructure::api::{
+use server::infrastructure::api::{
     create_jwt, create_oauth_state, generate_csrf_token, verify_csrf_token, verify_jwt,
     verify_oauth_state,
 };
-use overkill_todo::infrastructure::config::CryptoSettings;
-use overkill_todo::infrastructure::crypto::{Crypto, generate_secure_token, sha256_hex};
-use overkill_todo::infrastructure::services::Argon2Hasher;
+use server::infrastructure::config::CryptoSettings;
+use server::infrastructure::crypto::{Crypto, generate_secure_token, sha256_hex};
+use server::infrastructure::services::Argon2Hasher;
 use uuid::Uuid;
 
 /// Production Argon2id cost (`backend/.env.example`). Keep in sync if the

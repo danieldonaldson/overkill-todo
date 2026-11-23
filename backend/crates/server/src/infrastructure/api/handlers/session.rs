@@ -11,13 +11,13 @@
 use axum::http::header::{self, HeaderMap};
 use jiff::{SignedDuration, Timestamp};
 
-use crate::domain::entities::User;
 use crate::infrastructure::api::cookies::{
     REFRESH_COOKIE, create_csrf_cookie, create_jwt_cookie, create_refresh_cookie, extract_cookie,
 };
 use crate::infrastructure::api::error::AppError;
 use crate::infrastructure::api::{create_jwt, generate_csrf_token};
 use crate::infrastructure::crypto::Crypto;
+use domain::entities::User;
 
 /// Header carrying the client's device fingerprint, used to bind refresh tokens.
 const DEVICE_FINGERPRINT_HEADER: &str = "x-device-fingerprint";

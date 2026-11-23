@@ -183,7 +183,7 @@ rule Server_issue:
 // stolen again (an over-approximation that only helps the attacker). Jar is
 // the current refresh token, which a refresh consumes. Only the app's own
 // responses get here, because every auth cookie is `__Host-` prefixed.
-// Checks: backend/tests/oauth_integration.rs::auth_cookies_are_host_only
+// Checks: backend/crates/server/tests/oauth_integration.rs::auth_cookies_are_host_only
 rule Browser_store_session:
     let jwt  = <$A, ~j, s>
         csrf = <~r, t>
@@ -238,9 +238,9 @@ rule Server_refresh_rotate:
 // -D=NO_REVOKED_CHECK), nor revoked by revoke-all, and it must be bound to
 // this fingerprint. Rotation revokes it, and Server_issue mints its successor,
 // bound to the same fingerprint.
-// Checks: backend/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session
-//         backend/tests/refresh_token_integration.rs::concurrent_rotate_lets_exactly_one_winner
-//         backend/tests/auth_properties_integration.rs::a_refresh_token_is_refused_from_another_device
+// Checks: backend/crates/server/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session
+//         backend/crates/server/tests/refresh_token_integration.rs::concurrent_rotate_lets_exactly_one_winner
+//         backend/crates/server/tests/auth_properties_integration.rs::a_refresh_token_is_refused_from_another_device
 rule Server_refresh_rotate:
     [ Req(c, <'refresh', 'no_body', fp, rt>), !RT(rt, $U, fp) ]
   --[ NotEq(fp, 'no_header'), ExemptActed(c, 'refresh'), Checked(c, $U),
@@ -258,7 +258,7 @@ rule Server_refresh_reuse:
 #else
 // A rotated token presented again is reuse: every session of the user is
 // revoked, whatever fingerprint came with it.
-// Checks: backend/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session
+// Checks: backend/crates/server/tests/auth_properties_integration.rs::reusing_a_rotated_refresh_token_ends_every_session
 rule Server_refresh_reuse:
     [ Req(c, <'refresh', 'no_body', fp, rt>), !RTRotated(rt, $U) ]
   --[ ReuseDetected($U, rt, c), RevokeAll($U) ]->
@@ -331,9 +331,9 @@ rule Server_oauth_callback:
 // GET /auth/oauth/google/callback: the state must be validly signed and its
 // nonce must equal the oauth_state cookie; then the code is exchanged with
 // Google for the account it names.
-// Checks: backend/tests/oauth_integration.rs::callback_with_another_flows_nonce_is_rejected
-//         backend/tests/oauth_integration.rs::callback_without_state_cookie_is_rejected
-//         backend/tests/oauth_integration.rs::callback_with_forged_state_is_rejected
+// Checks: backend/crates/server/tests/oauth_integration.rs::callback_with_another_flows_nonce_is_rejected
+//         backend/crates/server/tests/oauth_integration.rs::callback_without_state_cookie_is_rejected
+//         backend/crates/server/tests/oauth_integration.rs::callback_with_forged_state_is_rejected
 rule Server_oauth_callback:
     [ Req(c, <'callback', ~code, <~n, mac(<'state', ~n>, ~k)>, ~n, fp>), !Key(~k),
       GCode(~code, $A) ]
@@ -363,9 +363,9 @@ rule Browser_cross_site_change:
 // A state-changing request on an authenticated route: a valid session, an
 // X-CSRF-Token header equal to the csrf_token cookie, and a token signed for
 // the session's user.
-// Checks: backend/tests/security_integration.rs::csrf_header_cookie_mismatch_rejected
-//         backend/tests/security_integration.rs::csrf_cookie_without_header_rejected
-//         backend/tests/security_integration.rs::csrf_token_bound_to_other_user_rejected
+// Checks: backend/crates/server/tests/security_integration.rs::csrf_header_cookie_mismatch_rejected
+//         backend/crates/server/tests/security_integration.rs::csrf_cookie_without_header_rejected
+//         backend/crates/server/tests/security_integration.rs::csrf_token_bound_to_other_user_rejected
 rule Server_change:
     [ Req(c, <'change', <$U, ~j, mac(<'jwt', $U, ~j>, ~k)>,
               <~r, mac(<'csrf', ~r, $U>, ~k)>, <~r, mac(<'csrf', ~r, $U>, ~k)>>), !Key(~k) ]
@@ -409,7 +409,7 @@ rule Browser_preauth:
 
 // Sign-up and the code routes stand for every exempt route with a JSON body:
 // the body must be application/json.
-// Checks: backend/tests/auth_properties_integration.rs::csrf_exempt_routes_cannot_be_driven_cross_site
+// Checks: backend/crates/server/tests/auth_properties_integration.rs::csrf_exempt_routes_cannot_be_driven_cross_site
 rule Server_preauth:
     [ Req(c, <'preauth', ctype, body, header>) ]
   --[ ContentType(ctype), ExemptActed(c, 'preauth') ]->

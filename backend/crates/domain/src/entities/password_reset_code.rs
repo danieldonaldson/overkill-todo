@@ -1,13 +1,13 @@
 //! Password reset code entity.
 
-use crate::domain::entities::attempt_lockout::{self, AttemptLockout, Reissue};
-use crate::domain::value_objects::{ResetCodeId, UserId};
+use crate::entities::attempt_lockout::{self, AttemptLockout, Reissue};
+use crate::value_objects::{ResetCodeId, UserId};
 use jiff::{SignedDuration, Timestamp};
 
 // The brute-force lockout policy (attempt cap, lock window, resend cooldown) is
 // shared with the email-verification flow; re-export it here so existing call
 // sites keep their import path while the arithmetic lives in one place.
-pub use crate::domain::entities::attempt_lockout::{
+pub use crate::entities::attempt_lockout::{
     LOCK_DURATION_MINUTES, MAX_ATTEMPTS, RESEND_COOLDOWN_MINUTES,
 };
 

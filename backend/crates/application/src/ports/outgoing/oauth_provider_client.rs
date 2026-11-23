@@ -8,8 +8,8 @@
 
 use async_trait::async_trait;
 
-use crate::application::dto::OAuthUserInfo;
-use crate::domain::errors::DomainError;
+use crate::dto::OAuthUserInfo;
+use domain::errors::DomainError;
 
 /// A single OAuth provider's client (e.g. Google).
 #[async_trait]

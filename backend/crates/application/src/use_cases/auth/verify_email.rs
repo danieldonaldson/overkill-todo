@@ -1,11 +1,11 @@
 //! Use case for verifying a user's email address.
 
-use crate::application::ports::UserRepository;
-use crate::application::ports::{EmailVerificationRepository, PasswordHasher};
-use crate::domain::entities::User;
-use crate::domain::entities::attempt_lockout::AttemptOutcome;
-use crate::domain::entities::email_verification_code::MAX_ATTEMPTS;
-use crate::domain::errors::DomainError;
+use crate::ports::UserRepository;
+use crate::ports::{EmailVerificationRepository, PasswordHasher};
+use domain::entities::User;
+use domain::entities::attempt_lockout::AttemptOutcome;
+use domain::entities::email_verification_code::MAX_ATTEMPTS;
+use domain::errors::DomainError;
 use std::sync::Arc;
 
 /// Error details for verification failures.
@@ -217,11 +217,11 @@ impl VerifyEmailUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::email_verification_repository::MockEmailVerificationRepository;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::{EmailVerificationCode, UserBuilder};
-    use crate::domain::value_objects::{UserId, VerificationCodeId};
+    use crate::ports::outgoing::email_verification_repository::MockEmailVerificationRepository;
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::{EmailVerificationCode, UserBuilder};
+    use domain::value_objects::{UserId, VerificationCodeId};
     use jiff::{SignedDuration, Timestamp};
 
     const EMAIL: &str = "verify@example.com";

@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use std::time::Duration;
 
-use crate::application::ports::TurnstileService;
-use crate::domain::errors::DomainError;
+use application::ports::TurnstileService;
+use domain::errors::DomainError;
 
 /// Cloudflare Turnstile verification service.
 ///

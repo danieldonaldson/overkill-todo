@@ -1,7 +1,7 @@
 //! Refresh token entity for JWT token rotation.
 
-use crate::domain::entities::attempt_lockout::expired_at;
-use crate::domain::value_objects::{RefreshTokenId, UserId};
+use crate::entities::attempt_lockout::expired_at;
+use crate::value_objects::{RefreshTokenId, UserId};
 use jiff::Timestamp;
 
 /// Lifecycle of a [`RefreshToken`]; see [`RefreshToken::status`].
@@ -210,7 +210,7 @@ const fn first_revocation<T: Copy>(revoked_at: Option<T>, now: T) -> T {
 #[cfg(kani)]
 mod verification {
     use super::*;
-    use crate::domain::entities::attempt_lockout::verification::any_time;
+    use crate::entities::attempt_lockout::verification::any_time;
 
     /// For every expiry and current time: a revoked token reports `Revoked`,
     /// before or after its expiry, and an unrevoked one is `Active` exactly

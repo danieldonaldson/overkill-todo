@@ -15,20 +15,18 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
 use super::scrub::scrub;
-use crate::application::dto::client_telemetry_dto::{
-    MAX_ATTRIBUTION_CHARS, MAX_MESSAGE_CHARS, MAX_STACK_CHARS,
-};
-use crate::application::dto::{
+use crate::dto::client_telemetry_dto::{MAX_ATTRIBUTION_CHARS, MAX_MESSAGE_CHARS, MAX_STACK_CHARS};
+use crate::dto::{
     ClientErrorEvent, ClientEvent, ClientIslandEvent, ClientNavigationEvent, ClientReportBatch,
     ClientVitalEvent, NavOutcome, NavType, Rating, ViewTransitionResult,
 };
-use crate::application::ports::incoming::RecordClientTelemetry;
-use crate::application::ports::outgoing::{
+use crate::ports::incoming::RecordClientTelemetry;
+use crate::ports::outgoing::{
     ClientErrorReport, ClientIslandReport, ClientNavigationReport, ClientPageLoadReport,
     ClientReportSink, ClientVitalReport,
 };
-use crate::domain::value_objects::UserId;
-use crate::shared::fingerprint::generate_error_fingerprint;
+use domain::value_objects::UserId;
+use shared::fingerprint::generate_error_fingerprint;
 
 /// Default for `CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC` (Decision 9).
 pub const DEFAULT_MAX_EVENTS_PER_SEC: u32 = 200;
@@ -457,7 +455,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::application::dto::{ClientErrorKind, IslandStage, VitalName};
+    use crate::dto::{ClientErrorKind, IslandStage, VitalName};
 
     const CHROME_DESKTOP: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     const SAFARI_IPHONE: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1";
@@ -573,7 +571,8 @@ mod tests {
                 }
             }
         }
-        let pages = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../apps/web/src/pages");
+        let pages =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../apps/web/src/pages");
         let mut routes = BTreeSet::new();
         walk(&pages, &pages, &mut routes);
         let listed: BTreeSet<String> = PAGE_TEMPLATES.iter().map(|p| (*p).to_string()).collect();
@@ -841,7 +840,7 @@ mod tests {
     #[test]
     fn island_templates_match_the_shared_fixture() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../tests/fixtures/client_islands.json"
+            "../../../../../tests/fixtures/client_islands.json"
         ))
         .unwrap();
         let listed: BTreeSet<&str> = fixture["islands"]

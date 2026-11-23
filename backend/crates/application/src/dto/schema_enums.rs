@@ -207,8 +207,8 @@ mod tests {
         ClientErrorKind, IslandStage, NavOutcome, NavType, OAuthProviderName, RoleName,
         ViewTransitionResult,
     };
-    use crate::domain::entities::OAuthProvider;
-    use crate::domain::value_objects::UserRole;
+    use domain::entities::OAuthProvider;
+    use domain::value_objects::UserRole;
 
     fn wire<T: serde::Serialize>(value: T) -> String {
         serde_json::to_value(value)

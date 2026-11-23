@@ -8,8 +8,8 @@ use opentelemetry_sdk::metrics::{
 };
 use std::sync::Arc;
 
-use overkill_todo::infrastructure::persistence::postgres::Database;
-use overkill_todo::infrastructure::telemetry::metrics::{METER_NAME, register_db_pool_gauges};
+use server::infrastructure::persistence::postgres::Database;
+use server::infrastructure::telemetry::metrics::{METER_NAME, register_db_pool_gauges};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 
 /// `(state attribute or "", value)` for each point of the `u64` gauge `name`
@@ -39,7 +39,7 @@ fn gauge_points(exporter: &InMemoryMetricExporter, name: &str) -> Vec<(String, u
     points
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn pool_gauges_report_connection_use_and_max(test_pool: PgPool) {
     // A pool of our own with a known maximum, on the test database.
     let pool = PgPoolOptions::new()

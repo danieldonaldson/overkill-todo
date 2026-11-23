@@ -1,18 +1,18 @@
 //! Application-level error types.
 
-use crate::domain::errors::DomainError;
+use domain::errors::DomainError;
 
 use crate::infrastructure::config::is_dev_mode;
-use crate::shared::fingerprint::generate_error_fingerprint;
 use axum::{
     Json,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
+use shared::fingerprint::generate_error_fingerprint;
 use utoipa::ToSchema;
 
-use crate::application::dto::VerificationErrorResponse;
+use application::dto::VerificationErrorResponse;
 
 /// Structured error response returned to clients.
 #[derive(Debug, Serialize, ToSchema)]
@@ -210,9 +210,9 @@ impl From<DomainError> for AppError {
     }
 }
 
-impl From<crate::application::use_cases::LoginError> for AppError {
-    fn from(error: crate::application::use_cases::LoginError) -> Self {
-        use crate::application::use_cases::LoginError;
+impl From<application::use_cases::LoginError> for AppError {
+    fn from(error: application::use_cases::LoginError) -> Self {
+        use application::use_cases::LoginError;
         match error {
             LoginError::InvalidCredentials => Self::invalid_credentials(),
             LoginError::Domain(e) => e.into(),
@@ -220,9 +220,9 @@ impl From<crate::application::use_cases::LoginError> for AppError {
     }
 }
 
-impl From<crate::application::use_cases::VerifyEmailError> for AppError {
-    fn from(error: crate::application::use_cases::VerifyEmailError) -> Self {
-        use crate::application::use_cases::VerifyEmailError;
+impl From<application::use_cases::VerifyEmailError> for AppError {
+    fn from(error: application::use_cases::VerifyEmailError) -> Self {
+        use application::use_cases::VerifyEmailError;
         match error {
             VerifyEmailError::NotFound(msg) => Self::NotFound(msg),
             VerifyEmailError::CodeExpired => {
@@ -240,9 +240,9 @@ impl From<crate::application::use_cases::VerifyEmailError> for AppError {
     }
 }
 
-impl From<crate::application::use_cases::ResendVerificationError> for AppError {
-    fn from(error: crate::application::use_cases::ResendVerificationError) -> Self {
-        use crate::application::use_cases::ResendVerificationError;
+impl From<application::use_cases::ResendVerificationError> for AppError {
+    fn from(error: application::use_cases::ResendVerificationError) -> Self {
+        use application::use_cases::ResendVerificationError;
         match error {
             ResendVerificationError::NotFound(msg) => Self::NotFound(msg),
             ResendVerificationError::AlreadyVerified => {
@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn test_from_domain_error_variants() {
-        use crate::domain::errors::DomainError;
+        use domain::errors::DomainError;
         assert!(matches!(
             AppError::from(DomainError::Validation("v".into())),
             AppError::Validation(_)

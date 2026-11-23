@@ -6,20 +6,21 @@ use axum::{
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::{
-    application::{
-        dto::{
-            AuthResponse, InitiateRegistrationRequest, InitiateRegistrationResponse, LoginRequest,
-            LogoutResponse, UserResponse,
-        },
-        ports::TurnstileService,
-        use_cases::{
-            GetCurrentUserUseCase, LoginError, LoginUserUseCase, RefreshError, RefreshTokenUseCase,
-            RegisterOutcome, RegisterUserUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
-        },
+use application::{
+    dto::{
+        AuthResponse, InitiateRegistrationRequest, InitiateRegistrationResponse, LoginRequest,
+        LogoutResponse, UserResponse,
     },
-    domain::errors::DomainError,
-    infrastructure::api::{
+    ports::TurnstileService,
+    use_cases::{
+        GetCurrentUserUseCase, LoginError, LoginUserUseCase, RefreshError, RefreshTokenUseCase,
+        RegisterOutcome, RegisterUserUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
+    },
+};
+use domain::errors::DomainError;
+
+use crate::infrastructure::{
+    api::{
         cookies::{clear_csrf_cookie, clear_jwt_cookie, clear_refresh_cookie},
         error::AppError,
         extractors::ValidatedJson,
@@ -29,10 +30,8 @@ use crate::{
         },
         middleware::AuthUser,
     },
-    infrastructure::crypto::Crypto,
-    infrastructure::telemetry::metrics::{
-        AuthFlow, AuthMetrics, AuthOutcome, BotCheckForm, SessionAnomaly,
-    },
+    crypto::Crypto,
+    telemetry::metrics::{AuthFlow, AuthMetrics, AuthOutcome, BotCheckForm, SessionAnomaly},
 };
 
 /// How long registration will wait for the verification email to be handed to

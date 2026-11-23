@@ -3,10 +3,10 @@
 //! Verifies a user's email using a magic link token (backup to 6-digit code).
 //! The magic link is a one-click verification option for web users.
 
-use crate::application::ports::EmailVerificationRepository;
-use crate::application::ports::UserRepository;
-use crate::domain::entities::User;
-use crate::domain::errors::DomainError;
+use crate::ports::EmailVerificationRepository;
+use crate::ports::UserRepository;
+use domain::entities::User;
+use domain::errors::DomainError;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
@@ -164,10 +164,10 @@ impl VerifyMagicLinkUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::email_verification_repository::MockEmailVerificationRepository;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::{EmailVerificationCode, UserBuilder};
-    use crate::domain::value_objects::{UserId, VerificationCodeId};
+    use crate::ports::outgoing::email_verification_repository::MockEmailVerificationRepository;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::{EmailVerificationCode, UserBuilder};
+    use domain::value_objects::{UserId, VerificationCodeId};
     use jiff::{SignedDuration, Timestamp};
 
     fn create_test_user(verified: bool) -> User {
@@ -287,7 +287,7 @@ mod tests {
         // A valid, unexpired magic-link token whose underlying 6-digit code is at
         // the attempt cap must surface `TokenLocked`. The lock check sits between
         // the expiry check and the user lookup, so only the code lookup is hit.
-        use crate::domain::entities::attempt_lockout::MAX_ATTEMPTS;
+        use domain::entities::attempt_lockout::MAX_ATTEMPTS;
 
         let user_id = UserId::new();
         let token = "locked-token";

@@ -1,9 +1,9 @@
 //! Use case for retrieving the current authenticated user.
 
-use crate::application::ports::{OAuthAccountRepository, UserRepository};
-use crate::domain::entities::{OAuthAccount, OAuthProvider, User};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
+use crate::ports::{OAuthAccountRepository, UserRepository};
+use domain::entities::{OAuthAccount, OAuthProvider, User};
+use domain::errors::DomainError;
+use domain::value_objects::UserId;
 use std::sync::Arc;
 
 /// The current user and the OAuth providers linked to their account.
@@ -56,9 +56,9 @@ impl GetCurrentUserUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::value_objects::Email;
+    use crate::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::value_objects::Email;
 
     fn no_oauth_accounts() -> Arc<MockOAuthAccountRepository> {
         let mut oauth = MockOAuthAccountRepository::new();

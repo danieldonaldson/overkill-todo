@@ -12,18 +12,18 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use jiff::{SignedDuration, Timestamp};
-use overkill_todo::application::ports::{
+use application::ports::{
     AccountLifecycleRepository, AuditLogRepository, OAuthAccountRepository, RefreshTokenRepository,
     UserRepository,
 };
-use overkill_todo::application::use_cases::PurgeScheduledAccountsUseCase;
-use overkill_todo::domain::entities::{
+use application::use_cases::PurgeScheduledAccountsUseCase;
+use domain::entities::{
     Actor, AuditEvent, AuditKind, OAuthAccount, OAuthProvider, RefreshToken, User,
 };
-use overkill_todo::domain::errors::DomainError;
-use overkill_todo::domain::value_objects::{Email, UserId, UserRole};
-use overkill_todo::infrastructure::persistence::postgres::{
+use domain::errors::DomainError;
+use domain::value_objects::{Email, UserId, UserRole};
+use jiff::{SignedDuration, Timestamp};
+use server::infrastructure::persistence::postgres::{
     Database, PostgresAuditLogRepository, PostgresOAuthAccountRepository,
     PostgresRefreshTokenRepository, PostgresUserRepository,
 };
@@ -32,7 +32,7 @@ use overkill_todo::infrastructure::persistence::postgres::{
 // Coverage guard
 // ---------------------------------------------------------------------------
 
-/// The `#[sqlx::test]`s proving each kind is stored if and only if its action
+/// The `#[sqlx::test(migrations = "../../migrations")]`s proving each kind is stored if and only if its action
 /// took effect. No wildcard arm: a new [`AuditKind`] doesn't compile until it
 /// names its tests here, and a name that isn't a test doesn't compile either.
 fn atomicity_tests(kind: AuditKind) -> &'static [fn()] {
@@ -183,7 +183,7 @@ async fn event_count(pool: &PgPool) -> i64 {
 /// Days in 7 years plus one, counting the leap days such a span always holds.
 const OVER_SEVEN_YEARS_DAYS: i32 = 7 * 365 + 2 + 1;
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn audit_event_update_is_refused(pool: PgPool) {
     let id = insert_event_aged(&pool, 0).await;
     let err =
@@ -202,7 +202,7 @@ async fn audit_event_update_is_refused(pool: PgPool) {
     assert_eq!(trace, None);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn audit_event_delete_of_a_fresh_row_is_refused(pool: PgPool) {
     let id = insert_event_aged(&pool, 0).await;
     // Just under 7 years old is still protected.
@@ -217,7 +217,7 @@ async fn audit_event_delete_of_a_fresh_row_is_refused(pool: PgPool) {
     assert_eq!(event_count(&pool).await, 2);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn audit_event_delete_past_seven_years_is_allowed(pool: PgPool) {
     let old = insert_event_aged(&pool, OVER_SEVEN_YEARS_DAYS).await;
     let fresh = insert_event_aged(&pool, 0).await;
@@ -235,7 +235,7 @@ async fn audit_event_delete_past_seven_years_is_allowed(pool: PgPool) {
     assert_eq!(left, vec![fresh]);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn audit_event_truncate_is_refused(pool: PgPool) {
     insert_event_aged(&pool, OVER_SEVEN_YEARS_DAYS).await;
     let err = sqlx::query("TRUNCATE audit_events")
@@ -246,7 +246,7 @@ async fn audit_event_truncate_is_refused(pool: PgPool) {
     assert_eq!(event_count(&pool).await, 1);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn audit_event_actor_id_is_set_only_for_user_actors(pool: PgPool) {
     for (actor_kind, actor_id) in [("user", None), ("operator", Some(Uuid::now_v7()))] {
         let result = sqlx::query(
@@ -269,7 +269,7 @@ async fn audit_event_actor_id_is_set_only_for_user_actors(pool: PgPool) {
 // Role changes: event if and only if the change took effect
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn role_change_writes_exactly_one_event(pool: PgPool) {
     let actor = seed_with_role(&pool, UserRole::SuperAdmin).await;
     let member = seed_with_role(&pool, UserRole::User).await;
@@ -292,7 +292,7 @@ async fn role_change_writes_exactly_one_event(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn refused_last_super_admin_demotion_leaves_no_event(pool: PgPool) {
     let only = seed_with_role(&pool, UserRole::SuperAdmin).await;
     let only_id = *only.id();
@@ -307,7 +307,7 @@ async fn refused_last_super_admin_demotion_leaves_no_event(pool: PgPool) {
     assert_eq!(stored_events(&pool).await, Vec::new());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn role_change_version_conflict_leaves_no_event(pool: PgPool) {
     let actor = seed_with_role(&pool, UserRole::SuperAdmin).await;
     let member = seed_with_role(&pool, UserRole::User).await;
@@ -328,7 +328,7 @@ async fn role_change_version_conflict_leaves_no_event(pool: PgPool) {
     assert_eq!(events[0].4, json!({ "from": "user", "to": "admin" }));
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn failed_event_insert_rolls_back_the_role_change(pool: PgPool) {
     let actor = seed_with_role(&pool, UserRole::SuperAdmin).await;
     let member = seed_with_role(&pool, UserRole::User).await;
@@ -351,7 +351,7 @@ async fn failed_event_insert_rolls_back_the_role_change(pool: PgPool) {
     assert_eq!(stored_events(&pool).await, Vec::new());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn concurrent_role_changes_give_one_event_per_applied_change(pool: PgPool) {
     let first = seed_with_role(&pool, UserRole::SuperAdmin).await;
     let second = seed_with_role(&pool, UserRole::SuperAdmin).await;
@@ -446,7 +446,7 @@ async fn promote_via_api(pool: &PgPool, actor: &User, member: &User) {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn super_admin_reads_a_role_change_in_the_audit_log(pool: PgPool) {
     let actor = seed_with_role(&pool, UserRole::SuperAdmin).await;
     let member = seed_with_role(&pool, UserRole::User).await;
@@ -475,7 +475,7 @@ async fn super_admin_reads_a_role_change_in_the_audit_log(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn audit_log_is_refused_to_everyone_but_super_admins(pool: PgPool) {
     for (role, expected) in [
         (Some(UserRole::Admin), StatusCode::FORBIDDEN),
@@ -488,7 +488,7 @@ async fn audit_log_is_refused_to_everyone_but_super_admins(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn audit_log_filters_by_affected_or_acting_account(pool: PgPool) {
     let actor = seed_with_role(&pool, UserRole::SuperAdmin).await;
     let other_actor = seed_with_role(&pool, UserRole::SuperAdmin).await;
@@ -523,7 +523,7 @@ async fn audit_log_filters_by_affected_or_acting_account(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn audit_log_with_no_matching_events_is_empty_not_an_error(pool: PgPool) {
     let (status, body) = get_as(
         &pool,
@@ -536,7 +536,7 @@ async fn audit_log_with_no_matching_events_is_empty_not_an_error(pool: PgPool) {
     assert_eq!(body["events"], json!([]));
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn audit_log_limit_is_capped_and_bad_filters_are_400(pool: PgPool) {
     let (status, body) = get_as(
         &pool,
@@ -558,7 +558,7 @@ async fn audit_log_limit_is_capped_and_bad_filters_are_400(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn deleted_account_shows_without_its_former_email(pool: PgPool) {
     let actor = seed_with_role(&pool, UserRole::SuperAdmin).await;
     let member = seed_with_role(&pool, UserRole::User).await;
@@ -630,7 +630,7 @@ fn google_link(id: UserId, sub: &str) -> OAuthAccount {
 
 // --- save_audited (password changed / set, deletion requested / cancelled)
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn save_audited_writes_the_event_with_the_save(pool: PgPool) {
     let mut user = seed_with_role(&pool, UserRole::User).await;
     let id = *user.id();
@@ -653,7 +653,7 @@ async fn save_audited_writes_the_event_with_the_save(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn save_audited_version_conflict_leaves_no_event(pool: PgPool) {
     let user = seed_with_role(&pool, UserRole::User).await;
     let id = *user.id();
@@ -673,7 +673,7 @@ async fn save_audited_version_conflict_leaves_no_event(pool: PgPool) {
     assert_eq!(stored_kinds(&pool).await, Vec::<String>::new());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn failed_event_insert_rolls_back_save_audited(pool: PgPool) {
     let mut user = seed_with_role(&pool, UserRole::User).await;
     let id = *user.id();
@@ -693,7 +693,7 @@ async fn failed_event_insert_rolls_back_save_audited(pool: PgPool) {
 
 // --- password reset (update_password)
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn password_reset_writes_exactly_one_event(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
 
@@ -709,7 +709,7 @@ async fn password_reset_writes_exactly_one_event(pool: PgPool) {
     assert_eq!(stored_kinds(&pool).await, vec!["password_reset"]);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn password_reset_of_a_missing_account_leaves_no_event(pool: PgPool) {
     let ghost = UserId::new();
     let err = user_repo(&pool)
@@ -720,7 +720,7 @@ async fn password_reset_of_a_missing_account_leaves_no_event(pool: PgPool) {
     assert_eq!(stored_kinds(&pool).await, Vec::<String>::new());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn failed_event_insert_rolls_back_the_password_reset(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     refuse_every_event(&pool).await;
@@ -736,7 +736,7 @@ async fn failed_event_insert_rolls_back_the_password_reset(pool: PgPool) {
 
 // --- sign-in methods
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn link_writes_exactly_one_event(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     let links = PostgresOAuthAccountRepository::new(db(&pool));
@@ -757,7 +757,7 @@ async fn link_writes_exactly_one_event(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn duplicate_link_leaves_no_event(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     let links = PostgresOAuthAccountRepository::new(db(&pool));
@@ -773,7 +773,7 @@ async fn duplicate_link_leaves_no_event(pool: PgPool) {
     assert_eq!(stored_kinds(&pool).await, vec!["sign_in_method_linked"]);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn failed_event_insert_rolls_back_the_link(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     refuse_every_event(&pool).await;
@@ -790,7 +790,7 @@ async fn failed_event_insert_rolls_back_the_link(pool: PgPool) {
     assert_eq!(link_count(&pool, &id).await, 0);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn unlink_writes_exactly_one_event(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     let links = PostgresOAuthAccountRepository::new(db(&pool));
@@ -819,7 +819,7 @@ async fn unlink_writes_exactly_one_event(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn unlinking_nothing_leaves_no_event(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     let deleted = PostgresOAuthAccountRepository::new(db(&pool))
@@ -834,7 +834,7 @@ async fn unlinking_nothing_leaves_no_event(pool: PgPool) {
     assert_eq!(stored_kinds(&pool).await, Vec::<String>::new());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn failed_event_insert_rolls_back_the_unlink(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     let links = PostgresOAuthAccountRepository::new(db(&pool));
@@ -889,7 +889,7 @@ async fn is_anonymised(pool: &PgPool, id: &UserId) -> bool {
         .unwrap()
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn purge_writes_one_event_and_keeps_earlier_ones(pool: PgPool) {
     let due = due_for_purge(&pool).await;
     let id = *due.id();
@@ -917,7 +917,7 @@ async fn purge_writes_one_event_and_keeps_earlier_ones(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn purge_of_a_cancelled_deletion_leaves_no_event(pool: PgPool) {
     let due = due_for_purge(&pool).await;
     let id = *due.id();
@@ -938,7 +938,7 @@ async fn purge_of_a_cancelled_deletion_leaves_no_event(pool: PgPool) {
     assert_eq!(stored_kinds(&pool).await, Vec::<String>::new());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn failed_event_insert_rolls_back_the_purge(pool: PgPool) {
     let due = due_for_purge(&pool).await;
     let id = *due.id();
@@ -955,7 +955,7 @@ async fn failed_event_insert_rolls_back_the_purge(pool: PgPool) {
 
 // --- data exported
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn export_record_writes_exactly_one_event(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     PostgresAuditLogRepository::new(db(&pool))
@@ -967,7 +967,7 @@ async fn export_record_writes_exactly_one_event(pool: PgPool) {
 
 /// The export use case returns this error instead of the data (unit-tested in
 /// `export_user_data.rs`), so no export happens unrecorded.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn failed_export_record_is_an_error(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     refuse_every_event(&pool).await;
@@ -1003,7 +1003,7 @@ async fn live_sessions(pool: &PgPool, id: &UserId) -> i64 {
     .unwrap()
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reuse_revocation_writes_exactly_one_event(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     seed_session(&pool, id, "h1").await;
@@ -1023,7 +1023,7 @@ async fn reuse_revocation_writes_exactly_one_event(pool: PgPool) {
     assert_eq!(stored_events(&pool).await[0].2, "system");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reuse_revocation_with_no_live_session_leaves_no_event(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     let revoked = PostgresRefreshTokenRepository::new(db(&pool))
@@ -1034,7 +1034,7 @@ async fn reuse_revocation_with_no_live_session_leaves_no_event(pool: PgPool) {
     assert_eq!(stored_kinds(&pool).await, Vec::<String>::new());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn failed_event_insert_rolls_back_the_reuse_revocation(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     seed_session(&pool, id, "h1").await;
@@ -1090,7 +1090,7 @@ fn json_request(
 /// A Member signs up, links Google, changes their password, exports their
 /// data and deletes their account. None of the events this leaves holds their
 /// email, name, password or hash, any code or token, or a client address.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn events_after_a_full_account_lifecycle_hold_no_personal_data(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-lifecycle-pii@example.com";
@@ -1294,7 +1294,7 @@ async fn activity_of(pool: &PgPool, member: &User, query: &str) -> (StatusCode, 
     )
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn member_sees_a_staff_role_change_without_the_staff_account(pool: PgPool) {
     let staff = seed_with_role(&pool, UserRole::SuperAdmin).await;
     let member = seed_with_role(&pool, UserRole::User).await;
@@ -1322,7 +1322,7 @@ async fn member_sees_a_staff_role_change_without_the_staff_account(pool: PgPool)
     assert!(!text.contains(staff.email().as_str()), "{text}");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn security_activity_holds_only_the_callers_events(pool: PgPool) {
     let member = seed_with_role(&pool, UserRole::User).await;
     let other = seed_with_role(&pool, UserRole::User).await;
@@ -1346,7 +1346,7 @@ async fn security_activity_holds_only_the_callers_events(pool: PgPool) {
     assert_eq!(body["events"].as_array().unwrap().len(), 1);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn security_activity_pages_with_before_id(pool: PgPool) {
     let member = seed_with_role(&pool, UserRole::User).await;
     let audit = PostgresAuditLogRepository::new(db(&pool));
@@ -1387,7 +1387,7 @@ async fn security_activity_pages_with_before_id(pool: PgPool) {
     assert_eq!(all, sorted);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn security_activity_is_empty_for_a_new_account_and_refused_to_visitors(pool: PgPool) {
     let member = seed_with_role(&pool, UserRole::User).await;
     let (status, body) = activity_of(&pool, &member, "").await;

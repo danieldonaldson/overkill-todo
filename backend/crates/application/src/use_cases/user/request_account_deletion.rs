@@ -10,10 +10,10 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 
-use crate::application::ports::{PasswordHasher, UserRepository};
-use crate::domain::entities::AuditEvent;
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{AccountStatus, UserId};
+use crate::ports::{PasswordHasher, UserRepository};
+use domain::entities::AuditEvent;
+use domain::errors::DomainError;
+use domain::value_objects::{AccountStatus, UserId};
 
 /// Use case for requesting account deletion (soft, grace-period-gated).
 pub struct RequestAccountDeletionUseCase {
@@ -87,9 +87,9 @@ impl RequestAccountDeletionUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::{User, UserBuilder};
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::{User, UserBuilder};
 
     fn make_user(password_hash: Option<&str>, scheduled: bool) -> User {
         let mut user = UserBuilder::new().password_hash(password_hash).build();

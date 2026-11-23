@@ -8,25 +8,24 @@ use axum::{
 use jiff::Timestamp;
 use std::sync::Arc;
 
-use crate::{
-    application::{
-        dto::{
-            AccountDeletionResponse, AccountExportResponse, ChangePasswordRequest,
-            LinkedOAuthAccountExport, RequestDeletionRequest, SecurityActivityQuery,
-            SecurityActivityResponse, SetPasswordRequest,
-        },
-        use_cases::{
-            CancelAccountDeletionUseCase, ChangePasswordUseCase, ExportUserDataUseCase,
-            ListSecurityActivityUseCase, RequestAccountDeletionUseCase, SetPasswordUseCase,
-        },
+use application::{
+    dto::{
+        AccountDeletionResponse, AccountExportResponse, ChangePasswordRequest,
+        LinkedOAuthAccountExport, RequestDeletionRequest, SecurityActivityQuery,
+        SecurityActivityResponse, SetPasswordRequest,
     },
-    domain::{entities::User, errors::DomainError},
-    infrastructure::api::error::AppError,
-    infrastructure::api::handlers::session::extract_refresh_token_cookie,
-    infrastructure::api::{
-        extractors::{ApiQuery, ValidatedJson},
-        middleware::AuthUser,
+    use_cases::{
+        CancelAccountDeletionUseCase, ChangePasswordUseCase, ExportUserDataUseCase,
+        ListSecurityActivityUseCase, RequestAccountDeletionUseCase, SetPasswordUseCase,
     },
+};
+use domain::{entities::User, errors::DomainError};
+
+use crate::infrastructure::api::{
+    error::AppError,
+    extractors::{ApiQuery, ValidatedJson},
+    handlers::session::extract_refresh_token_cookie,
+    middleware::AuthUser,
 };
 
 /// Dependencies for profile handlers.
@@ -107,10 +106,7 @@ pub async fn set_password(
 }
 
 /// Maps a user + their linked OAuth accounts to the export response DTO.
-fn build_export(
-    user: User,
-    oauth: &[crate::domain::entities::OAuthAccount],
-) -> AccountExportResponse {
+fn build_export(user: User, oauth: &[domain::entities::OAuthAccount]) -> AccountExportResponse {
     let linked_oauth_accounts = oauth
         .iter()
         .map(|a| LinkedOAuthAccountExport {

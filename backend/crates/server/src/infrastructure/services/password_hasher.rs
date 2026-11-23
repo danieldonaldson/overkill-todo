@@ -7,9 +7,9 @@ use argon2::password_hash::PasswordVerifier;
 use argon2::password_hash::phc::PasswordHash;
 use async_trait::async_trait;
 
-use crate::application::ports::PasswordHasher;
-use crate::domain::errors::DomainError;
 use crate::infrastructure::crypto::Crypto;
+use application::ports::PasswordHasher;
+use domain::errors::DomainError;
 
 /// Argon2-based password hasher backed by an injected [`Crypto`] handle.
 ///

@@ -1,13 +1,11 @@
 //! Use case for sending an email verification code.
 
-use crate::application::ports::{
-    CodeGenerator, EmailService, EmailVerificationRepository, PasswordHasher,
-};
-use crate::domain::entities::EmailVerificationCode;
-use crate::domain::entities::User;
-use crate::domain::entities::attempt_lockout::{IssueOutcome, RESEND_COOLDOWN_MINUTES};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{Email, UserId, VerificationCodeId};
+use crate::ports::{CodeGenerator, EmailService, EmailVerificationRepository, PasswordHasher};
+use domain::entities::EmailVerificationCode;
+use domain::entities::User;
+use domain::entities::attempt_lockout::{IssueOutcome, RESEND_COOLDOWN_MINUTES};
+use domain::errors::DomainError;
+use domain::value_objects::{Email, UserId, VerificationCodeId};
 use jiff::{SignedDuration, Timestamp};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -350,10 +348,10 @@ impl SendVerificationCodeUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::code_generator::MockCodeGenerator;
-    use crate::application::ports::outgoing::email_service::MockEmailService;
-    use crate::application::ports::outgoing::email_verification_repository::MockEmailVerificationRepository;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::code_generator::MockCodeGenerator;
+    use crate::ports::outgoing::email_service::MockEmailService;
+    use crate::ports::outgoing::email_verification_repository::MockEmailVerificationRepository;
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
 
     fn create_test_user() -> User {
         User::new(

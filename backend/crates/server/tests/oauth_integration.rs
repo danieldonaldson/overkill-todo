@@ -10,18 +10,18 @@ mod common;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use application::dto::OAuthUserInfo;
+use application::ports::OAuthProviderClient;
 use async_trait::async_trait;
 use axum::{
     Router,
     body::Body,
     http::{Request, Response, StatusCode, header},
 };
-use overkill_todo::application::dto::OAuthUserInfo;
-use overkill_todo::application::ports::OAuthProviderClient;
-use overkill_todo::domain::entities::OAuthProvider;
-use overkill_todo::domain::errors::DomainError;
-use overkill_todo::infrastructure::api::cookies;
+use domain::entities::OAuthProvider;
+use domain::errors::DomainError;
 use serde_json::{Value, json};
+use server::infrastructure::api::cookies;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
@@ -280,7 +280,7 @@ async fn password_signup(app: &Router, email: &str) -> String {
 // Login mode
 // ---------------------------------------------------------------------------
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_creates_user_and_issues_full_session(pool: PgPool) {
     let app = app(pool);
 
@@ -308,7 +308,7 @@ async fn login_creates_user_and_issues_full_session(pool: PgPool) {
     assert_eq!(user["oauth_providers"], json!(["google"]));
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_without_device_fingerprint_issues_access_only_session(pool: PgPool) {
     let app = app(pool);
 
@@ -319,7 +319,7 @@ async fn login_without_device_fingerprint_issues_access_only_session(pool: PgPoo
     assert!(common::cookie_value(&resp, "__Host-refresh_token").is_none());
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn repeat_login_with_same_sub_returns_same_user(pool: PgPool) {
     let app = app(pool);
 
@@ -342,7 +342,7 @@ async fn repeat_login_with_same_sub_returns_same_user(pool: PgPool) {
     assert_eq!(first_id, second_id);
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_auto_links_verified_password_account(pool: PgPool) {
     let app = app(pool);
     let password_token = password_signup(&app, "e2e-oauth-existing@example.com").await;
@@ -360,7 +360,7 @@ async fn login_auto_links_verified_password_account(pool: PgPool) {
     assert_eq!(user["oauth_providers"], json!(["google"]));
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_with_unverified_account_email_redirects_with_conflict(pool: PgPool) {
     let app = app(pool);
     // Registered but never verified: auto-linking would hand the OAuth identity
@@ -381,7 +381,7 @@ async fn login_with_unverified_account_email_redirects_with_conflict(pool: PgPoo
     assert_handoff_cookies_cleared(&resp);
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_without_provider_email_is_rejected(pool: PgPool) {
     let app = app(pool);
 
@@ -391,7 +391,7 @@ async fn login_without_provider_email_is_rejected(pool: PgPool) {
     assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn failed_code_exchange_does_not_log_in(pool: PgPool) {
     let app = app(pool);
 
@@ -406,7 +406,7 @@ async fn failed_code_exchange_does_not_log_in(pool: PgPool) {
 // State + browser binding (login CSRF defence)
 // ---------------------------------------------------------------------------
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn callback_without_state_cookie_is_rejected(pool: PgPool) {
     let app = app(pool);
     // An attacker's valid code+state replayed in a victim's browser: the
@@ -425,7 +425,7 @@ async fn callback_without_state_cookie_is_rejected(pool: PgPool) {
     assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn callback_with_another_flows_nonce_is_rejected(pool: PgPool) {
     let app = app(pool);
     let attacker = start(&app, "google", "login", None).await;
@@ -444,7 +444,7 @@ async fn callback_with_another_flows_nonce_is_rejected(pool: PgPool) {
 }
 
 /// A cancelled consent arrives as `?error=access_denied&state=…` with no code.
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn provider_cancellation_redirects_to_login(pool: PgPool) {
     let app = app(pool);
     let s = start(&app, "google", "login", None).await;
@@ -461,7 +461,7 @@ async fn provider_cancellation_redirects_to_login(pool: PgPool) {
     assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn other_provider_error_redirects_to_login(pool: PgPool) {
     let app = app(pool);
 
@@ -470,7 +470,7 @@ async fn other_provider_error_redirects_to_login(pool: PgPool) {
     assert_login_error(&resp, "oauth_failed");
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn callback_without_code_redirects_to_login(pool: PgPool) {
     let app = app(pool);
     let s = start(&app, "google", "login", None).await;
@@ -489,7 +489,7 @@ async fn callback_without_code_redirects_to_login(pool: PgPool) {
 /// SECURITY: an identity whose provider hasn't verified the email must not
 /// create an account. Such a row would be reused by the real owner's email
 /// signup, and the provider identity's link would then log into it.
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_with_unverified_provider_email_creates_no_account(pool: PgPool) {
     let app = app(pool.clone());
 
@@ -505,7 +505,7 @@ async fn login_with_unverified_provider_email_creates_no_account(pool: PgPool) {
     assert_eq!(users, 0);
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn callback_without_state_param_is_rejected(pool: PgPool) {
     let app = app(pool);
 
@@ -514,7 +514,7 @@ async fn callback_without_state_param_is_rejected(pool: PgPool) {
     assert_login_error(&resp, "oauth_failed");
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn callback_with_forged_state_is_rejected(pool: PgPool) {
     let app = app(pool);
 
@@ -529,7 +529,7 @@ async fn callback_with_forged_state_is_rejected(pool: PgPool) {
     assert_login_error(&resp, "oauth_failed");
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn callback_for_different_provider_than_state_is_rejected(pool: PgPool) {
     let app = app(pool);
     let s = start(&app, "apple", "login", None).await;
@@ -545,12 +545,12 @@ async fn callback_for_different_provider_than_state_is_rejected(pool: PgPool) {
     assert_login_error(&resp, "oauth_failed");
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn callback_with_malformed_user_id_in_state_is_rejected(pool: PgPool) {
     let app = app(pool);
     // A correctly signed state whose `user_id` claim isn't a UUID.
     let crypto = common::ensure_test_crypto();
-    let (state, nonce) = overkill_todo::infrastructure::api::create_oauth_state(
+    let (state, nonce) = server::infrastructure::api::create_oauth_state(
         crypto.tokens(),
         "google",
         "link",
@@ -573,7 +573,7 @@ async fn callback_with_malformed_user_id_in_state_is_rejected(pool: PgPool) {
 // Link mode
 // ---------------------------------------------------------------------------
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn link_attaches_provider_to_signed_in_user(pool: PgPool) {
     let app = app(pool);
     let token = password_signup(&app, "e2e-oauth-owner@example.com").await;
@@ -600,7 +600,7 @@ async fn link_attaches_provider_to_signed_in_user(pool: PgPool) {
     assert_eq!(user["oauth_providers"], json!(["apple"]));
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn relinking_same_identity_to_same_user_is_idempotent(pool: PgPool) {
     let app = app(pool);
     let token = password_signup(&app, "e2e-oauth-owner@example.com").await;
@@ -618,7 +618,7 @@ async fn relinking_same_identity_to_same_user_is_idempotent(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn link_identity_owned_by_another_user_redirects_already_linked(pool: PgPool) {
     let app = app(pool);
     // The identity behind "new-user" now belongs to the OAuth-created account.
@@ -639,7 +639,7 @@ async fn link_identity_owned_by_another_user_redirects_already_linked(pool: PgPo
     assert_eq!(me(&app, &token).await["oauth_providers"], json!([]));
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn link_with_unverified_provider_email_is_refused(pool: PgPool) {
     let app = app(pool);
     let token = password_signup(&app, "e2e-oauth-owner@example.com").await;
@@ -664,7 +664,7 @@ async fn link_with_unverified_provider_email_is_refused(pool: PgPool) {
 /// SECURITY regression: verify-email on an OAuth-only account (verified, no
 /// password) used to return a signup token for any code, letting an attacker
 /// set a password via complete-signup and take the account over.
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn verify_email_cannot_take_over_oauth_only_account(pool: PgPool) {
     let app = app(pool);
     login_flow(&app, "new-user", None).await;
@@ -707,7 +707,7 @@ async fn verify_email_cannot_take_over_oauth_only_account(pool: PgPool) {
 /// this host over HTTPS: a sibling host or a plain-HTTP response can't plant
 /// one. `models/auth_protocols.spthy` names this test on the rule where the
 /// browser stores the app's cookies.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn auth_cookies_are_host_only(pool: PgPool) {
     let app = app(pool);
     let fingerprint = "fp-host-only";

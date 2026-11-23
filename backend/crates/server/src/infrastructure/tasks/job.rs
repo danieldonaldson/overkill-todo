@@ -224,7 +224,8 @@ mod tests {
         let capture = Capture::default();
         let sub = subscriber(
             &provider,
-            EnvFilter::new("overkill_todo=info"),
+            EnvFilter::new(format!("{}=info", env!("CARGO_CRATE_NAME"))),
+            crate::infrastructure::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
             LogFormat::Json,
             capture.clone(),
             service,

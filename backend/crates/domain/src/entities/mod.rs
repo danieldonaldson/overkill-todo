@@ -14,6 +14,6 @@ pub use oauth_account::{OAuthAccount, OAuthProvider};
 pub use password_reset_code::PasswordResetCode;
 pub use refresh_token::{RefreshToken, RefreshTokenStatus};
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use user::UserBuilder;
 pub use user::{User, UserParts};

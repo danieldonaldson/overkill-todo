@@ -1,8 +1,8 @@
 //! Use case for revoking refresh tokens.
 
-use crate::application::ports::RefreshTokenRepository;
-use crate::application::ports::TokenService;
-use crate::domain::errors::DomainError;
+use crate::ports::RefreshTokenRepository;
+use crate::ports::TokenService;
+use domain::errors::DomainError;
 use std::sync::Arc;
 
 /// Use case for revoking refresh tokens.
@@ -62,10 +62,10 @@ impl RevokeTokenUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::refresh_token_repository::MockRefreshTokenRepository;
-    use crate::application::ports::outgoing::token_service::MockTokenService;
-    use crate::domain::entities::RefreshToken;
-    use crate::domain::value_objects::UserId;
+    use crate::ports::outgoing::refresh_token_repository::MockRefreshTokenRepository;
+    use crate::ports::outgoing::token_service::MockTokenService;
+    use domain::entities::RefreshToken;
+    use domain::value_objects::UserId;
     use jiff::{SignedDuration, Timestamp};
 
     fn create_valid_refresh_token() -> RefreshToken {

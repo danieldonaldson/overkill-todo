@@ -8,8 +8,8 @@ use jsonwebtoken::Validation;
 use rand::Rng;
 
 use super::error::AppError;
-use crate::application::dto::OAuthStateClaims;
 use crate::infrastructure::crypto::TokenKeyring;
+use application::dto::OAuthStateClaims;
 
 /// The OAuth-state validation, built once.
 static STATE_VALIDATION: LazyLock<Validation> = LazyLock::new(|| {

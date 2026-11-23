@@ -1,10 +1,10 @@
 //! Use case for validating a password reset code.
 
-use crate::application::ports::UserRepository;
-use crate::application::ports::{JwtService, PasswordHasher, PasswordResetRepository};
-use crate::domain::entities::attempt_lockout::AttemptOutcome;
-use crate::domain::entities::password_reset_code::MAX_ATTEMPTS;
-use crate::domain::errors::DomainError;
+use crate::ports::UserRepository;
+use crate::ports::{JwtService, PasswordHasher, PasswordResetRepository};
+use domain::entities::attempt_lockout::AttemptOutcome;
+use domain::entities::password_reset_code::MAX_ATTEMPTS;
+use domain::errors::DomainError;
 use jiff::{SignedDuration, Timestamp};
 use std::sync::Arc;
 
@@ -203,13 +203,13 @@ impl ValidateResetCodeUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::jwt_service::MockJwtService;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
-    use crate::application::ports::outgoing::password_reset_repository::MockPasswordResetRepository;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::PasswordResetCode;
-    use crate::domain::entities::User;
-    use crate::domain::value_objects::{Email, ResetCodeId};
+    use crate::ports::outgoing::jwt_service::MockJwtService;
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::password_reset_repository::MockPasswordResetRepository;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::PasswordResetCode;
+    use domain::entities::User;
+    use domain::value_objects::{Email, ResetCodeId};
     use jiff::{SignedDuration, Timestamp};
 
     fn create_test_user() -> User {

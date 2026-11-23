@@ -17,7 +17,7 @@ macro_rules! uuid_id {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $name(uuid::Uuid);
 
-        $crate::domain::value_objects::id_macros::uuid_id!(@impl $name);
+        $crate::value_objects::id_macros::uuid_id!(@impl $name);
     };
 
     (@impl $name:ident) => {
@@ -74,7 +74,7 @@ mod tests {
     //! `Display`, `Default`, and `FromStr` (both success and failure).
     use std::str::FromStr;
 
-    use crate::domain::value_objects::UserId;
+    use crate::value_objects::UserId;
 
     #[test]
     fn new_generates_distinct_ids() {

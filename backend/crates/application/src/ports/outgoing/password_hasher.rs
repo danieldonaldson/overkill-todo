@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 
-use crate::domain::errors::DomainError;
+use domain::errors::DomainError;
 
 /// Trait for hashing and verifying passwords/codes.
 ///

@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::domain::errors::DomainError;
+use crate::errors::DomainError;
 
 /// A validated email address.
 ///
@@ -15,7 +15,7 @@ use crate::domain::errors::DomainError;
 /// # Examples
 ///
 /// ```
-/// use overkill_todo::domain::value_objects::Email;
+/// use domain::value_objects::Email;
 ///
 /// // Valid email, normalized to lowercase
 /// let email = Email::new("  User@Example.COM  ").unwrap();
@@ -100,7 +100,7 @@ fn ascii_trim_range(bytes: &[u8]) -> (usize, usize) {
 /// # Examples
 ///
 /// ```
-/// use overkill_todo::domain::value_objects::Email;
+/// use domain::value_objects::Email;
 ///
 /// let email: Email = "user@example.com".to_string().try_into().unwrap();
 /// ```

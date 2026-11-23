@@ -10,10 +10,10 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityRequirement, SecurityScheme};
 use utoipa::openapi::{Components, Content, Ref, RefOr, Response, path::Operation};
 
-use crate::application::dto::{AuditKindFilter, OAuthMode};
 use crate::infrastructure::api::cookies::{AUTH_COOKIE, CSRF_COOKIE, REFRESH_COOKIE};
 use crate::infrastructure::api::error::ErrorResponse;
 use crate::infrastructure::api::middleware::csrf::CSRF_TOKEN_HEADER;
+use application::dto::{AuditKindFilter, OAuthMode};
 
 /// Security scheme: the session cookie, set by sign-in. Required wherever
 /// `require_auth()` guards a route.

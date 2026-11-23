@@ -3,10 +3,10 @@
 //! This allows users who signed up via OAuth (and don't have a password)
 //! to set one for the first time, enabling email/password login.
 
-use crate::application::ports::{PasswordHasher, UserRepository};
-use crate::domain::entities::AuditEvent;
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
+use crate::ports::{PasswordHasher, UserRepository};
+use domain::entities::AuditEvent;
+use domain::errors::DomainError;
+use domain::value_objects::UserId;
 use std::sync::Arc;
 
 /// Use case for setting a password on an OAuth-only account.
@@ -75,11 +75,11 @@ impl SetPasswordUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::User;
-    use crate::domain::errors::DomainError;
-    use crate::domain::value_objects::Email;
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::User;
+    use domain::errors::DomainError;
+    use domain::value_objects::Email;
     use proptest::prelude::*;
 
     fn create_oauth_only_user() -> User {

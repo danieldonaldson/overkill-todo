@@ -7,7 +7,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 use validator::Validate;
 
-use crate::domain::entities::User;
+use domain::entities::User;
 
 /// Default and maximum page sizes for the admin user listing.
 pub const DEFAULT_USER_LIMIT: i64 = 50;

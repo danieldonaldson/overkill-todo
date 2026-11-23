@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::job::{Job, JobMetrics};
-use crate::application::use_cases::PurgeScheduledAccountsUseCase;
+use application::use_cases::PurgeScheduledAccountsUseCase;
 
 /// The job's name in spans (`job.account_purger`) and metric labels.
 pub const JOB_NAME: &str = "account_purger";

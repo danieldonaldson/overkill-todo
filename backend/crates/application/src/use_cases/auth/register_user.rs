@@ -1,11 +1,9 @@
 //! Use case for the email-only first step of registration.
 
-use crate::application::ports::{
-    EmailService, MxValidator, OAuthAccountRepository, UserRepository,
-};
-use crate::domain::entities::User;
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::Email;
+use crate::ports::{EmailService, MxValidator, OAuthAccountRepository, UserRepository};
+use domain::entities::User;
+use domain::errors::DomainError;
+use domain::value_objects::Email;
 use std::sync::Arc;
 
 /// What registration found for the submitted email.
@@ -136,13 +134,13 @@ impl RegisterUserUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::email_service::MockEmailService;
-    use crate::application::ports::outgoing::mx_validator::MockMxValidator;
-    use crate::application::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::UserParts;
-    use crate::domain::value_objects::AccountStatus;
-    use crate::domain::value_objects::{UserId, UserRole};
+    use crate::ports::outgoing::email_service::MockEmailService;
+    use crate::ports::outgoing::mx_validator::MockMxValidator;
+    use crate::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::UserParts;
+    use domain::value_objects::AccountStatus;
+    use domain::value_objects::{UserId, UserRole};
     use jiff::Timestamp;
 
     fn create_incomplete_user() -> User {

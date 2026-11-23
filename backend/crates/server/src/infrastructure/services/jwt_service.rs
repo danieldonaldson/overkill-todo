@@ -6,10 +6,10 @@ use jiff::Timestamp;
 use jsonwebtoken::Validation;
 use serde::{Deserialize, Serialize};
 
-use crate::application::ports::JwtService;
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{ResetCodeId, UserId};
 use crate::infrastructure::crypto::{Crypto, TOKEN_REJECTED_MESSAGE as REJECTED, TokenKeyring};
+use application::ports::JwtService;
+use domain::errors::DomainError;
+use domain::value_objects::{ResetCodeId, UserId};
 
 /// The signup/reset validation, built once.
 static ONE_TIME_VALIDATION: LazyLock<Validation> = LazyLock::new(|| {

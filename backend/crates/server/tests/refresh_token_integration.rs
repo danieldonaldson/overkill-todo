@@ -13,15 +13,15 @@ use std::sync::Arc;
 use jiff::{SignedDuration, Timestamp};
 use sqlx::PgPool;
 
-use overkill_todo::application::ports::{RefreshTokenRepository, UserRepository};
-use overkill_todo::domain::entities::{RefreshToken, User};
-use overkill_todo::domain::errors::DomainError;
-use overkill_todo::domain::value_objects::Email;
-use overkill_todo::infrastructure::persistence::postgres::{
+use application::ports::{RefreshTokenRepository, UserRepository};
+use domain::entities::{RefreshToken, User};
+use domain::errors::DomainError;
+use domain::value_objects::Email;
+use server::infrastructure::persistence::postgres::{
     Database, PostgresRefreshTokenRepository, PostgresUserRepository,
 };
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn concurrent_rotate_lets_exactly_one_winner(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool.clone()));
     let user_repo = PostgresUserRepository::new(db.clone());

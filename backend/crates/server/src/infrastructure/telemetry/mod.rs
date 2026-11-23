@@ -35,7 +35,6 @@ use tracing_subscriber::{
 };
 
 use crate::infrastructure::config::TelemetrySettings;
-use crate::infrastructure::persistence::STATEMENT_LOG_DIRECTIVE;
 pub use log_format::ServiceInfo;
 use log_format::{JsonFields, JsonFormat, TraceIdLayer, pretty_fields};
 use redact::RedactingSpanProcessor;
@@ -43,14 +42,23 @@ use redact::RedactingSpanProcessor;
 /// Instrumentation scope name for spans created through `tracing`.
 const TRACER_NAME: &str = "overkill-todo";
 
-/// Spans exported to the collector: our own code, `tower_http`, and the
-/// database driver's per-statement events (SQL text only, never bound
-/// parameters, see [`STATEMENT_LOG_DIRECTIVE`]), which attach to the enclosing
-/// repository span.
-fn export_filter() -> EnvFilter {
-    EnvFilter::new(format!(
-        "overkill_todo=info,tower_http=info,{STATEMENT_LOG_DIRECTIVE}"
-    ))
+/// Build an [`EnvFilter`] setting `level` for every target in `targets`, plus
+/// any `extra` directives.
+#[must_use]
+pub fn targets_filter(targets: &[&str], level: &str, extra: &[&str]) -> EnvFilter {
+    let mut parts: Vec<String> = targets.iter().map(|t| format!("{t}={level}")).collect();
+    parts.extend(extra.iter().map(|e| (*e).to_string()));
+    EnvFilter::new(parts.join(","))
+}
+
+/// Spans exported to the collector: our workspace targets, `tower_http`, and
+/// any `extra` directives (such as the database driver's per-statement events).
+#[must_use]
+pub fn export_filter(targets: &[&str], extra: &[&str]) -> EnvFilter {
+    let mut all_extra = Vec::with_capacity(1 + extra.len());
+    all_extra.push("tower_http=info");
+    all_extra.extend_from_slice(extra);
+    targets_filter(targets, "info", &all_extra)
 }
 
 /// How log lines are written to stdout.
@@ -142,11 +150,12 @@ where
 /// Assemble the subscriber: stdout logs plus the OpenTelemetry layer.
 ///
 /// The log layer is filtered by `log_filter`, the OpenTelemetry layer by
-/// [`export_filter`]. Exposed so tests capture spans and logs with exactly the
-/// production stack.
+/// `export_filter` (typically built via [`export_filter`]). Exposed so tests
+/// capture spans and logs with exactly the production stack.
 pub fn subscriber<W>(
     provider: &SdkTracerProvider,
     log_filter: EnvFilter,
+    export_filter: EnvFilter,
     format: LogFormat,
     writer: W,
     service: ServiceInfo,
@@ -156,7 +165,7 @@ where
 {
     let otel = tracing_opentelemetry::layer()
         .with_tracer(provider.tracer(TRACER_NAME))
-        .with_filter(export_filter());
+        .with_filter(export_filter);
 
     let fmt_layer = match format {
         LogFormat::Json => tracing_subscriber::fmt::layer()
@@ -181,13 +190,15 @@ where
 
 /// Default stdout log filter: debug in dev, info in prod, plus OpenTelemetry
 /// SDK warnings (export failures). Overridable via `RUST_LOG`.
-fn default_log_filter(dev_mode: bool) -> EnvFilter {
-    let default = if dev_mode {
-        "overkill_todo=debug,tower_http=debug,opentelemetry_sdk=warn,opentelemetry_otlp=warn"
-    } else {
-        "overkill_todo=info,tower_http=info,opentelemetry_sdk=warn,opentelemetry_otlp=warn"
-    };
-    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default))
+fn default_log_filter(targets: &[&str], dev_mode: bool) -> EnvFilter {
+    let level = if dev_mode { "debug" } else { "info" };
+    let tower = format!("tower_http={level}");
+    let extra = [
+        tower.as_str(),
+        "opentelemetry_sdk=warn",
+        "opentelemetry_otlp=warn",
+    ];
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| targets_filter(targets, level, &extra))
 }
 
 /// Install the global subscriber and trace pipeline. Call once, early in `main`.
@@ -196,7 +207,12 @@ fn default_log_filter(dev_mode: bool) -> EnvFilter {
 ///
 /// Returns an error if the OTLP exporter cannot be built (e.g. a malformed
 /// endpoint URL) or a global subscriber is already installed.
-pub fn init(settings: &TelemetrySettings, dev_mode: bool) -> anyhow::Result<TelemetryGuard> {
+pub fn init(
+    settings: &TelemetrySettings,
+    dev_mode: bool,
+    targets: &[&str],
+    extra_export_directives: &[&str],
+) -> anyhow::Result<TelemetryGuard> {
     let service = ServiceInfo {
         name: settings.service_name.clone(),
         version: settings.version.clone(),
@@ -252,7 +268,8 @@ pub fn init(settings: &TelemetrySettings, dev_mode: bool) -> anyhow::Result<Tele
     };
     subscriber(
         &provider,
-        default_log_filter(dev_mode),
+        default_log_filter(targets, dev_mode),
+        export_filter(targets, extra_export_directives),
         format,
         std::io::stdout,
         service,

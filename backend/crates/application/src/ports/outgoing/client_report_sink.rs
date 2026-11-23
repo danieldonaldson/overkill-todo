@@ -1,9 +1,9 @@
 //! Where accepted browser reports go (OT-006 Decision 2).
 
-use crate::application::dto::{
+use crate::dto::{
     ClientErrorKind, IslandStage, NavOutcome, NavType, Rating, ViewTransitionResult, VitalName,
 };
-use crate::domain::value_objects::UserId;
+use domain::value_objects::UserId;
 
 /// A browser error, already validated, scrubbed and normalised by
 /// `RecordClientTelemetryUseCase`. Every `&'static str` comes from a fixed
@@ -106,7 +106,7 @@ pub struct ClientIslandReport {
 ///
 /// # Implementors
 ///
-/// - [`crate::infrastructure::telemetry::client_reports::TelemetryClientReportSink`]
+/// - `infrastructure::telemetry::client_reports::TelemetryClientReportSink`
 pub trait ClientReportSink: Send + Sync {
     /// Record one browser error.
     fn error(&self, report: &ClientErrorReport);

@@ -146,7 +146,7 @@ fn assert_no_lock_overwritten(path: &Path, ends: &[(i32, i32)]) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn resend_racing_the_locking_guess_keeps_the_lock(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-race-resend@example.com";
@@ -158,7 +158,7 @@ async fn resend_racing_the_locking_guess_keeps_the_lock(pool: PgPool) {
     assert_no_lock_overwritten(&VERIFY_VS_RESEND, &ends);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reregister_racing_the_locking_guess_keeps_the_lock(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-race-register@example.com";
@@ -170,7 +170,7 @@ async fn reregister_racing_the_locking_guess_keeps_the_lock(pool: PgPool) {
     assert_no_lock_overwritten(&VERIFY_VS_REREGISTER, &ends);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reset_request_racing_the_locking_guess_keeps_the_lock(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-race-reset@example.com";

@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 
-use overkill_todo::infrastructure::crypto::Crypto;
+use server::infrastructure::crypto::Crypto;
 
 const FINGERPRINT: &str = "test-device-rotation";
 const PASSWORD: &str = "hunter2hunter2";
@@ -149,7 +149,7 @@ async fn refresh(app: &Router, s: &Session) -> axum::http::Response<Body> {
     resp
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn tokens_from_the_previous_key_keep_working_after_rotation(pool: PgPool) {
     let app = common::create_test_app_with_crypto(pool.clone(), before());
     let session = signed_in(&app, "test-rotate-keep@example.com").await;
@@ -170,7 +170,7 @@ async fn tokens_from_the_previous_key_keep_working_after_rotation(pool: PgPool) 
     assert_eq!(me(&app, &next).await.0, StatusCode::OK);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn retiring_a_key_signs_its_sessions_in_again_silently(pool: PgPool) {
     let app = common::create_test_app_with_crypto(pool.clone(), before());
     let session = signed_in(&app, "test-rotate-retire@example.com").await;
@@ -187,7 +187,7 @@ async fn retiring_a_key_signs_its_sessions_in_again_silently(pool: PgPool) {
     assert_eq!(me(&app, &next).await.0, StatusCode::OK);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn retiring_a_key_invalidates_its_reset_links(pool: PgPool) {
     let email = "test-rotate-reset@example.com";
     let app = common::create_test_app_with_crypto(pool.clone(), before());

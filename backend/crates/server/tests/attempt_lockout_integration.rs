@@ -12,19 +12,17 @@
 
 use std::sync::Arc;
 
+use application::ports::{PasswordResetRepository, UserRepository};
+use domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome, MAX_ATTEMPTS};
+use domain::entities::{PasswordResetCode, User};
+use domain::value_objects::{Email, ResetCodeId, UserId};
 use jiff::{SignedDuration, Timestamp};
-use overkill_todo::application::ports::{PasswordResetRepository, UserRepository};
-use overkill_todo::domain::entities::attempt_lockout::{
-    AttemptOutcome, IssueOutcome, MAX_ATTEMPTS,
-};
-use overkill_todo::domain::entities::{PasswordResetCode, User};
-use overkill_todo::domain::value_objects::{Email, ResetCodeId, UserId};
-use overkill_todo::infrastructure::persistence::postgres::{
+use server::infrastructure::persistence::postgres::{
     Database, PostgresPasswordResetRepository, PostgresUserRepository,
 };
 use sqlx::PgPool;
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn register_attempt_caps_under_concurrency(pool: PgPool) {
     // More parallel claims than the cap allows; they all observe attempts = 0.
     const PARALLEL: i32 = 25;
@@ -79,7 +77,7 @@ async fn register_attempt_caps_under_concurrency(pool: PgPool) {
     assert!(after.is_locked());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn register_attempt_reports_not_found_without_row(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let reset_repo = PostgresPasswordResetRepository::new(db);
@@ -97,7 +95,7 @@ async fn register_attempt_reports_not_found_without_row(pool: PgPool) {
 /// attempts alone, even with B at the cap (no misleading "locked"). Claiming
 /// by user alone let it take a slot on B and be compared against A, past A's
 /// cap (`models/attempt_claim.qnt`, module `claim_by_user`).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn claim_naming_a_replaced_code_finds_no_code(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let user_repo = PostgresUserRepository::new(db.clone());

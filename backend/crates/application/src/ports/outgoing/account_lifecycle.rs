@@ -13,17 +13,17 @@
 //! [`anonymize_account`](AccountLifecycleRepository::anonymize_account) — the only
 //! step needing DB atomicity — already runs its whole multi-table scrub in one
 //! transaction inside the adapter. The wider deletion flow
-//! ([`PurgeScheduledAccountsUseCase`](crate::application::use_cases::PurgeScheduledAccountsUseCase):
+//! ([`PurgeScheduledAccountsUseCase`](crate::use_cases::PurgeScheduledAccountsUseCase):
 //! tear down external resources → anonymize) spans external calls
 //! that cannot join a DB transaction, so it is — correctly — an ordered, idempotent,
 //! retry-on-next-pass saga guarded by `ON DELETE RESTRICT` FKs, not a unit of work.
 //! Threading an sqlx `Transaction` through these domain ports would add an
 //! abstraction that fights both sqlx and mockall for no correctness gain.
 
-use crate::domain::entities::{AuditEvent, User};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
 use async_trait::async_trait;
+use domain::entities::{AuditEvent, User};
+use domain::errors::DomainError;
+use domain::value_objects::UserId;
 
 /// Cross-aggregate account-deletion / anonymization operations.
 #[cfg_attr(test, mockall::automock)]
@@ -50,7 +50,7 @@ pub trait AccountLifecycleRepository: Send + Sync {
     /// It does **not** touch rows that hold handles to live external resources;
     /// those must be torn down by their own use cases first. The orchestration
     /// that sequences teardown-then-anonymize lives in
-    /// [`PurgeScheduledAccountsUseCase`](crate::application::use_cases::PurgeScheduledAccountsUseCase).
+    /// [`PurgeScheduledAccountsUseCase`](crate::use_cases::PurgeScheduledAccountsUseCase).
     ///
     /// The scrub only applies while the account is still due: pending deletion,
     /// grace period over, not yet deleted. If the user cancelled after the purge

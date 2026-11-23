@@ -1,10 +1,10 @@
 //! Email verification code repository port.
 
-use crate::domain::entities::EmailVerificationCode;
-use crate::domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{UserId, VerificationCodeId};
 use async_trait::async_trait;
+use domain::entities::EmailVerificationCode;
+use domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome};
+use domain::errors::DomainError;
+use domain::value_objects::{UserId, VerificationCodeId};
 use jiff::Timestamp;
 
 /// Repository trait for email verification code persistence operations.
@@ -97,7 +97,7 @@ pub trait EmailVerificationRepository: Send + Sync {
     /// also starts the lock window, so moving it on a locked code, or on a code
     /// a concurrent request issued since, would end a lock early.
     ///
-    /// [`RESEND_COOLDOWN_MINUTES`]: crate::domain::entities::attempt_lockout::RESEND_COOLDOWN_MINUTES
+    /// [`RESEND_COOLDOWN_MINUTES`]: domain::entities::attempt_lockout::RESEND_COOLDOWN_MINUTES
     async fn set_last_sent_at(
         &self,
         user_id: &UserId,

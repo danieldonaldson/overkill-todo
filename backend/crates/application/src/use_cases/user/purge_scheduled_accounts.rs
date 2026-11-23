@@ -12,10 +12,10 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::AccountLifecycleRepository;
-use crate::domain::entities::{AuditEvent, User};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::Email;
+use crate::ports::AccountLifecycleRepository;
+use domain::entities::{AuditEvent, User};
+use domain::errors::DomainError;
+use domain::value_objects::Email;
 
 /// Finalizes deletion for accounts past their grace period.
 pub struct PurgeScheduledAccountsUseCase {
@@ -88,8 +88,8 @@ impl PurgeScheduledAccountsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::account_lifecycle::MockAccountLifecycleRepository;
-    use crate::domain::entities::UserBuilder;
+    use crate::ports::outgoing::account_lifecycle::MockAccountLifecycleRepository;
+    use domain::entities::UserBuilder;
 
     #[tokio::test]
     async fn purges_every_ready_account() {

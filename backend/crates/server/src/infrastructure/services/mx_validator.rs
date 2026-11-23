@@ -4,8 +4,8 @@ use async_trait::async_trait;
 use hickory_resolver::TokioResolver;
 use hickory_resolver::net::NetError;
 
-use crate::application::ports::MxValidator;
-use crate::domain::errors::DomainError;
+use application::ports::MxValidator;
+use domain::errors::DomainError;
 
 /// Outcome of a single MX lookup, with the error pre-classified.
 ///

@@ -8,15 +8,16 @@ use axum::{
     response::Response,
 };
 
-use crate::{
-    application::ports::outgoing::{SessionAuthorizationState, UserRepository},
-    domain::value_objects::{UserId, UserRole},
-    infrastructure::api::{
+use application::ports::outgoing::{SessionAuthorizationState, UserRepository};
+use domain::value_objects::{UserId, UserRole};
+
+use crate::infrastructure::{
+    api::{
         cookies::{AUTH_COOKIE, extract_cookie},
         error::AppError,
         verify_jwt,
     },
-    infrastructure::crypto::{Crypto, TokenKeyring},
+    crypto::{Crypto, TokenKeyring},
 };
 
 #[derive(Clone, Debug)]

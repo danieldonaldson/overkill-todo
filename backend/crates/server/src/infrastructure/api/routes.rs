@@ -54,7 +54,7 @@ use super::{
     },
     state::AppState,
 };
-use crate::application::ports::outgoing::UserRepository;
+use application::ports::outgoing::UserRepository;
 
 /// Request timeout for every route. Keep it above any outbound call a handler
 /// makes inline, or the client sees 408 after the work already committed.

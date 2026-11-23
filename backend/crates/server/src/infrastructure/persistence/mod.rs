@@ -16,7 +16,7 @@
 use std::future::Future;
 use std::sync::Arc;
 
-use crate::application::ports::outgoing::{
+use application::ports::outgoing::{
     AccountLifecycleRepository, AuditLogRepository, EmailVerificationRepository,
     OAuthAccountRepository, PasswordResetRepository, RefreshTokenRepository, UserRepository,
 };

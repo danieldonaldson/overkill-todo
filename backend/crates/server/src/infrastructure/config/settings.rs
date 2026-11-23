@@ -12,7 +12,7 @@
 
 use std::sync::OnceLock;
 
-use crate::application::use_cases::telemetry::record_client_telemetry::DEFAULT_MAX_EVENTS_PER_SEC;
+use application::use_cases::telemetry::record_client_telemetry::DEFAULT_MAX_EVENTS_PER_SEC;
 
 static DEV_MODE: OnceLock<bool> = OnceLock::new();
 

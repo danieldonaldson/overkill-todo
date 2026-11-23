@@ -1,10 +1,10 @@
 //! Password reset code repository port.
 
-use crate::domain::entities::PasswordResetCode;
-use crate::domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{ResetCodeId, UserId};
 use async_trait::async_trait;
+use domain::entities::PasswordResetCode;
+use domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome};
+use domain::errors::DomainError;
+use domain::value_objects::{ResetCodeId, UserId};
 
 /// Repository trait for password reset code persistence operations.
 ///

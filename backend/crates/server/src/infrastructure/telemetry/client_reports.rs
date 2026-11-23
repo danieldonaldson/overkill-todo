@@ -15,8 +15,8 @@ use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 
 use super::metrics::global_meter;
-use crate::application::dto::{NavType, Rating};
-use crate::application::ports::outgoing::{
+use application::dto::{NavType, Rating};
+use application::ports::outgoing::{
     ClientErrorReport, ClientIslandReport, ClientNavigationReport, ClientPageLoadReport,
     ClientReportSink, ClientVitalReport,
 };
@@ -284,13 +284,13 @@ mod tests {
     use super::*;
     use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 
-    use crate::application::dto::{
-        ClientErrorKind, IslandStage, NavOutcome, ViewTransitionResult, VitalName,
-    };
-    use crate::application::use_cases::auth::log_capture::LogCapture;
-    use crate::domain::value_objects::UserId;
     use crate::infrastructure::telemetry::metrics::testing::Attrs;
     use crate::infrastructure::telemetry::metrics::{METER_NAME, testing};
+    use application::dto::{
+        ClientErrorKind, IslandStage, NavOutcome, ViewTransitionResult, VitalName,
+    };
+    use application::use_cases::auth::log_capture::LogCapture;
+    use domain::value_objects::UserId;
 
     fn report(user_id: Option<UserId>) -> ClientErrorReport {
         ClientErrorReport {

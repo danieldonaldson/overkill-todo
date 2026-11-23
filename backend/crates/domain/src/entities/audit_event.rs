@@ -5,9 +5,9 @@
 //! can't carry an email, name, code, token or client address: people are
 //! identified only by account.
 
-use crate::domain::entities::OAuthProvider;
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{UserId, UserRole};
+use crate::entities::OAuthProvider;
+use crate::errors::DomainError;
+use crate::value_objects::{UserId, UserRole};
 
 /// The kind of action an event records.
 ///

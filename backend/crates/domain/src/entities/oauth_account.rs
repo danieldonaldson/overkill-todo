@@ -3,7 +3,7 @@
 use jiff::Timestamp;
 use uuid::Uuid;
 
-use crate::domain::value_objects::UserId;
+use crate::value_objects::UserId;
 
 /// Supported OAuth providers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

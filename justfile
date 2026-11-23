@@ -89,7 +89,7 @@ dev: db-up
     }
     trap cleanup EXIT
     trap 'exit 0' INT TERM  # Ctrl-C is how you stop it, not a failure
-    setsid bash -c 'cd {{backend}} && if command -v cargo-watch >/dev/null; then exec cargo watch -q -x run; else exec cargo run; fi' &
+    setsid bash -c "cd {{backend}} && if command -v cargo-watch >/dev/null; then exec cargo watch -q -x 'run -p server'; else exec cargo run -p server; fi" &
     pids+=($!)
     setsid bash -c 'cd apps/web && exec node_modules/.bin/astro dev' &
     pids+=($!)
@@ -146,12 +146,12 @@ db-migrate:
 # Regenerate the committed offline query cache. Run after changing any query!.
 [group('database')]
 db-prepare: db-migrate
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx prepare -- --all-targets
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx prepare --workspace -- --all-targets
 
 # Fail if the committed offline query cache is stale.
 [group('database')]
 db-prepare-check:
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx prepare --check -- --all-targets
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo sqlx prepare --workspace --check -- --all-targets || { echo "SQLx offline cache is stale. Run 'just db-prepare' and commit backend/.sqlx/" >&2; exit 1; }
 
 # Drop the local database volume and recreate it. Local only.
 [group('database')]
@@ -203,7 +203,7 @@ grant-admin email:
 # Write the OpenAPI description to backend/openapi.json. No database needed.
 [group('api')]
 api-spec:
-    cd {{backend}} && SQLX_OFFLINE=true cargo run --quiet --example export_openapi > openapi.json.tmp && mv openapi.json.tmp openapi.json
+    cd {{backend}} && SQLX_OFFLINE=true cargo run --quiet -p server --example export_openapi > openapi.json.tmp && mv openapi.json.tmp openapi.json
 
 # Fail if backend/openapi.json is stale.
 [group('api')]
@@ -233,18 +233,18 @@ api-types-check: api-spec-check api-ts-check
 # Format the backend (cargo fmt) and the whole repo (prettier).
 [group('format & lint')]
 fmt:
-    cd {{backend}} && cargo fmt
+    cd {{backend}} && cargo fmt --all
     {{pnpm}} format
 
 # Fail if the backend isn't cargo-fmt clean.
 [group('format & lint')]
 fmt-check:
-    cd {{backend}} && cargo fmt --check
+    cd {{backend}} && cargo fmt --all --check
 
 # Clippy, pedantic + nursery, warnings denied.
 [group('format & lint')]
 lint:
-    cd {{backend}} && SQLX_OFFLINE=true cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery -D clippy::allow_attributes_without_reason
+    cd {{backend}} && SQLX_OFFLINE=true cargo clippy --workspace --all-targets -- -D warnings
 
 # Frontend lint.
 [group('format & lint')]
@@ -266,12 +266,12 @@ toolchain-check:
 # Backend unit tests: reach nothing (no DB).
 [group('test')]
 test:
-    cd {{backend}} && SQLX_OFFLINE=true cargo nextest run --lib
+    cd {{backend}} && SQLX_OFFLINE=true cargo nextest run --workspace --lib
 
 # Backend integration tests: each #[sqlx::test] gets a fresh database.
 [group('test')]
 test-integration: db-up db-migrate
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo nextest run --tests
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo nextest run --workspace --tests
 
 # Frontend type check (astro check) and component tests (Vitest).
 [group('test')]
@@ -330,7 +330,7 @@ fuzz-api-test:
 # Backend coverage over unit + integration tests. HTML report: backend/target/llvm-cov/html.
 [group('coverage & bench')]
 coverage: db-up db-migrate
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo llvm-cov nextest --tests --html
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo llvm-cov nextest --workspace --tests --html
     cd {{backend}} && cargo llvm-cov report --summary-only
 
 # Frontend component-test coverage. HTML report: apps/web/coverage/index.html.
@@ -341,12 +341,12 @@ coverage-web:
 # Backend benches that need no DB (crypto, domain, middleware). Args go to criterion.
 [group('coverage & bench')]
 bench *args:
-    cd {{backend}} && SQLX_OFFLINE=true cargo bench --bench crypto --bench domain --bench middleware -- {{args}}
+    cd {{backend}} && SQLX_OFFLINE=true cargo bench -p server --bench crypto --bench domain --bench middleware -- {{args}}
 
 # Full-router benches against Postgres. Recreates an `overkill_todo_bench` database each run.
 [group('coverage & bench')]
 bench-db *args: db-up
-    cd {{backend}} && DATABASE_URL={{db_url}} cargo bench --bench http -- {{args}}
+    cd {{backend}} && DATABASE_URL={{db_url}} cargo bench -p server --bench http -- {{args}}
 
 # Frontend benches (Vitest bench in Chromium). Compare against a base ref: `just bench-compare --web`.
 [group('coverage & bench')]
@@ -386,7 +386,7 @@ machete:
 [doc('Kani proofs of the auth domain policy: every harness, every input within its bounds.')]
 verify:
     @cargo kani --version >/dev/null 2>&1 || { echo "Kani isn't installed: run 'mise install', then 'cargo kani setup' once" >&2; exit 1; }
-    cd {{backend}} && SQLX_OFFLINE=true cargo kani -j --output-format=terse
+    cd {{backend}} && SQLX_OFFLINE=true cargo kani --workspace -j --output-format=terse
 
 # Quint concurrency models (OT-010): bounded checks of every invariant, the old
 # code's counterexamples, then traces replayed against Postgres. Quint + Java from .mise.toml.

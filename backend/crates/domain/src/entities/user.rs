@@ -1,5 +1,5 @@
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{
+use crate::errors::DomainError;
+use crate::value_objects::{
     AccountStatus, AlreadyDeleted, Email, PendingEmailChange, UserId, UserRole,
 };
 use jiff::Timestamp;
@@ -38,7 +38,7 @@ pub const DELETION_GRACE_PERIOD_DAYS: i64 = 14;
 /// # Examples
 ///
 /// ```
-/// use overkill_todo::domain::{entities::User, value_objects::Email};
+/// use domain::{entities::User, value_objects::Email};
 ///
 /// let email = Email::new("user@example.com").unwrap();
 /// let user = User::new(
@@ -110,7 +110,7 @@ impl User {
     /// # Examples
     ///
     /// ```
-    /// use overkill_todo::domain::{entities::User, value_objects::Email};
+    /// use domain::{entities::User, value_objects::Email};
     ///
     /// // User with password
     /// let email = Email::new("jane@example.com").unwrap();
@@ -474,7 +474,7 @@ impl User {
     /// # Examples
     ///
     /// ```
-    /// use overkill_todo::domain::{entities::User, value_objects::Email};
+    /// use domain::{entities::User, value_objects::Email};
     ///
     /// let email = Email::new("user@example.com").unwrap();
     /// let mut user = User::new(email, Some("hash".to_string()), "John".into(), "Doe".into());
@@ -506,12 +506,12 @@ fn already_deleted() -> DomainError {
 /// ```ignore
 /// let user = UserBuilder::new().email("verify@example.com").email_verified(false).build();
 /// ```
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub struct UserBuilder {
     parts: UserParts,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl UserBuilder {
     /// Starts a builder for a verified email/password user with default fields.
     #[must_use]
@@ -541,7 +541,7 @@ impl UserBuilder {
 
     /// Overrides the user id.
     #[must_use]
-    pub fn id(mut self, id: UserId) -> Self {
+    pub const fn id(mut self, id: UserId) -> Self {
         self.parts.id = id;
         self
     }
@@ -574,7 +574,7 @@ impl UserBuilder {
 
     /// Overrides whether the email is verified.
     #[must_use]
-    pub fn email_verified(mut self, verified: bool) -> Self {
+    pub const fn email_verified(mut self, verified: bool) -> Self {
         self.parts.email_verified = verified;
         self
     }
@@ -588,7 +588,7 @@ impl UserBuilder {
 
     /// Overrides the user's role.
     #[must_use]
-    pub fn role(mut self, role: UserRole) -> Self {
+    pub const fn role(mut self, role: UserRole) -> Self {
         self.parts.role = role;
         self
     }
@@ -600,7 +600,7 @@ impl UserBuilder {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl Default for UserBuilder {
     fn default() -> Self {
         Self::new()

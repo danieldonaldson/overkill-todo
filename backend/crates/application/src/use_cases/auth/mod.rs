@@ -27,8 +27,8 @@
 
 mod complete_signup;
 mod get_current_user;
-#[cfg(test)]
-pub(crate) mod log_capture;
+#[cfg(any(test, feature = "test-support"))]
+pub mod log_capture;
 mod login_user;
 mod oauth_callback;
 mod oauth_unlink;

@@ -1,7 +1,7 @@
 //! Turnstile (CAPTCHA) service port.
 
-use crate::domain::errors::DomainError;
 use async_trait::async_trait;
+use domain::errors::DomainError;
 
 /// Trait for CAPTCHA verification using Cloudflare Turnstile.
 #[cfg_attr(test, mockall::automock)]

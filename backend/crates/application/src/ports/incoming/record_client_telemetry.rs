@@ -1,7 +1,7 @@
 //! Accept a batch of browser reports (OT-006).
 
-use crate::application::dto::ClientReportBatch;
-use crate::domain::value_objects::UserId;
+use crate::dto::ClientReportBatch;
+use domain::value_objects::UserId;
 
 /// Record a validated batch of browser reports.
 ///

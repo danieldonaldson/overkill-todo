@@ -71,7 +71,7 @@ async fn json_body(resp: axum::http::Response<Body>) -> Value {
     serde_json::from_slice(&bytes).unwrap()
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn list_users_forbidden_for_non_admin(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let (_, req) = admin_get(&pool, "user", "/api/v1/admin/users").await;
@@ -79,7 +79,7 @@ async fn list_users_forbidden_for_non_admin(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn role_change_forbidden_for_admin(pool: PgPool) {
     let target = insert_user(&pool, "promote-me@example.com").await;
     let app = common::create_test_app(pool.clone());
@@ -100,7 +100,7 @@ async fn role_change_forbidden_for_admin(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn role_change_ok_for_super_admin(pool: PgPool) {
     let target = insert_user(&pool, "promote-ok@example.com").await;
     let app = common::create_test_app(pool.clone());
@@ -134,7 +134,7 @@ async fn insert_user(pool: &PgPool, email: &str) -> Uuid {
     .id
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn list_users_ok_for_admin(pool: PgPool) {
     insert_user(&pool, "listed@example.com").await;
     let app = common::create_test_app(pool.clone());
@@ -151,7 +151,7 @@ async fn list_users_ok_for_admin(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn list_users_pages_with_total(pool: PgPool) {
     for i in 0..5 {
         insert_user(&pool, &format!("paged{i}@example.com")).await;
@@ -168,7 +168,7 @@ async fn list_users_pages_with_total(pool: PgPool) {
     assert_eq!(body["users"].as_array().unwrap().len(), 2);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn demoted_admin_token_is_rejected(pool: PgPool) {
     // Persisted role is `user`, but the still-unexpired token claims `admin`:
     // the fresh-session check on admin routes must reject it, not let the old

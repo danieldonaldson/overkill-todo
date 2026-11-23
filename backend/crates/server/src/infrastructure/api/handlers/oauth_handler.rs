@@ -8,21 +8,6 @@ use axum::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
-#[cfg(not(debug_assertions))]
-use crate::application::dto::OAuthCallbackQuery;
-#[cfg(debug_assertions)]
-use crate::application::dto::OAuthTestBypassQuery;
-use crate::application::dto::{
-    OAuthDeviceFingerprintRequest, OAuthMode, OAuthProviderName, OAuthStartQuery, OAuthStateClaims,
-    OAuthUserInfo,
-};
-use crate::application::ports::OAuthProviderClient;
-use crate::application::use_cases::{
-    OAuthCallbackMode, OAuthCallbackResult, OAuthCallbackUseCase, OAuthUnlinkUseCase,
-    RefreshTokenUseCase,
-};
-use crate::domain::entities::OAuthProvider;
-use crate::domain::value_objects::UserId;
 use crate::infrastructure::api::cookies::{
     OAUTH_DEVICE_FINGERPRINT_COOKIE, OAUTH_STATE_COOKIE, clear_oauth_device_fingerprint_cookie,
     clear_oauth_state_cookie, create_oauth_device_fingerprint_cookie, create_oauth_state_cookie,
@@ -34,6 +19,21 @@ use crate::infrastructure::api::handlers::session::build_session;
 use crate::infrastructure::api::middleware::{AuthUser, OptionalAuthUser};
 use crate::infrastructure::api::{create_oauth_state, verify_oauth_state};
 use crate::infrastructure::crypto::Crypto;
+#[cfg(not(debug_assertions))]
+use application::dto::OAuthCallbackQuery;
+#[cfg(debug_assertions)]
+use application::dto::OAuthTestBypassQuery;
+use application::dto::{
+    OAuthDeviceFingerprintRequest, OAuthMode, OAuthProviderName, OAuthStartQuery, OAuthStateClaims,
+    OAuthUserInfo,
+};
+use application::ports::OAuthProviderClient;
+use application::use_cases::{
+    OAuthCallbackMode, OAuthCallbackResult, OAuthCallbackUseCase, OAuthUnlinkUseCase,
+    RefreshTokenUseCase,
+};
+use domain::entities::OAuthProvider;
+use domain::value_objects::UserId;
 
 /// Check if test bypass mode is enabled.
 #[cfg(debug_assertions)]

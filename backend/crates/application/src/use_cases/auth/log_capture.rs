@@ -34,6 +34,7 @@ pub struct LogCapture {
 }
 
 impl LogCapture {
+    #[must_use]
     pub fn install() -> Self {
         let buffer = Buffer::default();
         let subscriber = tracing_subscriber::fmt()
@@ -49,6 +50,11 @@ impl LogCapture {
     }
 
     /// Every captured event, one JSON object each.
+    #[must_use]
+    #[allow(
+        clippy::missing_panics_doc,
+        reason = "test-only helper; lock poison or invalid JSON panics the test"
+    )]
     pub fn all(&self) -> Vec<Value> {
         let bytes = self.buffer.0.lock().unwrap().clone();
         String::from_utf8(bytes)
@@ -59,6 +65,7 @@ impl LogCapture {
     }
 
     /// The captured events whose `event` field is `name`.
+    #[must_use]
     pub fn events(&self, name: &str) -> Vec<Value> {
         self.all()
             .into_iter()
@@ -67,6 +74,7 @@ impl LogCapture {
     }
 
     /// Every captured event that has an `event` field.
+    #[must_use]
     pub fn named(&self) -> Vec<Value> {
         self.all()
             .into_iter()

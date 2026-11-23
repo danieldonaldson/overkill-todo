@@ -6,10 +6,10 @@ use std::sync::Arc;
 
 use jiff::Timestamp;
 
-use crate::application::ports::outgoing::{AuditLogRepository, SubjectEntry};
-use crate::domain::entities::{Actor, AuditDetails, AuditKind};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
+use crate::ports::outgoing::{AuditLogRepository, SubjectEntry};
+use domain::entities::{Actor, AuditDetails, AuditKind};
+use domain::errors::DomainError;
+use domain::value_objects::UserId;
 
 /// Who acted, as a Member is told.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -105,7 +105,7 @@ impl ListSecurityActivityUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::audit_log_repository::MockAuditLogRepository;
+    use crate::ports::outgoing::audit_log_repository::MockAuditLogRepository;
 
     fn entry(id: i64, actor: Actor) -> SubjectEntry {
         SubjectEntry {

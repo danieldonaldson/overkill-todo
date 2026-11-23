@@ -12,7 +12,7 @@ use crate::infrastructure::persistence::{
 
 // Expired code rows that were ever locked are kept this long after their last
 // send so the escalating lockout count isn't reset by cleanup.
-use crate::domain::entities::attempt_lockout::LOCKOUT_MEMORY_DAYS;
+use domain::entities::attempt_lockout::LOCKOUT_MEMORY_DAYS;
 
 impl DatabaseMaintenance for Database {
     async fn purge_expired(&self) -> Result<MaintenanceReport, DatabaseError> {

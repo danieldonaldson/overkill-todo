@@ -16,15 +16,15 @@ mod common;
 use std::hint::black_box;
 use std::sync::{Arc, Mutex};
 
+use application::ports::UserRepository;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use criterion::{Criterion, criterion_group, criterion_main};
-use overkill_todo::application::ports::UserRepository;
-use overkill_todo::domain::entities::{Actor, AuditEvent};
-use overkill_todo::domain::value_objects::UserRole;
-use overkill_todo::infrastructure::persistence::postgres::{Database, PostgresUserRepository};
+use domain::entities::{Actor, AuditEvent};
+use domain::value_objects::UserRole;
 use serde_json::{Value, json};
+use server::infrastructure::persistence::postgres::{Database, PostgresUserRepository};
 use sqlx::migrate::MigrateDatabase;
 use sqlx::{PgPool, Postgres};
 use tower::ServiceExt;
@@ -58,7 +58,7 @@ async fn fresh_pool(url: &str) -> PgPool {
     }
     Postgres::create_database(url).await.unwrap();
     let pool = PgPool::connect(url).await.unwrap();
-    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    sqlx::migrate!("../../migrations").run(&pool).await.unwrap();
     pool
 }
 

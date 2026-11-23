@@ -1,7 +1,7 @@
 //! Concurrency and data-integrity invariants at the repository layer.
 //!
 //! These build each Postgres repository directly from a throwaway `PgPool`
-//! (provisioned per test by `#[sqlx::test]`) and assert invariants the HTTP and
+//! (provisioned per test by `#[sqlx::test(migrations = "../../migrations")]`) and assert invariants the HTTP and
 //! basic repository suites don't reach: optimistic-version conflicts, the
 //! compare-and-swap status update, the 23505 unique-violation → `Conflict`
 //! mapping, and the encrypted-at-rest read paths' refusal to surface wrong
@@ -13,19 +13,17 @@
 
 mod common;
 
-use overkill_todo::domain::entities::AuditEvent;
+use domain::entities::AuditEvent;
 use std::sync::Arc;
 
 use jiff::{SignedDuration, Timestamp};
 use sqlx::PgPool;
 
-use overkill_todo::application::ports::{
-    OAuthAccountRepository, RefreshTokenRepository, UserRepository,
-};
-use overkill_todo::domain::entities::{OAuthAccount, OAuthProvider, RefreshToken, User};
-use overkill_todo::domain::errors::DomainError;
-use overkill_todo::domain::value_objects::{Email, UserId};
-use overkill_todo::infrastructure::persistence::postgres::{
+use application::ports::{OAuthAccountRepository, RefreshTokenRepository, UserRepository};
+use domain::entities::{OAuthAccount, OAuthProvider, RefreshToken, User};
+use domain::errors::DomainError;
+use domain::value_objects::{Email, UserId};
+use server::infrastructure::persistence::postgres::{
     Database, PostgresOAuthAccountRepository, PostgresRefreshTokenRepository,
     PostgresUserRepository,
 };
@@ -51,7 +49,7 @@ async fn seed_user(db: &Arc<Database>, email: &str) -> UserId {
 // 1. user_repository::save optimistic-version concurrency
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn user_save_optimistic_version_conflict_and_increment(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresUserRepository::new(db.clone());
@@ -101,7 +99,7 @@ async fn user_save_optimistic_version_conflict_and_increment(pool: PgPool) {
 // 3. 23505 unique-violation mapping, end-to-end through real repos
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_account_duplicate_link_maps_23505_to_conflict(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresOAuthAccountRepository::new(db.clone());
@@ -141,7 +139,7 @@ async fn oauth_account_duplicate_link_maps_23505_to_conflict(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn refresh_token_duplicate_hash_maps_23505_to_conflict(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresRefreshTokenRepository::new(db.clone());

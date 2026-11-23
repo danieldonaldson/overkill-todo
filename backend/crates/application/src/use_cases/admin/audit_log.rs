@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::outgoing::{AuditEntry, AuditFilter, AuditLogRepository};
-use crate::domain::entities::AuditKind;
-use crate::domain::errors::DomainError;
+use crate::ports::outgoing::{AuditEntry, AuditFilter, AuditLogRepository};
+use domain::entities::AuditKind;
+use domain::errors::DomainError;
 
 /// One page of events plus the total matching the filter.
 #[derive(Debug)]
@@ -48,8 +48,8 @@ impl ListAuditEventsUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::audit_log_repository::MockAuditLogRepository;
-    use crate::domain::value_objects::UserId;
+    use crate::ports::outgoing::audit_log_repository::MockAuditLogRepository;
+    use domain::value_objects::UserId;
 
     #[tokio::test]
     async fn passes_the_filter_and_page_through() {

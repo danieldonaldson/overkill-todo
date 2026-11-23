@@ -83,7 +83,7 @@ async fn complete_signup(app: &axum::Router, email: &str) {
 /// A login missing the `x-device-fingerprint` header fails validation → 400.
 /// (The user must exist and have a password so we get past the enumeration and
 /// signup-incomplete guards to the fingerprint check.)
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_missing_device_fingerprint_returns_400(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-login-nofp@example.com";
@@ -104,7 +104,7 @@ async fn login_missing_device_fingerprint_returns_400(pool: PgPool) {
 /// gets the same generic 401 `invalid_credentials` as a wrong password or an
 /// unknown email. A distinct answer would confirm the email has an account; the
 /// user finishes signup by registering again, which reuses the pending user.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_signup_incomplete_returns_generic_401(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-login-incomplete@example.com";
@@ -141,12 +141,12 @@ async fn login_signup_incomplete_returns_generic_401(pool: PgPool) {
 /// A password-less user *with* a linked OAuth account is an OAuth-only account:
 /// password login is refused with the same generic 401, and the response must
 /// not disclose that the account is provider-linked.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_oauth_only_user_returns_401(pool: PgPool) {
-    use overkill_todo::application::ports::{OAuthAccountRepository, UserRepository};
-    use overkill_todo::domain::entities::{OAuthAccount, OAuthProvider, User};
-    use overkill_todo::domain::value_objects::Email;
-    use overkill_todo::infrastructure::persistence::postgres::{
+    use application::ports::{OAuthAccountRepository, UserRepository};
+    use domain::entities::{OAuthAccount, OAuthProvider, User};
+    use domain::value_objects::Email;
+    use server::infrastructure::persistence::postgres::{
         Database, PostgresOAuthAccountRepository, PostgresUserRepository,
     };
     use std::sync::Arc;
@@ -175,10 +175,7 @@ async fn login_oauth_only_user_returns_401(pool: PgPool) {
                 "google-sub-1".to_string(),
                 Some(email.to_string()),
             ),
-            &overkill_todo::domain::entities::AuditEvent::sign_in_method_linked(
-                *user.id(),
-                OAuthProvider::Google,
-            ),
+            &domain::entities::AuditEvent::sign_in_method_linked(*user.id(), OAuthProvider::Google),
         )
         .await
         .expect("save oauth account");
@@ -202,7 +199,7 @@ async fn login_oauth_only_user_returns_401(pool: PgPool) {
 
 /// With a live pool the readiness probe returns 200. The 503 DB-down branch is
 /// not covered: it requires killing the pool mid-test, which `sqlx::test` owns.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn health_ready_returns_200_when_db_up(pool: PgPool) {
     let app = common::create_test_app(pool);
 

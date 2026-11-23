@@ -31,7 +31,7 @@ impl Database {
     /// # Errors
     /// Returns an error if a migration fails.
     pub async fn run_migrations(&self) -> Result<(), DatabaseError> {
-        sqlx::migrate!("./migrations")
+        sqlx::migrate!("../../migrations")
             .run(&self.pool)
             .await
             .map_err(DatabaseError::new)

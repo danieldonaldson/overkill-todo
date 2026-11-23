@@ -11,9 +11,9 @@ use tokio::sync::RwLock;
 
 use async_trait::async_trait;
 
-use crate::application::dto::OAuthUserInfo;
-use crate::application::ports::OAuthProviderClient;
-use crate::domain::errors::DomainError;
+use application::dto::OAuthUserInfo;
+use application::ports::OAuthProviderClient;
+use domain::errors::DomainError;
 
 #[derive(Debug, Deserialize)]
 struct GoogleTokenResponse {

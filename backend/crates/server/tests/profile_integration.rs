@@ -2,7 +2,7 @@
 //!
 //! These drive real requests through the wired test app so each handler runs
 //! together with its use case and repositories against a throwaway database
-//! (provisioned per test by `#[sqlx::test]`). The focus is the error/edge
+//! (provisioned per test by `#[sqlx::test(migrations = "../../migrations")]`). The focus is the error/edge
 //! branches the happy-path suite in `auth_integration.rs`
 //! leaves uncovered.
 
@@ -128,7 +128,7 @@ async fn signup_and_session(app: &axum::Router, email: &str) -> Session {
 // Profile handler — export
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn export_data_returns_user_profile(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-profile-export@example.com";
@@ -149,7 +149,7 @@ async fn export_data_returns_user_profile(pool: PgPool) {
     assert!(body["deletion_scheduled_at"].is_null());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn export_data_without_token_returns_401(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -169,7 +169,7 @@ async fn export_data_without_token_returns_401(pool: PgPool) {
 // Profile handler — change password
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn change_password_succeeds_and_old_password_stops_working(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-profile-change-pw@example.com";
@@ -208,7 +208,7 @@ async fn change_password_succeeds_and_old_password_stops_working(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn change_password_wrong_current_returns_error(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signup_and_session(&app, "e2e-profile-change-bad@example.com").await;
@@ -225,7 +225,7 @@ async fn change_password_wrong_current_returns_error(pool: PgPool) {
     assert!(resp.status().is_client_error());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn change_password_too_short_returns_400(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signup_and_session(&app, "e2e-profile-change-short@example.com").await;
@@ -245,7 +245,7 @@ async fn change_password_too_short_returns_400(pool: PgPool) {
 // Profile handler — set password
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn set_password_when_already_set_returns_error(pool: PgPool) {
     let app = common::create_test_app(pool);
     // Signup users already have a password, so set_password must be rejected.
@@ -267,7 +267,7 @@ async fn set_password_when_already_set_returns_error(pool: PgPool) {
 // Profile handler — account deletion request / cancel
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn request_deletion_without_confirmation_returns_400(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signup_and_session(&app, "e2e-profile-del-noconfirm@example.com").await;
@@ -283,7 +283,7 @@ async fn request_deletion_without_confirmation_returns_400(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn request_deletion_wrong_password_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signup_and_session(&app, "e2e-profile-del-badpw@example.com").await;
@@ -300,7 +300,7 @@ async fn request_deletion_wrong_password_is_rejected(pool: PgPool) {
     assert_ne!(resp.status(), StatusCode::OK);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn request_then_cancel_deletion_round_trip(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-profile-del-cycle@example.com";
@@ -355,7 +355,7 @@ async fn request_then_cancel_deletion_round_trip(pool: PgPool) {
     assert!(body["deletion_scheduled_at"].is_null());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn cancel_deletion_when_none_pending_is_noop_success(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signup_and_session(&app, "e2e-profile-cancel-none@example.com").await;
@@ -378,7 +378,7 @@ async fn cancel_deletion_when_none_pending_is_noop_success(pool: PgPool) {
 // OAuth handler — branches reachable without a real provider
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_store_device_fingerprint_sets_scoped_cookie(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -397,7 +397,7 @@ async fn oauth_store_device_fingerprint_sets_scoped_cookie(pool: PgPool) {
 /// The fingerprint goes into `Set-Cookie`, so anything but a plain token is a
 /// 400 (found by the API fuzzer, OT-011: it used to be a 500 that leaked the
 /// internal message, and `;` could add cookie attributes).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_store_device_fingerprint_rejects_unsafe_values(pool: PgPool) {
     let app = common::create_test_app(pool);
     let too_long = "a".repeat(129);
@@ -428,7 +428,7 @@ async fn oauth_store_device_fingerprint_rejects_unsafe_values(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_store_device_fingerprint_blank_returns_400(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -442,7 +442,7 @@ async fn oauth_store_device_fingerprint_blank_returns_400(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_start_unknown_provider_returns_400(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -458,7 +458,7 @@ async fn oauth_start_unknown_provider_returns_400(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_start_login_unconfigured_provider_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -476,7 +476,7 @@ async fn oauth_start_login_unconfigured_provider_is_rejected(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_start_link_without_auth_returns_401(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -492,7 +492,7 @@ async fn oauth_start_link_without_auth_returns_401(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_unlink_unknown_provider_returns_400(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signup_and_session(&app, "e2e-oauth-unlink-bad@example.com").await;
@@ -508,7 +508,7 @@ async fn oauth_unlink_unknown_provider_returns_400(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_unlink_not_linked_returns_client_error(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signup_and_session(&app, "e2e-oauth-unlink-none@example.com").await;
@@ -526,7 +526,7 @@ async fn oauth_unlink_not_linked_returns_client_error(pool: PgPool) {
     assert_ne!(resp.status(), StatusCode::OK);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_unlink_without_auth_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -556,7 +556,7 @@ async fn oauth_unlink_without_auth_is_rejected(pool: PgPool) {
 // Auth handler — uncovered error branches
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_unknown_user_returns_401(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -570,7 +570,7 @@ async fn login_unknown_user_returns_401(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn verify_email_wrong_code_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-auth-verify-wrong@example.com";
@@ -594,7 +594,7 @@ async fn verify_email_wrong_code_is_rejected(pool: PgPool) {
     assert_ne!(resp.status(), StatusCode::OK);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn complete_signup_bad_token_is_rejected(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-auth-complete-badtoken@example.com";
@@ -618,7 +618,7 @@ async fn complete_signup_bad_token_is_rejected(pool: PgPool) {
     assert_ne!(resp.status(), StatusCode::OK);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn me_with_garbage_token_returns_401(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -635,7 +635,7 @@ async fn me_with_garbage_token_returns_401(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn logout_clears_session_cookie(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signup_and_session(&app, "e2e-auth-logout@example.com").await;
@@ -647,7 +647,7 @@ async fn logout_clears_session_cookie(pool: PgPool) {
     assert!(resp.status().is_success(), "logout should succeed");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn refresh_without_cookie_returns_401(pool: PgPool) {
     let app = common::create_test_app(pool);
 

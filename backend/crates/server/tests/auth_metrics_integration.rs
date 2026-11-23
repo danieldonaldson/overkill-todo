@@ -22,15 +22,15 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SimpleSpanProcessor};
-use overkill_todo::infrastructure::telemetry::{
+use server::infrastructure::telemetry::{
     self, LogFormat, ServiceInfo,
     metrics::{AuthMetrics, METER_NAME},
 };
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use overkill_todo::{application::ports::TurnstileService, domain::errors::DomainError};
-use tracing_subscriber::EnvFilter;
+use application::ports::TurnstileService;
+use domain::errors::DomainError;
 
 /// The code the dev code generator gives `e2e-*` addresses.
 const DEV_CODE: &str = "123456";
@@ -60,7 +60,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
 }
 
 impl LogCapture {
-    /// Install the production stack as the thread default. `#[sqlx::test]`
+    /// Install the production stack as the thread default. `#[sqlx::test(migrations = "../../migrations")]`
     /// runs on a current-thread runtime, so every request is captured.
     fn install() -> (Self, tracing::subscriber::DefaultGuard) {
         let service = ServiceInfo {
@@ -75,7 +75,8 @@ impl LogCapture {
         let logs = Self::default();
         let subscriber = telemetry::subscriber(
             &provider,
-            EnvFilter::new("overkill_todo=debug"),
+            telemetry::targets_filter(server::APP_TARGETS, "debug", &[]),
+            telemetry::export_filter(server::APP_TARGETS, &[]),
             LogFormat::Json,
             logs.clone(),
             service,
@@ -391,7 +392,7 @@ async fn expire_email_code(pool: &PgPool, email: &str) {
 
 /// Wrong password and unknown email are both one failure each; a correct
 /// password is a success. Responses are the usual 401 / 200.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn sign_in_outcomes_are_counted(pool: PgPool) {
     let h = Harness::new(pool);
     let email = "e2e-signin@example.com";
@@ -423,7 +424,7 @@ async fn sign_in_outcomes_are_counted(pool: PgPool) {
 // ---------------------------------------------------------------------------
 
 /// 5 wrong codes then 3 more while locked: 5 failures, 1 lockout, 3 locked.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn email_code_lockout_is_counted_once(pool: PgPool) {
     let h = Harness::new(pool);
     let email = "e2e-lockout@example.com";
@@ -449,7 +450,7 @@ async fn email_code_lockout_is_counted_once(pool: PgPool) {
 
 /// An expired email code is counted as expired, a correct one as a success;
 /// unknown and already verified emails aren't guesses and aren't counted.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn email_code_expired_and_success_are_counted(pool: PgPool) {
     let h = Harness::new(pool.clone());
     let expired = "e2e-expired@example.com";
@@ -488,7 +489,7 @@ async fn email_code_expired_and_success_are_counted(pool: PgPool) {
 /// Every `verify-reset-code` outcome keeps its pre-OT-007 status and body, and
 /// is counted under the reset-code flow: 5 failures, 1 lockout, then locked;
 /// expired as expired; no code not at all.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reset_code_outcomes_keep_their_responses_and_are_counted(pool: PgPool) {
     let h = Harness::new(pool.clone());
     let email = "e2e-reset@example.com";
@@ -557,7 +558,7 @@ async fn reset_code_outcomes_keep_their_responses_and_are_counted(pool: PgPool) 
 }
 
 /// A correct reset code is a success and still returns a reset token.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reset_code_success_is_counted(pool: PgPool) {
     let h = Harness::new(pool);
     let email = "e2e-reset-ok@example.com";
@@ -576,7 +577,7 @@ async fn reset_code_success_is_counted(pool: PgPool) {
 /// The magic link shares the email code's attempt row. Opening it for an
 /// account whose email code is locked counts one `magic_link/locked` and
 /// nothing more under `email_code`.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn magic_link_on_a_locked_code_counts_under_its_own_flow(pool: PgPool) {
     let h = Harness::new(pool.clone());
     let email = "e2e-magic-locked@example.com";
@@ -612,7 +613,7 @@ async fn magic_link_on_a_locked_code_counts_under_its_own_flow(pool: PgPool) {
 }
 
 /// A magic link that doesn't exist is a `failure`; a live one is a `success`.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn magic_link_outcomes_are_counted(pool: PgPool) {
     let h = Harness::new(pool.clone());
     let email = "e2e-magic@example.com";
@@ -647,7 +648,7 @@ async fn magic_link_outcomes_are_counted(pool: PgPool) {
 /// `sign_in`, the other forms stay at zero, and the responses are the same
 /// `400 bot_check_failed` as before. An upstream outage is a 500, not a
 /// rejection, and a valid token isn't counted.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn bot_check_rejections_are_counted_per_form(pool: PgPool) {
     let h = Harness::with_turnstile(pool);
     let sign_in = |token: Option<&str>| {
@@ -683,7 +684,7 @@ async fn bot_check_rejections_are_counted_per_form(pool: PgPool) {
 }
 
 /// Each protected form counts under its own name.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn each_protected_form_names_itself(pool: PgPool) {
     let h = Harness::with_turnstile(pool);
     let email = "e2e-forms@example.com";
@@ -741,7 +742,7 @@ fn unauthorized(message: &str) -> (StatusCode, String, String) {
 
 /// Presenting a rotated refresh token again counts one `token_reuse` and
 /// signs out every session, with the same 401 as before.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reused_refresh_token_is_counted(pool: PgPool) {
     let h = Harness::new(pool);
     let email = "e2e-reuse@example.com";
@@ -776,7 +777,7 @@ async fn reused_refresh_token_is_counted(pool: PgPool) {
 
 /// A refresh from a different device counts one `device_mismatch`, with the
 /// same 401 as before.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn device_mismatch_is_counted(pool: PgPool) {
     let h = Harness::new(pool);
     let email = "e2e-device@example.com";
@@ -794,7 +795,7 @@ async fn device_mismatch_is_counted(pool: PgPool) {
 }
 
 /// An unknown or expired refresh token keeps its 401 and is not an anomaly.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn unknown_and_expired_refresh_tokens_are_not_anomalies(pool: PgPool) {
     let h = Harness::new(pool.clone());
     let email = "e2e-expired@example.com";
@@ -854,7 +855,7 @@ async fn set_magic_token(pool: &PgPool, email: &str, token: &str) {
 /// After sign-ins and code checks by several Members, no label value on any
 /// auth measurement holds an email, user ID, code or token, and the series
 /// are the fixed flow/outcome combinations only.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn measurements_hold_no_personal_data(pool: PgPool) {
     let (logs, _guard) = LogCapture::install();
     let h = Harness::with_turnstile_tokens(pool.clone());

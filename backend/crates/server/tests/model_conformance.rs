@@ -22,27 +22,23 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use jiff::{SignedDuration, Timestamp};
-use overkill_todo::application::ports::{
+use application::ports::{
     EmailVerificationRepository, PasswordResetRepository, RefreshTokenRepository, UserRepository,
 };
-use overkill_todo::domain::entities::attempt_lockout::{
-    AttemptOutcome, IssueOutcome, RESEND_COOLDOWN_MINUTES,
-};
-use overkill_todo::domain::entities::{
+use domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome, RESEND_COOLDOWN_MINUTES};
+use domain::entities::{
     EmailVerificationCode, PasswordResetCode, RefreshToken, RefreshTokenStatus, User,
     email_verification_code, password_reset_code,
 };
-use overkill_todo::domain::errors::DomainError;
-use overkill_todo::domain::value_objects::{
-    Email, RefreshTokenId, ResetCodeId, UserId, VerificationCodeId,
-};
-use overkill_todo::infrastructure::persistence::postgres::{
+use domain::errors::DomainError;
+use domain::value_objects::{Email, RefreshTokenId, ResetCodeId, UserId, VerificationCodeId};
+use jiff::{SignedDuration, Timestamp};
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use server::infrastructure::persistence::postgres::{
     Database, PostgresEmailVerificationRepository, PostgresPasswordResetRepository,
     PostgresRefreshTokenRepository, PostgresUserRepository,
 };
-use serde::Deserialize;
-use serde::de::DeserializeOwned;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
@@ -331,7 +327,7 @@ impl Codes {
     }
 
     async fn claim(&self, user: &UserId, id: Uuid) -> AttemptOutcome {
-        let cap = overkill_todo::domain::entities::attempt_lockout::MAX_ATTEMPTS;
+        let cap = domain::entities::attempt_lockout::MAX_ATTEMPTS;
         match self.kind {
             CodeKind::Email => self
                 .email
@@ -644,13 +640,13 @@ async fn replay_code_traces(pool: PgPool, kind: CodeKind, prefix: &str) {
     }
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 #[ignore = "replays exported model traces; run with `just models`"]
 async fn email_codes_follow_the_attempt_claim_model(pool: PgPool) {
     replay_code_traces(pool, CodeKind::Email, "email_codes").await;
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 #[ignore = "replays exported model traces; run with `just models`"]
 async fn reset_codes_follow_the_attempt_claim_model(pool: PgPool) {
     replay_code_traces(pool, CodeKind::Reset, "reset_codes").await;
@@ -876,7 +872,7 @@ impl TokenReplay<'_> {
     }
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 #[ignore = "replays exported model traces; run with `just models`"]
 async fn refresh_tokens_follow_the_rotation_model(pool: PgPool) {
     let mut refreshes = BTreeMap::new();

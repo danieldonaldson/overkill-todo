@@ -2,56 +2,52 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use application::{
+    ports::{
+        EmailService, MxValidator, OAuthProviderClient, TurnstileService,
+        outgoing::ClientReportSink,
+    },
+    use_cases::{
+        CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
+        ExportUserDataUseCase, GetCurrentUserUseCase, ListAuditEventsUseCase,
+        ListSecurityActivityUseCase, ListUsersUseCase, LoginUserUseCase, OAuthCallbackUseCase,
+        OAuthUnlinkUseCase, RefreshTokenUseCase, RegisterUserUseCase,
+        RequestAccountDeletionUseCase, RequestPasswordResetUseCase, ResendVerificationUseCase,
+        ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase, SetPasswordUseCase,
+        SetUserRoleUseCase, ValidateResetCodeUseCase, VerifyEmailUseCase, VerifyMagicLinkUseCase,
+        telemetry::{
+            RecordClientTelemetryUseCase, record_client_telemetry::DEFAULT_MAX_EVENTS_PER_SEC,
+        },
+    },
+};
 use axum::Router;
 use axum::body::Body;
 use axum::http::header;
-use overkill_todo::domain::entities::OAuthProvider;
-use overkill_todo::domain::errors::DomainError;
-use overkill_todo::{
-    application::{
-        ports::{
-            EmailService, MxValidator, OAuthProviderClient, TurnstileService,
-            outgoing::ClientReportSink,
-        },
-        use_cases::{
-            CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
-            ExportUserDataUseCase, GetCurrentUserUseCase, ListAuditEventsUseCase,
-            ListSecurityActivityUseCase, ListUsersUseCase, LoginUserUseCase, OAuthCallbackUseCase,
-            OAuthUnlinkUseCase, RefreshTokenUseCase, RegisterUserUseCase,
-            RequestAccountDeletionUseCase, RequestPasswordResetUseCase, ResendVerificationUseCase,
-            ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
-            SetPasswordUseCase, SetUserRoleUseCase, ValidateResetCodeUseCase, VerifyEmailUseCase,
-            VerifyMagicLinkUseCase,
-            telemetry::{
-                RecordClientTelemetryUseCase, record_client_telemetry::DEFAULT_MAX_EVENTS_PER_SEC,
-            },
+use domain::entities::OAuthProvider;
+use domain::errors::DomainError;
+use server::infrastructure::{
+    api::{
+        RouterDeps, create_router,
+        handlers::{
+            admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
+            client_telemetry_handler::ClientTelemetryHandlerDeps, oauth_handler::OAuthHandlerDeps,
+            profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
         },
     },
-    infrastructure::{
-        api::{
-            RouterDeps, create_router,
-            handlers::{
-                admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
-                client_telemetry_handler::ClientTelemetryHandlerDeps,
-                oauth_handler::OAuthHandlerDeps, profile_handler::ProfileHandlerDeps,
-                verification_handler::VerificationHandlerDeps,
-            },
-        },
-        persistence::{
-            Persistence,
-            postgres::{self, Database},
-        },
-        services::{
-            Argon2Hasher, ConsoleEmailService, CryptoJwtService, CryptoTokenService,
-            NoOpMxValidator, NoOpTurnstileService, RandomCodeGenerator,
-        },
+    persistence::{
+        Persistence,
+        postgres::{self, Database},
+    },
+    services::{
+        Argon2Hasher, ConsoleEmailService, CryptoJwtService, CryptoTokenService, NoOpMxValidator,
+        NoOpTurnstileService, RandomCodeGenerator,
     },
 };
 use sqlx::PgPool;
 
-use overkill_todo::infrastructure::crypto::Crypto;
-use overkill_todo::infrastructure::telemetry::client_reports::TelemetryClientReportSink;
-use overkill_todo::infrastructure::telemetry::metrics::AuthMetrics;
+use server::infrastructure::crypto::Crypto;
+use server::infrastructure::telemetry::client_reports::TelemetryClientReportSink;
+use server::infrastructure::telemetry::metrics::AuthMetrics;
 
 static TEST_CRYPTO: OnceLock<Arc<Crypto>> = OnceLock::new();
 
@@ -77,7 +73,7 @@ pub fn test_token_key(kid: &str, fill: u8) -> String {
 pub fn crypto_with_token_keys(signing: &str, trusted: Option<&str>) -> Arc<Crypto> {
     // `Crypto::for_testing()` is library-test-only (`cfg(test)`) and not
     // reachable from this integration-test crate, so build the slice here.
-    let crypto = overkill_todo::infrastructure::config::CryptoSettings {
+    let crypto = server::infrastructure::config::CryptoSettings {
         argon2_memory_cost: 4096,
         argon2_time_cost: 1,
         argon2_parallelism: 1,
@@ -144,7 +140,7 @@ pub fn mint_session_jwt(
     expiration_minutes: i64,
 ) -> String {
     let crypto = test_crypto();
-    overkill_todo::infrastructure::api::create_jwt(
+    server::infrastructure::api::create_jwt(
         user_id,
         email_verified,
         role,
@@ -163,7 +159,7 @@ pub fn mint_session_jwt(
 )]
 pub fn mint_csrf_token(user_id: &str) -> String {
     let crypto = test_crypto();
-    overkill_todo::infrastructure::api::generate_csrf_token(crypto.csrf_secret(), user_id)
+    server::infrastructure::api::generate_csrf_token(crypto.csrf_secret(), user_id)
 }
 
 /// Build a fully wired test application from a sqlx-provided pool.

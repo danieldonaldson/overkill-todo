@@ -1,11 +1,9 @@
 //! Use case for resetting a user's password.
 
-use crate::application::ports::UserRepository;
-use crate::application::ports::{
-    JwtService, PasswordHasher, PasswordResetRepository, RefreshTokenRepository,
-};
-use crate::domain::entities::{AuditEvent, User};
-use crate::domain::errors::DomainError;
+use crate::ports::UserRepository;
+use crate::ports::{JwtService, PasswordHasher, PasswordResetRepository, RefreshTokenRepository};
+use domain::entities::{AuditEvent, User};
+use domain::errors::DomainError;
 use jiff::Timestamp;
 use std::sync::Arc;
 
@@ -143,12 +141,12 @@ impl ResetPasswordUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::jwt_service::MockJwtService;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
-    use crate::application::ports::outgoing::password_reset_repository::MockPasswordResetRepository;
-    use crate::application::ports::outgoing::refresh_token_repository::MockRefreshTokenRepository;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::value_objects::{Email, ResetCodeId, UserId};
+    use crate::ports::outgoing::jwt_service::MockJwtService;
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::password_reset_repository::MockPasswordResetRepository;
+    use crate::ports::outgoing::refresh_token_repository::MockRefreshTokenRepository;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::value_objects::{Email, ResetCodeId, UserId};
 
     fn create_test_user() -> User {
         let mut user = User::new(

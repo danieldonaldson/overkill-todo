@@ -6,10 +6,10 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::{AuditLogRepository, OAuthAccountRepository, UserRepository};
-use crate::domain::entities::{AuditEvent, OAuthAccount, User};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
+use crate::ports::{AuditLogRepository, OAuthAccountRepository, UserRepository};
+use domain::entities::{AuditEvent, OAuthAccount, User};
+use domain::errors::DomainError;
+use domain::value_objects::UserId;
 
 /// Use case for exporting the authenticated user's personal data.
 pub struct ExportUserDataUseCase {
@@ -67,11 +67,11 @@ impl ExportUserDataUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::audit_log_repository::MockAuditLogRepository;
-    use crate::application::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::oauth_account::OAuthProvider;
-    use crate::domain::entities::{User, UserBuilder};
+    use crate::ports::outgoing::audit_log_repository::MockAuditLogRepository;
+    use crate::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::oauth_account::OAuthProvider;
+    use domain::entities::{User, UserBuilder};
 
     fn make_user() -> User {
         UserBuilder::new().password_hash(Some("hash")).build()

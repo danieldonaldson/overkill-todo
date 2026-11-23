@@ -1,5 +1,5 @@
-use crate::domain::errors::DomainError;
 use async_trait::async_trait;
+use domain::errors::DomainError;
 
 /// Service trait for validating email domains via MX record lookup.
 ///
@@ -15,7 +15,7 @@ use async_trait::async_trait;
 ///
 /// # Implementors
 ///
-/// - [`crate::infrastructure::services::HickoryMxValidator`]
+/// - `infrastructure::services::HickoryMxValidator`
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait MxValidator: Send + Sync {

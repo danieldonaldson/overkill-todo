@@ -582,6 +582,31 @@ caught").
 
   Record the same numbers after slice 1 (partial: adapters are still one
   crate) and after the last slice. Keep the table here.
+
+  | Measurement (`RUSTC_WRAPPER=""`, `SQLX_OFFLINE=true`) | Phase 0 baseline | After slice 1 | After slice 2 (final) |
+  |---|---|---|---|
+  | `clean cargo build` | 53.80s | 55.38s | — |
+  | `touch` handler → `cargo build` (`auth_handler.rs`) | 3.28s | 3.09s | — |
+  | `touch` repo → `cargo build` (`user_repository.rs`) | 3.25s | 3.15s | — |
+  | `touch` domain → `cargo build` (`user.rs`) | 3.23s | 3.77s | — |
+  | `just test --no-run` | 37.58s | 36.08s | — |
+  | `just test-integration --no-run` | 34.44s | 35.31s | — |
+  | Docker release build, cold (`--no-cache`) | 358.50s | 438.57s | — |
+  | Docker release build, warm (`touch` / BuildKit cache) | 3.10s | 1.84s | — |
+  | Docker release build, warm (1-line edit in `auth_handler.rs`) | — | 219.19s | — |
+
+  **Slice 1 notes:** Dev compile/rebuild times stay essentially flat (`~3.1–3.8s`
+  for single-file edits, `55.38s` clean vs `53.80s` baseline), as expected while
+  all adapters remain in `server`. In the release Docker image (`cargo-chef` +
+  `cargo-auditable`), `cargo chef cook` (136.9s) + `cargo auditable build`
+  (220.2s) total 357.1s vs ~330s baseline (+8.2%, within ±10%); the remaining
+  extra time on `--no-cache` cold builds is the one-time cached
+  `cargo-chef + cargo-auditable` tool-install layer (73.6s vs 28.1s for
+  `cargo-auditable` alone). BuildKit hashes file content rather than mtime, so
+  `touch` hits layer cache (`1.84s` vs `3.10s`); a real 1-line edit to
+  `auth_handler.rs` keeps `cargo chef cook` `CACHED` and compiles only the four
+  workspace crates + fat LTO (`219.19s`). D7 stands for Slice 2.
+
 - **How we'll know:** if adapter-only edits don't improve after the last
   slice, the change still stands on enforcement (spec requirements 1–2). We
   then don't pursue finer splits. If the release image build gets more than

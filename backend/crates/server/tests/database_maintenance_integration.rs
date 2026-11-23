@@ -1,11 +1,11 @@
 //! Integration coverage for bounded expiry and retention maintenance.
 
-use overkill_todo::infrastructure::persistence::DatabaseMaintenance as _;
-use overkill_todo::infrastructure::persistence::postgres::Database;
+use server::infrastructure::persistence::DatabaseMaintenance as _;
+use server::infrastructure::persistence::postgres::Database;
 use sqlx::PgPool;
 use uuid::Uuid;
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn removes_stale_rows_and_preserves_current_rows(pool: PgPool) {
     let user_id = Uuid::now_v7();
     let old_email_user = Uuid::now_v7();
@@ -108,7 +108,7 @@ async fn removes_stale_rows_and_preserves_current_rows(pool: PgPool) {
 /// Expired code rows that were ever locked are kept for the lockout memory
 /// window, so waiting for cleanup doesn't reset the escalating lock. Once idle
 /// past that window they go like any other expired row.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn keeps_expired_code_rows_with_lockouts_until_idle(pool: PgPool) {
     // (lockouts, last sent) → kept?
     let cases = [
@@ -169,7 +169,7 @@ async fn keeps_expired_code_rows_with_lockouts_until_idle(pool: PgPool) {
 
 /// OT-008 retention: events past 7 years go, younger ones stay, and a pass
 /// with nothing to delete succeeds.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn deletes_audit_events_only_past_seven_years(pool: PgPool) {
     let db = Database::from_pool(pool.clone());
     let report = db.purge_expired().await.unwrap();

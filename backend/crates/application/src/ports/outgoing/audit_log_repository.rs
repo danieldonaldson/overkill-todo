@@ -8,9 +8,9 @@
 use async_trait::async_trait;
 use jiff::Timestamp;
 
-use crate::domain::entities::{Actor, AuditDetails, AuditEvent, AuditKind};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
+use domain::entities::{Actor, AuditDetails, AuditEvent, AuditKind};
+use domain::errors::DomainError;
+use domain::value_objects::UserId;
 
 /// Which events to list. Both conditions must hold when both are set.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

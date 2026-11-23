@@ -8,8 +8,8 @@ use std::fmt::Write as _;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use overkill_todo::infrastructure::api::cookies;
 use serde_json::{Value, json};
+use server::infrastructure::api::cookies;
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -187,7 +187,7 @@ async fn complete_reset(app: &Router, email: &str, new_password: &str) -> String
 /// and so is the old session on `/auth/me` and Google unlink (that it's refused on the
 /// account-sensitive routes is `verification_integration::
 /// password_reset_flow_succeeds`).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_password_reset_ends_earlier_sessions(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "test-p04-reset@example.com";
@@ -230,7 +230,7 @@ async fn a_password_reset_ends_earlier_sessions(pool: PgPool) {
 // ── P-17 ─────────────────────────────────────────────────────────────────────
 
 /// P-17: signing out revokes the refresh token server-side, not just the cookie.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_refresh_token_is_refused_after_logout(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signed_in(&app, "test-p17-logout@example.com").await;
@@ -262,7 +262,7 @@ async fn a_refresh_token_is_refused_after_logout(pool: PgPool) {
 
 /// P-15: presenting a refresh token after it was rotated revokes every session
 /// of that Member: the rotated successor and an unrelated sign-in alike.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reusing_a_rotated_refresh_token_ends_every_session(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "test-p15-reuse@example.com";
@@ -293,7 +293,7 @@ async fn reusing_a_rotated_refresh_token_ends_every_session(pool: PgPool) {
 
 /// P-16: a refresh token presented from another device is refused, and still
 /// works from the device it was issued to.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_refresh_token_is_refused_from_another_device(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signed_in(&app, "test-p16-fingerprint@example.com").await;
@@ -339,7 +339,7 @@ async fn user_id(pool: &PgPool, email: &str) -> Uuid {
 /// B is made password-less with a linked Google identity, so that a route
 /// wrongly acting on B would visibly succeed: set-password would give B a
 /// password, unlink would remove B's identity.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_member_reaches_only_their_own_account(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let a_email = "test-p09-alice@example.com";
@@ -590,7 +590,7 @@ fn sets_credential_cookie(resp: &axum::http::Response<Body>) -> bool {
 /// P-21: the CSRF-exempt routes can't be driven by a cross-site form. Routes
 /// with a body accept only `application/json`; refresh needs a custom header;
 /// and no response grants another origin CORS access.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn csrf_exempt_routes_cannot_be_driven_cross_site(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     // A real account, so a login or code that slipped through would succeed.
@@ -666,7 +666,7 @@ async fn csrf_exempt_routes_cannot_be_driven_cross_site(pool: PgPool) {
 }
 
 /// P-21: CORS never grants another origin, for preflights or actual requests.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn cors_grants_no_other_origin(pool: PgPool) {
     let app = common::create_test_app(pool);
     let mut granted = Vec::new();
@@ -748,14 +748,14 @@ struct CapturingEmail {
 }
 
 #[async_trait::async_trait]
-impl overkill_todo::application::ports::outgoing::EmailService for CapturingEmail {
+impl application::ports::outgoing::EmailService for CapturingEmail {
     async fn send_verification_email(
         &self,
         _to: &str,
         _code: &str,
         _first_name: &str,
         magic_link: Option<String>,
-    ) -> Result<(), overkill_todo::domain::errors::DomainError> {
+    ) -> Result<(), domain::errors::DomainError> {
         if let Some(link) = magic_link {
             self.magic_links.lock().unwrap().push(link);
         }
@@ -767,7 +767,7 @@ impl overkill_todo::application::ports::outgoing::EmailService for CapturingEmai
         _to: &str,
         _code: &str,
         _first_name: &str,
-    ) -> Result<(), overkill_todo::domain::errors::DomainError> {
+    ) -> Result<(), domain::errors::DomainError> {
         Ok(())
     }
 
@@ -775,7 +775,7 @@ impl overkill_todo::application::ports::outgoing::EmailService for CapturingEmai
         &self,
         _to: &str,
         _first_name: &str,
-    ) -> Result<(), overkill_todo::domain::errors::DomainError> {
+    ) -> Result<(), domain::errors::DomainError> {
         Ok(())
     }
 }
@@ -788,7 +788,7 @@ impl overkill_todo::application::ports::outgoing::EmailService for CapturingEmai
 ///
 /// Google linking is not part of this flow: it stores only the provider's
 /// user id and email, and no provider token or secret (threat model P-27).
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_database_copy_holds_no_usable_credentials(pool: PgPool) {
     let email_service = std::sync::Arc::new(CapturingEmail::default());
     let app = common::create_test_app_with_email_service(pool.clone(), email_service.clone());

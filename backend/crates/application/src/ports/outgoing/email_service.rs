@@ -1,7 +1,7 @@
 //! Email service port for sending transactional emails.
 
-use crate::domain::errors::DomainError;
 use async_trait::async_trait;
+use domain::errors::DomainError;
 
 /// Trait for sending transactional emails.
 ///

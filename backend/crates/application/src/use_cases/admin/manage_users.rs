@@ -2,10 +2,10 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::outgoing::UserRepository;
-use crate::domain::entities::{Actor, AuditEvent, User};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{RoleChangeRefusal, UserId, UserRole};
+use crate::ports::outgoing::UserRepository;
+use domain::entities::{Actor, AuditEvent, User};
+use domain::errors::DomainError;
+use domain::value_objects::{RoleChangeRefusal, UserId, UserRole};
 
 /// One page of users plus the total across all pages.
 #[derive(Debug)]
@@ -121,8 +121,8 @@ impl SetUserRoleUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::{AuditDetails, UserBuilder};
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::{AuditDetails, UserBuilder};
 
     #[tokio::test]
     async fn set_user_role_to_the_same_role_is_not_audited() {

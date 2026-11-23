@@ -42,13 +42,13 @@ pub async fn require_verified_email(req: Request, next: Next) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::value_objects::{UserId, UserRole};
     use axum::{
         Router,
         body::Body,
         http::{Request as HttpRequest, StatusCode},
         routing::get,
     };
+    use domain::value_objects::{UserId, UserRole};
     use tower::ServiceExt;
 
     async fn dummy_handler() -> &'static str {

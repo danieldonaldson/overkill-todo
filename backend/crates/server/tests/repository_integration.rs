@@ -1,30 +1,28 @@
 //! Repository-level integration coverage.
 //!
 //! These build each Postgres repository directly from a throwaway `PgPool`
-//! (provisioned per test by `#[sqlx::test]`) and exercise the find / insert /
+//! (provisioned per test by `#[sqlx::test(migrations = "../../migrations")]`) and exercise the find / insert /
 //! revoke / consume / delete paths plus their not-found, expired, and
 //! idempotency branches — the cases the HTTP suites don't reach.
 
 mod common;
 
-use overkill_todo::domain::entities::AuditEvent;
+use domain::entities::AuditEvent;
 use std::sync::Arc;
 
 use jiff::{SignedDuration, Timestamp};
 use sqlx::PgPool;
 
-use overkill_todo::application::ports::{
+use application::ports::{
     EmailVerificationRepository, OAuthAccountRepository, PasswordResetRepository,
     RefreshTokenRepository, UserRepository,
 };
-use overkill_todo::domain::entities::attempt_lockout::IssueOutcome;
-use overkill_todo::domain::entities::{
+use domain::entities::attempt_lockout::IssueOutcome;
+use domain::entities::{
     EmailVerificationCode, OAuthAccount, OAuthProvider, PasswordResetCode, RefreshToken, User,
 };
-use overkill_todo::domain::value_objects::{
-    Email, RefreshTokenId, ResetCodeId, UserId, VerificationCodeId,
-};
-use overkill_todo::infrastructure::persistence::postgres::{
+use domain::value_objects::{Email, RefreshTokenId, ResetCodeId, UserId, VerificationCodeId};
+use server::infrastructure::persistence::postgres::{
     Database, PostgresEmailVerificationRepository, PostgresOAuthAccountRepository,
     PostgresPasswordResetRepository, PostgresRefreshTokenRepository, PostgresUserRepository,
 };
@@ -66,7 +64,7 @@ async fn seed_user(db: &Arc<Database>, email: &str) -> UserId {
 // OAuth account repository
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn oauth_account_save_find_count_delete(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresOAuthAccountRepository::new(db.clone());
@@ -148,7 +146,7 @@ async fn oauth_account_save_find_count_delete(pool: PgPool) {
 // Refresh token repository
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn refresh_token_save_find_revoke_and_revoke_all(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresRefreshTokenRepository::new(db.clone());
@@ -204,7 +202,7 @@ async fn refresh_token_save_find_revoke_and_revoke_all(pool: PgPool) {
 /// `revoke_all_for_user_except` (powers "log out other devices") revokes every
 /// active token for the user *except* the one whose hash is kept, and counts only
 /// the rows it touched.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn refresh_token_revoke_all_except_keeps_current(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresRefreshTokenRepository::new(db.clone());
@@ -278,7 +276,7 @@ async fn refresh_token_revoke_all_except_keeps_current(pool: PgPool) {
 /// `mark_email_verified` and `update_password` must report `NotFound` when the
 /// target row no longer exists (deleted/anonymized) rather than silently
 /// succeeding on zero rows.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn user_targeted_writes_report_not_found_for_missing_row(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresUserRepository::new(db.clone());
@@ -286,10 +284,7 @@ async fn user_targeted_writes_report_not_found_for_missing_row(pool: PgPool) {
 
     let verify = repo.mark_email_verified(&ghost).await;
     assert!(
-        matches!(
-            verify,
-            Err(overkill_todo::domain::errors::DomainError::NotFound(_))
-        ),
+        matches!(verify, Err(domain::errors::DomainError::NotFound(_))),
         "verifying a missing user must be NotFound, got {verify:?}"
     );
 
@@ -297,19 +292,16 @@ async fn user_targeted_writes_report_not_found_for_missing_row(pool: PgPool) {
         .update_password(
             &ghost,
             "irrelevant-hash",
-            &overkill_todo::domain::entities::AuditEvent::password_reset(ghost),
+            &domain::entities::AuditEvent::password_reset(ghost),
         )
         .await;
     assert!(
-        matches!(
-            update,
-            Err(overkill_todo::domain::errors::DomainError::NotFound(_))
-        ),
+        matches!(update, Err(domain::errors::DomainError::NotFound(_))),
         "updating a missing user's password must be NotFound, got {update:?}"
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn refresh_token_delete_expired_removes_only_expired(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresRefreshTokenRepository::new(db.clone());
@@ -336,7 +328,7 @@ async fn refresh_token_delete_expired_removes_only_expired(pool: PgPool) {
     assert!(repo.find_by_hash("expired-hash").await.unwrap().is_none());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn refresh_token_rotate_missing_token_conflicts(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresRefreshTokenRepository::new(db.clone());
@@ -351,10 +343,7 @@ async fn refresh_token_rotate_missing_token_conflicts(pool: PgPool) {
     );
     let result = repo.rotate(&RefreshTokenId::new(), &successor).await;
     assert!(
-        matches!(
-            result,
-            Err(overkill_todo::domain::errors::DomainError::Conflict(_))
-        ),
+        matches!(result, Err(domain::errors::DomainError::Conflict(_))),
         "rotating a missing token must Conflict: {result:?}"
     );
 }
@@ -363,7 +352,7 @@ async fn refresh_token_rotate_missing_token_conflicts(pool: PgPool) {
 // Password reset repository
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn password_reset_save_upsert_consume(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool.clone()));
     let repo = PostgresPasswordResetRepository::new(db.clone());
@@ -403,7 +392,7 @@ async fn password_reset_save_upsert_consume(pool: PgPool) {
     assert!(repo.find_by_user(&user_id).await.unwrap().is_none());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn password_reset_release_attempt_and_delete_expired(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresPasswordResetRepository::new(db.clone());
@@ -469,7 +458,7 @@ async fn password_reset_release_attempt_and_delete_expired(pool: PgPool) {
 // Email verification repository
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn email_verification_magic_token_lifecycle(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresEmailVerificationRepository::new(db.clone());
@@ -518,7 +507,7 @@ async fn email_verification_magic_token_lifecycle(pool: PgPool) {
     repo.delete_for_user(&user_id).await.unwrap();
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn email_verification_save_upsert_preserves_magic_token(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool.clone()));
     let repo = PostgresEmailVerificationRepository::new(db.clone());
@@ -552,7 +541,7 @@ async fn email_verification_save_upsert_preserves_magic_token(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn email_verification_delete_expired(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresEmailVerificationRepository::new(db.clone());
@@ -560,7 +549,7 @@ async fn email_verification_delete_expired(pool: PgPool) {
 
     // Persist an already-expired code.
     let expired = EmailVerificationCode::from_persistence(
-        overkill_todo::domain::value_objects::VerificationCodeId::new(),
+        domain::value_objects::VerificationCodeId::new(),
         user_id,
         "hash".to_string(),
         Timestamp::now() - SignedDuration::from_hours(1),
@@ -581,7 +570,7 @@ async fn email_verification_delete_expired(pool: PgPool) {
 /// P-11: releasing the resend cooldown after a failed email moves only the
 /// code whose email failed, and never a locked one, since `last_sent_at` also
 /// starts the lock window.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn set_last_sent_at_moves_only_the_named_unlocked_code(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let repo = PostgresEmailVerificationRepository::new(db.clone());

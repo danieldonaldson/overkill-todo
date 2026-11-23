@@ -2,8 +2,8 @@
 
 use super::schema_enums::{OAuthProviderName, RoleName};
 use super::validation::validate_verification_code;
-use crate::domain::entities::User;
-use crate::domain::value_objects::PendingEmailChange;
+use domain::entities::User;
+use domain::value_objects::PendingEmailChange;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;

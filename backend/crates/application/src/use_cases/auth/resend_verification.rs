@@ -1,13 +1,11 @@
 //! Use case for resending an email verification code.
 
-use crate::application::ports::UserRepository;
-use crate::application::ports::{
-    CodeGenerator, EmailService, EmailVerificationRepository, PasswordHasher,
-};
-use crate::domain::entities::attempt_lockout::IssueOutcome;
-use crate::domain::entities::email_verification_code::RESEND_COOLDOWN_MINUTES;
-use crate::domain::entities::{EmailVerificationCode, Reissue};
-use crate::domain::value_objects::UserId;
+use crate::ports::UserRepository;
+use crate::ports::{CodeGenerator, EmailService, EmailVerificationRepository, PasswordHasher};
+use domain::entities::attempt_lockout::IssueOutcome;
+use domain::entities::email_verification_code::RESEND_COOLDOWN_MINUTES;
+use domain::entities::{EmailVerificationCode, Reissue};
+use domain::value_objects::UserId;
 use std::sync::Arc;
 
 /// Result of a resend operation, including metadata for the frontend.
@@ -187,13 +185,13 @@ impl ResendVerificationUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::code_generator::MockCodeGenerator;
-    use crate::application::ports::outgoing::email_service::MockEmailService;
-    use crate::application::ports::outgoing::email_verification_repository::MockEmailVerificationRepository;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::User;
-    use crate::domain::value_objects::Email;
+    use crate::ports::outgoing::code_generator::MockCodeGenerator;
+    use crate::ports::outgoing::email_service::MockEmailService;
+    use crate::ports::outgoing::email_verification_repository::MockEmailVerificationRepository;
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::User;
+    use domain::value_objects::Email;
 
     fn create_unverified_user() -> User {
         User::new(
@@ -293,8 +291,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_resend_blocked_while_locked() {
-        use crate::domain::entities::email_verification_code::MAX_ATTEMPTS;
-        use crate::domain::value_objects::VerificationCodeId;
+        use domain::entities::email_verification_code::MAX_ATTEMPTS;
+        use domain::value_objects::VerificationCodeId;
         use jiff::{SignedDuration, Timestamp};
 
         let user = create_unverified_user();
@@ -371,8 +369,8 @@ mod tests {
     /// read from the stored code, and sends nothing.
     #[tokio::test]
     async fn resend_refused_by_the_store_reports_locked() {
-        use crate::domain::entities::email_verification_code::MAX_ATTEMPTS;
-        use crate::domain::value_objects::VerificationCodeId;
+        use domain::entities::email_verification_code::MAX_ATTEMPTS;
+        use domain::value_objects::VerificationCodeId;
         use jiff::{SignedDuration, Timestamp};
 
         let user = create_unverified_user();
@@ -468,9 +466,7 @@ mod tests {
                 if reads == 1 {
                     Ok(None)
                 } else {
-                    Err(crate::domain::errors::DomainError::Persistence(
-                        "down".into(),
-                    ))
+                    Err(domain::errors::DomainError::Persistence("down".into()))
                 }
             });
         mock_verification_repo

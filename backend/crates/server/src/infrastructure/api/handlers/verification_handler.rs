@@ -8,26 +8,26 @@ use axum::{
 };
 use std::sync::Arc;
 
-use crate::{
-    application::{
-        dto::{
-            AuthResponse, CompleteRegistrationRequest, ForgotPasswordRequest,
-            ForgotPasswordResponse, ResendVerificationRequest, ResendVerificationResponse,
-            ResetPasswordRequest, UserResponse, VerificationErrorCode, VerificationErrorResponse,
-            VerifyEmailRequest, VerifyEmailResponse, VerifyMagicLinkQuery, VerifyMagicLinkRequest,
-            VerifyResetCodeRequest, VerifyResetCodeResponse,
-            validation::sanitize_verification_code,
-        },
-        ports::TurnstileService,
-        use_cases::auth::{
-            CompleteSignupUseCase, RefreshTokenUseCase, RequestPasswordResetUseCase,
-            ResendVerificationError, ResendVerificationUseCase, ResetCodeError,
-            ResetPasswordUseCase, ValidateResetCodeUseCase, VerifyEmailError, VerifyEmailUseCase,
-            VerifyMagicLinkError, VerifyMagicLinkUseCase,
-        },
+use application::{
+    dto::{
+        AuthResponse, CompleteRegistrationRequest, ForgotPasswordRequest, ForgotPasswordResponse,
+        ResendVerificationRequest, ResendVerificationResponse, ResetPasswordRequest, UserResponse,
+        VerificationErrorCode, VerificationErrorResponse, VerifyEmailRequest, VerifyEmailResponse,
+        VerifyMagicLinkQuery, VerifyMagicLinkRequest, VerifyResetCodeRequest,
+        VerifyResetCodeResponse, validation::sanitize_verification_code,
     },
-    domain::{entities::attempt_lockout::RESEND_COOLDOWN_MINUTES, errors::DomainError},
-    infrastructure::api::{
+    ports::TurnstileService,
+    use_cases::auth::{
+        CompleteSignupUseCase, RefreshTokenUseCase, RequestPasswordResetUseCase,
+        ResendVerificationError, ResendVerificationUseCase, ResetCodeError, ResetPasswordUseCase,
+        ValidateResetCodeUseCase, VerifyEmailError, VerifyEmailUseCase, VerifyMagicLinkError,
+        VerifyMagicLinkUseCase,
+    },
+};
+use domain::{entities::attempt_lockout::RESEND_COOLDOWN_MINUTES, errors::DomainError};
+
+use crate::infrastructure::{
+    api::{
         error::{AppError, VerificationOrStandardError},
         extractors::{ApiQuery, ValidatedJson},
         handlers::{
@@ -38,10 +38,8 @@ use crate::{
             verify_turnstile,
         },
     },
-    infrastructure::crypto::Crypto,
-    infrastructure::telemetry::metrics::{
-        AuthFlow, AuthMetrics, AuthOutcome, BotCheckForm, LockableCode,
-    },
+    crypto::Crypto,
+    telemetry::metrics::{AuthFlow, AuthMetrics, AuthOutcome, BotCheckForm, LockableCode},
 };
 
 /// Dependencies for verification-related handlers.
@@ -183,7 +181,7 @@ fn record_reset_code_outcome<T>(metrics: &AuthMetrics, result: &Result<T, ResetC
 async fn issue_tokens_or_signup_token(
     deps: &VerificationHandlerDeps,
     headers: &HeaderMap,
-    user: crate::domain::entities::User,
+    user: domain::entities::User,
 ) -> Response {
     // Check if this is a new signup (no password yet)
     if !user.has_password() {
@@ -195,10 +193,7 @@ async fn issue_tokens_or_signup_token(
 }
 
 /// Issue a signup token for completing registration (setting password).
-fn issue_signup_token(
-    deps: &VerificationHandlerDeps,
-    user: crate::domain::entities::User,
-) -> Response {
+fn issue_signup_token(deps: &VerificationHandlerDeps, user: domain::entities::User) -> Response {
     let signup_token = match deps.complete_signup_use_case.issue_signup_token(&user) {
         Ok(t) => t,
         Err(e) => return AppError::from(e).into_response(),
@@ -221,7 +216,7 @@ fn issue_signup_token(
 async fn issue_auth_tokens(
     deps: &VerificationHandlerDeps,
     headers: &HeaderMap,
-    user: crate::domain::entities::User,
+    user: domain::entities::User,
 ) -> Response {
     // A device fingerprint upgrades this to a full session with a refresh token;
     // without one the user gets an access-only session and must re-login to

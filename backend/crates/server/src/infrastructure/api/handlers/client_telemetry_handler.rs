@@ -19,10 +19,10 @@ use axum::{
 };
 use validator::Validate;
 
-use crate::application::{dto::ClientReportBatch, ports::incoming::RecordClientTelemetry};
 use crate::infrastructure::api::{
     error::AppError, extractors::ApiJson, middleware::OptionalAuthUser,
 };
+use application::{dto::ClientReportBatch, ports::incoming::RecordClientTelemetry};
 
 /// Largest request body accepted, in bytes.
 pub const MAX_BODY_BYTES: usize = 16 * 1024;

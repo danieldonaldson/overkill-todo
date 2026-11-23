@@ -23,8 +23,8 @@ cd ~/Work/myproject && rm -rf node_modules backend/target && git init
 ```
 
 Then rename: `app` / `@overkill-todo/*` / `App` are placeholders (package names, Compose
-project, DB name, JWT issuer and audience in `backend/src/infrastructure/api/jwt.rs`,
-`APP_NAME`, page titles, the leader-lock key in `main.rs`).
+project, DB name, JWT issuer and audience in `backend/crates/server/src/infrastructure/api/jwt.rs`,
+`APP_NAME`, page titles, the leader-lock key in `backend/crates/server/src/main.rs`).
 
 ```bash
 grep -rIl --exclude-dir={node_modules,target,.sqlx,dist} -e '\bapp\b' -e '@overkill-todo/' -e 'App\b' .
@@ -161,12 +161,12 @@ just bench-web --outputJson .bench/main.json                # frontend, on main
 just bench-web --compare .bench/main.json                   # frontend, on your branch
 ```
 
-- `backend/benches/crypto.rs`: JWT, CSRF, OAuth state, secret cipher, tokens,
+- `backend/crates/server/benches/crypto.rs`: JWT, CSRF, OAuth state, secret cipher, tokens,
   and Argon2 at production cost.
-- `backend/benches/domain.rs`: value objects, request DTOs, error fingerprints
+- `backend/crates/server/benches/domain.rs`: value objects, request DTOs, error fingerprints
   and responses, email templates.
-- `backend/benches/middleware.rs`: the real router's middleware stack, no DB.
-- `backend/benches/http.rs` (`just bench-db`): `/me`, export, admin list,
+- `backend/crates/server/benches/middleware.rs`: the real router's middleware stack, no DB.
+- `backend/crates/server/benches/http.rs` (`just bench-db`): `/me`, export, admin list,
   login, and refresh rotation against a throwaway `overkill_todo_bench` database.
 - `apps/web/**/*.bench.ts`: Vitest benches in Chromium. Bench mode skips
   `beforeAll`, so set up in the `describe` body; pass `{ throws: true }` to async
@@ -255,6 +255,9 @@ just obs-wipe            # delete stored traces, logs and metrics (keeps Grafana
 - **Ports** are bound to 127.0.0.1 only (`GRAFANA_PORT`, `ALERTMANAGER_PORT`).
   `just obs-check` (part of `just ci`) validates the collector config,
   Alertmanager configs and alert-rule tests.
+- **Log filtering (`RUST_LOG`).** `RUST_LOG` targets workspace crate names
+  (e.g. `server=debug,application=debug,domain=debug`; `api=debug` after the
+  full crate split) instead of `overkill_todo`.
 
 ### Browser errors
 

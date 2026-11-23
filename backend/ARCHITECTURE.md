@@ -3,26 +3,36 @@
 ## Hexagonal layout
 
 ```
-src/
-├── domain/           # Entities, value objects, domain errors — no dependencies
-├── application/      # Use cases and port traits — depends only on domain
+crates/
+├── domain/src/       # Entities, value objects, domain errors — no I/O dependencies
+├── application/src/  # Use cases, DTOs and port traits — depends only on domain + shared
+│   ├── dto/          # Request/response DTOs (serde, utoipa, validator)
 │   ├── ports/
 │   │   ├── incoming/ # Traits implemented by use cases (called from handlers)
 │   │   └── outgoing/ # Traits implemented by adapters (repos, services)
 │   └── use_cases/    # Business logic — depends on port traits, not adapters
-├── infrastructure/   # All I/O adapters — depends on application + domain
-│   ├── api/          # Axum handlers, routes, middleware (HTTP adapter)
-│   ├── config/       # Settings loaded from env vars
-│   ├── crypto.rs     # `Crypto` handle: Argon2 params, JWT keys, CSRF secret, cipher
-│   ├── oauth/        # Google OAuth client
-│   ├── persistence/  # Driver-neutral DB traits; postgres/ = sqlx adapter (only sqlx user)
-│   ├── services/     # Concrete service impls (argon2, JWT, token gen, …)
-│   ├── tasks/        # Background jobs and leader election
-│   └── telemetry/    # Tracing, logs, metrics
-└── shared/           # Dependency-free utilities (error fingerprinting, redaction rules)
+├── shared/src/       # Dependency-free leaf (error fingerprinting, redaction rules)
+└── server/           # Composition root, infrastructure adapters, binary, tests, benches
+    ├── src/
+    │   ├── main.rs
+    │   └── infrastructure/
+    │       ├── api/          # Axum handlers, routes, middleware (HTTP adapter)
+    │       ├── config/       # Settings loaded from env vars
+    │       ├── crypto.rs     # `Crypto` handle: Argon2 params, JWT keys, CSRF secret, cipher
+    │       ├── oauth/        # Google OAuth client
+    │       ├── persistence/  # Driver-neutral DB traits; postgres/ = sqlx adapter (only sqlx user)
+    │       ├── services/     # Concrete service impls (argon2, JWT, token gen, …)
+    │       ├── tasks/        # Background jobs and leader election
+    │       └── telemetry/    # Tracing, logs, metrics
+    ├── tests/        # Full-stack integration tests + crate_graph gate
+    ├── benches/      # Criterion benchmarks
+    └── examples/     # export_openapi
 ```
 
-Dependencies only point inward: `infrastructure → application → domain`.
+Dependencies only point inward: `server (infrastructure) → application → domain`,
+with `shared` as a leaf (used by `application` and `server`). The crate-graph
+gate (`crates/server/tests/crate_graph.rs`) enforces this at the workspace level
+and locks `domain` and `application` third-party dependencies to an allowlist.
 The domain imports no `sqlx` or `serde`: Postgres enum mappings live in
 `persistence/postgres/models.rs` (`DbUserRole`, `DbOAuthProvider`) and convert with
 `From` at the repository boundary.
@@ -146,17 +156,17 @@ behaviour belongs on this list, because the fuzzer can't see past it.
 
 ## Adding a use case
 
-1. Define the input/output types in `application/dto/` if needed.
-2. Add an incoming port trait in `application/ports/incoming/` (one method per operation).
-3. Implement the trait in `application/use_cases/`.
-4. Wire it in `src/main.rs` (construction) and `infrastructure/api/routes.rs`
+1. Define the input/output types in `crates/application/src/dto/` if needed.
+2. Add an incoming port trait in `crates/application/src/ports/incoming/` (one method per operation).
+3. Implement the trait in `crates/application/src/use_cases/`.
+4. Wire it in `crates/server/src/main.rs` (construction) and `crates/server/src/infrastructure/api/routes.rs`
    (`.routes(routes!(handler))` in `api_routes()`), then run `just api-types`.
-5. Write mock-based unit tests in the use case file and HTTP-level integration tests under `tests/`.
+5. Write mock-based unit tests in the use case file and HTTP-level integration tests under `crates/server/tests/`.
 
 ## Adding a repository method
 
-1. Add the method signature to the outgoing port trait in `application/ports/outgoing/`.
-2. Implement it in `infrastructure/persistence/postgres/` using `sqlx::query!` macros.
+1. Add the method signature to the outgoing port trait in `crates/application/src/ports/outgoing/`.
+2. Implement it in `crates/server/src/infrastructure/persistence/postgres/` using `sqlx::query!` macros.
 3. Map any `sqlx::Error` with the shared `persist_err` helper (`postgres/error.rs`) —
    `.map_err(persist_err)?` — so a unique violation (`23505`) becomes a
    `DomainError::Conflict` and a missing row a `DomainError::NotFound` instead of an

@@ -19,14 +19,14 @@ use std::time::Duration;
 use sqlx::PgPool;
 use tokio::sync::{Notify, watch};
 
+use application::use_cases::PurgeScheduledAccountsUseCase;
 use opentelemetry::metrics::MeterProvider as _;
 use opentelemetry_sdk::metrics::{
     InMemoryMetricExporter, PeriodicReader, SdkMeterProvider,
     data::{AggregatedMetrics, MetricData, ScopeMetrics},
 };
-use overkill_todo::application::use_cases::PurgeScheduledAccountsUseCase;
-use overkill_todo::infrastructure::persistence::postgres::{Database, PostgresUserRepository};
-use overkill_todo::infrastructure::tasks::leader::{LeaderMetrics, run_as_leader};
+use server::infrastructure::persistence::postgres::{Database, PostgresUserRepository};
+use server::infrastructure::tasks::leader::{LeaderMetrics, run_as_leader};
 
 async fn try_lock(pool: &PgPool, key: i64) -> bool {
     let mut conn = pool.acquire().await.unwrap();
@@ -43,7 +43,7 @@ async fn try_lock(pool: &PgPool, key: i64) -> bool {
 
 /// A single replica acquires the lock, runs its worker, and steps down cleanly
 /// when shutdown is signalled, releasing the advisory lock.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn leader_acquires_runs_and_releases_on_shutdown(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool.clone()));
     let lock_key: i64 = 9_000_001;
@@ -113,7 +113,7 @@ async fn leader_acquires_runs_and_releases_on_shutdown(pool: PgPool) {
 
 /// With the lock already held by another session, the would-be leader stands by
 /// (its worker never runs) until shutdown.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn leader_stands_by_when_lock_held_elsewhere(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool.clone()));
     let lock_key: i64 = 9_000_002;
@@ -193,7 +193,7 @@ fn is_leader_value(exporter: &InMemoryMetricExporter) -> u64 {
 /// Two replicas contend for one lock. Each reports `leader.is_leader` through
 /// its own meter provider (in production, its own process and
 /// `service.instance.id`). Exactly one of them reports 1.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn exactly_one_of_two_replicas_reports_leader(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let lock_key: i64 = 9_000_003;
@@ -255,7 +255,7 @@ async fn exactly_one_of_two_replicas_reports_leader(pool: PgPool) {
 // ===========================================================================
 
 /// A user still within the grace window is not touched.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn purge_skips_accounts_within_grace_period(pool: PgPool) {
     let email = "e2e-purge-skip@example.com";
     let id = uuid::Uuid::new_v4();
@@ -283,7 +283,7 @@ async fn purge_skips_accounts_within_grace_period(pool: PgPool) {
 }
 
 /// No accounts scheduled for deletion is a clean no-op.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn purge_no_scheduled_accounts_is_noop(pool: PgPool) {
     let uc = purge_uc(&pool);
     assert_eq!(uc.run_once().await.unwrap(), 0);
@@ -296,7 +296,7 @@ fn purge_uc(pool: &PgPool) -> PurgeScheduledAccountsUseCase {
 
 /// A user whose deletion grace period has elapsed is
 /// anonymized: PII scrubbed, `deleted_at` set, `deletion_scheduled_at` cleared.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn purge_finalizes_account_past_grace_period(pool: PgPool) {
     let email = "e2e-purge-me@example.com";
     let id = uuid::Uuid::new_v4();

@@ -1,12 +1,10 @@
 //! Use case for requesting a password reset.
 
-use crate::application::ports::UserRepository;
-use crate::application::ports::{
-    CodeGenerator, EmailService, PasswordHasher, PasswordResetRepository,
-};
-use crate::domain::entities::PasswordResetCode;
-use crate::domain::entities::attempt_lockout::IssueOutcome;
-use crate::domain::errors::DomainError;
+use crate::ports::UserRepository;
+use crate::ports::{CodeGenerator, EmailService, PasswordHasher, PasswordResetRepository};
+use domain::entities::PasswordResetCode;
+use domain::entities::attempt_lockout::IssueOutcome;
+use domain::errors::DomainError;
 use std::sync::Arc;
 
 /// Use case for requesting a password reset.
@@ -106,13 +104,13 @@ impl RequestPasswordResetUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::code_generator::MockCodeGenerator;
-    use crate::application::ports::outgoing::email_service::MockEmailService;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
-    use crate::application::ports::outgoing::password_reset_repository::MockPasswordResetRepository;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::User;
-    use crate::domain::value_objects::Email;
+    use crate::ports::outgoing::code_generator::MockCodeGenerator;
+    use crate::ports::outgoing::email_service::MockEmailService;
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::password_reset_repository::MockPasswordResetRepository;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::User;
+    use domain::value_objects::Email;
 
     fn create_test_user() -> User {
         let mut user = User::new(
@@ -201,8 +199,8 @@ mod tests {
     /// success without sending, per the enumeration policy.
     #[tokio::test]
     async fn test_request_reset_suppressed_while_locked() {
-        use crate::domain::entities::password_reset_code::MAX_ATTEMPTS;
-        use crate::domain::value_objects::ResetCodeId;
+        use domain::entities::password_reset_code::MAX_ATTEMPTS;
+        use domain::value_objects::ResetCodeId;
         use jiff::{SignedDuration, Timestamp};
 
         let user = create_test_user();

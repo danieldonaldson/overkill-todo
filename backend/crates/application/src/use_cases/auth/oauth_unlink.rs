@@ -2,11 +2,11 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::OAuthAccountRepository;
-use crate::application::ports::UserRepository;
-use crate::domain::entities::{AuditEvent, OAuthProvider};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
+use crate::ports::OAuthAccountRepository;
+use crate::ports::UserRepository;
+use domain::entities::{AuditEvent, OAuthProvider};
+use domain::errors::DomainError;
+use domain::value_objects::UserId;
 
 /// OAuth unlink use case - removes OAuth provider link from account.
 ///
@@ -94,10 +94,10 @@ impl OAuthUnlinkUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::User;
-    use crate::domain::value_objects::Email;
+    use crate::ports::outgoing::oauth_account_repository::MockOAuthAccountRepository;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::User;
+    use domain::value_objects::Email;
 
     fn create_test_user(has_password: bool) -> User {
         User::new(

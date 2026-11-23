@@ -4,6 +4,15 @@ Rust 2024 / Axum 0.8 auth service in a hexagonal layout, on Postgres via sqlx.
 Run everything through the root `justfile`; this file covers what's specific to
 the backend.
 
+## Layout
+
+Cargo workspace under `crates/`:
+
+- `crates/domain/` — entities, value objects, domain errors (no I/O)
+- `crates/application/` — use cases, DTOs, incoming and outgoing port traits
+- `crates/shared/` — dependency-free utilities (error fingerprinting, redaction)
+- `crates/server/` — `infrastructure/` adapters, binary (`main.rs`), integration tests (`tests/`), benches, examples
+
 ## Run
 
 ```bash
@@ -26,7 +35,7 @@ just test-integration  # #[sqlx::test]: each test gets its own fresh database
 ```
 
 Unit tests mock the outgoing ports, so use cases are tested without I/O.
-Integration tests in `tests/` drive the real router against Postgres.
+Integration tests in `crates/server/tests/` drive the real router against Postgres.
 
 ## Queries and the offline cache
 
@@ -45,7 +54,7 @@ They are embedded in the binary and run at startup.
 ## External services: ports and adapters
 
 Every external dependency sits behind an outgoing port with a real adapter and a
-no-op or console adapter. `main.rs` is the only place that chooses, and outside
+no-op or console adapter. `crates/server/src/main.rs` is the only place that chooses, and outside
 `DEV_MODE` it **refuses to start** if a no-op would be used:
 
 | Port           | Real                         | Dev fallback                             |
@@ -56,11 +65,11 @@ no-op or console adapter. `main.rs` is the only place that chooses, and outside
 | Google OAuth   | `GoogleOAuthClient`          | disabled unless `GOOGLE_OAUTH_ENABLED`   |
 
 Adding a provider (payments, storage, LLMs) means a new port in
-`application/ports/outgoing/`, an adapter in `infrastructure/`, and a no-op for dev.
+`crates/application/src/ports/outgoing/`, an adapter in `crates/server/src/infrastructure/`, and a no-op for dev.
 
 ## Background work
 
-`infrastructure/tasks/` holds periodic jobs. They run under a Postgres
+`crates/server/src/infrastructure/tasks/` holds periodic jobs. They run under a Postgres
 advisory-lock leader (`leader.rs`), so with N replicas exactly one runs them:
 
 - `account_purger`: anonymizes accounts whose deletion grace period has passed

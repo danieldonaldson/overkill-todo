@@ -40,7 +40,7 @@ fn get_authed(uri: &str, token: &str) -> Request<Body> {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn health_check_returns_200(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -57,7 +57,7 @@ async fn health_check_returns_200(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::OK);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn health_probes_are_reachable_under_api_prefix(pool: PgPool) {
     // Health is also mounted under /api/v1 so it routes to the backend through
     // the edge proxy's single-origin `/api` rule (the root `/` goes to the frontend).
@@ -74,7 +74,7 @@ async fn health_probes_are_reachable_under_api_prefix(pool: PgPool) {
 }
 
 /// Login returns a JWT after a completed signup.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_returns_token_after_signup(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-login@example.com";
@@ -103,7 +103,7 @@ async fn login_returns_token_after_signup(pool: PgPool) {
 }
 
 /// Login with wrong password returns 401.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn login_wrong_password_returns_401(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-badpass@example.com";
@@ -121,7 +121,7 @@ async fn login_wrong_password_returns_401(pool: PgPool) {
 }
 
 /// /me without token returns 401.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn me_without_token_returns_401(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -138,7 +138,7 @@ async fn me_without_token_returns_401(pool: PgPool) {
 }
 
 /// Register with an invalid email returns 400.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn register_invalid_email_returns_400(pool: PgPool) {
     let app = common::create_test_app(pool);
 
@@ -206,7 +206,7 @@ async fn complete_signup_for(app: axum::Router, email: &str, password: &str) {
 }
 
 /// Full happy-path signup: register → verify email → complete registration → me
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn signup_flow_succeeds(pool: PgPool) {
     let app = common::create_test_app(pool);
     let email = "e2e-signup@example.com";

@@ -9,14 +9,14 @@ mod common;
 
 use std::sync::Arc;
 
+use application::ports::TurnstileService;
 use async_trait::async_trait;
 use axum::{
     Router,
     body::Body,
     http::{Request, StatusCode, header},
 };
-use overkill_todo::application::ports::TurnstileService;
-use overkill_todo::domain::errors::DomainError;
+use domain::errors::DomainError;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -99,7 +99,7 @@ fn error_text(body: &Value) -> String {
     body.to_string()
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn missing_token_is_rejected_on_every_protected_endpoint(pool: PgPool) {
     let app = app(pool);
     for uri in PROTECTED {
@@ -113,7 +113,7 @@ async fn missing_token_is_rejected_on_every_protected_endpoint(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn blank_token_counts_as_missing(pool: PgPool) {
     let app = app(pool);
     for uri in PROTECTED {
@@ -127,7 +127,7 @@ async fn blank_token_counts_as_missing(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn failed_verification_is_rejected_on_every_protected_endpoint(pool: PgPool) {
     let app = app(pool);
     for uri in PROTECTED {
@@ -141,7 +141,7 @@ async fn failed_verification_is_rejected_on_every_protected_endpoint(pool: PgPoo
     }
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn valid_token_lets_each_request_through(pool: PgPool) {
     let app = app(pool);
     // Past the bot check each endpoint answers on its own terms. Order matters:
@@ -166,7 +166,7 @@ async fn valid_token_lets_each_request_through(pool: PgPool) {
     }
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn rejected_registration_creates_no_account(pool: PgPool) {
     let app = app(pool.clone());
 
@@ -185,7 +185,7 @@ async fn rejected_registration_creates_no_account(pool: PgPool) {
     assert_eq!(users, 0, "the bot check must run before any side effect");
 }
 
-#[sqlx::test]
+#[sqlx::test(migrations = "../../migrations")]
 async fn upstream_failure_fails_closed_without_leaking_details(pool: PgPool) {
     let app = app(pool);
     for uri in PROTECTED {

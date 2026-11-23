@@ -6,11 +6,9 @@
 
 use axum::{extract::FromRequestParts, http::request::Parts};
 
-use crate::{
-    domain::value_objects::{UserId, UserRole},
-    infrastructure::api::error::AppError,
-    infrastructure::api::middleware::AuthUser,
-};
+use domain::value_objects::{UserId, UserRole};
+
+use crate::infrastructure::api::{error::AppError, middleware::AuthUser};
 
 /// Extractor that requires admin or `super_admin` role.
 ///

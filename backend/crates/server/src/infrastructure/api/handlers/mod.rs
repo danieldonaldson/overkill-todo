@@ -12,9 +12,9 @@ pub mod profile_handler;
 pub mod session;
 pub mod verification_handler;
 
-use crate::application::ports::TurnstileService;
 use crate::infrastructure::api::error::AppError;
 use crate::infrastructure::telemetry::metrics::{AuthMetrics, BotCheckForm, BotCheckReason};
+use application::ports::TurnstileService;
 
 /// Verify a Turnstile token for an incoming request.
 ///

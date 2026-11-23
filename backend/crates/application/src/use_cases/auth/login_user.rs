@@ -1,8 +1,8 @@
 //! Use case for password login: credential verification.
 
-use crate::application::ports::{PasswordHasher, UserRepository};
-use crate::domain::entities::User;
-use crate::domain::errors::DomainError;
+use crate::ports::{PasswordHasher, UserRepository};
+use domain::entities::User;
+use domain::errors::DomainError;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
@@ -126,9 +126,9 @@ impl LoginUserUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::value_objects::Email;
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::value_objects::Email;
 
     const EMAIL: &str = "test@example.com";
 

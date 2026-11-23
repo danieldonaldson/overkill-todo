@@ -13,13 +13,13 @@ use jiff::{SignedDuration, Timestamp};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use overkill_todo::application::ports::{
+use application::ports::{
     AccountLifecycleRepository, EmailVerificationRepository, RefreshTokenRepository, UserRepository,
 };
-use overkill_todo::domain::entities::{EmailVerificationCode, RefreshToken, User};
-use overkill_todo::domain::value_objects::Email;
-use overkill_todo::infrastructure::persistence::postgres::time::ToDb;
-use overkill_todo::infrastructure::persistence::postgres::{
+use domain::entities::{EmailVerificationCode, RefreshToken, User};
+use domain::value_objects::Email;
+use server::infrastructure::persistence::postgres::time::ToDb;
+use server::infrastructure::persistence::postgres::{
     Database, PostgresEmailVerificationRepository, PostgresRefreshTokenRepository,
     PostgresUserRepository,
 };
@@ -75,7 +75,7 @@ async fn schedule_deletion_in_past(pool: &PgPool, user_id: Uuid) {
     .expect("schedule deletion");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool.clone()));
 
@@ -149,7 +149,7 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
     let anonymized_now = user_repo
         .anonymize_account(
             &anonymized,
-            &overkill_todo::domain::entities::AuditEvent::account_deleted(*anonymized.id()),
+            &domain::entities::AuditEvent::account_deleted(*anonymized.id()),
         )
         .await
         .expect("anonymize");
@@ -186,7 +186,7 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
 
 /// The schema enforces what `AccountStatus` encodes: a deleted account cannot
 /// also be pending deletion, whichever code path tries to write it.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn deleted_account_cannot_be_pending_deletion(pool: PgPool) {
     let now = Timestamp::now();
     let err = sqlx::query!(
@@ -210,7 +210,7 @@ async fn deleted_account_cannot_be_pending_deletion(pool: PgPool) {
 
 /// The purge lists due accounts, then anonymizes them one at a time. A user who
 /// cancels in between must keep their account and credentials.
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn anonymize_skips_account_cancelled_after_the_scan(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool.clone()));
     let user_repo = PostgresUserRepository::new(db.clone());
@@ -265,7 +265,7 @@ async fn anonymize_skips_account_cancelled_after_the_scan(pool: PgPool) {
     let anonymized_now = user_repo
         .anonymize_account(
             &anonymized,
-            &overkill_todo::domain::entities::AuditEvent::account_deleted(*anonymized.id()),
+            &domain::entities::AuditEvent::account_deleted(*anonymized.id()),
         )
         .await
         .expect("anonymize");

@@ -95,6 +95,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "application"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "domain",
+ "hex",
+ "jiff 1.0.0",
+ "mockall",
+ "proptest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "shared",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa",
+ "uuid",
+ "validator",
+]
+
+[[package]]
 name = "argon2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -973,6 +995,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "442039f5147480ba31067cb00ada1adae6892028e40e45fc5de7b7df6dcc1b5f"
 dependencies = [
  "const-random",
+]
+
+[[package]]
+name = "domain"
+version = "0.1.0"
+dependencies = [
+ "jiff 1.0.0",
+ "proptest",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
@@ -2471,59 +2503,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "overkill-todo"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "anyhow",
- "argon2",
- "async-trait",
- "axum",
- "base64 0.23.1",
- "config",
- "criterion",
- "dotenvy",
- "hex",
- "hickory-resolver",
- "hmac",
- "itf",
- "jiff 1.0.0",
- "jiff-sqlx",
- "jsonwebtoken",
- "lettre",
- "mimalloc",
- "mockall",
- "once_cell",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry-semantic-conventions",
- "opentelemetry_sdk",
- "proptest",
- "rand 0.10.4",
- "reqwest",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "sqlx",
- "thiserror",
- "tokio",
- "tokio-test",
- "tower",
- "tower-http 0.7.1",
- "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "urlencoding",
- "utoipa",
- "utoipa-axum",
- "utoipa-swagger-ui",
- "uuid",
- "validator",
- "wiremock",
-]
-
-[[package]]
 name = "page_size"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3481,6 +3460,59 @@ dependencies = [
 ]
 
 [[package]]
+name = "server"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "application",
+ "argon2",
+ "async-trait",
+ "axum",
+ "base64 0.23.1",
+ "config",
+ "criterion",
+ "domain",
+ "dotenvy",
+ "hex",
+ "hickory-resolver",
+ "hmac",
+ "itf",
+ "jiff 1.0.0",
+ "jiff-sqlx",
+ "jsonwebtoken",
+ "lettre",
+ "mimalloc",
+ "opentelemetry",
+ "opentelemetry-otlp",
+ "opentelemetry-semantic-conventions",
+ "opentelemetry_sdk",
+ "proptest",
+ "rand 0.10.4",
+ "reqwest",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "shared",
+ "sqlx",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "urlencoding",
+ "utoipa",
+ "utoipa-axum",
+ "utoipa-swagger-ui",
+ "uuid",
+ "validator",
+ "wiremock",
+]
+
+[[package]]
 name = "sha1"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3521,6 +3553,10 @@ checksum = "f40ca3c46823713e0d4209592e8d6e826aa57e928f09752619fc696c499637f6"
 dependencies = [
  "lazy_static",
 ]
+
+[[package]]
+name = "shared"
+version = "0.1.0"
 
 [[package]]
 name = "shlex"
@@ -4057,17 +4093,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
-]
-
-[[package]]
-name = "tokio-test"
-version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12bc5db7778a8e08ee255090861e0e7aac55e784300077e7ed293c7be36168b2"
-dependencies = [
- "futures-core",
- "tokio",
- "tokio-stream",
 ]
 
 [[package]]

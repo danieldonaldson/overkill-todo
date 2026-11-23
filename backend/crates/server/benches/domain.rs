@@ -4,19 +4,15 @@
 
 use std::hint::black_box;
 
+use application::dto::validation::sanitize_verification_code;
+use application::dto::{CompleteRegistrationRequest, LoginRequest, VerifyEmailRequest};
 use axum::response::IntoResponse;
 use criterion::{Criterion, criterion_group, criterion_main};
-use overkill_todo::application::dto::validation::sanitize_verification_code;
-use overkill_todo::application::dto::{
-    CompleteRegistrationRequest, LoginRequest, VerifyEmailRequest,
-};
-use overkill_todo::domain::errors::DomainError;
-use overkill_todo::domain::value_objects::{Email, UserRole};
-use overkill_todo::infrastructure::api::AppError;
-use overkill_todo::infrastructure::services::email_templates::{
-    password_reset_email, verification_email,
-};
-use overkill_todo::shared::fingerprint::generate_error_fingerprint;
+use domain::errors::DomainError;
+use domain::value_objects::{Email, UserRole};
+use server::infrastructure::api::AppError;
+use server::infrastructure::services::email_templates::{password_reset_email, verification_email};
+use shared::fingerprint::generate_error_fingerprint;
 use validator::Validate;
 
 fn value_objects(c: &mut Criterion) {

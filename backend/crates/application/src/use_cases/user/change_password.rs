@@ -5,12 +5,12 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::PasswordHasher;
-use crate::application::ports::UserRepository;
-use crate::application::ports::{RefreshTokenRepository, TokenService};
-use crate::domain::entities::AuditEvent;
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::UserId;
+use crate::ports::PasswordHasher;
+use crate::ports::UserRepository;
+use crate::ports::{RefreshTokenRepository, TokenService};
+use domain::entities::AuditEvent;
+use domain::errors::DomainError;
+use domain::value_objects::UserId;
 
 /// Use case for changing an existing password.
 ///
@@ -137,11 +137,11 @@ impl ChangePasswordUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::password_hasher::MockPasswordHasher;
-    use crate::application::ports::outgoing::refresh_token_repository::MockRefreshTokenRepository;
-    use crate::application::ports::outgoing::token_service::MockTokenService;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::{User, UserBuilder};
+    use crate::ports::outgoing::password_hasher::MockPasswordHasher;
+    use crate::ports::outgoing::refresh_token_repository::MockRefreshTokenRepository;
+    use crate::ports::outgoing::token_service::MockTokenService;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::{User, UserBuilder};
 
     /// A refresh-token-repository mock that expects no revocation calls. Used by
     /// the failure-path tests where the password is never changed.

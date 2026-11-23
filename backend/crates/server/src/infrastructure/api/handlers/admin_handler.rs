@@ -7,20 +7,19 @@ use axum::{Json, extract::State};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::{
-    application::{
-        dto::{
-            AdminUserListResponse, AdminUserResponse, AuditEventListResponse, AuditEventResponse,
-            AuditKindFilter, ListAuditEventsQuery, ListUsersQuery, SetUserRoleRequest,
-        },
-        ports::outgoing::AuditFilter,
-        use_cases::{ListAuditEventsUseCase, ListUsersUseCase, SetUserRoleUseCase},
+use application::{
+    dto::{
+        AdminUserListResponse, AdminUserResponse, AuditEventListResponse, AuditEventResponse,
+        AuditKindFilter, ListAuditEventsQuery, ListUsersQuery, SetUserRoleRequest,
     },
-    domain::value_objects::UserId,
-    infrastructure::api::error::AppError,
-    infrastructure::api::extractors::{
-        AdminUser, ApiPath, ApiQuery, SuperAdminUser, ValidatedJson,
-    },
+    ports::outgoing::AuditFilter,
+    use_cases::{ListAuditEventsUseCase, ListUsersUseCase, SetUserRoleUseCase},
+};
+use domain::value_objects::UserId;
+
+use crate::infrastructure::api::{
+    error::AppError,
+    extractors::{AdminUser, ApiPath, ApiQuery, SuperAdminUser, ValidatedJson},
 };
 
 /// Dependencies for admin handlers.
@@ -91,7 +90,7 @@ pub async fn set_user_role(
     let user = deps
         .set_user_role_use_case
         .execute(
-            crate::domain::value_objects::UserRole::SuperAdmin,
+            domain::value_objects::UserRole::SuperAdmin,
             &super_admin.user_id,
             &UserId::from_uuid(id),
             &request.role,

@@ -8,10 +8,10 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use super::schema_enums::{OAuthProviderName, RoleName};
-use crate::application::ports::outgoing::{AuditAccount, AuditActorView, AuditEntry};
-use crate::application::use_cases::user::{ActivityActor, ActivityEntry, ActivityPage};
-use crate::domain::entities::{AuditDetails, AuditKind, OAuthProvider};
-use crate::domain::value_objects::UserRole;
+use crate::ports::outgoing::{AuditAccount, AuditActorView, AuditEntry};
+use crate::use_cases::user::{ActivityActor, ActivityEntry, ActivityPage};
+use domain::entities::{AuditDetails, AuditKind, OAuthProvider};
+use domain::value_objects::UserRole;
 
 /// Default and maximum page sizes for the audit log.
 pub const DEFAULT_AUDIT_LIMIT: i64 = 50;

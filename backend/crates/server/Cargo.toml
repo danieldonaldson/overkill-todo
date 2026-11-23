@@ -1,0 +1,96 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "overkill-todo"
+path = "src/main.rs"
+
+[features]
+default = ["swagger-ui"]
+# Serves /docs in DEV_MODE. Off in the release image (backend/Dockerfile).
+swagger-ui = ["dep:utoipa-swagger-ui"]
+
+[dependencies]
+shared = { path = "../shared" }
+domain = { path = "../domain" }
+application = { path = "../application" }
+
+axum.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tower.workspace = true
+tower-http.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+jsonwebtoken.workspace = true
+argon2.workspace = true
+aes-gcm.workspace = true
+uuid = { workspace = true, features = ["v4", "v7", "serde"] }
+sha2.workspace = true
+hmac.workspace = true
+hex.workspace = true
+rand.workspace = true
+base64.workspace = true
+urlencoding.workspace = true
+validator.workspace = true
+jiff = { workspace = true, features = ["serde"] }
+jiff-sqlx.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+dotenvy.workspace = true
+config.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+async-trait.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+hickory-resolver.workspace = true
+lettre.workspace = true
+utoipa = { workspace = true, features = ["axum_extras"] }
+utoipa-swagger-ui = { workspace = true, optional = true }
+mimalloc.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-otlp.workspace = true
+tracing-opentelemetry.workspace = true
+opentelemetry-semantic-conventions.workspace = true
+utoipa-axum.workspace = true
+
+[dev-dependencies]
+application = { path = "../application", features = ["test-support"] }
+# In-memory span and metric exporters for asserting on exported telemetry in tests.
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+proptest.workspace = true
+wiremock.workspace = true
+criterion.workspace = true
+# Reads the Quint models' ITF traces for the conformance replay (`just models`).
+itf.workspace = true
+
+# Criterion benches (`just bench`). `harness = false` hands `main` to criterion.
+# They share `tests/common` with the integration tests for app wiring and keys.
+[[bench]]
+name = "crypto"
+harness = false
+
+[[bench]]
+name = "domain"
+harness = false
+
+[[bench]]
+name = "middleware"
+harness = false
+
+# Full router against Postgres; skips itself when DATABASE_URL is unset.
+[[bench]]
+name = "http"
+harness = false
+
+[lints]
+workspace = true

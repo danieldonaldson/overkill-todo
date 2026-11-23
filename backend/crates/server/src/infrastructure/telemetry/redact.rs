@@ -21,7 +21,7 @@ use std::time::Duration;
 
 // The rules themselves are dependency-free, so the application layer can apply
 // them too (browser reports, OT-006).
-pub use crate::shared::redact::{REDACTED, is_sensitive_field, redact_query, redact_url};
+pub use shared::redact::{REDACTED, is_sensitive_field, redact_query, redact_url};
 
 fn redact_attributes(attributes: &mut [KeyValue]) {
     for kv in attributes {

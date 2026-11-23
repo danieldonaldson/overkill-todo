@@ -6,10 +6,10 @@
 
 use std::sync::Arc;
 
-use crate::application::ports::UserRepository;
-use crate::domain::entities::AuditEvent;
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{AccountStatus, UserId};
+use crate::ports::UserRepository;
+use domain::entities::AuditEvent;
+use domain::errors::DomainError;
+use domain::value_objects::{AccountStatus, UserId};
 
 /// Use case for cancelling a scheduled account deletion.
 pub struct CancelAccountDeletionUseCase {
@@ -57,8 +57,8 @@ impl CancelAccountDeletionUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::application::ports::outgoing::user_repository::MockUserRepository;
-    use crate::domain::entities::{User, UserBuilder};
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::{User, UserBuilder};
     use jiff::Timestamp;
 
     fn make_user(status: AccountStatus) -> User {

@@ -1,6 +1,6 @@
 //! Verification code generator implementations.
 
-use crate::application::ports::CodeGenerator;
+use application::ports::CodeGenerator;
 use rand::RngExt;
 
 /// Test email patterns that receive fixed codes (only in dev mode).

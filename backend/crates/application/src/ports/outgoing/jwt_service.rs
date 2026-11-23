@@ -8,8 +8,8 @@
     )
 )]
 
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{ResetCodeId, UserId};
+use domain::errors::DomainError;
+use domain::value_objects::{ResetCodeId, UserId};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 

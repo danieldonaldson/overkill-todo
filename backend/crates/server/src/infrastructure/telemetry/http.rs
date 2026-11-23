@@ -225,6 +225,7 @@ mod tests {
         let sub = subscriber(
             &provider,
             EnvFilter::new("off"),
+            crate::infrastructure::telemetry::export_filter(&[env!("CARGO_CRATE_NAME")], &[]),
             LogFormat::Json,
             std::io::sink,
             service,

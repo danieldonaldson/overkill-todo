@@ -3,43 +3,40 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
 
-use overkill_todo::{
-    application::{
-        ports::{EmailService, MxValidator, OAuthProviderClient, TurnstileService},
-        use_cases::{
-            CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
-            ExportUserDataUseCase, GetCurrentUserUseCase, ListAuditEventsUseCase,
-            ListSecurityActivityUseCase, ListUsersUseCase, LoginUserUseCase, OAuthCallbackUseCase,
-            OAuthUnlinkUseCase, PurgeScheduledAccountsUseCase, RefreshTokenUseCase,
-            RegisterUserUseCase, RequestAccountDeletionUseCase, RequestPasswordResetUseCase,
-            ResendVerificationUseCase, ResetPasswordUseCase, RevokeTokenUseCase,
-            SendVerificationCodeUseCase, SetPasswordUseCase, SetUserRoleUseCase,
-            ValidateResetCodeUseCase, VerifyEmailUseCase, VerifyMagicLinkUseCase,
-            telemetry::RecordClientTelemetryUseCase,
+use application::{
+    ports::{EmailService, MxValidator, OAuthProviderClient, TurnstileService},
+    use_cases::{
+        CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
+        ExportUserDataUseCase, GetCurrentUserUseCase, ListAuditEventsUseCase,
+        ListSecurityActivityUseCase, ListUsersUseCase, LoginUserUseCase, OAuthCallbackUseCase,
+        OAuthUnlinkUseCase, PurgeScheduledAccountsUseCase, RefreshTokenUseCase,
+        RegisterUserUseCase, RequestAccountDeletionUseCase, RequestPasswordResetUseCase,
+        ResendVerificationUseCase, ResetPasswordUseCase, RevokeTokenUseCase,
+        SendVerificationCodeUseCase, SetPasswordUseCase, SetUserRoleUseCase,
+        ValidateResetCodeUseCase, VerifyEmailUseCase, VerifyMagicLinkUseCase,
+        telemetry::RecordClientTelemetryUseCase,
+    },
+};
+use domain::entities::OAuthProvider;
+use server::infrastructure::{
+    api::{
+        RouterDeps, create_router,
+        handlers::{
+            admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
+            client_telemetry_handler::ClientTelemetryHandlerDeps, oauth_handler::OAuthHandlerDeps,
+            profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
         },
     },
-    domain::entities::OAuthProvider,
-    infrastructure::crypto::Crypto,
-    infrastructure::{
-        api::{
-            RouterDeps, create_router,
-            handlers::{
-                admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
-                client_telemetry_handler::ClientTelemetryHandlerDeps,
-                oauth_handler::OAuthHandlerDeps, profile_handler::ProfileHandlerDeps,
-                verification_handler::VerificationHandlerDeps,
-            },
-        },
-        config::Settings,
-        oauth::GoogleOAuthClient,
-        persistence::{self, Persistence},
-        services::{
-            Argon2Hasher, CloudflareTurnstileService, ConsoleEmailService, CryptoJwtService,
-            CryptoTokenService, HickoryMxValidator, NoOpMxValidator, NoOpTurnstileService,
-            RandomCodeGenerator, SmtpEmailService,
-        },
-        telemetry,
+    config::Settings,
+    crypto::Crypto,
+    oauth::GoogleOAuthClient,
+    persistence::{self, Persistence},
+    services::{
+        Argon2Hasher, CloudflareTurnstileService, ConsoleEmailService, CryptoJwtService,
+        CryptoTokenService, HickoryMxValidator, NoOpMxValidator, NoOpTurnstileService,
+        RandomCodeGenerator, SmtpEmailService,
     },
+    telemetry,
 };
 
 /// Use mimalloc (secure mode) as the global allocator. Reduces fragmentation
@@ -95,7 +92,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
 
     // Before any TLS client (Google, Turnstile, SMTP) is built: post-quantum
     // key exchange first (OT-009).
-    overkill_todo::infrastructure::tls::install()
+    server::infrastructure::tls::install()
         .map_err(|e| anyhow::anyhow!("TLS provider setup failed: {e}"))?;
 
     let settings = Settings::from_env()?;
@@ -112,7 +109,12 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         "TEST_OAUTH_BYPASS is set but DEV_MODE=false — this bypass must not run in production"
     );
 
-    let telemetry = telemetry::init(&settings.telemetry, settings.server.dev_mode)?;
+    let telemetry = telemetry::init(
+        &settings.telemetry,
+        settings.server.dev_mode,
+        server::APP_TARGETS,
+        &[persistence::STATEMENT_LOG_DIRECTIVE],
+    )?;
     crypto.tokens().log_configuration();
 
     tracing::info!(
@@ -405,7 +407,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     let leader_handle = {
-        use overkill_todo::infrastructure::tasks;
+        use server::infrastructure::tasks;
         use std::time::Duration;
 
         // Stable per-deployment key for the background-workers advisory lock.

@@ -7,7 +7,7 @@
 //! Each test installs the production subscriber stack as the thread default,
 //! with an in-memory span exporter and a captured JSON log writer, and builds
 //! the app with the real `TelemetryClientReportSink` on an in-memory meter.
-//! `#[sqlx::test]` runs on a current-thread runtime, so the subscriber sees
+//! `#[sqlx::test(migrations = "../../migrations")]` runs on a current-thread runtime, so the subscriber sees
 //! everything the request does.
 
 mod common;
@@ -26,14 +26,13 @@ use opentelemetry_sdk::metrics::{
     data::{AggregatedMetrics, MetricData, ScopeMetrics, SumDataPoint},
 };
 use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider, SimpleSpanProcessor};
-use overkill_todo::infrastructure::api::cookies::AUTH_COOKIE;
-use overkill_todo::infrastructure::telemetry::{
+use serde_json::{Value, json};
+use server::infrastructure::api::cookies::AUTH_COOKIE;
+use server::infrastructure::telemetry::{
     self, LogFormat, ServiceInfo, client_reports::TelemetryClientReportSink, metrics::METER_NAME,
 };
-use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
-use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 const ROUTE: &str = "/api/v1/client-telemetry";
@@ -101,7 +100,11 @@ impl Harness {
         let logs = LogBuffer::default();
         let subscriber = telemetry::subscriber(
             &tracer,
-            EnvFilter::new("overkill_todo=debug,tower_http=debug"),
+            telemetry::targets_filter(server::APP_TARGETS, "debug", &["tower_http=debug"]),
+            telemetry::export_filter(
+                server::APP_TARGETS,
+                &[server::infrastructure::persistence::STATEMENT_LOG_DIRECTIVE],
+            ),
             LogFormat::Json,
             logs.clone(),
             service,
@@ -260,7 +263,7 @@ fn session_cookie(token: &str) -> String {
 // Tests
 // ---------------------------------------------------------------------------
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_visitor_report_is_logged_with_no_user_id_and_an_empty_204(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let (status, body) = h
@@ -284,7 +287,7 @@ async fn a_visitor_report_is_logged_with_no_user_id_and_an_empty_204(pool: PgPoo
     assert!(event.get("user_id").is_none(), "{event}");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_session_cookie_attributes_the_report_with_no_csrf_header(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let user = Uuid::new_v4();
@@ -303,7 +306,7 @@ async fn a_session_cookie_attributes_the_report_with_no_csrf_header(pool: PgPool
     assert_eq!(errors[0]["page"], "/dashboard/settings");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn an_expired_or_invalid_session_is_anonymous_never_a_401(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let expired = session_cookie(&common::mint_session_jwt(Uuid::new_v4(), true, "user", -10));
@@ -324,7 +327,7 @@ async fn an_expired_or_invalid_session_is_anonymous_never_a_401(pool: PgPool) {
     }
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_user_id_in_the_body_is_ignored(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let claimed = Uuid::new_v4().to_string();
@@ -352,7 +355,7 @@ async fn a_user_id_in_the_body_is_ignored(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn malformed_input_gets_the_standard_400_and_is_logged_nowhere(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let mut bad_id = batch("/login", &[error_event("boom")]);
@@ -382,7 +385,7 @@ async fn malformed_input_gets_the_standard_400_and_is_logged_nowhere(pool: PgPoo
     assert!(loud.is_empty(), "bad input was logged: {loud:?}");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_body_over_16_kb_gets_a_413_and_is_not_recorded(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let mut body = batch("/login", &[error_event("boom")]);
@@ -394,7 +397,7 @@ async fn a_body_over_16_kb_gets_a_413_and_is_not_recorded(pool: PgPool) {
     assert_eq!(h.client_errors(), Vec::<Value>::new());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn reports_over_the_budget_get_a_204_and_are_counted_not_recorded(pool: PgPool) {
     let h = Harness::new(pool, 2);
     let events: Vec<Value> = (0..5).map(|i| error_event(&format!("e{i}"))).collect();
@@ -405,7 +408,7 @@ async fn reports_over_the_budget_get_a_204_and_are_counted_not_recorded(pool: Pg
     assert_eq!(h.dropped(), 3);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_report_gets_no_span_but_is_counted_in_request_metrics(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let (status, _) = h
@@ -449,7 +452,7 @@ fn attrs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn page_loads_are_counted_as_signed_in_only_from_the_session(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let cookie = session_cookie(&common::mint_session_jwt(Uuid::new_v4(), true, "user", 15));
@@ -495,7 +498,7 @@ async fn page_loads_are_counted_as_signed_in_only_from_the_session(pool: PgPool)
     assert!(h.client_errors().is_empty(), "page loads aren't errors");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn a_boundary_error_is_logged_with_its_island(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let mut known = error_event("panel crashed");
@@ -513,7 +516,7 @@ async fn a_boundary_error_is_logged_with_its_island(pool: PgPool) {
     assert_eq!(errors[1]["island"], "other");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn an_api_error_is_logged_with_route_status_and_trace_id_and_counted(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let trace_id = "abcdef0123456789abcdef0123456789";
@@ -571,7 +574,7 @@ async fn an_api_error_is_logged_with_route_status_and_trace_id_and_counted(pool:
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn an_external_error_is_logged_but_not_counted(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let external = json!({
@@ -587,7 +590,7 @@ async fn an_external_error_is_logged_but_not_counted(pool: PgPool) {
     assert_eq!(h.counter("browser.error"), Vec::new());
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn vitals_are_recorded_per_page_and_poor_ones_logged(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let cookie = session_cookie(&common::mint_session_jwt(Uuid::new_v4(), true, "user", 15));
@@ -663,7 +666,7 @@ async fn vitals_are_recorded_per_page_and_poor_ones_logged(pool: PgPool) {
     assert!(h.client_errors().is_empty(), "vitals aren't errors");
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn unknown_vital_names_and_ratings_get_a_400(pool: PgPool) {
     let h = Harness::new(pool, 200);
     for (name, rating) in [("FID", "good"), ("LCP", "great")] {
@@ -681,7 +684,7 @@ async fn unknown_vital_names_and_ratings_get_a_400(pool: PgPool) {
     assert_eq!(h.histogram("browser.web_vital").len(), 0);
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn navigations_are_timed_counted_and_labelled_consistently(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let (status, body) = h
@@ -775,7 +778,7 @@ async fn navigations_are_timed_counted_and_labelled_consistently(pool: PgPool) {
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn island_timings_are_recorded_and_made_up_panels_are_other(pool: PgPool) {
     let h = Harness::new(pool, 200);
     let (status, _) = h
@@ -814,7 +817,7 @@ async fn island_timings_are_recorded_and_made_up_panels_are_other(pool: PgPool) 
     );
 }
 
-#[sqlx::test(migrations = "./migrations")]
+#[sqlx::test(migrations = "../../migrations")]
 async fn unknown_navigation_kinds_transitions_outcomes_and_stages_get_a_400(pool: PgPool) {
     let h = Harness::new(pool, 200);
     for event in [

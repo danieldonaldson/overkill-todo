@@ -1,7 +1,7 @@
-use crate::domain::entities::{AuditEvent, User};
-use crate::domain::errors::DomainError;
-use crate::domain::value_objects::{UserId, UserRole};
 use async_trait::async_trait;
+use domain::entities::{AuditEvent, User};
+use domain::errors::DomainError;
+use domain::value_objects::{UserId, UserRole};
 use jiff::Timestamp;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,7 +17,7 @@ pub struct SessionAuthorizationState {
 ///
 /// # Implementors
 ///
-/// - [`crate::infrastructure::persistence::postgres::PostgresUserRepository`]
+/// - `infrastructure::persistence::postgres::PostgresUserRepository`
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait UserRepository: Send + Sync {

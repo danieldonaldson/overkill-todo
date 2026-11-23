@@ -17,7 +17,7 @@ crate for now (design D1 end state comes in later slices). This puts the sqlx
 code in a non-root crate with the cache at the workspace root, which retires
 the riskiest unknown.
 
-- [ ] 1.1 Baseline, before touching anything:
+- [x] 1.1 Baseline, before touching anything:
   - Save `cargo nextest list --workspace` output (test names and count).
   - Save a `pg_dump --schema-only` of a freshly migrated database.
   - Copy `backend/openapi.json`.
@@ -28,7 +28,7 @@ the riskiest unknown.
     repository and domain `touch` rebuilds; `just test` / `just test-integration`
     `--no-run`; warm and cold release image build) in design.md.
   - Verify the numbers are in the Hypothesis table.
-- [ ] 1.2 Turn `backend/Cargo.toml` into a virtual workspace manifest (D2):
+- [x] 1.2 Turn `backend/Cargo.toml` into a virtual workspace manifest (D2):
   - members `crates/*` and resolver 3
   - `[workspace.package]` with `version`, `edition = "2024"` and
     `publish = false`, inherited by every member
@@ -38,7 +38,7 @@ the riskiest unknown.
   - profiles unchanged
 
   Verify `cargo metadata` lists the members.
-- [ ] 1.3 `git mv` the code into the crates (D8: one move-only commit):
+- [x] 1.3 `git mv` the code into the crates (D8: one move-only commit):
   - `src/shared` → `crates/shared`
   - `src/domain` → `crates/domain`
   - `src/application` → `crates/application`
@@ -46,7 +46,7 @@ the riskiest unknown.
     `examples/`) → `crates/server`
 
   Verify `git log --follow` on a moved file shows its history.
-- [ ] 1.4 Fix-up commit:
+- [x] 1.4 Fix-up commit:
   - per-crate manifests using `workspace = true` deps and lints
   - `crate::domain::` → `domain::` (likewise application, shared)
   - the `double_must_use` allow at each async_trait crate root
@@ -73,7 +73,7 @@ the riskiest unknown.
   Verify `cargo build --workspace`, `SQLX_OFFLINE=true cargo build`, and
   that `cargo test --workspace --no-run` and `cargo test --doc --workspace`
   build.
-- [ ] 1.5 sqlx in the workspace (D5):
+- [x] 1.5 sqlx in the workspace (D5):
   - `sqlx::migrate!` and every `#[sqlx::test(migrations = …)]` point at
     `backend/migrations`
   - `sqlx.toml` lives in `crates/server`
@@ -86,14 +86,14 @@ the riskiest unknown.
   Verify that running `just db-prepare` leaves `git status` clean. Also verify
   that editing one query without preparing makes `just ci`'s
   `prepare --check` fail with that message (then revert).
-- [ ] 1.6 Re-point path-relative references:
+- [x] 1.6 Re-point path-relative references:
   - fixture `include_str!`s in application telemetry tests
   - the `apps/web/src/pages` walk
 
   (`model_conformance` reads `MODEL_TRACES_DIR` from the environment, so
   it needs no change.) Verify each test still asserts its input is present,
   and passes.
-- [ ] 1.7 Move the `just` recipes, CI (`.github/workflows/ci.yml`) and the
+- [x] 1.7 Move the `just` recipes, CI (`.github/workflows/ci.yml`) and the
   pre-commit hook to workspace-wide invocations (D9):
   - `nextest --workspace`
   - `clippy --workspace`
@@ -123,7 +123,7 @@ the riskiest unknown.
   with no new arguments. Verify that `just models` replays its traces. Verify
   that `scripts/bench-compare.sh` runs with `main` from before the split as
   the base.
-- [ ] 1.8 Dockerfile: switch both stages to cargo-chef, pinned and `--locked`
+- [x] 1.8 Dockerfile: switch both stages to cargo-chef, pinned and `--locked`
   (D7). Keep `.cargo/config.toml` before the dependency build in the dev stage.
   Build the release with `-p server --no-default-features`, and give
   `cargo chef cook` exactly the same profile, package and feature flags as
@@ -138,7 +138,7 @@ the riskiest unknown.
   - `just smoke` against the local stack passes
   - a source-only change rebuilds without recompiling deps
   - the dev image's live recompile still works
-- [ ] 1.9 Crate edge gate (D6): add `crates/server/tests/crate_graph.rs`:
+- [x] 1.9 Crate edge gate (D6): add `crates/server/tests/crate_graph.rs`:
   - it reads `cargo metadata --no-deps --offline --locked`
   - the rank table (shared/domain 0, application 1, server 4; later crates
     added as they appear), checked for normal, build and dev edges, and
@@ -157,7 +157,7 @@ the riskiest unknown.
   - adding an unlisted dummy member fails it
   - a member missing from `APP_TARGETS` fails it
   - editing the table to point outward fails it
-- [ ] 1.10 Check that nothing observable changed:
+- [x] 1.10 Check that nothing observable changed:
   - `just api-types` leaves `openapi.json` and `schema.d.ts` byte-identical
   - the schema dump matches the 1.1 baseline
   - `cargo nextest list --workspace` has the same tests as baseline (names
@@ -166,10 +166,10 @@ the riskiest unknown.
     (then revert)
   - the `just smoke` logs and exported span names match the 1.1 baseline
     in level and message (only the `target` field may differ)
-- [ ] 1.11 Re-record the Hypothesis timings after slice 1 and write what they
+- [x] 1.11 Re-record the Hypothesis timings after slice 1 and write what they
   show in design.md. If the warm or cold image build is more than 10% slower,
   revisit D7 before slice 2.
-- [ ] 1.12 Update `backend/ARCHITECTURE.md` (layout tree, "Adding a use case",
+- [x] 1.12 Update `backend/ARCHITECTURE.md` (layout tree, "Adding a use case",
   "Adding a repository method" paths), `CLAUDE.md` backend rules and
   `README.md` paths to the workspace layout. Re-point the security tooling
   (D9):
@@ -184,7 +184,7 @@ the riskiest unknown.
   Verify `just threat-model-check` and `just protocols` pass, and that
   `grep -rn 'backend/src/\|backend/tests/[a-z_]*\.rs'` over docs, models
   and scripts finds nothing stale.
-- [ ] 1.13 `just ci` green. No deploy exists yet. Note for the first deploy:
+- [x] 1.13 `just ci` green. No deploy exists yet. Note for the first deploy:
   the image build now uses cargo-chef, and the binary name and path are
   unchanged.
 

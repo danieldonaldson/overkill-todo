@@ -50,9 +50,20 @@ if [ $backend = 1 ]; then
   export CRITERION_HOME="$out/criterion"
 
   run_side() { # <checkout> <baseline-name>
-    local args=()
-    for b in "${benches[@]}"; do [ -f "$1/backend/benches/$b.rs" ] && args+=(--bench "$b"); done
-    if [ ${#args[@]} = 0 ]; then echo "no backend benches in $2; skipping"; return; fi
+    local args=() bench_dir found=0
+    if [ -d "$1/backend/crates/server/benches" ]; then
+      bench_dir="$1/backend/crates/server/benches"
+      args+=(-p server)
+    else
+      bench_dir="$1/backend/benches"
+    fi
+    for b in "${benches[@]}"; do
+      if [ -f "$bench_dir/$b.rs" ]; then
+        args+=(--bench "$b")
+        found=1
+      fi
+    done
+    if [ "$found" = 0 ]; then echo "no backend benches in $2; skipping"; return; fi
     echo "── backend benches: $2"
     # shellcheck disable=SC2086 # criterion_args is a flag list.
     (cd "$1/backend" && cargo bench --locked "${args[@]}" -- --save-baseline "$2" $criterion_args)
