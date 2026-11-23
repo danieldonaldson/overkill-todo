@@ -8,16 +8,16 @@ use axum::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::infrastructure::api::cookies::{
+use crate::cookies::{
     OAUTH_DEVICE_FINGERPRINT_COOKIE, OAUTH_STATE_COOKIE, clear_oauth_device_fingerprint_cookie,
     clear_oauth_state_cookie, create_oauth_device_fingerprint_cookie, create_oauth_state_cookie,
     extract_cookie,
 };
-use crate::infrastructure::api::error::AppError;
-use crate::infrastructure::api::extractors::{ApiJson, ApiPath, ApiQuery};
-use crate::infrastructure::api::handlers::session::build_session;
-use crate::infrastructure::api::middleware::{AuthUser, OptionalAuthUser};
-use crate::infrastructure::api::{create_oauth_state, verify_oauth_state};
+use crate::error::AppError;
+use crate::extractors::{ApiJson, ApiPath, ApiQuery};
+use crate::handlers::session::build_session;
+use crate::middleware::{AuthUser, OptionalAuthUser};
+use crate::{create_oauth_state, verify_oauth_state};
 #[cfg(not(debug_assertions))]
 use application::dto::OAuthCallbackQuery;
 #[cfg(debug_assertions)]

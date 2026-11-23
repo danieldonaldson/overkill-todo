@@ -10,9 +10,9 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityRequirement, SecurityScheme};
 use utoipa::openapi::{Components, Content, Ref, RefOr, Response, path::Operation};
 
-use crate::infrastructure::api::cookies::{AUTH_COOKIE, CSRF_COOKIE, REFRESH_COOKIE};
-use crate::infrastructure::api::error::ErrorResponse;
-use crate::infrastructure::api::middleware::csrf::CSRF_TOKEN_HEADER;
+use crate::cookies::{AUTH_COOKIE, CSRF_COOKIE, REFRESH_COOKIE};
+use crate::error::ErrorResponse;
+use crate::middleware::csrf::CSRF_TOKEN_HEADER;
 use application::dto::{AuditKindFilter, OAuthMode};
 
 /// Security scheme: the session cookie, set by sign-in. Required wherever
@@ -552,8 +552,8 @@ mod tests {
     /// The schemes are the credentials the backend actually reads.
     #[test]
     fn security_schemes_name_the_real_credentials() {
-        use crate::infrastructure::api::cookies::{AUTH_COOKIE, REFRESH_COOKIE};
-        use crate::infrastructure::api::middleware::csrf::CSRF_TOKEN_HEADER;
+        use crate::cookies::{AUTH_COOKIE, REFRESH_COOKIE};
+        use crate::middleware::csrf::CSRF_TOKEN_HEADER;
         let spec = serde_json::to_value(openapi()).unwrap();
         let schemes = &spec["components"]["securitySchemes"];
         for (name, location, key) in [
@@ -618,7 +618,7 @@ mod tests {
     /// state-changing methods on paths it doesn't exclude.
     #[test]
     fn csrf_header_required_exactly_where_csrf_applies() {
-        use crate::infrastructure::api::middleware::csrf::is_excluded_path;
+        use crate::middleware::csrf::is_excluded_path;
         let mut wrong = Vec::new();
         each_operation(|method, path, op| {
             let checked =

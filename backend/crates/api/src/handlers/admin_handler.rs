@@ -17,7 +17,7 @@ use application::{
 };
 use domain::value_objects::UserId;
 
-use crate::infrastructure::api::{
+use crate::{
     error::AppError,
     extractors::{AdminUser, ApiPath, ApiQuery, SuperAdminUser, ValidatedJson},
 };

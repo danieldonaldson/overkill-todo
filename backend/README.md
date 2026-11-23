@@ -13,7 +13,9 @@ Cargo workspace under `crates/`:
 - `crates/shared/` — dependency-free utilities (error fingerprinting, redaction)
 - `crates/platform/` — config, crypto, TLS, telemetry, driver-neutral persistence traits
 - `crates/persistence-postgres/` — sqlx Postgres adapter (only normal `sqlx` user)
-- `crates/server/` — `infrastructure/` adapters, binary (`main.rs`), integration tests (`tests/`), benches, examples
+- `crates/services/` — external service & OAuth adapters (SMTP, Argon2, JWT, Turnstile, MX, Google OAuth)
+- `crates/api/` — HTTP API adapter (Axum handlers, middleware, extractors, router, OpenAPI + `export_openapi`)
+- `crates/server/` — composition root (`main.rs`), background `tasks/`, integration tests (`tests/`), benches
 
 ## Run
 
@@ -67,7 +69,7 @@ no-op or console adapter. `crates/server/src/main.rs` is the only place that cho
 | Google OAuth   | `GoogleOAuthClient`          | disabled unless `GOOGLE_OAUTH_ENABLED`   |
 
 Adding a provider (payments, storage, LLMs) means a new port in
-`crates/application/src/ports/outgoing/`, an adapter in `crates/server/src/infrastructure/`, and a no-op for dev.
+`crates/application/src/ports/outgoing/`, an adapter in `crates/services/src/`, and a no-op for dev.
 
 ## Background work
 

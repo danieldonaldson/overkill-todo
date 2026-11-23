@@ -21,7 +21,7 @@ use application::{
 };
 use domain::{entities::User, errors::DomainError};
 
-use crate::infrastructure::api::{
+use crate::{
     error::AppError,
     extractors::{ApiQuery, ValidatedJson},
     handlers::session::extract_refresh_token_cookie,

@@ -13,7 +13,7 @@ use axum::{
 };
 use serde::de::DeserializeOwned;
 
-use crate::infrastructure::api::error::AppError;
+use crate::error::AppError;
 
 /// JSON body without `validator` rules.
 ///

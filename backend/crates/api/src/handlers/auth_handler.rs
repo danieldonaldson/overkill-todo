@@ -24,7 +24,7 @@ use platform::{
     telemetry::metrics::{AuthFlow, AuthMetrics, AuthOutcome, BotCheckForm, SessionAnomaly},
 };
 
-use crate::infrastructure::api::{
+use crate::{
     cookies::{clear_csrf_cookie, clear_jwt_cookie, clear_refresh_cookie},
     error::AppError,
     extractors::ValidatedJson,

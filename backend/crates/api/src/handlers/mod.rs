@@ -12,7 +12,7 @@ pub mod profile_handler;
 pub mod session;
 pub mod verification_handler;
 
-use crate::infrastructure::api::error::AppError;
+use crate::error::AppError;
 use application::ports::TurnstileService;
 use platform::telemetry::metrics::{AuthMetrics, BotCheckForm, BotCheckReason};
 

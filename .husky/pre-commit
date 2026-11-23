@@ -32,7 +32,7 @@ fi
 # Non-blocking reminder: API-shaping backend changes usually need `just api-types`.
 # CI's "API spec current" step is the real gate; this only saves a round trip.
 staged=$(git diff --cached --name-only)
-if echo "$staged" | grep -Eq '^backend/crates/(application/src/dto|server/src/infrastructure/api)/' \
+if echo "$staged" | grep -Eq '^backend/crates/(application/src/dto|api/src)/' \
     && ! echo "$staged" | grep -qx 'backend/openapi.json'; then
     echo "Note: API code changed but backend/openapi.json isn't staged."
     echo "  If a DTO, handler annotation or route changed: just api-types, then stage"

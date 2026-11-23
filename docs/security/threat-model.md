@@ -93,10 +93,10 @@ assumptions:
   - `backend/crates/platform/src/crypto/keyring.rs::refuses_a_missing_or_unknown_kid_without_trying_other_keys`
   - `backend/crates/platform/src/crypto/keyring.rs::refuses_any_change_to_header_claims_or_signature`
   - `backend/crates/platform/src/crypto/keyring.rs::prop_random_input_never_verifies`
-  - `backend/crates/server/src/infrastructure/api/jwt.rs::test_rs256_token_rejected`
-  - `backend/crates/server/src/infrastructure/api/jwt.rs::test_wrong_issuer_rejected`
-  - `backend/crates/server/src/infrastructure/api/jwt.rs::test_wrong_audience_rejected`
-  - `backend/crates/server/src/infrastructure/api/jwt.rs::test_non_session_typ_rejected`
+  - `backend/crates/api/src/jwt.rs::test_rs256_token_rejected`
+  - `backend/crates/api/src/jwt.rs::test_wrong_issuer_rejected`
+  - `backend/crates/api/src/jwt.rs::test_wrong_audience_rejected`
+  - `backend/crates/api/src/jwt.rs::test_non_session_typ_rejected`
   - `backend/crates/server/tests/security_integration.rs::expired_jwt_is_rejected`
   - `backend/crates/server/tests/security_integration.rs::tampered_jwt_signature_is_rejected`
 
@@ -127,8 +127,8 @@ assumptions:
 - Attackers: A3
 - Strength: tested
 - Checks:
-  - `backend/crates/server/src/infrastructure/api/middleware/auth.rs::changed_role_invalidates_session`
-  - `backend/crates/server/src/infrastructure/api/middleware/auth.rs::token_from_cutoff_second_remains_revoked_after_role_cycle`
+  - `backend/crates/api/src/middleware/auth.rs::changed_role_invalidates_session`
+  - `backend/crates/api/src/middleware/auth.rs::token_from_cutoff_second_remains_revoked_after_role_cycle`
   - `backend/crates/server/tests/admin_integration.rs::demoted_admin_token_is_rejected`
   - `backend/crates/application/src/use_cases/auth/reset_password.rs::test_reset_password_success`
   - `backend/crates/application/src/use_cases/user/change_password.rs::test_change_password_without_refresh_token_revokes_all`
@@ -145,7 +145,7 @@ session for up to `JWT_EXPIRATION_MINUTES`.
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/crates/server/src/infrastructure/api/middleware/verification.rs::test_unverified_user_gets_403`
+  - `backend/crates/api/src/middleware/verification.rs::test_unverified_user_gets_403`
   - `backend/crates/server/tests/security_integration.rs::unverified_session_blocked_by_verification_gate`
   - `backend/crates/server/tests/verification_integration.rs::verification_gate_blocks_then_allows`
 
@@ -173,8 +173,8 @@ a route is declared public.
   - `backend/crates/server/tests/route_guards_integration.rs::every_admin_route_refuses_a_member`
   - `backend/crates/server/tests/route_guards_integration.rs::admin_guards_refuse_members_without_any_handler_check`
   - `backend/crates/server/tests/route_guards_integration.rs::a_just_promoted_member_is_sent_to_refresh_not_refused`
-  - `backend/crates/server/src/infrastructure/api/extractors/admin.rs::admin_user_with_plain_user_role_is_access_denied`
-  - `backend/crates/server/src/infrastructure/api/extractors/admin.rs::super_admin_user_with_admin_role_is_access_denied`
+  - `backend/crates/api/src/extractors/admin.rs::admin_user_with_plain_user_role_is_access_denied`
+  - `backend/crates/api/src/extractors/admin.rs::super_admin_user_with_admin_role_is_access_denied`
   - `backend/crates/server/tests/admin_integration.rs::list_users_forbidden_for_non_admin`
 
 The role is enforced twice: by `require_admin()` or `require_super_admin()`
@@ -529,8 +529,8 @@ it's the SQL attempt claim, modelled in P-12.
   - `backend/crates/server/tests/security_integration.rs::csrf_header_cookie_mismatch_rejected`
   - `backend/crates/server/tests/security_integration.rs::csrf_cookie_without_header_rejected`
   - `backend/crates/server/tests/security_integration.rs::csrf_token_bound_to_other_user_rejected`
-  - `backend/crates/server/src/infrastructure/api/csrf.rs::test_verify_rejects_other_user`
-  - `backend/crates/server/src/infrastructure/api/csrf.rs::prop_arbitrary_strings_fail`
+  - `backend/crates/api/src/csrf.rs::test_verify_rejects_other_user`
+  - `backend/crates/api/src/csrf.rs::prop_arbitrary_strings_fail`
   - `models/auth_protocols.spthy::cross_site_pages_cannot_change_state`
   - `models/auth_protocols.spthy::cross_site_changes_need_a_token_signed_for_the_member`
   - `just protocols`
@@ -566,7 +566,7 @@ do:
   - `just protocols`
   - `backend/crates/server/tests/auth_properties_integration.rs::csrf_exempt_routes_cannot_be_driven_cross_site`
   - `backend/crates/server/tests/auth_properties_integration.rs::cors_grants_no_other_origin`
-  - `backend/crates/server/src/infrastructure/api/middleware/csrf.rs::test_excluded_paths`
+  - `backend/crates/api/src/middleware/csrf.rs::test_excluded_paths`
 - Gap: Accepted. Logout takes no body and no custom header. A cross-site form can POST to it, and what stops it ending the session is the browser not sending or setting `SameSite=Lax` cookies on a cross-site POST (P-24). A server test can't observe that browser behaviour, and the model leaves logout out. The impact would be a forced sign-out, not access.
 
 **Modelled** (Tamarin, `just protocols`; attacker and assumptions under
@@ -588,8 +588,8 @@ exempt route acts on such a request; if a route accepted a simple body
   - `backend/crates/server/tests/oauth_integration.rs::callback_with_another_flows_nonce_is_rejected`
   - `backend/crates/server/tests/oauth_integration.rs::callback_with_forged_state_is_rejected`
   - `backend/crates/server/tests/oauth_integration.rs::callback_for_different_provider_than_state_is_rejected`
-  - `backend/crates/server/src/infrastructure/api/oauth_state.rs::tampered_oauth_state_is_refused`
-  - `backend/crates/server/src/infrastructure/api/oauth_state.rs::expired_oauth_state_is_refused`
+  - `backend/crates/api/src/oauth_state.rs::tampered_oauth_state_is_refused`
+  - `backend/crates/api/src/oauth_state.rs::expired_oauth_state_is_refused`
   - `backend/crates/server/tests/oauth_integration.rs::auth_cookies_are_host_only`
 
 **Modelled** (Tamarin, `just protocols`; attacker and assumptions under
@@ -621,9 +621,9 @@ shows the code sets every cookie with the prefix.
 - Attackers: A1, A4
 - Strength: tested
 - Checks:
-  - `backend/crates/server/src/infrastructure/api/cookies.rs::every_cookie_meets_the_host_prefix_rules`
-  - `backend/crates/server/src/infrastructure/api/cookies.rs::only_the_csrf_cookie_is_readable_by_scripts`
-  - `backend/crates/server/src/infrastructure/api/cookies.rs::extract_cookie_ignores_the_unprefixed_name`
+  - `backend/crates/api/src/cookies.rs::every_cookie_meets_the_host_prefix_rules`
+  - `backend/crates/api/src/cookies.rs::only_the_csrf_cookie_is_readable_by_scripts`
+  - `backend/crates/api/src/cookies.rs::extract_cookie_ignores_the_unprefixed_name`
   - `backend/crates/server/tests/oauth_integration.rs::auth_cookies_are_host_only`
   - `apps/web/tests/integration/signup.spec.ts`
 
@@ -666,8 +666,8 @@ the sender's own session, bounded by the recording budget.
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/crates/server/src/infrastructure/api/error.rs::test_into_response_internal_redacted_in_prod`
-  - `backend/crates/server/src/infrastructure/api/error.rs::test_into_response_database_redacted_in_prod`
+  - `backend/crates/api/src/error.rs::test_into_response_internal_redacted_in_prod`
+  - `backend/crates/api/src/error.rs::test_into_response_database_redacted_in_prod`
 
 ### P-27: A database copy gives no usable credentials
 
@@ -763,7 +763,7 @@ they're left to the proptests.
   - `backend/crates/server/tests/profile_integration.rs::me_with_garbage_token_returns_401`
   - `backend/crates/platform/src/crypto/keyring.rs::refuses_malformed_tokens`
   - `backend/crates/platform/src/crypto/keyring.rs::prop_random_segments_never_verify`
-  - `backend/crates/server/src/infrastructure/api/cookies.rs::extract_cookie_returns_none_for_non_utf8_header`
+  - `backend/crates/api/src/cookies.rs::extract_cookie_returns_none_for_non_utf8_header`
   - `backend/crates/server/tests/oauth_integration.rs::callback_with_malformed_user_id_in_state_is_rejected`
 - Gap: Sampled. Fuzzing every operation is OT-011 (API fuzzing); link its checks here when it lands.
 

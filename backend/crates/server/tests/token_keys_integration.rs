@@ -239,3 +239,20 @@ async fn retiring_a_key_invalidates_its_reset_links(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::OK, "{body}");
     assert_eq!(kid_of(body["reset_token"].as_str().unwrap()), "new");
 }
+
+#[test]
+fn session_token_is_rejected_as_a_signup_token() {
+    use application::ports::JwtService;
+    use domain::errors::DomainError;
+
+    let crypto = Crypto::for_testing();
+    let session = api::create_jwt(uuid::Uuid::now_v7(), true, "user", crypto.tokens(), 15).unwrap();
+    let service = services::CryptoJwtService::new(Arc::new(crypto));
+    let err = service.validate_signup_token(&session).unwrap_err();
+    match err {
+        DomainError::Authorization(msg) => {
+            assert_eq!(msg, platform::crypto::TOKEN_REJECTED_MESSAGE);
+        }
+        other => panic!("expected the generic rejection, got {other:?}"),
+    }
+}

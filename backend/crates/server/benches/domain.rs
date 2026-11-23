@@ -4,14 +4,14 @@
 
 use std::hint::black_box;
 
+use api::AppError;
 use application::dto::validation::sanitize_verification_code;
 use application::dto::{CompleteRegistrationRequest, LoginRequest, VerifyEmailRequest};
 use axum::response::IntoResponse;
 use criterion::{Criterion, criterion_group, criterion_main};
 use domain::errors::DomainError;
 use domain::value_objects::{Email, UserRole};
-use server::infrastructure::api::AppError;
-use server::infrastructure::services::email_templates::{password_reset_email, verification_email};
+use services::email_templates::{password_reset_email, verification_email};
 use shared::fingerprint::generate_error_fingerprint;
 use validator::Validate;
 

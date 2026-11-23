@@ -3,6 +3,14 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::signal;
 
+use api::{
+    RouterDeps, create_router,
+    handlers::{
+        admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
+        client_telemetry_handler::ClientTelemetryHandlerDeps, oauth_handler::OAuthHandlerDeps,
+        profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
+    },
+};
 use application::{
     ports::{EmailService, MxValidator, OAuthProviderClient, TurnstileService},
     use_cases::{
@@ -20,21 +28,10 @@ use application::{
 use domain::entities::OAuthProvider;
 use persistence_postgres::{Persistence, STATEMENT_LOG_DIRECTIVE};
 use platform::{config::Settings, crypto::Crypto, telemetry};
-use server::infrastructure::{
-    api::{
-        RouterDeps, create_router,
-        handlers::{
-            admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
-            client_telemetry_handler::ClientTelemetryHandlerDeps, oauth_handler::OAuthHandlerDeps,
-            profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
-        },
-    },
-    oauth::GoogleOAuthClient,
-    services::{
-        Argon2Hasher, CloudflareTurnstileService, ConsoleEmailService, CryptoJwtService,
-        CryptoTokenService, HickoryMxValidator, NoOpMxValidator, NoOpTurnstileService,
-        RandomCodeGenerator, SmtpEmailService,
-    },
+use services::{
+    Argon2Hasher, CloudflareTurnstileService, ConsoleEmailService, CryptoJwtService,
+    CryptoTokenService, GoogleOAuthClient, HickoryMxValidator, NoOpMxValidator,
+    NoOpTurnstileService, RandomCodeGenerator, SmtpEmailService,
 };
 
 /// Use mimalloc (secure mode) as the global allocator. Reduces fragmentation

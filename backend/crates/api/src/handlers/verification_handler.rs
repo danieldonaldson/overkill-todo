@@ -31,7 +31,7 @@ use platform::{
     telemetry::metrics::{AuthFlow, AuthMetrics, AuthOutcome, BotCheckForm, LockableCode},
 };
 
-use crate::infrastructure::api::{
+use crate::{
     error::{AppError, VerificationOrStandardError},
     extractors::{ApiQuery, ValidatedJson},
     handlers::{

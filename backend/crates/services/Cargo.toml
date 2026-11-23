@@ -1,0 +1,39 @@
+[package]
+name = "services"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[features]
+# No default features.
+
+[dependencies]
+application = { path = "../application" }
+domain = { path = "../domain" }
+platform = { path = "../platform" }
+
+anyhow.workspace = true
+argon2.workspace = true
+async-trait.workspace = true
+hickory-resolver.workspace = true
+jiff.workspace = true
+jsonwebtoken.workspace = true
+lettre.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tracing.workspace = true
+urlencoding.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+platform = { path = "../platform", features = ["test-support"] }
+
+proptest.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+wiremock.workspace = true
+
+[lints]
+workspace = true

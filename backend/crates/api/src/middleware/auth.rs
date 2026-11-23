@@ -13,7 +13,7 @@ use domain::value_objects::{UserId, UserRole};
 
 use platform::crypto::{Crypto, TokenKeyring};
 
-use crate::infrastructure::api::{
+use crate::{
     cookies::{AUTH_COOKIE, extract_cookie},
     error::AppError,
     verify_jwt,

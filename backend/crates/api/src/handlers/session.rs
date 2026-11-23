@@ -11,11 +11,11 @@
 use axum::http::header::{self, HeaderMap};
 use jiff::{SignedDuration, Timestamp};
 
-use crate::infrastructure::api::cookies::{
+use crate::cookies::{
     REFRESH_COOKIE, create_csrf_cookie, create_jwt_cookie, create_refresh_cookie, extract_cookie,
 };
-use crate::infrastructure::api::error::AppError;
-use crate::infrastructure::api::{create_jwt, generate_csrf_token};
+use crate::error::AppError;
+use crate::{create_jwt, generate_csrf_token};
 use domain::entities::User;
 use platform::crypto::Crypto;
 

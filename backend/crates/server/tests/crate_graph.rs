@@ -28,6 +28,8 @@ const RANKS: &[(&str, u8)] = &[
     ("application", 1),
     ("platform", 2),
     ("persistence-postgres", 3),
+    ("services", 3),
+    ("api", 3),
     ("server", 4),
 ];
 
@@ -40,6 +42,8 @@ const ALLOWED_EDGES: &[(&str, &[&str])] = &[
         "persistence-postgres",
         &["domain", "application", "platform"],
     ),
+    ("services", &["domain", "application", "platform"]),
+    ("api", &["shared", "domain", "application", "platform"]),
     (
         "server",
         &[
@@ -48,6 +52,8 @@ const ALLOWED_EDGES: &[(&str, &[&str])] = &[
             "application",
             "platform",
             "persistence-postgres",
+            "services",
+            "api",
         ],
     ),
 ];
@@ -214,6 +220,12 @@ fn check_declared_dependencies(
                     to_rank < from_rank,
                     "forbidden outward/same-rank edge: `{from}` (rank {from_rank}) -> `{dep_name}` (rank {to_rank})"
                 );
+                if from == "server" && dep_name == "api" {
+                    assert!(
+                        !dep["uses_default_features"].as_bool().unwrap_or(true),
+                        "`server` must depend on `api` with `default-features = false`"
+                    );
+                }
                 continue;
             }
 
@@ -256,8 +268,10 @@ fn check_declared_dependencies(
             }
         }
 
-        if matches!(from, "application" | "persistence-postgres")
-            && let Some(defaults) = pkg["features"].get("default").and_then(Value::as_array)
+        if matches!(
+            from,
+            "application" | "persistence-postgres" | "services" | "api"
+        ) && let Some(defaults) = pkg["features"].get("default").and_then(Value::as_array)
         {
             assert!(
                 defaults.is_empty(),

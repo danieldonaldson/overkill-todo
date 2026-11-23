@@ -14,21 +14,20 @@ crates/
 ├── shared/src/               # Dependency-free leaf (error fingerprinting, redaction rules)
 ├── platform/                 # Config, crypto, TLS, telemetry, driver-neutral persistence traits
 ├── persistence-postgres/     # sqlx Postgres adapter (only sqlx normal-dependency user)
-└── server/                   # Composition root, HTTP/service/task adapters, binary, tests, benches
+├── services/                 # External service & Google OAuth adapters
+├── api/                      # HTTP adapter (handlers, middleware, extractors, router, OpenAPI)
+│   └── examples/             # export_openapi
+└── server/                   # Composition root, background tasks, binary, tests, benches
     ├── src/
     │   ├── main.rs
     │   └── infrastructure/
-    │       ├── api/          # Axum handlers, routes, middleware (HTTP adapter)
-    │       ├── oauth/        # Google OAuth client
-    │       ├── services/     # Concrete service impls (argon2, JWT, token gen, …)
     │       └── tasks/        # Background jobs and leader election
     ├── tests/                # Full-stack integration tests + crate_graph gate
-    ├── benches/              # Criterion benchmarks
-    └── examples/             # export_openapi
+    └── benches/              # Criterion benchmarks
 ```
 
-Dependencies only point inward: `server → persistence-postgres → platform → application → domain`,
-with `shared` as a leaf (used by `application`, `platform`, and `server`). The crate-graph
+Dependencies only point inward: `server → {persistence-postgres, services, api} → platform → application → domain`,
+with `shared` as a leaf (used by `application`, `platform`, `api`, and `server`). Adapters never depend on each other. The crate-graph
 gate (`crates/server/tests/crate_graph.rs`) enforces this at the workspace level
 and locks `domain` and `application` third-party dependencies to an allowlist.
 The domain imports no `sqlx` or `serde`: Postgres enum mappings live in
@@ -58,13 +57,13 @@ means pointing the `server::Database` alias and the `open` call in `main.rs` at 
 telemetry exits and the browser-report use case). `Crypto` lives in `infrastructure/crypto.rs` because it is built from
 `CryptoSettings` and holds key material. The HTTP-facing `AppError` (with its
 `IntoResponse`/`From` mappings) and the helpers that produce it — `csrf`, `jwt`,
-`oauth_state` — live in `infrastructure/api` (they import `axum`/`jsonwebtoken`).
+`oauth_state` — live in `crates/api` (they import `axum`/`jsonwebtoken`).
 
 Handlers stay thin: they parse the request, run edge admission (Turnstile, device
 fingerprint), call one use case, and turn its result into cookies and a response.
 Credential checks, password hashing, and minting single-purpose tokens (signup,
 reset) happen in use cases. The session access JWT and CSRF token are an HTTP
-concern, so `build_session` mints them in `infrastructure/api`, next to the
+concern, so `build_session` mints them in `crates/api`, next to the
 middleware that verifies them.
 
 DTOs (`application/dto/`) are likewise not a purely inward layer: every DTO derives
@@ -76,7 +75,7 @@ intentionally carries serialization/OpenAPI/validation concerns.
 ## Routes and the API description
 
 The router and the OpenAPI description are built from the same declarations, so
-they can't drift. In `infrastructure/api/routes.rs`, `api_routes()` mounts every
+they can't drift. In `crates/api/src/routes.rs`, `api_routes()` mounts every
 documented route with `utoipa_axum::routes!(handler)`, which takes the method and
 path from the handler's `#[utoipa::path]`. The annotation's `path` is relative to
 the group it's nested in (`path = "/login"` under `/auth` under `/api/v1`). Use one
@@ -134,7 +133,7 @@ the group it's nested in (`path = "/login"` under `/auth` under `/api/v1`). Use 
   automatically and must keep the run clean. A wrong method gets the JSON 405
   from `error::method_not_allowed`.
 - **Committed outputs:** `just api-types` writes `backend/openapi.json` (from
-  `examples/export_openapi.rs`) and the web types
+  `crates/api/examples/export_openapi.rs`) and the web types
   `apps/web/src/lib/api/schema.d.ts`. Commit both; CI fails if either is stale.
 
 ### Dev-mode differences a client can see
@@ -158,7 +157,7 @@ behaviour belongs on this list, because the fuzzer can't see past it.
 1. Define the input/output types in `crates/application/src/dto/` if needed.
 2. Add an incoming port trait in `crates/application/src/ports/incoming/` (one method per operation).
 3. Implement the trait in `crates/application/src/use_cases/`.
-4. Wire it in `crates/server/src/main.rs` (construction) and `crates/server/src/infrastructure/api/routes.rs`
+4. Wire it in `crates/server/src/main.rs` (construction) and `crates/api/src/routes.rs`
    (`.routes(routes!(handler))` in `api_routes()`), then run `just api-types`.
 5. Write mock-based unit tests in the use case file and HTTP-level integration tests under `crates/server/tests/`.
 

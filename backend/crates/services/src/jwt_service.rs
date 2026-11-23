@@ -227,20 +227,6 @@ mod tests {
     }
 
     #[test]
-    fn session_token_is_rejected_as_a_signup_token() {
-        let crypto = Crypto::for_testing();
-        let session = crate::infrastructure::api::create_jwt(
-            uuid::Uuid::now_v7(),
-            true,
-            "user",
-            crypto.tokens(),
-            15,
-        )
-        .unwrap();
-        assert_rejected(test_service().validate_signup_token(&session));
-    }
-
-    #[test]
     fn reset_token_from_a_retired_key_is_rejected() {
         let old = Crypto::for_testing_with_tokens(
             TokenKeyring::from_config(&platform::crypto::keyring_test_entry("retired", 7), None)

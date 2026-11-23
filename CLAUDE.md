@@ -19,13 +19,12 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
 
 ## Backend rules
 
-- Dependencies point inward only: `server` (`infrastructure`) → `application` → `domain`,
-  with `shared` as a leaf. Domain has no I/O crates.
-- New external service = outgoing port + real adapter + no-op adapter, chosen in
+- Dependencies point inward only: `server` (tasks, wiring) → adapters (`persistence-postgres`, `services`, `api`) → `platform` → `application` → `domain`, with `shared` as a leaf. Adapters never depend on each other; `domain` has no I/O crates.
+- New external service = outgoing port + real adapter (`crates/services/src/`) + no-op adapter, chosen in
   `crates/server/src/main.rs`, with production refusing the no-op.
-- `sqlx::query!` / `query_as!` only. Migrations are forward-only and must stay
+- `sqlx::query!` / `query_as!` only (`crates/persistence-postgres/src/`). Migrations are forward-only and must stay
   compatible with the previous release (expand, deploy, then contract).
-- Mount routes with `.routes(routes!(handler))` in `api_routes()` (`crates/server/src/infrastructure/api/routes.rs`),
+- Mount routes with `.routes(routes!(handler))` in `api_routes()` (`crates/api/src/routes.rs`),
   so they're in the OpenAPI description; plain `.route(...)` fails lint. Protect
   groups with the `Guarded` methods (`require_auth()` etc.), not bare
   `route_layer`s. New authenticated groups go above `.require_csrf()`; public
@@ -37,7 +36,7 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
   goes in `apifuzz/schemathesis.toml` with its reason. Auth is the session
   cookie only; security requirements come from the guards, never by hand.
 - Background jobs that must run once go under the leader lock in `crates/server/src/main.rs`.
-- Errors: domain errors map to `AppError` in `crates/server/src/infrastructure/api`; never leak
+- Errors: domain errors map to `AppError` in `crates/api/src/error.rs`; never leak
   internal error text to clients outside `DEV_MODE`.
 - Telemetry: never record secrets, tokens, codes or emails in spans or logs;
   `#[tracing::instrument]` always uses `skip_all` with explicit fields.

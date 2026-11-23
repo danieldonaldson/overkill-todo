@@ -8,7 +8,7 @@ use axum::{extract::FromRequestParts, http::request::Parts};
 
 use domain::value_objects::{UserId, UserRole};
 
-use crate::infrastructure::api::{error::AppError, middleware::AuthUser};
+use crate::{error::AppError, middleware::AuthUser};
 
 /// Extractor that requires admin or `super_admin` role.
 ///
@@ -189,7 +189,7 @@ mod tests {
 
     // ----- from_request_parts rejection / acceptance paths -----
 
-    use crate::infrastructure::api::error::{auth_codes, forbidden_codes};
+    use crate::error::{auth_codes, forbidden_codes};
 
     /// Build a bare `Parts`, optionally seeding an `AuthUser` extension with the
     /// given role, mirroring what `auth_middleware` injects upstream.

@@ -95,6 +95,42 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "api"
+version = "0.1.0"
+dependencies = [
+ "application",
+ "argon2",
+ "axum",
+ "base64 0.23.1",
+ "domain",
+ "hmac",
+ "jiff 1.0.0",
+ "jsonwebtoken",
+ "opentelemetry",
+ "opentelemetry_sdk",
+ "platform",
+ "proptest",
+ "rand 0.10.4",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "shared",
+ "thiserror",
+ "tokio",
+ "tower",
+ "tower-http 0.7.1",
+ "tracing",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "urlencoding",
+ "utoipa",
+ "utoipa-axum",
+ "utoipa-swagger-ui",
+ "uuid",
+ "validator",
+]
+
+[[package]]
 name = "application"
 version = "0.1.0"
 dependencies = [
@@ -3522,45 +3558,60 @@ name = "server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "api",
  "application",
- "argon2",
  "async-trait",
  "axum",
  "base64 0.23.1",
  "criterion",
  "domain",
  "hex",
- "hickory-resolver",
- "hmac",
  "jiff 1.0.0",
  "jsonwebtoken",
- "lettre",
  "mimalloc",
  "opentelemetry",
  "opentelemetry_sdk",
  "persistence-postgres",
  "platform",
  "proptest",
+ "serde_json",
+ "services",
+ "sha2 0.11.1",
+ "shared",
+ "sqlx",
+ "tokio",
+ "tower",
+ "tracing",
+ "tracing-subscriber",
+ "utoipa-axum",
+ "uuid",
+ "validator",
+ "wiremock",
+]
+
+[[package]]
+name = "services"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "application",
+ "argon2",
+ "async-trait",
+ "domain",
+ "hickory-resolver",
+ "jiff 1.0.0",
+ "jsonwebtoken",
+ "lettre",
+ "platform",
+ "proptest",
  "rand 0.10.4",
  "reqwest",
  "serde",
  "serde_json",
- "sha2 0.11.1",
- "shared",
- "sqlx",
- "thiserror",
  "tokio",
- "tower",
- "tower-http 0.7.1",
  "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
  "urlencoding",
- "utoipa",
- "utoipa-axum",
- "utoipa-swagger-ui",
  "uuid",
- "validator",
  "wiremock",
 ]
 

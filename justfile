@@ -203,7 +203,7 @@ grant-admin email:
 # Write the OpenAPI description to backend/openapi.json. No database needed.
 [group('api')]
 api-spec:
-    cd {{backend}} && SQLX_OFFLINE=true cargo run --quiet -p server --example export_openapi > openapi.json.tmp && mv openapi.json.tmp openapi.json
+    cd {{backend}} && SQLX_OFFLINE=true cargo run --quiet -p api --example export_openapi > openapi.json.tmp && mv openapi.json.tmp openapi.json
 
 # Fail if backend/openapi.json is stale.
 [group('api')]

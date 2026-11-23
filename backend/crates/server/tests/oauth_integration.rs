@@ -10,6 +10,7 @@ mod common;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use api::cookies;
 use application::dto::OAuthUserInfo;
 use application::ports::OAuthProviderClient;
 use async_trait::async_trait;
@@ -22,7 +23,6 @@ use domain::entities::OAuthProvider;
 use domain::errors::DomainError;
 use persistence_postgres::testing;
 use serde_json::{Value, json};
-use server::infrastructure::api::cookies;
 use sqlx::PgPool;
 use tower::ServiceExt;
 
@@ -548,13 +548,8 @@ async fn callback_with_malformed_user_id_in_state_is_rejected(pool: PgPool) {
     let app = app(pool);
     // A correctly signed state whose `user_id` claim isn't a UUID.
     let crypto = common::ensure_test_crypto();
-    let (state, nonce) = server::infrastructure::api::create_oauth_state(
-        crypto.tokens(),
-        "google",
-        "link",
-        Some("not-a-uuid"),
-    )
-    .unwrap();
+    let (state, nonce) =
+        api::create_oauth_state(crypto.tokens(), "google", "link", Some("not-a-uuid")).unwrap();
 
     let resp = callback(
         &app,

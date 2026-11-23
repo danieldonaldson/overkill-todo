@@ -25,17 +25,17 @@ use std::sync::Arc;
 
 use axum::{extract::Request, http::Method, middleware::Next, response::Response};
 
-use crate::infrastructure::api::cookies::extract_cookie;
-use crate::infrastructure::api::error::AppError;
-use crate::infrastructure::api::middleware::auth::ensure_authenticated;
-use crate::infrastructure::api::verify_csrf_token;
+use crate::cookies::extract_cookie;
+use crate::error::AppError;
+use crate::middleware::auth::ensure_authenticated;
+use crate::verify_csrf_token;
 use platform::crypto::Crypto;
 
 /// Header name for the CSRF token.
 pub const CSRF_TOKEN_HEADER: &str = "x-csrf-token";
 
 /// Cookie name for the CSRF token.
-pub const CSRF_TOKEN_COOKIE: &str = crate::infrastructure::api::cookies::CSRF_COOKIE;
+pub const CSRF_TOKEN_COOKIE: &str = crate::cookies::CSRF_COOKIE;
 
 /// Paths excluded from CSRF validation.
 const EXCLUDED_PATHS: &[&str] = &[

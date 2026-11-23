@@ -21,6 +21,8 @@ pub const APP_TARGETS: &[&str] = &[
     "application",
     "platform",
     "persistence_postgres",
+    "services",
+    "api",
     "server",
     "overkill_todo",
 ];

@@ -156,7 +156,7 @@ jobs:
       # `just api-types` (backend/openapi.json is generated from the route tree).
       - name: API spec current
         run: |
-          cargo run --quiet -p server --example export_openapi > openapi.json
+          cargo run --quiet -p api --example export_openapi > openapi.json
           git diff --exit-code -- openapi.json || { echo "::error file=backend/openapi.json::Stale. Run: just api-types"; exit 1; }
         env:
           SQLX_OFFLINE: 'true'

@@ -5,13 +5,13 @@ mod common;
 
 use std::fmt::Write as _;
 
+use api::cookies;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use domain::entities::OAuthProvider;
 use persistence_postgres::testing;
 use serde_json::{Value, json};
-use server::infrastructure::api::cookies;
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;

@@ -25,6 +25,7 @@ mod common;
 
 use std::sync::Arc;
 
+use api::routes::{admin_guards, super_admin_guards};
 use application::ports::outgoing::UserRepository;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
@@ -33,7 +34,6 @@ use domain::value_objects::UserRole;
 use persistence_postgres::testing;
 use persistence_postgres::{self, Database};
 use serde_json::Value;
-use server::infrastructure::api::routes::{admin_guards, super_admin_guards};
 use sqlx::PgPool;
 use tower::ServiceExt;
 use utoipa_axum::router::OpenApiRouter;
@@ -72,8 +72,7 @@ const PUBLIC_ROUTES: &[&str] = &[
 
 /// Every `"METHOD /path"` in the API description.
 fn operations() -> Vec<(String, String)> {
-    let spec = serde_json::to_value(server::infrastructure::api::openapi::openapi())
-        .expect("API description serialises");
+    let spec = serde_json::to_value(api::openapi::openapi()).expect("API description serialises");
     let mut ops = Vec::new();
     for (path, item) in spec["paths"].as_object().expect("description has paths") {
         for method in ["get", "post", "put", "patch", "delete"] {

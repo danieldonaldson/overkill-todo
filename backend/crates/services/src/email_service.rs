@@ -9,7 +9,7 @@ use lettre::message::{Mailbox, MultiPart};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
-use crate::infrastructure::services::email_templates::{
+use crate::email_templates::{
     RenderedEmail, account_exists_email, password_reset_email, verification_email,
 };
 use application::ports::EmailService;

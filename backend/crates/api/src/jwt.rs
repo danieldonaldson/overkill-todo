@@ -162,7 +162,7 @@ pub fn verify_jwt(token: &str, keys: &TokenKeyring) -> Result<Claims, AppError> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::api::error::auth_codes;
+    use crate::error::auth_codes;
     use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
     use platform::crypto::TEST_RSA_PRIVATE_KEY;
     use proptest::prelude::*;

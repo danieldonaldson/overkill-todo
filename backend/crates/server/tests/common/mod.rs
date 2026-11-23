@@ -2,6 +2,14 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use api::{
+    RouterDeps, create_router,
+    handlers::{
+        admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
+        client_telemetry_handler::ClientTelemetryHandlerDeps, oauth_handler::OAuthHandlerDeps,
+        profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
+    },
+};
 use application::{
     ports::{
         EmailService, MxValidator, OAuthProviderClient, TurnstileService,
@@ -26,19 +34,9 @@ use axum::http::header;
 use domain::entities::OAuthProvider;
 use domain::errors::DomainError;
 use persistence_postgres::{Database, Persistence};
-use server::infrastructure::{
-    api::{
-        RouterDeps, create_router,
-        handlers::{
-            admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
-            client_telemetry_handler::ClientTelemetryHandlerDeps, oauth_handler::OAuthHandlerDeps,
-            profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
-        },
-    },
-    services::{
-        Argon2Hasher, ConsoleEmailService, CryptoJwtService, CryptoTokenService, NoOpMxValidator,
-        NoOpTurnstileService, RandomCodeGenerator,
-    },
+use services::{
+    Argon2Hasher, ConsoleEmailService, CryptoJwtService, CryptoTokenService, NoOpMxValidator,
+    NoOpTurnstileService, RandomCodeGenerator,
 };
 use sqlx::PgPool;
 
@@ -137,7 +135,7 @@ pub fn mint_session_jwt(
     expiration_minutes: i64,
 ) -> String {
     let crypto = test_crypto();
-    server::infrastructure::api::create_jwt(
+    api::create_jwt(
         user_id,
         email_verified,
         role,
@@ -156,7 +154,7 @@ pub fn mint_session_jwt(
 )]
 pub fn mint_csrf_token(user_id: &str) -> String {
     let crypto = test_crypto();
-    server::infrastructure::api::generate_csrf_token(crypto.csrf_secret(), user_id)
+    api::generate_csrf_token(crypto.csrf_secret(), user_id)
 }
 
 /// Build a fully wired test application from a sqlx-provided pool.

@@ -1,6 +1,3 @@
-//! Infrastructure layer — HTTP API, persistence, external services, OAuth, tasks.
+//! Infrastructure layer — background tasks and composition wiring.
 
-pub mod api;
-pub mod oauth;
-pub mod services;
 pub mod tasks;

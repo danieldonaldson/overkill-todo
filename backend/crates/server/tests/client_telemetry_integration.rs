@@ -15,6 +15,7 @@ mod common;
 use std::io::Write;
 use std::sync::{Arc, Mutex, OnceLock};
 
+use api::cookies::AUTH_COOKIE;
 use axum::{
     Router,
     body::{Body, to_bytes},
@@ -30,7 +31,6 @@ use platform::telemetry::{
     self, LogFormat, ServiceInfo, client_reports::TelemetryClientReportSink, metrics::METER_NAME,
 };
 use serde_json::{Value, json};
-use server::infrastructure::api::cookies::AUTH_COOKIE;
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
