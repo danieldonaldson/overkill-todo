@@ -5,8 +5,6 @@
 //! PII is scrubbed and every child row is gone. This is the multi-table
 //! transactional purge that previously had only in-memory coverage.
 
-mod common;
-
 use std::sync::Arc;
 
 use jiff::{SignedDuration, Timestamp};
@@ -18,8 +16,8 @@ use application::ports::{
 };
 use domain::entities::{EmailVerificationCode, RefreshToken, User};
 use domain::value_objects::Email;
-use server::infrastructure::persistence::postgres::time::ToDb;
-use server::infrastructure::persistence::postgres::{
+use persistence_postgres::time::ToDb;
+use persistence_postgres::{
     Database, PostgresEmailVerificationRepository, PostgresRefreshTokenRepository,
     PostgresUserRepository,
 };

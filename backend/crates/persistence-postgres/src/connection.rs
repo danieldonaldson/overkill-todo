@@ -4,7 +4,7 @@ use sqlx::{ConnectOptions, PgPool, postgres::PgConnectOptions, postgres::PgPoolO
 use std::{str::FromStr, time::Duration};
 use tracing::log::LevelFilter;
 
-use crate::infrastructure::persistence::{DatabaseError, DatabaseHealth, PoolStats};
+use platform::persistence::{DatabaseError, DatabaseHealth, PoolStats};
 
 /// `tracing` filter directive for the driver's per-statement events (SQL text
 /// only, never bound values), as emitted under [`with_statement_logging`].

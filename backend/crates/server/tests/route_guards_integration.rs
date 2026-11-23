@@ -29,9 +29,11 @@ use application::ports::outgoing::UserRepository;
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
 use axum::{Extension, Router, routing::get};
+use domain::value_objects::UserRole;
+use persistence_postgres::testing;
+use persistence_postgres::{self, Database};
 use serde_json::Value;
 use server::infrastructure::api::routes::{admin_guards, super_admin_guards};
-use server::infrastructure::persistence::postgres::{self, Database};
 use sqlx::PgPool;
 use tower::ServiceExt;
 use utoipa_axum::router::OpenApiRouter;
@@ -113,18 +115,14 @@ fn request(method: &str, path: &str) -> axum::http::request::Builder {
 
 /// Inserts a verified account with `role` and returns its id.
 async fn insert_user(pool: &PgPool, role: &str) -> Uuid {
-    let id = Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO users (id, email, role, email_verified)
-         VALUES ($1, $2, $3::user_role, true)",
-    )
-    .bind(id)
-    .bind(format!("route-guard-{role}-{id}@example.com"))
-    .bind(role)
-    .execute(pool)
-    .await
-    .unwrap();
-    id
+    let user_role = match role {
+        "user" => UserRole::User,
+        "admin" => UserRole::Admin,
+        "super_admin" => UserRole::SuperAdmin,
+        other => panic!("unknown role: {other}"),
+    };
+    let email = format!("route-guard-{role}-{}@example.com", Uuid::now_v7());
+    testing::insert_verified_user(pool, &email, user_role).await
 }
 
 /// Session cookie, CSRF cookie and matching header for a session token.
@@ -240,7 +238,8 @@ async fn probe() -> &'static str {
               enforces the role; never served"
 )]
 fn guarded_probe(pool: PgPool) -> Router {
-    let users: Arc<dyn UserRepository> = postgres::wire(Arc::new(Database::from_pool(pool))).users;
+    let users: Arc<dyn UserRepository> =
+        persistence_postgres::wire(Arc::new(Database::from_pool(pool))).users;
     let probe_routes = || OpenApiRouter::<()>::new().route("/probe", get(probe));
     let (admin, _) = admin_guards(probe_routes()).split_for_parts();
     let (super_admin, _) = super_admin_guards(probe_routes()).split_for_parts();

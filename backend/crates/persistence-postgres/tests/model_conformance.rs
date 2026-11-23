@@ -33,12 +33,12 @@ use domain::entities::{
 use domain::errors::DomainError;
 use domain::value_objects::{Email, RefreshTokenId, ResetCodeId, UserId, VerificationCodeId};
 use jiff::{SignedDuration, Timestamp};
-use serde::Deserialize;
-use serde::de::DeserializeOwned;
-use server::infrastructure::persistence::postgres::{
+use persistence_postgres::{
     Database, PostgresEmailVerificationRepository, PostgresPasswordResetRepository,
     PostgresRefreshTokenRepository, PostgresUserRepository,
 };
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;

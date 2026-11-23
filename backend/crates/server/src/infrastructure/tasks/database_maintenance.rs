@@ -9,9 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::job::{Job, JobMetrics};
-use crate::infrastructure::persistence::{
-    DatabaseError, DatabaseMaintenance, MAINTENANCE_BATCH_SIZE,
-};
+use platform::persistence::{DatabaseError, DatabaseMaintenance, MAINTENANCE_BATCH_SIZE};
 
 /// The job's name in spans (`job.database_maintenance`) and metric labels.
 pub const JOB_NAME: &str = "database_maintenance";

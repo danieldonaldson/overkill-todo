@@ -4,53 +4,54 @@
 
 ```
 crates/
-├── domain/src/       # Entities, value objects, domain errors — no I/O dependencies
-├── application/src/  # Use cases, DTOs and port traits — depends only on domain + shared
-│   ├── dto/          # Request/response DTOs (serde, utoipa, validator)
+├── domain/src/               # Entities, value objects, domain errors — no I/O dependencies
+├── application/src/          # Use cases, DTOs and port traits — depends only on domain + shared
+│   ├── dto/                  # Request/response DTOs (serde, utoipa, validator)
 │   ├── ports/
-│   │   ├── incoming/ # Traits implemented by use cases (called from handlers)
-│   │   └── outgoing/ # Traits implemented by adapters (repos, services)
-│   └── use_cases/    # Business logic — depends on port traits, not adapters
-├── shared/src/       # Dependency-free leaf (error fingerprinting, redaction rules)
-├── platform/         # Config, crypto, TLS, telemetry, driver-neutral persistence traits
-└── server/           # Composition root, infrastructure adapters, binary, tests, benches
+│   │   ├── incoming/         # Traits implemented by use cases (called from handlers)
+│   │   └── outgoing/         # Traits implemented by adapters (repos, services)
+│   └── use_cases/            # Business logic — depends on port traits, not adapters
+├── shared/src/               # Dependency-free leaf (error fingerprinting, redaction rules)
+├── platform/                 # Config, crypto, TLS, telemetry, driver-neutral persistence traits
+├── persistence-postgres/     # sqlx Postgres adapter (only sqlx normal-dependency user)
+└── server/                   # Composition root, HTTP/service/task adapters, binary, tests, benches
     ├── src/
     │   ├── main.rs
     │   └── infrastructure/
     │       ├── api/          # Axum handlers, routes, middleware (HTTP adapter)
     │       ├── oauth/        # Google OAuth client
-    │       ├── persistence/  # postgres/ = sqlx adapter (only sqlx user)
     │       ├── services/     # Concrete service impls (argon2, JWT, token gen, …)
     │       └── tasks/        # Background jobs and leader election
-    ├── tests/        # Full-stack integration tests + crate_graph gate
-    ├── benches/      # Criterion benchmarks
-    └── examples/     # export_openapi
+    ├── tests/                # Full-stack integration tests + crate_graph gate
+    ├── benches/              # Criterion benchmarks
+    └── examples/             # export_openapi
 ```
 
-Dependencies only point inward: `server (infrastructure) → platform → application → domain`,
+Dependencies only point inward: `server → persistence-postgres → platform → application → domain`,
 with `shared` as a leaf (used by `application`, `platform`, and `server`). The crate-graph
 gate (`crates/server/tests/crate_graph.rs`) enforces this at the workspace level
 and locks `domain` and `application` third-party dependencies to an allowlist.
 The domain imports no `sqlx` or `serde`: Postgres enum mappings live in
-`persistence/postgres/models.rs` (`DbUserRole`, `DbOAuthProvider`) and convert with
+`crates/persistence-postgres/src/models.rs` (`DbUserRole`, `DbOAuthProvider`) and convert with
 `From` at the repository boundary.
 
-**`sqlx` is confined to `infrastructure/persistence/postgres/`**, and only
-`main.rs` wiring and tests name that module. The `persistence` root is
-driver-neutral. The driver is chosen at compile time, so dispatch is static:
-`persistence::Database` aliases the selected adapter's handle, and other
-infrastructure modules use it only through the root's traits, either as generic
-bounds or as trait methods on that alias. The traits are `LeaderLocks` /
+**`sqlx` is confined to `crates/persistence-postgres/`**, and only
+`main.rs` wiring, tests, and benches name that crate (`tests/` and `benches/`
+also allow `#[sqlx::test]` and `PgPool`/`PgPoolOptions`). Driver-neutral
+plumbing traits live in `platform::persistence`. The driver is chosen at compile
+time, so dispatch is static: `server::Database` aliases `persistence_postgres::Database`,
+and other infrastructure modules use `platform::persistence` traits, either as
+generic bounds or as trait methods on that alias. The traits are `LeaderLocks` /
 `LeaderLock` (leader election in `tasks/leader.rs`), `DatabaseMaintenance`
 (`tasks/database_maintenance.rs`) and `DatabaseHealth` (`/health/ready` and the
-pool gauges); the root also exports `STATEMENT_LOG_DIRECTIVE` (trace export
+pool gauges); `persistence-postgres` also exports `STATEMENT_LOG_DIRECTIVE` (trace export
 filter). Repositories stay `Arc<dyn Port>`, because that is what use cases take and
-mock. Each adapter returns a `Persistence` bundle of both. Plumbing failures
+mock. `persistence-postgres` returns a `Persistence` bundle of both. Plumbing failures
 surface as the opaque, driver-agnostic `DatabaseError`; repository failures go
 through `persist_err` to `DomainError`. There is no `From<sqlx::Error> for
 AppError`, so a handler can't `?` a raw driver error. A second driver is a sibling
-of `postgres/` implementing the outgoing ports and these traits; selecting it
-means pointing the `Database` alias and the `open` call in `main.rs` at it.
+crate of `persistence-postgres` implementing the outgoing ports and these traits; selecting it
+means pointing the `server::Database` alias and the `open` call in `main.rs` at it.
 
 `shared/` is a true leaf: it imports nothing from any layer and holds only
 `fingerprint` and `redact` (the field-name and URL-query rules, shared by the
@@ -164,8 +165,8 @@ behaviour belongs on this list, because the fuzzer can't see past it.
 ## Adding a repository method
 
 1. Add the method signature to the outgoing port trait in `crates/application/src/ports/outgoing/`.
-2. Implement it in `crates/server/src/infrastructure/persistence/postgres/` using `sqlx::query!` macros.
-3. Map any `sqlx::Error` with the shared `persist_err` helper (`postgres/error.rs`) —
+2. Implement it in `crates/persistence-postgres/src/` using `sqlx::query!` macros.
+3. Map any `sqlx::Error` with the shared `persist_err` helper (`persistence-postgres/src/error.rs`) —
    `.map_err(persist_err)?` — so a unique violation (`23505`) becomes a
    `DomainError::Conflict` and a missing row a `DomainError::NotFound` instead of an
    opaque `Persistence` string. Only hand-write a `match` when a query needs a
@@ -293,7 +294,7 @@ exported, and all sessions signed out after a reused session token.
 - **Adding a kind.** Add the `AuditKind` variant, widen
   `audit_events_kind_check` in a new migration (`NOT VALID`, then validate),
   and name the `#[sqlx::test]`s proving its atomicity in `atomicity_tests` in
-  `tests/audit_log_integration.rs`. There's no wildcard arm, so a kind without
+  `persistence-postgres/tests/audit_log_integration.rs`. There's no wildcard arm, so a kind without
   tests doesn't compile.
 - **Minimal personal data.** Events identify people by account ID only. Kind,
   actor and details are closed types (old and new role, OAuth provider), so

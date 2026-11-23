@@ -25,7 +25,7 @@ use opentelemetry::{
     metrics::{Gauge, Meter},
 };
 
-use crate::infrastructure::persistence::{LeaderLock, LeaderLocks};
+use platform::persistence::{LeaderLock, LeaderLocks};
 use platform::telemetry::metrics::global_meter;
 
 /// The `leader.is_leader` gauge. Cheap to clone.

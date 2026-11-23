@@ -20,13 +20,17 @@ use axum::{
     http::{Request, Response, StatusCode, header},
 };
 use domain::errors::DomainError;
+use domain::value_objects::UserRole;
 use opentelemetry_sdk::trace::{
     InMemorySpanExporter, SdkTracerProvider, SimpleSpanProcessor, SpanData,
 };
+use persistence_postgres::STATEMENT_LOG_DIRECTIVE;
+use persistence_postgres::connection::with_statement_logging;
+use persistence_postgres::testing;
 use platform::telemetry::{self, LogFormat, ServiceInfo};
 use serde_json::{Value, json};
-use server::infrastructure::persistence::postgres::connection::with_statement_logging;
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use tower::ServiceExt;
 
 // ---------------------------------------------------------------------------
@@ -79,10 +83,7 @@ impl Captured {
                 "debug",
                 &["tower_http=debug", "sqlx=debug"],
             ),
-            telemetry::export_filter(
-                server::APP_TARGETS,
-                &[server::infrastructure::persistence::STATEMENT_LOG_DIRECTIVE],
-            ),
+            telemetry::export_filter(server::APP_TARGETS, &[STATEMENT_LOG_DIRECTIVE]),
             LogFormat::Json,
             logs.clone(),
             service,
@@ -208,17 +209,14 @@ impl EmailService for CapturingEmail {
 
 /// Inserts an account with `role` and returns its ID.
 async fn insert_account(pool: &PgPool, role: &str) -> uuid::Uuid {
-    let id = uuid::Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO users (id, email, role, email_verified) VALUES ($1, $2, $3::user_role, true)",
-    )
-    .bind(id)
-    .bind(format!("telemetry-{id}@example.com"))
-    .bind(role)
-    .execute(pool)
-    .await
-    .unwrap();
-    id
+    let user_role = match role {
+        "user" => UserRole::User,
+        "admin" => UserRole::Admin,
+        "super_admin" => UserRole::SuperAdmin,
+        other => panic!("unknown role: {other}"),
+    };
+    let email = format!("telemetry-{}@example.com", uuid::Uuid::now_v7());
+    testing::insert_verified_user(pool, &email, user_role).await
 }
 
 /// A Super Admin's role change to `admin` for `target`, with session and CSRF.
@@ -253,19 +251,10 @@ async fn audit_events_carry_the_trace_id_and_insert_failures_are_logged(pool: Pg
     )
     .await;
     assert_eq!(resp.status(), StatusCode::OK);
-    let stored: Option<String> = sqlx::query_scalar("SELECT trace_id FROM audit_events")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let stored = testing::latest_audit_event_trace_id(&pool).await;
     assert_eq!(stored, Some(trace_id_header(&resp)));
 
-    sqlx::query(
-        "ALTER TABLE audit_events ADD CONSTRAINT test_refuse_role_changed
-         CHECK (kind <> 'role_changed') NOT VALID",
-    )
-    .execute(&pool)
-    .await
-    .unwrap();
+    testing::refuse_role_changed_audit_events(&pool).await;
     let (resp, body) = send(
         &app,
         role_change_request(actor, insert_account(&pool, "user").await),

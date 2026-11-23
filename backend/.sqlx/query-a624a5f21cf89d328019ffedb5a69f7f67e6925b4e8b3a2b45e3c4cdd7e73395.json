@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH accounts AS (\n           SELECT array_agg(id ORDER BY id) AS ids FROM users\n         )\n         INSERT INTO audit_events (kind, subject_id, actor_kind, actor_id, details)\n         SELECT 'role_changed',\n                ids[1 + n % array_length(ids, 1)],\n                'user',\n                ids[1 + (n + 1) % array_length(ids, 1)],\n                '{\"from\": \"user\", \"to\": \"admin\"}'\n         FROM accounts, generate_series(1, $1) AS n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a624a5f21cf89d328019ffedb5a69f7f67e6925b4e8b3a2b45e3c4cdd7e73395"
+}

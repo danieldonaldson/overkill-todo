@@ -23,10 +23,9 @@ use axum::http::{Request, StatusCode, header};
 use criterion::{Criterion, criterion_group, criterion_main};
 use domain::entities::{Actor, AuditEvent};
 use domain::value_objects::UserRole;
+use persistence_postgres::{Database, PostgresUserRepository, testing};
 use serde_json::{Value, json};
-use server::infrastructure::persistence::postgres::{Database, PostgresUserRepository};
-use sqlx::migrate::MigrateDatabase;
-use sqlx::{PgPool, Postgres};
+use sqlx::PgPool;
 use tower::ServiceExt;
 
 const PASSWORD: &str = "hunter2hunter2";
@@ -34,7 +33,7 @@ const FINGERPRINT: &str = "bench-device-0123456789abcdef";
 /// Rows behind the admin list, so pagination does real work.
 const SEEDED_USERS: usize = 200;
 /// Audit events seeded for the audit log benches (OT-008 task 1.9).
-const SEEDED_AUDIT_EVENTS: i64 = 100_000;
+const SEEDED_AUDIT_EVENTS: i32 = 100_000;
 
 /// A logged-in browser: session cookie, CSRF token, and refresh cookie.
 #[derive(Clone)]
@@ -53,13 +52,7 @@ fn bench_db_url() -> Option<String> {
 }
 
 async fn fresh_pool(url: &str) -> PgPool {
-    if Postgres::database_exists(url).await.unwrap() {
-        Postgres::drop_database(url).await.unwrap();
-    }
-    Postgres::create_database(url).await.unwrap();
-    let pool = PgPool::connect(url).await.unwrap();
-    sqlx::migrate!("../../migrations").run(&pool).await.unwrap();
-    pool
+    testing::recreate_bench_pool(url).await
 }
 
 fn json_post(uri: &str, body: &Value) -> Request<Body> {
@@ -161,28 +154,7 @@ async fn seed(app: &Router, pool: &PgPool) -> (Session, Session) {
 /// Spreads [`SEEDED_AUDIT_EVENTS`] role changes over the seeded accounts,
 /// each made by the next account, straight into the table.
 async fn seed_audit_events(pool: &PgPool) {
-    sqlx::query(
-        "WITH accounts AS (
-           SELECT array_agg(id ORDER BY id) AS ids FROM users
-         )
-         INSERT INTO audit_events (kind, subject_id, actor_kind, actor_id, details)
-         SELECT 'role_changed',
-                ids[1 + n % array_length(ids, 1)],
-                'user',
-                ids[1 + (n + 1) % array_length(ids, 1)],
-                '{\"from\": \"user\", \"to\": \"admin\"}'
-         FROM accounts, generate_series(1, $1) AS n",
-    )
-    .bind(SEEDED_AUDIT_EVENTS)
-    .execute(pool)
-    .await
-    .unwrap();
-    // As autovacuum would have by then: sets the visibility map, so paging on
-    // IDs and counting can use index-only scans.
-    sqlx::query("VACUUM ANALYZE audit_events")
-        .execute(pool)
-        .await
-        .unwrap();
+    testing::seed_bench_audit_events(pool, SEEDED_AUDIT_EVENTS).await;
 }
 
 fn get(uri: &str, s: &Session) -> Request<Body> {
@@ -240,12 +212,7 @@ fn http(c: &mut Criterion) {
     });
 
     // OT-008: the audit log must page as fast as the user list above.
-    let audit_account: String = rt.block_on(async {
-        sqlx::query_scalar("SELECT id::text FROM users ORDER BY id LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-    });
+    let audit_account: String = rt.block_on(testing::first_bench_user_id(&pool));
     for (name, uri) in [
         (
             "admin_audit_events_first_page",

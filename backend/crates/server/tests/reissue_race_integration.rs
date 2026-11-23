@@ -21,6 +21,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, header},
 };
+use persistence_postgres::testing::{self, CodeTable};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -49,51 +50,31 @@ async fn post(app: &axum::Router, uri: &str, body: Value) -> StatusCode {
         .status()
 }
 
-async fn user_id(pool: &PgPool, email: &str) -> uuid::Uuid {
-    sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM users WHERE email = $1")
-        .bind(email)
-        .fetch_one(pool)
-        .await
-        .unwrap()
-}
-
 /// A code table and the requests that race on it.
 struct Path {
-    table: &'static str,
-    /// Sets the row to 4 attempts, no lockouts, sent 6 minutes ago, live.
-    arm: &'static str,
-    /// Reads `(attempts, lockouts)`.
-    read: &'static str,
+    name: &'static str,
+    table: CodeTable,
     guess_uri: &'static str,
     issue_uri: &'static str,
 }
 
 const VERIFY_VS_RESEND: Path = Path {
-    table: "email_verification_codes",
-    arm: "UPDATE email_verification_codes SET attempts = 4, lockouts = 0, \
-          last_sent_at = NOW() - INTERVAL '6 minutes', \
-          expires_at = NOW() + INTERVAL '10 minutes' WHERE user_id = $1",
-    read: "SELECT attempts, lockouts FROM email_verification_codes WHERE user_id = $1",
+    name: "email_verification_codes",
+    table: CodeTable::EmailVerification,
     guess_uri: "/api/v1/auth/verify-email",
     issue_uri: "/api/v1/auth/resend-verification",
 };
 
 const VERIFY_VS_REREGISTER: Path = Path {
-    table: "email_verification_codes",
-    arm: "UPDATE email_verification_codes SET attempts = 4, lockouts = 0, \
-          last_sent_at = NOW() - INTERVAL '6 minutes', \
-          expires_at = NOW() + INTERVAL '10 minutes' WHERE user_id = $1",
-    read: "SELECT attempts, lockouts FROM email_verification_codes WHERE user_id = $1",
+    name: "email_verification_codes",
+    table: CodeTable::EmailVerification,
     guess_uri: "/api/v1/auth/verify-email",
     issue_uri: "/api/v1/auth/register",
 };
 
 const RESET_VS_FORGOT: Path = Path {
-    table: "password_reset_codes",
-    arm: "UPDATE password_reset_codes SET attempts = 4, lockouts = 0, \
-          last_sent_at = NOW() - INTERVAL '6 minutes', \
-          expires_at = NOW() + INTERVAL '10 minutes' WHERE user_id = $1",
-    read: "SELECT attempts, lockouts FROM password_reset_codes WHERE user_id = $1",
+    name: "password_reset_codes",
+    table: CodeTable::PasswordReset,
     guess_uri: "/api/v1/auth/verify-reset-code",
     issue_uri: "/api/v1/auth/forgot-password",
 };
@@ -101,11 +82,11 @@ const RESET_VS_FORGOT: Path = Path {
 /// Runs `ROUNDS` races on `path` and returns the `(attempts, lockouts)` each
 /// round ended on.
 async fn race(app: &axum::Router, pool: &PgPool, path: &Path, email: &str) -> Vec<(i32, i32)> {
-    let id = user_id(pool, email).await;
+    let id = testing::user_id_by_email(pool, email).await;
     let mut ends = Vec::with_capacity(ROUNDS);
     for _ in 0..ROUNDS {
-        let armed = sqlx::query(path.arm).bind(id).execute(pool).await.unwrap();
-        assert_eq!(armed.rows_affected(), 1, "no {} row to arm", path.table);
+        let armed = testing::arm_code_for_race(pool, path.table, id).await;
+        assert_eq!(armed, 1, "no {} row to arm", path.name);
 
         let guess = tokio::spawn({
             let app = app.clone();
@@ -123,13 +104,7 @@ async fn race(app: &axum::Router, pool: &PgPool, path: &Path, email: &str) -> Ve
         assert_eq!(guess.await.unwrap(), StatusCode::BAD_REQUEST);
         assert_eq!(issue.await.unwrap(), StatusCode::OK);
 
-        ends.push(
-            sqlx::query_as::<_, (i32, i32)>(path.read)
-                .bind(id)
-                .fetch_one(pool)
-                .await
-                .unwrap(),
-        );
+        ends.push(testing::code_counters(pool, path.table, id).await);
     }
     ends
 }

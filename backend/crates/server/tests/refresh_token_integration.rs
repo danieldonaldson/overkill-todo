@@ -17,9 +17,8 @@ use application::ports::{RefreshTokenRepository, UserRepository};
 use domain::entities::{RefreshToken, User};
 use domain::errors::DomainError;
 use domain::value_objects::Email;
-use server::infrastructure::persistence::postgres::{
-    Database, PostgresRefreshTokenRepository, PostgresUserRepository,
-};
+use persistence_postgres::testing;
+use persistence_postgres::{Database, PostgresRefreshTokenRepository, PostgresUserRepository};
 
 #[sqlx::test(migrations = "../../migrations")]
 async fn concurrent_rotate_lets_exactly_one_winner(pool: PgPool) {
@@ -78,35 +77,15 @@ async fn concurrent_rotate_lets_exactly_one_winner(pool: PgPool) {
     assert_eq!(conflicts, 1, "the loser must see a Conflict: {results:?}");
 
     // The original is revoked; exactly one successor exists and is active.
-    let total: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1",
-        user_id
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count tokens")
-    .unwrap_or(0);
+    let (total, active) = testing::refresh_token_counts(&pool, *user_id).await;
     assert_eq!(
         total, 2,
         "original + one successor only — the loser never inserted"
     );
-
-    let active: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM refresh_tokens WHERE user_id = $1 AND revoked_at IS NULL",
-        user_id
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("count active tokens")
-    .unwrap_or(0);
     assert_eq!(active, 1, "exactly one active token after rotation");
 
-    let original_revoked: Option<jiff_sqlx::Timestamp> = sqlx::query_scalar!(
-        "SELECT revoked_at FROM refresh_tokens WHERE id = $1",
-        old_id.as_uuid()
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("load original token");
-    assert!(original_revoked.is_some(), "original token must be revoked");
+    assert!(
+        testing::is_refresh_token_revoked(&pool, *old_id.as_uuid()).await,
+        "original token must be revoked"
+    );
 }

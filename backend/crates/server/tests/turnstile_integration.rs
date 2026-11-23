@@ -17,6 +17,7 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use domain::errors::DomainError;
+use persistence_postgres::testing;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -178,10 +179,7 @@ async fn rejected_registration_creates_no_account(pool: PgPool) {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
-    let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let users = testing::count_users(&pool).await;
     assert_eq!(users, 0, "the bot check must run before any side effect");
 }
 

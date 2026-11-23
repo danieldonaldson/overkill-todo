@@ -8,6 +8,8 @@ use std::fmt::Write as _;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
+use domain::entities::OAuthProvider;
+use persistence_postgres::testing;
 use serde_json::{Value, json};
 use server::infrastructure::api::cookies;
 use sqlx::PgPool;
@@ -311,24 +313,11 @@ async fn a_refresh_token_is_refused_from_another_device(pool: PgPool) {
 
 /// Everything stored about one account, as text, for before/after comparison.
 async fn snapshot(pool: &PgPool, id: Uuid) -> String {
-    sqlx::query_scalar::<_, String>(
-        "SELECT concat_ws(' | ',
-            coalesce((SELECT row_to_json(u)::text FROM users u WHERE u.id = $1), 'null'),
-            coalesce((SELECT json_agg(o ORDER BY o.id)::text FROM user_oauth_accounts o WHERE o.user_id = $1), 'null'),
-            coalesce((SELECT json_agg(r ORDER BY r.id)::text FROM refresh_tokens r WHERE r.user_id = $1), 'null'))",
-    )
-    .bind(id)
-    .fetch_one(pool)
-    .await
-    .unwrap()
+    testing::account_snapshot_text(pool, id).await
 }
 
 async fn user_id(pool: &PgPool, email: &str) -> Uuid {
-    sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
-        .bind(email)
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    testing::user_id_by_email(pool, email).await
 }
 
 /// P-09: as Member A, call every account route (the `/users` routes and Google
@@ -349,22 +338,15 @@ async fn a_member_reaches_only_their_own_account(pool: PgPool) {
     let a_id = user_id(&pool, a_email).await;
     let b_id = user_id(&pool, b_email).await;
 
-    sqlx::query(
-        "UPDATE users SET first_name = 'Bobsled', last_name = 'Zyxwvut', password_hash = NULL
-         WHERE id = $1",
+    testing::set_passwordless_user_name(&pool, b_id, "Bobsled", "Zyxwvut").await;
+    testing::insert_oauth_account(
+        &pool,
+        b_id,
+        OAuthProvider::Google,
+        "p09-bob-google-sub",
+        "bob-google@example.com",
     )
-    .bind(b_id)
-    .execute(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO user_oauth_accounts (user_id, provider, provider_user_id, provider_email)
-         VALUES ($1, 'google', 'p09-bob-google-sub', 'bob-google@example.com')",
-    )
-    .bind(b_id)
-    .execute(&pool)
-    .await
-    .unwrap();
+    .await;
     let b_before = snapshot(&pool, b_id).await;
     let b_markers = [
         b_id.to_string(),
@@ -384,13 +366,9 @@ async fn a_member_reaches_only_their_own_account(pool: PgPool) {
         body
     };
     let a_scheduled = || async {
-        sqlx::query_scalar::<_, Option<jiff_sqlx::Timestamp>>(
-            "SELECT deletion_scheduled_at FROM users WHERE id = $1",
-        )
-        .bind(a_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap()
+        testing::user_snapshot(&pool, a_id)
+            .await
+            .deletion_scheduled_at
     };
 
     // Export: A's data only.
@@ -650,11 +628,7 @@ async fn csrf_exempt_routes_cannot_be_driven_cross_site(pool: PgPool) {
         ))
         .unwrap();
     send(&app, req).await;
-    let created: i64 = sqlx::query_scalar("SELECT count(*) FROM users WHERE email = $1")
-        .bind("test-p21-new@example.com")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let created = testing::count_users_by_email(&pool, "test-p21-new@example.com").await;
     if created != 0 {
         accepted.push("text/plain sign-up created an account".to_owned());
     }
@@ -710,34 +684,7 @@ async fn cors_grants_no_other_origin(pool: PgPool) {
 
 /// Every row of every table in the public schema, as text.
 async fn dump_database(pool: &PgPool) -> String {
-    let tables: Vec<String> = sqlx::query_scalar(
-        "SELECT table_name::text FROM information_schema.tables
-         WHERE table_schema = 'public' AND table_type = 'BASE TABLE'",
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap();
-    assert!(
-        tables.iter().any(|t| t == "users"),
-        "dumped the wrong schema: {tables:?}"
-    );
-    let mut dump = String::new();
-    for table in tables {
-        // Table names come from the catalog, not from input.
-        let rows: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
-            "SELECT row_to_json(t)::text FROM \"{table}\" t"
-        )))
-        .fetch_all(pool)
-        .await
-        .unwrap();
-        for row in rows {
-            dump.push_str(&table);
-            dump.push_str(": ");
-            dump.push_str(&row);
-            dump.push('\n');
-        }
-    }
-    dump
+    testing::dump_database(pool).await
 }
 
 /// Wraps the console email service and keeps every magic link it is asked to

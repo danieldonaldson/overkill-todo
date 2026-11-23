@@ -520,7 +520,7 @@ impl AccountLifecycleRepository for PostgresUserRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::infrastructure::persistence::postgres::models::UserRow;
+    use crate::models::UserRow;
     use jiff::Timestamp;
     use proptest::prelude::*;
     use uuid::Uuid;

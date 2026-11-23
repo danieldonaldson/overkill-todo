@@ -8,6 +8,9 @@
 
 pub mod infrastructure;
 
+/// The active persistence handle exposed by the workspace adapter.
+pub type Database = persistence_postgres::Database;
+
 /// Tracing targets of every library and binary in the backend workspace.
 ///
 /// Checked against `cargo metadata` by `tests/crate_graph.rs` so a new crate's
@@ -17,6 +20,7 @@ pub const APP_TARGETS: &[&str] = &[
     "domain",
     "application",
     "platform",
+    "persistence_postgres",
     "server",
     "overkill_todo",
 ];

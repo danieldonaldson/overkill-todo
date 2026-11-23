@@ -11,6 +11,8 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
 };
+use domain::value_objects::UserRole;
+use persistence_postgres::testing::{self, CodeTable};
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -35,11 +37,7 @@ fn post_json(uri: &str, body: &Value) -> Request<Body> {
 }
 
 async fn user_id(pool: &PgPool, email: &str) -> uuid::Uuid {
-    sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM users WHERE email = $1")
-        .bind(email)
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    testing::user_id_by_email(pool, email).await
 }
 
 /// A real session: the `auth_token` JWT cookie, the readable CSRF token, and the
@@ -235,14 +233,7 @@ async fn expired_jwt_is_rejected(pool: PgPool) {
 /// session were sent, while the same JWT as the cookie succeeds (OT-011).
 #[sqlx::test(migrations = "../../migrations")]
 async fn bearer_token_is_not_accepted(pool: PgPool) {
-    let id = sqlx::query!(
-        "INSERT INTO users (email, role, email_verified) VALUES ($1, 'user', true) RETURNING id",
-        "bearer-only@example.com"
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap()
-    .id;
+    let id = testing::insert_verified_user(&pool, "bearer-only@example.com", UserRole::User).await;
     let app = common::create_test_app(pool);
     let token = common::mint_session_jwt(id, true, "user", 15);
 
@@ -347,21 +338,12 @@ async fn correct_reset_code_releases_attempt_slot(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let attempts_after_wrong = sqlx::query_scalar::<_, i32>(
-        "SELECT attempts FROM password_reset_codes WHERE user_id = $1",
-    )
-    .bind(id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (attempts_after_wrong, _) =
+        testing::code_counters(&pool, CodeTable::PasswordReset, id).await;
     assert_eq!(attempts_after_wrong, 1, "a wrong guess must be counted");
 
     // Drive the counter to MAX_ATTEMPTS - 1 (= 4) so only one slot remains.
-    sqlx::query("UPDATE password_reset_codes SET attempts = 4 WHERE user_id = $1")
-        .bind(id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    testing::set_code_attempts(&pool, CodeTable::PasswordReset, id, 4).await;
 
     // A CORRECT code must still succeed (not be rejected as locked)...
     let resp = app
@@ -379,13 +361,8 @@ async fn correct_reset_code_releases_attempt_slot(pool: PgPool) {
     );
 
     // ...and the slot it claimed must have been released: still 4, not 5.
-    let attempts_after_correct = sqlx::query_scalar::<_, i32>(
-        "SELECT attempts FROM password_reset_codes WHERE user_id = $1",
-    )
-    .bind(id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let (attempts_after_correct, _) =
+        testing::code_counters(&pool, CodeTable::PasswordReset, id).await;
     assert_eq!(
         attempts_after_correct, 4,
         "a correct guess must release its claimed slot (reset-on-success)"

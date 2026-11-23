@@ -8,7 +8,7 @@
 #   3. A deeper random search (`quint run`, 30 steps).
 #   4. Random traces, plus witness traces that reach the rare races, are
 #      exported as ITF and replayed against Postgres by
-#      backend/crates/server/tests/model_conformance.rs.
+#      backend/crates/persistence-postgres/tests/model_conformance.rs.
 #
 # Steps 1-4 are independent, so they run concurrently (up to MODELS_JOBS at a
 # time, default: CPU count); only the replay waits for them. Each Apalache check
@@ -139,4 +139,4 @@ collect
 
 echo "models: replaying the traces against Postgres"
 cd backend
-MODEL_TRACES_DIR="$PWD/target/model-traces" cargo nextest run -p server --test model_conformance --run-ignored only
+MODEL_TRACES_DIR="$PWD/target/model-traces" cargo nextest run -p persistence-postgres --test model_conformance --run-ignored only

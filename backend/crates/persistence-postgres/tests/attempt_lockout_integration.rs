@@ -17,9 +17,7 @@ use domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome, MAX_ATTEMP
 use domain::entities::{PasswordResetCode, User};
 use domain::value_objects::{Email, ResetCodeId, UserId};
 use jiff::{SignedDuration, Timestamp};
-use server::infrastructure::persistence::postgres::{
-    Database, PostgresPasswordResetRepository, PostgresUserRepository,
-};
+use persistence_postgres::{Database, PostgresPasswordResetRepository, PostgresUserRepository};
 use sqlx::PgPool;
 
 #[sqlx::test(migrations = "../../migrations")]

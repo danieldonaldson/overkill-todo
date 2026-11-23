@@ -5,8 +5,8 @@
 //! retention limit (sessions, one-time codes, processed webhook ids, ...), and
 //! a matching field on [`MaintenanceReport`].
 
-use super::Database;
-use crate::infrastructure::persistence::{
+use crate::Database;
+use platform::persistence::{
     DatabaseError, DatabaseMaintenance, MAINTENANCE_BATCH_SIZE, MaintenanceReport,
 };
 

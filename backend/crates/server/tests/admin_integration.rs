@@ -8,15 +8,26 @@ mod common;
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode, header};
+use domain::value_objects::UserRole;
+use persistence_postgres::testing;
 use serde_json::{Value, json};
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
+fn parse_role(role: &str) -> UserRole {
+    match role {
+        "user" => UserRole::User,
+        "admin" => UserRole::Admin,
+        "super_admin" => UserRole::SuperAdmin,
+        other => panic!("unknown role: {other}"),
+    }
+}
+
 /// GET request authenticated as a persisted user with `role`.
 async fn admin_get(pool: &PgPool, role: &str, path: &str) -> (Uuid, Request<Body>) {
-    let user_id = Uuid::now_v7();
-    insert_requester(pool, user_id, role).await;
+    let email = format!("admin-requester-{}@example.com", Uuid::now_v7());
+    let user_id = testing::insert_verified_user(pool, &email, parse_role(role)).await;
     let token = common::mint_session_jwt(user_id, true, role, 15);
     let req = Request::builder()
         .method("GET")
@@ -36,8 +47,8 @@ async fn admin_mutate(
     path: &str,
     body: &Value,
 ) -> Request<Body> {
-    let user_id = Uuid::now_v7();
-    insert_requester(pool, user_id, role).await;
+    let email = format!("admin-requester-{}@example.com", Uuid::now_v7());
+    let user_id = testing::insert_verified_user(pool, &email, parse_role(role)).await;
     let token = common::mint_session_jwt(user_id, true, role, 15);
     let csrf = common::mint_csrf_token(&user_id.to_string());
     Request::builder()
@@ -51,19 +62,6 @@ async fn admin_mutate(
         .header("x-csrf-token", csrf)
         .body(Body::from(serde_json::to_vec(body).unwrap()))
         .unwrap()
-}
-
-async fn insert_requester(pool: &PgPool, id: Uuid, role: &str) {
-    sqlx::query(
-        "INSERT INTO users (id, email, role, email_verified)
-         VALUES ($1, $2, $3::user_role, true)",
-    )
-    .bind(id)
-    .bind(format!("admin-requester-{id}@example.com"))
-    .bind(role)
-    .execute(pool)
-    .await
-    .unwrap();
 }
 
 async fn json_body(resp: axum::http::Response<Body>) -> Value {
@@ -124,14 +122,7 @@ async fn role_change_ok_for_super_admin(pool: PgPool) {
 /// Insert a verified user directly, returning its id — for the routes that load
 /// a target user (role change).
 async fn insert_user(pool: &PgPool, email: &str) -> Uuid {
-    sqlx::query!(
-        "INSERT INTO users (email, role, email_verified) VALUES ($1, 'user', true) RETURNING id",
-        email
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap()
-    .id
+    testing::insert_verified_user(pool, email, UserRole::User).await
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -173,8 +164,12 @@ async fn demoted_admin_token_is_rejected(pool: PgPool) {
     // Persisted role is `user`, but the still-unexpired token claims `admin`:
     // the fresh-session check on admin routes must reject it, not let the old
     // privilege linger until the access token expires.
-    let user_id = Uuid::now_v7();
-    insert_requester(&pool, user_id, "user").await;
+    let user_id = testing::insert_verified_user(
+        &pool,
+        &format!("admin-requester-{}@example.com", Uuid::now_v7()),
+        UserRole::User,
+    )
+    .await;
     let token = common::mint_session_jwt(user_id, true, "admin", 15);
     let req = Request::builder()
         .method("GET")

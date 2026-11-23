@@ -25,6 +25,7 @@ use axum::body::Body;
 use axum::http::header;
 use domain::entities::OAuthProvider;
 use domain::errors::DomainError;
+use persistence_postgres::{Database, Persistence};
 use server::infrastructure::{
     api::{
         RouterDeps, create_router,
@@ -33,10 +34,6 @@ use server::infrastructure::{
             client_telemetry_handler::ClientTelemetryHandlerDeps, oauth_handler::OAuthHandlerDeps,
             profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
         },
-    },
-    persistence::{
-        Persistence,
-        postgres::{self, Database},
     },
     services::{
         Argon2Hasher, ConsoleEmailService, CryptoJwtService, CryptoTokenService, NoOpMxValidator,
@@ -456,7 +453,7 @@ fn create_test_app_inner(
         email_verifications: email_verification_repo,
         password_resets: password_reset_repo,
         db,
-    } = postgres::wire(Arc::new(Database::from_pool(pool)));
+    } = persistence_postgres::wire(Arc::new(Database::from_pool(pool)));
 
     let register_uc = Arc::new(RegisterUserUseCase::new(
         user_repo.clone(),

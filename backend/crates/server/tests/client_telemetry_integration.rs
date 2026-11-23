@@ -103,7 +103,7 @@ impl Harness {
             telemetry::targets_filter(server::APP_TARGETS, "debug", &["tower_http=debug"]),
             telemetry::export_filter(
                 server::APP_TARGETS,
-                &[server::infrastructure::persistence::STATEMENT_LOG_DIRECTIVE],
+                &[persistence_postgres::STATEMENT_LOG_DIRECTIVE],
             ),
             LogFormat::Json,
             logs.clone(),

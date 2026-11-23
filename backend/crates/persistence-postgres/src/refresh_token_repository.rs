@@ -5,9 +5,9 @@ use std::sync::Arc;
 
 use super::audit_log::insert_audit_event;
 use super::time::{ToDb, ToDomain};
-use crate::infrastructure::persistence::postgres::connection::Database;
-use crate::infrastructure::persistence::postgres::error::persist_err;
-use crate::infrastructure::persistence::postgres::models::RefreshTokenRow;
+use crate::connection::Database;
+use crate::error::persist_err;
+use crate::models::RefreshTokenRow;
 use application::ports::RefreshTokenRepository;
 use domain::entities::{AuditEvent, RefreshToken};
 use domain::errors::DomainError;

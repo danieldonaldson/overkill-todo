@@ -6,9 +6,6 @@
 //! - `PurgeScheduledAccountsUseCase::run_once` driven against the real Postgres
 //!   repositories (the run-loops themselves are infinite `tokio` loops, so we exercise the single-iteration use cases they
 //!   call, which is where all the DB logic lives).
-//!
-//! Test glue uses runtime `sqlx::query*` (not the compile-checked macros) so the
-//! suite builds under `SQLX_OFFLINE=true` without regenerating the `.sqlx` cache.
 
 mod common;
 
@@ -16,6 +13,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use persistence_postgres::testing;
+use persistence_postgres::{Database, PostgresUserRepository};
+use platform::persistence::{LeaderLock as _, LeaderLocks as _};
 use sqlx::PgPool;
 use tokio::sync::{Notify, watch};
 
@@ -25,16 +25,14 @@ use opentelemetry_sdk::metrics::{
     InMemoryMetricExporter, PeriodicReader, SdkMeterProvider,
     data::{AggregatedMetrics, MetricData, ScopeMetrics},
 };
-use server::infrastructure::persistence::postgres::{Database, PostgresUserRepository};
 use server::infrastructure::tasks::leader::{LeaderMetrics, run_as_leader};
 
-async fn try_lock(pool: &PgPool, key: i64) -> bool {
-    let mut conn = pool.acquire().await.unwrap();
-    sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
-        .bind(key)
-        .fetch_one(&mut *conn)
-        .await
-        .unwrap()
+async fn try_lock(db: &Database, key: i64) -> bool {
+    let Some(lock) = db.try_lock(key).await.unwrap() else {
+        return false;
+    };
+    lock.release().await;
+    true
 }
 
 // ===========================================================================
@@ -78,14 +76,8 @@ async fn leader_acquires_runs_and_releases_on_shutdown(pool: PgPool) {
         .expect("worker should have started as leader");
 
     // While held, the lock is not grantable to another session.
-    let mut other = pool.acquire().await.unwrap();
-    let acquired_elsewhere = sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
-        .bind(lock_key)
-        .fetch_one(&mut *other)
-        .await
-        .unwrap();
     assert!(
-        !acquired_elsewhere,
+        !try_lock(&db, lock_key).await,
         "lock should be held by the leader, not grantable elsewhere"
     );
 
@@ -96,17 +88,10 @@ async fn leader_acquires_runs_and_releases_on_shutdown(pool: PgPool) {
         .expect("leader loop should stop on shutdown")
         .unwrap();
 
-    // Release the lock we grabbed above, then confirm a fresh session can now
-    // acquire it (proving the leader's own lock was released on step-down).
-    sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
-        .bind(lock_key)
-        .fetch_one(&mut *other)
-        .await
-        .unwrap();
-    drop(other);
-
+    // A fresh session can now acquire it (proving the leader's own lock was
+    // released on step-down).
     assert!(
-        try_lock(&pool, lock_key).await,
+        try_lock(&db, lock_key).await,
         "lock should be free after the leader stepped down"
     );
 }
@@ -119,13 +104,11 @@ async fn leader_stands_by_when_lock_held_elsewhere(pool: PgPool) {
     let lock_key: i64 = 9_000_002;
 
     // Hold the lock on a dedicated connection so the leader can't acquire it.
-    let mut holder = pool.acquire().await.unwrap();
-    let held = sqlx::query_scalar::<_, bool>("SELECT pg_try_advisory_lock($1)")
-        .bind(lock_key)
-        .fetch_one(&mut *holder)
+    let held = db
+        .try_lock(lock_key)
         .await
-        .unwrap();
-    assert!(held, "test must hold the lock first");
+        .unwrap()
+        .expect("test must hold the lock first");
 
     let ran = Arc::new(AtomicBool::new(false));
     let ran_flag = ran.clone();
@@ -163,11 +146,7 @@ async fn leader_stands_by_when_lock_held_elsewhere(pool: PgPool) {
         .expect("standby loop should stop on shutdown")
         .unwrap();
 
-    sqlx::query_scalar::<_, bool>("SELECT pg_advisory_unlock($1)")
-        .bind(lock_key)
-        .fetch_one(&mut *holder)
-        .await
-        .unwrap();
+    held.release().await;
 }
 
 /// Latest `leader.is_leader` value exported by `exporter`.
@@ -258,28 +237,13 @@ async fn exactly_one_of_two_replicas_reports_leader(pool: PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn purge_skips_accounts_within_grace_period(pool: PgPool) {
     let email = "e2e-purge-skip@example.com";
-    let id = uuid::Uuid::new_v4();
-    sqlx::query(
-        r"
-        INSERT INTO users (id, email, password_hash, first_name, last_name, email_verified, deletion_scheduled_at)
-        VALUES ($1, $2, 'hash', 'Real', 'Name', true, NOW() + INTERVAL '7 days')
-        ",
-    )
-    .bind(id)
-    .bind(email)
-    .execute(&pool)
-    .await
-    .unwrap();
+    let id = testing::insert_scheduled_deletion_user(&pool, email, 7).await;
 
     let uc = purge_uc(&pool);
     assert_eq!(uc.run_once().await.unwrap(), 0);
 
-    let still_there = sqlx::query_scalar::<_, String>("SELECT email FROM users WHERE id = $1")
-        .bind(id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(still_there, email, "user must be untouched within grace");
+    let snapshot = testing::user_snapshot(&pool, id).await;
+    assert_eq!(snapshot.email, email, "user must be untouched within grace");
 }
 
 /// No accounts scheduled for deletion is a clean no-op.
@@ -299,40 +263,26 @@ fn purge_uc(pool: &PgPool) -> PurgeScheduledAccountsUseCase {
 #[sqlx::test(migrations = "../../migrations")]
 async fn purge_finalizes_account_past_grace_period(pool: PgPool) {
     let email = "e2e-purge-me@example.com";
-    let id = uuid::Uuid::new_v4();
-    sqlx::query(
-        r"
-        INSERT INTO users (id, email, password_hash, first_name, last_name, email_verified, deletion_scheduled_at)
-        VALUES ($1, $2, 'hash', 'Real', 'Name', true, NOW() - INTERVAL '1 day')
-        ",
-    )
-    .bind(id)
-    .bind(email)
-    .execute(&pool)
-    .await
-    .unwrap();
+    let id = testing::insert_scheduled_deletion_user(&pool, email, -1).await;
 
     let uc = purge_uc(&pool);
     assert_eq!(uc.run_once().await.unwrap(), 1);
 
-    let row = sqlx::query_as::<_, (String, Option<jiff_sqlx::Timestamp>, Option<jiff_sqlx::Timestamp>, Option<String>, String)>(
-        "SELECT email, deleted_at, deletion_scheduled_at, password_hash, first_name FROM users WHERE id = $1",
-    )
-    .bind(id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let (email_after, deleted_at, deletion_scheduled_at, password_hash, first_name) = row;
+    let snapshot = testing::user_snapshot(&pool, id).await;
 
-    assert!(deleted_at.is_some(), "deleted_at should be set");
+    assert!(snapshot.deleted_at.is_some(), "deleted_at should be set");
     assert!(
-        deletion_scheduled_at.is_none(),
+        snapshot.deletion_scheduled_at.is_none(),
         "deletion_scheduled_at should be cleared"
     );
-    assert!(password_hash.is_none(), "password should be scrubbed");
     assert!(
-        email_after.starts_with("deleted-"),
-        "email should be anonymized, got {email_after}"
+        snapshot.password_hash.is_none(),
+        "password should be scrubbed"
     );
-    assert_ne!(first_name, "Real", "name should be scrubbed");
+    assert!(
+        snapshot.email.starts_with("deleted-"),
+        "email should be anonymized, got {}",
+        snapshot.email
+    );
+    assert_ne!(snapshot.first_name, "Real", "name should be scrubbed");
 }

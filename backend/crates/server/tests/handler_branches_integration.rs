@@ -146,9 +146,7 @@ async fn login_oauth_only_user_returns_401(pool: PgPool) {
     use application::ports::{OAuthAccountRepository, UserRepository};
     use domain::entities::{OAuthAccount, OAuthProvider, User};
     use domain::value_objects::Email;
-    use server::infrastructure::persistence::postgres::{
-        Database, PostgresOAuthAccountRepository, PostgresUserRepository,
-    };
+    use persistence_postgres::{Database, PostgresOAuthAccountRepository, PostgresUserRepository};
     use std::sync::Arc;
 
     let email = "e2e-oauth-only@example.com";

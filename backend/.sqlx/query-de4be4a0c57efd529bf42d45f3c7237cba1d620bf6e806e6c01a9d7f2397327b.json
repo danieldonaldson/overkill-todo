@@ -1,0 +1,21 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT row_to_json(e)::text FROM audit_events e",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "row_to_json",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "de4be4a0c57efd529bf42d45f3c7237cba1d620bf6e806e6c01a9d7f2397327b"
+}

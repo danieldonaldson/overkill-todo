@@ -23,7 +23,7 @@
 // `x <= now` here.
 //
 // Traces are replayed against PostgresRefreshTokenRepository by
-// backend/crates/server/tests/model_conformance.rs (`just models`).
+// backend/crates/persistence-postgres/tests/model_conformance.rs (`just models`).
 module refresh_rotation {
   // REFRESH_TOKEN_EXPIRATION_DAYS (30) in minutes.
   pure val TTL = 43200

@@ -4,9 +4,9 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use super::time::{ToDb, ToDomain};
-use crate::infrastructure::persistence::postgres::connection::Database;
-use crate::infrastructure::persistence::postgres::error::persist_err;
-use crate::infrastructure::persistence::postgres::models::PasswordResetCodeRow;
+use crate::connection::Database;
+use crate::error::persist_err;
+use crate::models::PasswordResetCodeRow;
 use application::ports::PasswordResetRepository;
 use domain::entities::PasswordResetCode;
 use domain::entities::attempt_lockout::{

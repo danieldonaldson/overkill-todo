@@ -8,24 +8,22 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
 };
+use domain::value_objects::UserRole;
+use persistence_postgres::testing;
 use serde_json::Value;
 use sqlx::PgPool;
 use tower::ServiceExt;
 use uuid::Uuid;
 
 async fn insert_user_with_role(pool: &PgPool, role: &str) -> Uuid {
-    let id = Uuid::now_v7();
-    sqlx::query(
-        "INSERT INTO users (id, email, role, email_verified)
-         VALUES ($1, $2, $3::user_role, true)",
-    )
-    .bind(id)
-    .bind(format!("contract-{id}@example.com"))
-    .bind(role)
-    .execute(pool)
-    .await
-    .unwrap();
-    id
+    let user_role = match role {
+        "user" => UserRole::User,
+        "admin" => UserRole::Admin,
+        "super_admin" => UserRole::SuperAdmin,
+        other => panic!("unknown role: {other}"),
+    };
+    let email = format!("contract-{}@example.com", Uuid::now_v7());
+    testing::insert_verified_user(pool, &email, user_role).await
 }
 
 /// Assert a 400 whose body is the standard `{ code, message }` error.

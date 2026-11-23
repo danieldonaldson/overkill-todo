@@ -31,6 +31,8 @@ use std::sync::{Arc, Mutex};
 
 use application::ports::TurnstileService;
 use domain::errors::DomainError;
+use jiff::{SignedDuration, Timestamp};
+use persistence_postgres::testing::{self, CodeTable};
 
 /// The code the dev code generator gives `e2e-*` addresses.
 const DEV_CODE: &str = "123456";
@@ -365,25 +367,11 @@ fn labels(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
 }
 
 async fn expire_reset_code(pool: &PgPool, email: &str) {
-    sqlx::query(
-        "UPDATE password_reset_codes SET expires_at = NOW() - INTERVAL '1 hour' \
-         WHERE user_id = (SELECT id FROM users WHERE email = $1)",
-    )
-    .bind(email)
-    .execute(pool)
-    .await
-    .unwrap();
+    testing::expire_code_for_email(pool, CodeTable::PasswordReset, email).await;
 }
 
 async fn expire_email_code(pool: &PgPool, email: &str) {
-    sqlx::query(
-        "UPDATE email_verification_codes SET expires_at = NOW() - INTERVAL '1 hour' \
-         WHERE user_id = (SELECT id FROM users WHERE email = $1)",
-    )
-    .bind(email)
-    .execute(pool)
-    .await
-    .unwrap();
+    testing::expire_code_for_email(pool, CodeTable::EmailVerification, email).await;
 }
 
 // ---------------------------------------------------------------------------
@@ -810,14 +798,7 @@ async fn unknown_and_expired_refresh_tokens_are_not_anomalies(pool: PgPool) {
         unauthorized("Invalid refresh token")
     );
 
-    sqlx::query(
-        "UPDATE refresh_tokens SET expires_at = now() - interval '1 minute'
-         WHERE user_id = (SELECT id FROM users WHERE email = $1)",
-    )
-    .bind(email)
-    .execute(&pool)
-    .await
-    .unwrap();
+    testing::expire_refresh_tokens_for_email(&pool, email).await;
     let (status, body, _) = h.refresh(&refresh, &csrf, "test-device-abc123").await;
     assert_eq!(
         refusal(status, &body),
@@ -834,17 +815,14 @@ const MAGIC_TOKEN: &str = "e2e-known-magic-token";
 async fn set_magic_token(pool: &PgPool, email: &str, token: &str) {
     use sha2::{Digest, Sha256};
     let hash = hex::encode(Sha256::digest(token.as_bytes()));
-    let updated = sqlx::query(
-        "UPDATE email_verification_codes SET magic_token_hash = $1,
-             magic_token_expires_at = now() + interval '1 hour'
-         WHERE user_id = (SELECT id FROM users WHERE email = $2)",
+    let id = testing::user_id_by_email(pool, email).await;
+    let updated = testing::set_verification_magic_token(
+        pool,
+        id,
+        &hash,
+        Timestamp::now() + SignedDuration::from_hours(1),
     )
-    .bind(hash)
-    .bind(email)
-    .execute(pool)
-    .await
-    .unwrap()
-    .rows_affected();
+    .await;
     assert_eq!(updated, 1, "no pending code for {email}");
 }
 
@@ -891,11 +869,7 @@ async fn measurements_hold_no_personal_data(pool: PgPool) {
         h.refresh(&refresh, &csrf, "test-device-abc123").await;
         secrets.extend([refresh, csrf]);
         secrets.extend(rotated);
-        let id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM users WHERE email = $1")
-            .bind(&email)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let id = testing::user_id_by_email(&pool, &email).await;
         secrets.push(id.to_string());
         user_ids.push(id.to_string());
         secrets.push(email);

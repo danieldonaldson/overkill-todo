@@ -7,8 +7,8 @@
 
 use sqlx::{Postgres, pool::PoolConnection};
 
-use super::Database;
-use crate::infrastructure::persistence::{DatabaseError, LeaderLock, LeaderLocks};
+use crate::Database;
+use platform::persistence::{DatabaseError, LeaderLock, LeaderLocks};
 
 /// A held session-level advisory lock and the connection holding it.
 ///

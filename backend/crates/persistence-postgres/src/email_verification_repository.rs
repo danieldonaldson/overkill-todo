@@ -5,9 +5,9 @@ use jiff::Timestamp;
 use std::sync::Arc;
 
 use super::time::{ToDb, ToDomain};
-use crate::infrastructure::persistence::postgres::connection::Database;
-use crate::infrastructure::persistence::postgres::error::persist_err;
-use crate::infrastructure::persistence::postgres::models::EmailVerificationCodeRow;
+use crate::connection::Database;
+use crate::error::persist_err;
+use crate::models::EmailVerificationCodeRow;
 use application::ports::EmailVerificationRepository;
 use domain::entities::EmailVerificationCode;
 use domain::entities::attempt_lockout::{

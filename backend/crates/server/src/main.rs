@@ -18,6 +18,7 @@ use application::{
     },
 };
 use domain::entities::OAuthProvider;
+use persistence_postgres::{Persistence, STATEMENT_LOG_DIRECTIVE};
 use platform::{config::Settings, crypto::Crypto, telemetry};
 use server::infrastructure::{
     api::{
@@ -29,7 +30,6 @@ use server::infrastructure::{
         },
     },
     oauth::GoogleOAuthClient,
-    persistence::{self, Persistence},
     services::{
         Argon2Hasher, CloudflareTurnstileService, ConsoleEmailService, CryptoJwtService,
         CryptoTokenService, HickoryMxValidator, NoOpMxValidator, NoOpTurnstileService,
@@ -110,7 +110,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         &settings.telemetry,
         settings.server.dev_mode,
         server::APP_TARGETS,
-        &[persistence::STATEMENT_LOG_DIRECTIVE],
+        &[STATEMENT_LOG_DIRECTIVE],
     )?;
     crypto.tokens().log_configuration();
 
@@ -130,7 +130,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         email_verifications: email_verification_repo,
         password_resets: password_reset_repo,
         db,
-    } = persistence::postgres::open(&settings.database.url, settings.database.max_connections)
+    } = persistence_postgres::open(&settings.database.url, settings.database.max_connections)
         .await?;
     telemetry::metrics::register_db_pool_gauges(&telemetry::metrics::global_meter(), &db);
 

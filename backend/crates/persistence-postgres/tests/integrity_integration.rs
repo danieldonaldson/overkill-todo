@@ -11,8 +11,6 @@
 //! compile-checked macros) precisely so that they can write deliberately invalid
 //! data and do not need the offline `.sqlx` cache regenerated.
 
-mod common;
-
 use domain::entities::AuditEvent;
 use std::sync::Arc;
 
@@ -23,7 +21,7 @@ use application::ports::{OAuthAccountRepository, RefreshTokenRepository, UserRep
 use domain::entities::{OAuthAccount, OAuthProvider, RefreshToken, User};
 use domain::errors::DomainError;
 use domain::value_objects::{Email, UserId};
-use server::infrastructure::persistence::postgres::{
+use persistence_postgres::{
     Database, PostgresOAuthAccountRepository, PostgresRefreshTokenRepository,
     PostgresUserRepository,
 };

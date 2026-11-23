@@ -20,6 +20,7 @@ use axum::{
 };
 use domain::entities::OAuthProvider;
 use domain::errors::DomainError;
+use persistence_postgres::testing;
 use serde_json::{Value, json};
 use server::infrastructure::api::cookies;
 use sqlx::PgPool;
@@ -498,10 +499,7 @@ async fn login_with_unverified_provider_email_creates_no_account(pool: PgPool) {
     assert_eq!(resp.status(), StatusCode::TEMPORARY_REDIRECT);
     assert_eq!(location(&resp), "/login?error=oauth_email_conflict");
     assert!(common::cookie_value(&resp, "__Host-auth_token").is_none());
-    let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let users = testing::count_users(&pool).await;
     assert_eq!(users, 0);
 }
 

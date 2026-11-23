@@ -12,6 +12,7 @@ Cargo workspace under `crates/`:
 - `crates/application/` — use cases, DTOs, incoming and outgoing port traits
 - `crates/shared/` — dependency-free utilities (error fingerprinting, redaction)
 - `crates/platform/` — config, crypto, TLS, telemetry, driver-neutral persistence traits
+- `crates/persistence-postgres/` — sqlx Postgres adapter (only normal `sqlx` user)
 - `crates/server/` — `infrastructure/` adapters, binary (`main.rs`), integration tests (`tests/`), benches, examples
 
 ## Run

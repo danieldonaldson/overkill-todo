@@ -5,8 +5,6 @@
 //! revoke / consume / delete paths plus their not-found, expired, and
 //! idempotency branches — the cases the HTTP suites don't reach.
 
-mod common;
-
 use domain::entities::AuditEvent;
 use std::sync::Arc;
 
@@ -22,7 +20,7 @@ use domain::entities::{
     EmailVerificationCode, OAuthAccount, OAuthProvider, PasswordResetCode, RefreshToken, User,
 };
 use domain::value_objects::{Email, RefreshTokenId, ResetCodeId, UserId, VerificationCodeId};
-use server::infrastructure::persistence::postgres::{
+use persistence_postgres::{
     Database, PostgresEmailVerificationRepository, PostgresOAuthAccountRepository,
     PostgresPasswordResetRepository, PostgresRefreshTokenRepository, PostgresUserRepository,
 };

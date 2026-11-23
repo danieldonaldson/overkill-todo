@@ -1,9 +1,17 @@
 //! sqlx Postgres adapter: repositories plus the [`Database`] handle, which
-//! implements the driver-neutral plumbing traits in the parent module.
+//! implements the driver-neutral plumbing traits in [`platform::persistence`].
+#![allow(
+    clippy::double_must_use,
+    reason = "`#[async_trait]` marks its boxed futures `#[must_use]`; not actionable here"
+)]
 
 use std::sync::Arc;
 
-use super::{DatabaseError, Persistence};
+use application::ports::outgoing::{
+    AccountLifecycleRepository, AuditLogRepository, EmailVerificationRepository,
+    OAuthAccountRepository, PasswordResetRepository, RefreshTokenRepository, UserRepository,
+};
+use platform::persistence::DatabaseError;
 
 mod advisory_lock;
 pub mod audit_log;
@@ -16,6 +24,8 @@ pub mod models;
 pub mod oauth_account_repository;
 pub mod password_reset_repository;
 pub mod refresh_token_repository;
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
 pub mod time;
 
 pub mod user_repository;
@@ -29,6 +39,19 @@ pub use password_reset_repository::PostgresPasswordResetRepository;
 pub use refresh_token_repository::PostgresRefreshTokenRepository;
 
 pub use user_repository::PostgresUserRepository;
+
+/// Every persistence handle the app needs.
+#[derive(Clone)]
+pub struct Persistence {
+    pub users: Arc<dyn UserRepository>,
+    pub account_lifecycle: Arc<dyn AccountLifecycleRepository>,
+    pub audit_log: Arc<dyn AuditLogRepository>,
+    pub oauth_accounts: Arc<dyn OAuthAccountRepository>,
+    pub refresh_tokens: Arc<dyn RefreshTokenRepository>,
+    pub email_verifications: Arc<dyn EmailVerificationRepository>,
+    pub password_resets: Arc<dyn PasswordResetRepository>,
+    pub db: Arc<Database>,
+}
 
 /// Connects, runs pending migrations, and wires every port to this adapter.
 ///

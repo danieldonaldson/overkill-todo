@@ -290,15 +290,15 @@ ended.
 - Checks:
   - `models/attempt_claim.qnt::lockIsNeverLiftedInsideItsWindow`
   - `models/attempt_claim.qnt::noReissueInsideTheCooldown`
-  - `backend/crates/server/tests/model_conformance.rs::email_codes_follow_the_attempt_claim_model`
-  - `backend/crates/server/tests/model_conformance.rs::reset_codes_follow_the_attempt_claim_model`
+  - `backend/crates/persistence-postgres/tests/model_conformance.rs::email_codes_follow_the_attempt_claim_model`
+  - `backend/crates/persistence-postgres/tests/model_conformance.rs::reset_codes_follow_the_attempt_claim_model`
   - `backend/crates/server/tests/reissue_race_integration.rs::resend_racing_the_locking_guess_keeps_the_lock`
   - `backend/crates/server/tests/reissue_race_integration.rs::reregister_racing_the_locking_guess_keeps_the_lock`
   - `backend/crates/server/tests/reissue_race_integration.rs::reset_request_racing_the_locking_guess_keeps_the_lock`
   - `backend/crates/server/tests/verification_integration.rs::resend_while_locked_issues_no_new_code`
   - `backend/crates/server/tests/verification_integration.rs::reregistering_does_not_reset_a_locked_code`
-  - `backend/crates/server/tests/repository_integration.rs::password_reset_save_upsert_consume`
-  - `backend/crates/server/tests/repository_integration.rs::set_last_sent_at_moves_only_the_named_unlocked_code`
+  - `backend/crates/persistence-postgres/tests/repository_integration.rs::password_reset_save_upsert_consume`
+  - `backend/crates/persistence-postgres/tests/repository_integration.rs::set_last_sent_at_moves_only_the_named_unlocked_code`
   - `backend/crates/domain/src/entities/attempt_lockout.rs::lock_window_table_matches_the_policy`
   - `just models`
 
@@ -339,11 +339,11 @@ attacker who timed a resend with each 5th guess got about 5 guesses per
 - Checks:
   - `models/attempt_claim.qnt::atMostFiveWrongGuessesPerCode`
   - `models/attempt_claim.qnt::goneCodeIsNeverReportedLocked`
-  - `backend/crates/server/tests/model_conformance.rs::email_codes_follow_the_attempt_claim_model`
-  - `backend/crates/server/tests/model_conformance.rs::reset_codes_follow_the_attempt_claim_model`
-  - `backend/crates/server/tests/attempt_lockout_integration.rs::register_attempt_caps_under_concurrency`
-  - `backend/crates/server/tests/attempt_lockout_integration.rs::register_attempt_reports_not_found_without_row`
-  - `backend/crates/server/tests/attempt_lockout_integration.rs::claim_naming_a_replaced_code_finds_no_code`
+  - `backend/crates/persistence-postgres/tests/model_conformance.rs::email_codes_follow_the_attempt_claim_model`
+  - `backend/crates/persistence-postgres/tests/model_conformance.rs::reset_codes_follow_the_attempt_claim_model`
+  - `backend/crates/persistence-postgres/tests/attempt_lockout_integration.rs::register_attempt_caps_under_concurrency`
+  - `backend/crates/persistence-postgres/tests/attempt_lockout_integration.rs::register_attempt_reports_not_found_without_row`
+  - `backend/crates/persistence-postgres/tests/attempt_lockout_integration.rs::claim_naming_a_replaced_code_finds_no_code`
   - `just models`
 - Gap: Accepted (2026-11-16). The model treats each statement as atomic. The claim's "does the code still exist" check reads the statement's snapshot, so a guess whose claim waits on a concurrent replacement or deletion of its code can still be told "locked" rather than "no code". The message is the only effect: no slot is taken and nothing is compared. Fixing it would need a stricter isolation level on every guess, for a wording difference.
 
@@ -364,7 +364,7 @@ the old claim and must keep its counterexample (5 steps).
 - Attackers: A1
 - Strength: tested
 - Checks:
-  - `backend/crates/server/tests/attempt_lockout_integration.rs::register_attempt_caps_under_concurrency`
+  - `backend/crates/persistence-postgres/tests/attempt_lockout_integration.rs::register_attempt_caps_under_concurrency`
 
 The counter is incremented only in SQL, by the repositories' attempt claim
 (`SET attempts = attempts + 1 … WHERE attempts < $2`). It stops at the cap of
@@ -381,7 +381,7 @@ it was deleted rather than kept as a second counter that doesn't matter.
 - Strength: modelled, tested
 - Checks:
   - `models/refresh_rotation.qnt::atMostOneSuccessorPerToken`
-  - `backend/crates/server/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
+  - `backend/crates/persistence-postgres/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
   - `backend/crates/server/tests/refresh_token_integration.rs::concurrent_rotate_lets_exactly_one_winner`
   - `backend/crates/application/src/use_cases/auth/refresh_token.rs::rotates_token_on_valid_refresh`
   - `just models`
@@ -401,7 +401,7 @@ Logins aren't modelled: they mint unrelated tokens.
 - Checks:
   - `models/refresh_rotation.qnt::reuseAfterRotationIsDetected`
   - `models/refresh_rotation.qnt::reuseRevokesEverySession`
-  - `backend/crates/server/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
+  - `backend/crates/persistence-postgres/tests/model_conformance.rs::refresh_tokens_follow_the_rotation_model`
   - `backend/crates/application/src/use_cases/auth/refresh_token.rs::revoked_reuse_revokes_all_even_when_also_expired`
   - `backend/crates/domain/src/entities/refresh_token.rs::a_revoked_token_is_never_accepted`
   - `backend/crates/domain/src/entities/refresh_token.rs::revoking_twice_keeps_the_first_time`
@@ -704,8 +704,8 @@ dump.
   - `backend/crates/domain/src/entities/user.rs::test_schedule_deletion_is_idempotent`
   - `backend/crates/domain/src/entities/user.rs::test_schedule_deletion_sets_future_timestamp`
   - `backend/crates/domain/src/entities/user.rs::test_is_ready_for_deletion_when_scheduled_in_past`
-  - `backend/crates/server/tests/account_deletion_integration.rs::deleted_account_cannot_be_pending_deletion`
-  - `backend/crates/server/tests/account_deletion_integration.rs::anonymize_skips_account_cancelled_after_the_scan`
+  - `backend/crates/persistence-postgres/tests/account_deletion_integration.rs::deleted_account_cannot_be_pending_deletion`
+  - `backend/crates/persistence-postgres/tests/account_deletion_integration.rs::anonymize_skips_account_cancelled_after_the_scan`
 
 **Proven** (Kani, `just verify`) for every status and every time, in any
 order (the transitions only copy and compare times, so the proofs run them

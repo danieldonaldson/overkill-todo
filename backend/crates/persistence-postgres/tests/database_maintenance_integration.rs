@@ -1,7 +1,7 @@
 //! Integration coverage for bounded expiry and retention maintenance.
 
-use server::infrastructure::persistence::DatabaseMaintenance as _;
-use server::infrastructure::persistence::postgres::Database;
+use persistence_postgres::Database;
+use platform::persistence::DatabaseMaintenance as _;
 use sqlx::PgPool;
 use uuid::Uuid;
 

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE email_verification_codes\n         SET magic_token_hash = $2, magic_token_expires_at = $3\n         WHERE user_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7d71b80d289af002df0b47b3d420bf8030a241f07232265d1e2e7a1e97cc1b6a"
+}

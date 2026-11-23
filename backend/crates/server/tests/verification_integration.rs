@@ -11,6 +11,8 @@ use axum::{
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
 };
+use jiff::{SignedDuration, Timestamp};
+use persistence_postgres::testing::{self, CodeTable};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -49,15 +51,8 @@ async fn register(app: &axum::Router, email: &str) {
 }
 
 /// Looks up a user's id by email.
-///
-/// Test glue uses runtime `sqlx::query*` (not the compile-checked macros) so the
-/// suite builds under `SQLX_OFFLINE=true` without regenerating the `.sqlx` cache.
 async fn user_id(pool: &PgPool, email: &str) -> uuid::Uuid {
-    sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM users WHERE email = $1")
-        .bind(email)
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    testing::user_id_by_email(pool, email).await
 }
 
 // ---------------------------------------------------------------------------
@@ -106,14 +101,9 @@ async fn verify_email_expired_code_returns_code_expired(pool: PgPool) {
     let app = common::create_test_app(pool.clone());
     let email = "e2e-expired@example.com";
     register(&app, email).await;
-    let id = user_id(&pool, email).await;
 
     // Push the code into the past.
-    sqlx::query("UPDATE email_verification_codes SET expires_at = NOW() - INTERVAL '1 hour' WHERE user_id = $1")
-        .bind(id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    testing::expire_code_for_email(&pool, CodeTable::EmailVerification, email).await;
 
     let resp = app
         .oneshot(post_json(
@@ -136,11 +126,7 @@ async fn verify_email_locked_code_returns_code_locked(pool: PgPool) {
     let id = user_id(&pool, email).await;
 
     // Drive attempts to the cap (MAX_ATTEMPTS = 5).
-    sqlx::query("UPDATE email_verification_codes SET attempts = 5 WHERE user_id = $1")
-        .bind(id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    testing::set_code_attempts(&pool, CodeTable::EmailVerification, id, 5).await;
 
     let resp = app
         .oneshot(post_json(
@@ -300,11 +286,7 @@ async fn resend_after_cooldown_succeeds(pool: PgPool) {
     let id = user_id(&pool, email).await;
 
     // Age the code past the 5-minute resend cooldown.
-    sqlx::query("UPDATE email_verification_codes SET last_sent_at = NOW() - INTERVAL '10 minutes' WHERE user_id = $1")
-        .bind(id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    testing::age_code_last_sent(&pool, CodeTable::EmailVerification, id, 10).await;
 
     let resp = app
         .oneshot(post_json(
@@ -335,13 +317,7 @@ async fn resend(app: &axum::Router, email: &str) -> (StatusCode, Value) {
 
 /// Reads `(attempts, lockouts)` for a user's verification code row.
 async fn code_counters(pool: &PgPool, id: uuid::Uuid) -> (i32, i32) {
-    sqlx::query_as::<_, (i32, i32)>(
-        "SELECT attempts, lockouts FROM email_verification_codes WHERE user_id = $1",
-    )
-    .bind(id)
-    .fetch_one(pool)
-    .await
-    .unwrap()
+    testing::code_counters(pool, CodeTable::EmailVerification, id).await
 }
 
 /// Every account-dependent outcome — unknown email, already verified, inside
@@ -354,11 +330,8 @@ async fn resend_answers_identically_whatever_the_account_state(pool: PgPool) {
     // Fresh send, past the cooldown: the reference response.
     let ok_email = "e2e-resend-same-ok@example.com";
     register(&app, ok_email).await;
-    sqlx::query("UPDATE email_verification_codes SET last_sent_at = NOW() - INTERVAL '10 minutes' WHERE user_id = $1")
-        .bind(user_id(&pool, ok_email).await)
-        .execute(&pool)
-        .await
-        .unwrap();
+    let ok_id = user_id(&pool, ok_email).await;
+    testing::age_code_last_sent(&pool, CodeTable::EmailVerification, ok_id, 10).await;
     let reference = resend(&app, ok_email).await;
     assert_eq!(reference.0, StatusCode::OK);
 
@@ -369,11 +342,9 @@ async fn resend_answers_identically_whatever_the_account_state(pool: PgPool) {
     // Locked: at the cap, cooldown elapsed, lock window not.
     let locked_email = "e2e-resend-same-locked@example.com";
     register(&app, locked_email).await;
-    sqlx::query("UPDATE email_verification_codes SET attempts = 5, last_sent_at = NOW() - INTERVAL '6 minutes' WHERE user_id = $1")
-        .bind(user_id(&pool, locked_email).await)
-        .execute(&pool)
-        .await
-        .unwrap();
+    let locked_id = user_id(&pool, locked_email).await;
+    testing::set_code_attempts(&pool, CodeTable::EmailVerification, locked_id, 5).await;
+    testing::age_code_last_sent(&pool, CodeTable::EmailVerification, locked_id, 6).await;
 
     // Already verified.
     let verified_email = "e2e-resend-same-verified@example.com";
@@ -403,11 +374,8 @@ async fn resend_while_locked_issues_no_new_code(pool: PgPool) {
     register(&app, email).await;
     let id = user_id(&pool, email).await;
 
-    sqlx::query("UPDATE email_verification_codes SET attempts = 5, last_sent_at = NOW() - INTERVAL '6 minutes' WHERE user_id = $1")
-        .bind(id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    testing::set_code_attempts(&pool, CodeTable::EmailVerification, id, 5).await;
+    testing::age_code_last_sent(&pool, CodeTable::EmailVerification, id, 6).await;
 
     assert_eq!(resend(&app, email).await.0, StatusCode::OK);
     assert_eq!(
@@ -427,11 +395,8 @@ async fn reregistering_does_not_reset_a_locked_code(pool: PgPool) {
     register(&app, email).await;
     let id = user_id(&pool, email).await;
 
-    sqlx::query("UPDATE email_verification_codes SET attempts = 5, last_sent_at = NOW() - INTERVAL '6 minutes' WHERE user_id = $1")
-        .bind(id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    testing::set_code_attempts(&pool, CodeTable::EmailVerification, id, 5).await;
+    testing::age_code_last_sent(&pool, CodeTable::EmailVerification, id, 6).await;
 
     register(&app, email).await; // still a plain 200
     assert_eq!(
@@ -449,23 +414,16 @@ async fn lock_window_doubles_after_each_lockout(pool: PgPool) {
     let email = "e2e-lockout-escalation@example.com";
     register(&app, email).await;
     let id = user_id(&pool, email).await;
-    let lock_20_minutes_ago = "UPDATE email_verification_codes SET attempts = 5, last_sent_at = NOW() - INTERVAL '20 minutes' WHERE user_id = $1";
 
     // First lock (15 min) has expired: the resend replaces the code.
-    sqlx::query(lock_20_minutes_ago)
-        .bind(id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    testing::set_code_attempts(&pool, CodeTable::EmailVerification, id, 5).await;
+    testing::age_code_last_sent(&pool, CodeTable::EmailVerification, id, 20).await;
     resend(&app, email).await;
     assert_eq!(code_counters(&pool, id).await, (0, 1));
 
     // Second lock is 30 min, so 20 min later the code is still locked.
-    sqlx::query(lock_20_minutes_ago)
-        .bind(id)
-        .execute(&pool)
-        .await
-        .unwrap();
+    testing::set_code_attempts(&pool, CodeTable::EmailVerification, id, 5).await;
+    testing::age_code_last_sent(&pool, CodeTable::EmailVerification, id, 20).await;
     resend(&app, email).await;
     assert_eq!(
         code_counters(&pool, id).await,
@@ -520,26 +478,8 @@ async fn register_existing_account_answers_like_a_new_signup(pool: PgPool) {
 async fn plant_magic_token(pool: &PgPool, id: uuid::Uuid, expired: bool) -> String {
     let token = uuid::Uuid::new_v4().to_string();
     let hash = hex::encode(Sha256::digest(token.as_bytes()));
-    // Two fixed literal queries (no interpolation) keep the SQL static.
-    if expired {
-        sqlx::query(
-            "UPDATE email_verification_codes SET magic_token_hash = $2, magic_token_expires_at = NOW() - INTERVAL '1 hour' WHERE user_id = $1",
-        )
-        .bind(id)
-        .bind(&hash)
-        .execute(pool)
-        .await
-        .unwrap();
-    } else {
-        sqlx::query(
-            "UPDATE email_verification_codes SET magic_token_hash = $2, magic_token_expires_at = NOW() + INTERVAL '24 hours' WHERE user_id = $1",
-        )
-        .bind(id)
-        .bind(&hash)
-        .execute(pool)
-        .await
-        .unwrap();
-    }
+    let offset = SignedDuration::from_hours(if expired { -1 } else { 24 });
+    testing::set_verification_magic_token(pool, id, &hash, Timestamp::now() + offset).await;
     token
 }
 
@@ -566,11 +506,7 @@ fn confirm_magic(token: &str) -> Request<Body> {
 }
 
 async fn email_verified(pool: &PgPool, id: uuid::Uuid) -> bool {
-    sqlx::query_scalar::<_, bool>("SELECT email_verified FROM users WHERE id = $1")
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap()
+    testing::is_email_verified(pool, id).await
 }
 
 /// The legacy GET link only forwards the token to the frontend confirmation

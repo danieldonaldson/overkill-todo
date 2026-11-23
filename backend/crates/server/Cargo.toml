@@ -22,12 +22,12 @@ shared = { path = "../shared" }
 domain = { path = "../domain" }
 application = { path = "../application" }
 platform = { path = "../platform" }
+persistence-postgres = { path = "../persistence-postgres" }
 
 axum.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tower.workspace = true
 tower-http.workspace = true
-sqlx.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jsonwebtoken.workspace = true
@@ -41,7 +41,6 @@ base64.workspace = true
 urlencoding.workspace = true
 validator.workspace = true
 jiff = { workspace = true, features = ["serde"] }
-jiff-sqlx.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 tracing.workspace = true
@@ -61,13 +60,13 @@ utoipa-axum.workspace = true
 [dev-dependencies]
 application = { path = "../application", features = ["test-support"] }
 platform = { path = "../platform", features = ["test-support"] }
+persistence-postgres = { path = "../persistence-postgres", features = ["test-support"] }
+sqlx.workspace = true
 # In-memory span and metric exporters for asserting on exported telemetry in tests.
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 wiremock.workspace = true
 criterion.workspace = true
-# Reads the Quint models' ITF traces for the conformance replay (`just models`).
-itf.workspace = true
 
 # Criterion benches (`just bench`). `harness = false` hands `main` to criterion.
 # They share `tests/common` with the integration tests for app wiring and keys.

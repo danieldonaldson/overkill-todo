@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT concat_ws(' | ',\n            coalesce((SELECT row_to_json(u)::text FROM users u WHERE u.id = $1), 'null'),\n            coalesce((SELECT json_agg(o ORDER BY o.id)::text FROM user_oauth_accounts o WHERE o.user_id = $1), 'null'),\n            coalesce((SELECT json_agg(r ORDER BY r.id)::text FROM refresh_tokens r WHERE r.user_id = $1), 'null'))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "concat_ws",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "63caeacbf0f6d8f9c536470f4016736cb436422ecd6f3f4c8523d5397da0ba0b"
+}
