@@ -26,7 +26,7 @@ const RANKS: &[(&str, u8)] = &[
     ("shared", 0),
     ("domain", 0),
     ("application", 1),
-    ("platform", 2),
+    ("platform", 1),
     ("persistence-postgres", 3),
     ("services", 3),
     ("api", 3),
@@ -37,7 +37,7 @@ const ALLOWED_EDGES: &[(&str, &[&str])] = &[
     ("shared", &[]),
     ("domain", &[]),
     ("application", &["domain", "shared"]),
-    ("platform", &["shared", "domain", "application"]),
+    ("platform", &["shared"]),
     (
         "persistence-postgres",
         &["domain", "application", "platform"],

@@ -28,9 +28,6 @@ use crate::ports::outgoing::{
 use domain::value_objects::UserId;
 use shared::fingerprint::generate_error_fingerprint;
 
-/// Default for `CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC` (Decision 9).
-pub const DEFAULT_MAX_EVENTS_PER_SEC: u32 = 200;
-
 /// Longest `source` and `api_route` kept, in characters (the DTO's limits).
 const MAX_SOURCE_CHARS: usize = 500;
 const MAX_API_ROUTE_CHARS: usize = 200;
@@ -456,6 +453,8 @@ mod tests {
 
     use super::*;
     use crate::dto::{ClientErrorKind, IslandStage, VitalName};
+
+    const DEFAULT_MAX_EVENTS_PER_SEC: u32 = 200;
 
     const CHROME_DESKTOP: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
     const SAFARI_IPHONE: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1";

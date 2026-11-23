@@ -14,12 +14,12 @@
 use opentelemetry::KeyValue;
 use opentelemetry::metrics::{Counter, Histogram, Meter};
 
-use super::metrics::global_meter;
 use application::dto::{NavType, Rating};
 use application::ports::outgoing::{
     ClientErrorReport, ClientIslandReport, ClientNavigationReport, ClientPageLoadReport,
     ClientReportSink, ClientVitalReport,
 };
+use platform::telemetry::metrics::global_meter;
 
 /// Buckets for the millisecond vitals.
 ///
@@ -284,13 +284,15 @@ mod tests {
     use super::*;
     use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 
-    use crate::telemetry::metrics::testing::Attrs;
-    use crate::telemetry::metrics::{METER_NAME, testing};
     use application::dto::{
         ClientErrorKind, IslandStage, NavOutcome, ViewTransitionResult, VitalName,
     };
     use application::use_cases::auth::log_capture::LogCapture;
     use domain::value_objects::UserId;
+    use platform::telemetry::metrics::{
+        METER_NAME,
+        testing::{self, Attrs},
+    };
 
     fn report(user_id: Option<UserId>) -> ClientErrorReport {
         ClientErrorReport {

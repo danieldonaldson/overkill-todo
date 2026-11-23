@@ -23,9 +23,7 @@ use application::{
         RequestAccountDeletionUseCase, RequestPasswordResetUseCase, ResendVerificationUseCase,
         ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase, SetPasswordUseCase,
         SetUserRoleUseCase, ValidateResetCodeUseCase, VerifyEmailUseCase, VerifyMagicLinkUseCase,
-        telemetry::{
-            RecordClientTelemetryUseCase, record_client_telemetry::DEFAULT_MAX_EVENTS_PER_SEC,
-        },
+        telemetry::RecordClientTelemetryUseCase,
     },
 };
 use axum::Router;
@@ -40,9 +38,10 @@ use services::{
 };
 use sqlx::PgPool;
 
+use platform::config::DEFAULT_MAX_EVENTS_PER_SEC;
 use platform::crypto::Crypto;
-use platform::telemetry::client_reports::TelemetryClientReportSink;
 use platform::telemetry::metrics::AuthMetrics;
+use services::TelemetryClientReportSink;
 
 static TEST_CRYPTO: OnceLock<Arc<Crypto>> = OnceLock::new();
 

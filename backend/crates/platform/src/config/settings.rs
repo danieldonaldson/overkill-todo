@@ -12,7 +12,8 @@
 
 use std::sync::OnceLock;
 
-use application::use_cases::telemetry::record_client_telemetry::DEFAULT_MAX_EVENTS_PER_SEC;
+/// Default for `CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC`.
+pub const DEFAULT_MAX_EVENTS_PER_SEC: u32 = 200;
 
 static DEV_MODE: OnceLock<bool> = OnceLock::new();
 

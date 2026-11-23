@@ -3,6 +3,7 @@
     reason = "`#[async_trait]` marks its boxed futures `#[must_use]`; not actionable here"
 )]
 
+pub mod client_reports;
 pub mod code_generator;
 
 pub mod email_service;
@@ -18,6 +19,7 @@ pub mod password_hasher;
 pub mod token_service;
 pub mod turnstile_service;
 
+pub use client_reports::TelemetryClientReportSink;
 pub use code_generator::RandomCodeGenerator;
 
 pub use email_service::{ConsoleEmailService, SmtpEmailService};

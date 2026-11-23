@@ -9,7 +9,6 @@
 //! trace IDs, so `X-Trace-Id` and log correlation work the same everywhere, and
 //! a meter provider with no reader makes instruments no-ops.
 
-pub mod client_reports;
 pub mod log_format;
 pub mod metrics;
 pub mod redact;

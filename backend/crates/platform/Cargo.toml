@@ -8,7 +8,6 @@ publish.workspace = true
 test-support = ["opentelemetry_sdk/testing"]
 
 [dependencies]
-application = { path = "../application" }
 shared = { path = "../shared" }
 
 aes-gcm.workspace = true
@@ -39,8 +38,6 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
 uuid = { workspace = true, features = ["v4"] }
 
 [dev-dependencies]
-application = { path = "../application", features = ["test-support"] }
-domain = { path = "../domain" }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }

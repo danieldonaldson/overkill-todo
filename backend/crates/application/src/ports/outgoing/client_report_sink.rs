@@ -106,7 +106,7 @@ pub struct ClientIslandReport {
 ///
 /// # Implementors
 ///
-/// - `infrastructure::telemetry::client_reports::TelemetryClientReportSink`
+/// - `services::client_reports::TelemetryClientReportSink`
 pub trait ClientReportSink: Send + Sync {
     /// Record one browser error.
     fn error(&self, report: &ClientErrorReport);

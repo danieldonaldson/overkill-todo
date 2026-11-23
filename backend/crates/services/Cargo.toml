@@ -19,6 +19,7 @@ hickory-resolver.workspace = true
 jiff.workspace = true
 jsonwebtoken.workspace = true
 lettre.workspace = true
+opentelemetry.workspace = true
 rand.workspace = true
 reqwest.workspace = true
 serde.workspace = true
@@ -29,8 +30,10 @@ urlencoding.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+application = { path = "../application", features = ["test-support"] }
 platform = { path = "../platform", features = ["test-support"] }
 
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 wiremock.workspace = true

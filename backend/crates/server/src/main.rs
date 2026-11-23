@@ -385,7 +385,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     let client_telemetry_deps = Arc::new(ClientTelemetryHandlerDeps {
         record: Arc::new(
             RecordClientTelemetryUseCase::new(
-                Arc::new(telemetry::client_reports::TelemetryClientReportSink::from_global()),
+                Arc::new(services::TelemetryClientReportSink::from_global()),
                 settings.telemetry.client_max_events_per_sec,
             )
             .with_own_release(&settings.telemetry.version),
