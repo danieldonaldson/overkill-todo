@@ -34,7 +34,7 @@ the riskiest unknown.
     `publish = false`, inherited by every member
   - `[workspace.dependencies]` for every third-party crate
   - `[workspace.lints]` carrying `unexpected_cfgs` and the clippy groups now
-    passed in the justfile
+    passed in the justfile, with the groups at `priority = -1`
   - profiles unchanged
 
   Verify `cargo metadata` lists the members.
@@ -52,15 +52,27 @@ the riskiest unknown.
   - the `double_must_use` allow at each async_trait crate root
   - `pub(crate)` widened only where the compiler requires
   - the binary still named `overkill-todo`
-  - `APP_TARGETS` in server, passed to `telemetry::init`, which builds the
-    default and export filters from it (D3). The `overkill_todo=…` test
-    filters (`tasks/job.rs`, `telemetry/log_format.rs`, the
-    `telemetry`, `client_telemetry` and `auth_metrics` integration tests)
-    use the list or the crate's own name. A `RUST_LOG` note goes in
-    `README.md` and `.env.example`.
+  - `APP_TARGETS` in server: every lib and bin target, so including
+    `overkill_todo` for `main.rs` (D3)
+  - `telemetry::export_filter(targets, extra)` added. `telemetry::subscriber`
+    takes the export filter as a parameter, and `telemetry::init` takes the
+    targets and extra directives.
+  - the `overkill_todo=…` test filters (`tasks/job.rs`,
+    `telemetry/log_format.rs`, `telemetry/http.rs`, and the `telemetry`,
+    `client_telemetry` and `auth_metrics` integration tests) pass
+    `APP_TARGETS` (plus the statement directive where they assert on it)
+    or the crate's own name
+  - a `RUST_LOG` note in `README.md` and `.env.example`
+  - `test-support` features (D4): `domain` for `UserBuilder`, enabled from
+    application's dev-deps; `application` for `LogCapture`, enabled from
+    server's dev-deps
+  - outward rustdoc links in application ports become code spans, and the
+    `shared::fingerprint` doctest uses `shared::…`
   - `swagger-ui` feature on the server crate
 
-  Verify `cargo build --workspace` and `SQLX_OFFLINE=true cargo build`.
+  Verify `cargo build --workspace`, `SQLX_OFFLINE=true cargo build`, and
+  that `cargo test --workspace --no-run` and `cargo test --doc --workspace`
+  build.
 - [ ] 1.5 sqlx in the workspace (D5):
   - `sqlx::migrate!` and every `#[sqlx::test(migrations = …)]` point at
     `backend/migrations`
@@ -91,12 +103,15 @@ the riskiest unknown.
   - `bench -p server`
   - `run -p server` in `just dev`, in both the cargo-watch command and
     the plain `cargo run` fallback
-  - `export_openapi` via `-p server` (it moves to the api crate in a
-    later slice)
+  - `export_openapi` via `-p server` in the justfile and in CI's "API spec
+    current" step (it moves to the api crate in a later slice)
   - `scripts/models.sh`: `nextest run -p server --test model_conformance`
-  - CI release-feature clippy: `-p server --lib --bins --no-default-features`
-  - CI offline-cache step calls `just db-prepare-check`, so it prints the
-    same message
+  - CI release-feature clippy:
+    `--workspace --lib --bins --no-default-features`
+  - CI offline-cache step: `cargo sqlx prepare --workspace --check` with an
+    `::error::` fallback naming `just db-prepare` (the job has no `just`)
+  - CI `verify` job: Kani action `args` gain `--workspace`
+  - `.gitignore`: `backend/**/proptest-regressions/`
   - `.husky/pre-commit`: both path patterns (the backend trigger and the
     API-spec reminder) match the crate layout
   - `.github/workflows/bench.yml`: path filters on `backend/crates/**`,
@@ -112,7 +127,10 @@ the riskiest unknown.
   (D7). Keep `.cargo/config.toml` before the dependency build in the dev stage.
   Build the release with `-p server --no-default-features`, and give
   `cargo chef cook` exactly the same profile, package and feature flags as
-  the build after it, in both stages. In the dev stage, drop
+  the build after it, in both stages. Add a planner stage
+  (`COPY . .` then `cargo chef prepare`), and copy only its `recipe.json`
+  into the builder and dev stages before cook. In the dev stage, keep
+  the registry `chmod` on the cook layer before `CARGO_NET_OFFLINE`, drop
   `touch src/main.rs src/lib.rs`, build with `-p server`, and run
   `cargo watch -x 'run -p server'`. Verify:
   - `just` image build succeeds
@@ -123,12 +141,16 @@ the riskiest unknown.
 - [ ] 1.9 Crate edge gate (D6): add `crates/server/tests/crate_graph.rs`:
   - it reads `cargo metadata --no-deps --offline --locked`
   - the rank table (shared/domain 0, application 1, server 4; later crates
-    added as they appear), checked for normal, build and dev edges
-  - the third-party allowlists for `domain` and `application`, taken from
-    their manifests at the split
+    added as they appear), checked for normal, build and dev edges, and
+    every edge goes to a strictly lower rank
+  - the third-party allowlists for `domain` and `application`, normal and
+    dev kept apart, taken from their manifests at the split
+  - every lib and bin target name (with `-` turned into `_`) is in
+    `APP_TARGETS`
 
   Verify locally, reverting each change after:
   - adding `server` as a dependency of `domain` fails it
+  - adding `shared` as a dependency of `domain` fails it (same rank)
   - adding `server` as a dev-dependency of `application` fails it
   - adding `axum.workspace = true` to `domain` fails it, naming domain and
     axum
@@ -156,8 +178,12 @@ the riskiest unknown.
   - the `// Checks:` lines in `models/auth_protocols.spthy`
   - the `backend/tests/*.rs::*` pattern and its resolver in
     `scripts/threat-model-check.sh`
+  - `backend/README.md`'s layout section, and the path comments in
+    `models/attempt_claim.qnt` and `models/refresh_rotation.qnt`
 
-  Verify `just threat-model-check` and `just protocols` pass.
+  Verify `just threat-model-check` and `just protocols` pass, and that
+  `grep -rn 'backend/src/\|backend/tests/[a-z_]*\.rs'` over docs, models
+  and scripts finds nothing stale.
 - [ ] 1.13 `just ci` green. No deploy exists yet. Note for the first deploy:
   the image build now uses cargo-chef, and the binary name and path are
   unchanged.
@@ -168,28 +194,44 @@ the riskiest unknown.
   remaining slices here, in this order:
   - (a) Untangle the cross-adapter edges (D3) and extract `platform`
     (D1). Before the move:
-    - the HTTP span/metrics middleware leaves `telemetry/http.rs` for the
-      api module (still in `server` until (c))
+    - the HTTP span/metrics middleware, `HEALTH_ROUTES` and
+      `UNTRACED_ROUTES` leave `telemetry/http.rs` for the api module
+      (still in `server` until (c))
     - `settings.rs` uses `http::HeaderValue`
     - `Persistence` stays in `server` until (b)
 
-    Add `platform`'s `test-support` feature (D4). Verify that
-    `cargo tree -p platform -e normal` shows no axum or tower-http.
+    Add `platform`'s `test-support` feature (D4), covering the crypto and
+    keyring helpers and `metrics::testing`. Enable `application`'s
+    `test-support` from platform's dev-deps (for `LogCapture` in the
+    client-reports tests). Verify that `cargo tree -p platform -e normal`
+    shows no axum or tower-http.
   - (b) Extract `persistence-postgres`, moving `Persistence`, its
     adapter-level tests (D4), `sqlx.toml` and `model_conformance`
-    (`scripts/models.sh` switches to `-p persistence-postgres`). Replace
-    every SQL statement in server's tests and benches with fixtures from its
-    `testing` module (D5), including the `http` bench's database setup.
-    Add three
-    checks to the edge gate (D6): the `sqlx::`-path scan with its allowlist,
-    the rule that only this crate has `sqlx` as a normal dependency, and the
-    unused-fixture check. Verify that a `raw_sql` call, an imported
-    `query(…)` and an `Executor::execute(&pool, "…")` in a server test each
-    fail the scan, and that an uncalled fixture fails the gate. This covers
-    "SQL runs only in the database adapter".
+    (`scripts/models.sh` switches to `-p persistence-postgres`), plus
+    the schema tests from `audit_log_integration`.
+    - Drop `From<sqlx::Error> for DatabaseError` and use
+      `.map_err(DatabaseError::new)?` at its sites (D3).
+    - Replace every SQL statement in server's tests and benches with
+      fixtures from its `testing` module (D5), including the `http` bench's
+      database setup and the whole `dump_database` helper.
+      `tasks_integration` uses `LeaderLocks` instead.
+    - Delete the doc comments in server tests that mention `sqlx::query*`.
+
+    Add three checks to the edge gate (D6): the `sqlx::`-path scan (comments
+    stripped, braced and glob imports rejected) with its allowlist, the rule
+    that only this crate has `sqlx` as a normal dependency, and the
+    unused-fixture check (`pub fn` and `pub async fn`). Verify that each of
+    these in a server test fails the scan: a `raw_sql` call, an imported
+    `query(…)`, a `use sqlx::{PgPool, query}` and an
+    `Executor::execute(&pool, "…")`. Also verify that an uncalled fixture
+    fails the gate. This covers "SQL runs only in the database adapter".
   - (c) Extract `services` and `api` (`export_openapi` moves
-    to api), leaving `server` as wiring, tasks, full-stack tests and
-    benches.
+    to api, and CI's "API spec current" step uses `-p api`), leaving
+    `server` as wiring, tasks, full-stack tests and benches. `api` has no
+    default features, and server depends on it with
+    `default-features = false` (D2). Verify that a clippy warning under
+    `#[cfg(not(feature = "swagger-ui"))]` in `api` fails CI's
+    release-feature clippy step.
 
   Each slice adds its crates to the edge table and to `APP_TARGETS`. It
   re-points the threat-model, Tamarin `Checks:` and pre-commit paths for the

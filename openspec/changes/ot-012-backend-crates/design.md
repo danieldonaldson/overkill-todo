@@ -13,7 +13,9 @@ before writing this (2026-11-20):
   outgoing port, and only application use-case tests use the mocks.
 - **The orphan rule holds.** Every foreign-trait impl in infrastructure is on a
   local type or has the form `From<Local> for Foreign`, so nothing breaks when
-  domain and application types move to other crates.
+  domain and application types move to other crates. The one impl that
+  breaks is between infrastructure crates: `From<sqlx::Error> for
+  DatabaseError` once `platform` and `persistence-postgres` are split (D3).
 - **Infrastructure modules have three tangles** that would block crate
   boundaries:
   - `persistence ↔ telemetry`: the audit-log repository calls
@@ -144,10 +146,10 @@ that adapter hands the server, which is its only user.
 
 `platform` does not depend on axum or tower-http:
 
-- The HTTP span/metrics middleware in `telemetry/http.rs` moves to `api`.
-  `current_trace_id` and the untraced-route list stay in
-  `platform::telemetry`, because the postgres audit adapter and the api
-  `trace_id` middleware both read them.
+- The HTTP span/metrics middleware in `telemetry/http.rs` moves to `api`,
+  along with `HEALTH_ROUTES` and `UNTRACED_ROUTES`, which only it reads.
+  `current_trace_id` stays in `platform::telemetry`, because the postgres
+  audit adapter and the api `trace_id` middleware both read it.
 - `config/settings.rs` checks CORS origins with `http::HeaderValue` (the
   `http` crate) in place of the axum re-export.
 
@@ -201,20 +203,31 @@ Commands still run from `backend/`, so `dotenvy` finds `.env` as before.
   `foo.workspace = true`. Version bumps stay one-line.
 - The clippy groups (pedantic, nursery, `allow_attributes_without_reason`) and
   `unexpected_cfgs` move into `[workspace.lints]`, so editor `cargo clippy`
-  matches the gate. The justfile keeps `-D warnings` and adds `--workspace`.
+  matches the gate. The groups get `priority = -1`, so single lints such as
+  `allow_attributes_without_reason` override them; otherwise
+  `clippy::lint_groups_priority` (deny by default) fails. The justfile keeps
+  `-D warnings` and adds `--workspace`.
   Every crate that uses `async_trait` repeats the `double_must_use` allow
   (with its reason) at its root.
-- `swagger-ui` stays an optional dep of `api`. `server`
-  re-exposes it as its default feature
-  (`swagger-ui = ["api/swagger-ui"]`), and release builds still pass
+- `swagger-ui` stays an optional dep of `api`, and `api` has no default
+  features. `server` depends on `api` with `default-features = false` and
+  re-exposes it as its own default feature
+  (`swagger-ui = ["api/swagger-ui"]`). So `--no-default-features` on
+  `server` really turns it off, and release builds still pass
   `--no-default-features`.
 
 ### D3. Untangling the cross-adapter edges
 
 - **`STATEMENT_LOG_DIRECTIVE`** is driver-specific (it names sqlx's log
   target). It moves to `persistence-postgres`, and the server passes
-  it into telemetry init as an extra filter directive. Telemetry no longer
-  knows the driver.
+  it in as an extra filter directive (see the log-filter bullet below).
+  Telemetry no longer knows the driver.
+- **`From<sqlx::Error> for DatabaseError`** can't stay. In
+  `persistence-postgres`, `From`, `sqlx::Error` and `platform`'s
+  `DatabaseError` are all foreign, so the impl breaks the orphan rule
+  (E0117). It's dropped, and its `?` sites in `connection.rs`,
+  `advisory_lock.rs` and `maintenance.rs` use
+  `.map_err(DatabaseError::new)?`, as `run_migrations` already does.
 - **`Database` alias** lives only in `server`, so only the server
   knows which driver is selected.
 - **The api crate** defines a small object-safe `ReadinessCheck` trait
@@ -228,16 +241,28 @@ Commands still run from `backend/`, so `dotenvy` finds `.env` as before.
   No change needed.
 - **The `jwt_service` vs `create_jwt` cross-check** spans two adapters, so it
   moves to `server`'s tests.
-- **Log and trace filters name every workspace crate.** `server` holds the
-  list of workspace crate names (`APP_TARGETS`) and passes it to
-  `telemetry::init`. Init builds the default and export filters from that
-  list (`domain=info,application=info,…,tower_http=info`) plus the
-  driver's directive, so platform never names the other crates.
-  - `crate_graph.rs` (D6) fails if a workspace member isn't in
-    `APP_TARGETS`, so a new crate's logs can't silently go missing.
-  - Server's tests and tasks build their filters from the same list. Tests
-    inside one crate filter on that crate's own name
-    (`env!("CARGO_CRATE_NAME")`).
+- **Log and trace filters name every workspace crate.** `server` holds
+  `APP_TARGETS`, the tracing target of every lib and bin in the workspace.
+  A target is the crate name with `-` turned into `_`
+  (`persistence_postgres`), and the bin keeps its own: `main.rs` compiles
+  as crate `overkill_todo`, so its startup and shutdown logs carry that
+  target. Telemetry gets the targets from its callers, never from its own
+  list:
+  - `telemetry::export_filter(targets, extra)` builds the filter
+    (`domain=info,…,overkill_todo=info,tower_http=info`, plus extra
+    directives such as the driver's).
+  - `telemetry::subscriber` takes that filter as a parameter, rather than
+    calling a private `export_filter()`. Six test suites build the
+    subscriber directly and assert on exported spans.
+  - `telemetry::init` takes the targets and the extra directives, and builds
+    the default stdout filter the same way.
+  - `crate_graph.rs` (D6) reads every lib and bin target from
+    `cargo metadata` and fails if one isn't in `APP_TARGETS`, so a new
+    crate's logs can't silently go missing.
+  - Server's tests and tasks pass `APP_TARGETS` plus
+    `STATEMENT_LOG_DIRECTIVE` (`telemetry_integration` asserts on `repo.*`
+    spans and `db.statement` events). Unit tests inside one crate pass
+    `[env!("CARGO_CRATE_NAME")]`.
   - Changed for operators: a hand-set `RUST_LOG=overkill_todo=debug` no
     longer matches anything. `RUST_LOG` names crates now
     (`RUST_LOG=api=debug`). The README and `.env.example` say so. No
@@ -254,23 +279,41 @@ Commands still run from `backend/`, so `dotenvy` finds `.env` as before.
 - **Adapter-level integration tests** go to that adapter's `tests/` when they
   need only the adapter and inner crates. They take a dev-dependency on
   `platform` with its `test-support` feature, for `Crypto::for_testing`.
-- **`platform` gets a `test-support` feature.** Today
-  `Crypto::for_testing`, `Crypto::for_testing_with_tokens`,
-  `TEST_RSA_PRIVATE_KEY` and `telemetry::metrics::testing` are
-  `#[cfg(test)]`, so other crates' tests can't see them. They move behind
-  `#[cfg(any(test, feature = "test-support"))]`, and the feature also
-  enables `opentelemetry_sdk/testing`. Like every `test-support` feature,
-  it's enabled only from `[dev-dependencies]`.
+- **Cross-crate `#[cfg(test)]` helpers move behind `test-support`
+  features.** `#[cfg(test)]` is only set for the crate whose tests are
+  running, so its dependencies can't see their own test-only items. Each
+  item below moves behind `#[cfg(any(test, feature = "test-support"))]` in
+  the crate it lives in, and like every `test-support` feature it's enabled
+  only from `[dev-dependencies]`:
+  - `domain`: `UserBuilder` (used by 10 application use-case test modules).
+    Slice 1.
+  - `application`: `use_cases::auth::log_capture::LogCapture` (used by
+    `telemetry/client_reports.rs` tests). Slice 1.
+  - `platform`: `Crypto::for_testing`, `Crypto::for_testing_with_tokens`,
+    `TokenKeyring::for_testing`, `keyring::test_entry`,
+    `TEST_RSA_PRIVATE_KEY` and `telemetry::metrics::testing`. The feature
+    also enables `opentelemetry_sdk/testing`. Slice (a).
+
+  A later item of this kind is found by the compiler, when a dependent's
+  tests fail to build.
+- **Adapter-level integration tests** that move out of `server/tests/`:
   - Postgres adapter: `attempt_lockout`, `database_maintenance`,
-    `model_conformance`, and `repository_integration` if its use of `common`
-    is only crypto.
+    `model_conformance`, `repository_integration`, `integrity_integration`
+    and `telemetry_metrics_integration`. None uses the HTTP harness; the
+    first two have a dead `mod common;`, which is dropped. Also the six
+    schema tests in `audit_log_integration` (append-only trigger, `CHECK`
+    constraints, `TRUNCATE`) and `deleted_account_cannot_be_pending_deletion`.
+    They test the schema directly, not the router, so their SQL stays as
+    written in the crate that owns the schema.
   - Platform: `tls_key_exchange`.
   - Benefit: a query edit reruns its repository tests without building axum.
 - **Full-stack tests** (anything using the `tests/common` HTTP harness or
   more than one adapter) go to `server/tests/` along with `common/`.
-  That's most files, including `tasks`, `telemetry_metrics`, `token_keys` and
-  `route_guards`. The server is the composition root, and these tests
-  exercise the assembled app.
+  That's most files, including `tasks`, `token_keys` and `route_guards`.
+  The server is the composition root, and these tests exercise the assembled
+  app. `tasks_integration` swaps its raw `pg_try_advisory_lock` /
+  `pg_advisory_unlock` queries for the `LeaderLocks` port
+  (`try_lock` / `release`), so it needs no new fixtures.
   - Alternative rejected: a separate `integration-tests` crate. It would
     depend on everything the server does and rebuild just as often, only
     with one more manifest.
@@ -315,11 +358,19 @@ Commands still run from `backend/`, so `dotenvy` finds `.env` as before.
   - time travel: `expire_verification_codes(user)`,
     `expire_refresh_tokens(user)`, `backdate_deletion(user, by)`
   - probes: `count_refresh_tokens(user)`, `refresh_token_revoked_at(id)`,
-    `table_names()`
+    `dump_database()` (the whole helper from `auth_properties_integration`,
+    including its per-table `row_to_json` reads, not just the table list)
+  - schema and bench plumbing: the `ALTER TABLE … ADD CONSTRAINT` in
+    `telemetry_integration`, and the `http` bench's database setup and
+    `VACUUM ANALYZE`
 
-  Each fixture is a checked `query!`, so the 65 runtime queries become
-  compile-checked too, in line with the "`query!` only" rule. A schema change
-  then breaks only this crate, never the HTTP tests. `server` enables
+  Each fixture is a checked `query!` wherever the statement allows it, so
+  most of the 65 runtime queries become compile-checked too, in line with
+  the "`query!` only" rule. Some can't be: SQL built at runtime
+  (`dump_database` formats each table name in) and any utility statement
+  sqlx can't prepare (`VACUUM`, if so). Those stay runtime queries inside
+  this crate, each with a comment saying why. A schema change then breaks
+  only this crate, never the HTTP tests. `server` enables
   the feature only from `[dev-dependencies]`, so the fixtures never reach the
   release graph. The fixtures are `pub` items in a library, so `dead_code`
   never flags one that no test calls. The edge gate (D6) checks that instead.
@@ -347,25 +398,34 @@ enough, and it needs no network) and checks four things:
   edges follow the same rank rules as the others. The one extra they allow is
   `testkit`.
 - **Third-party dependencies of the inner layers.** `domain` and
-  `application` each have an allowlist of the third-party crates they may
-  depend on, taken from what they use at the split (domain: `jiff`, `uuid`,
-  `thiserror`). A new entry needs a deliberate edit to the test. Without
+  `application` each have two allowlists, taken from their manifests at the
+  split:
+  - normal dependencies (domain: `jiff`, `uuid`, `thiserror`; application
+    adds e.g. `serde`, `utoipa`, `validator`, `async-trait`, `tracing`)
+  - dev dependencies, i.e. test tooling (`proptest`, `mockall`, `tokio`,
+    `tracing-subscriber`, `serde_json`)
+
+  `cargo metadata` lists both kinds under `dependencies`, so the test splits
+  them by `kind`. A new entry needs a deliberate edit to the test. Without
   this, adding `axum.workspace = true` to domain's manifest would compile, and
   the "Domain code reaching outward does not compile" scenario would not hold.
   `sqlx` may be a normal dependency only of `persistence-postgres`, and a dev
   dependency only of `server`.
 - **SQL outside the database adapter.** The test scans the sources, tests
-  and benches of every crate except `persistence-postgres`. It fails on any
-  `sqlx::` path or `use sqlx` import that isn't on a short allowlist
-  (`sqlx::test`, `sqlx::PgPool`, `sqlx::postgres::PgPoolOptions` where
-  the harness needs it), naming the file and line. That catches
+  and benches of every crate except `persistence-postgres`, with comments
+  stripped first. It fails on any `sqlx::` path or `use sqlx` import that
+  isn't on a short allowlist (`sqlx::test`, `sqlx::PgPool`,
+  `sqlx::postgres::PgPoolOptions` where the harness needs it), naming the
+  file and line. Braced and glob imports (`use sqlx::{…}`, `use sqlx::*`)
+  always fail; write one allowlisted `use sqlx::…;` per line. That catches
   `query*`/`query_as*`, and also `raw_sql`, `Executor::execute(&pool, "…")`
   and imported `query(…)`. Server's dev-dependency on `sqlx` exists only for
   `#[sqlx::test]`, so nothing in the dependency graph stops it running SQL.
-- **Unused fixtures.** Every `pub fn` in `persistence-postgres`'s `testing`
-  module is called somewhere in another crate's tests or benches.
-- **Log targets.** Every workspace member is listed in server's
-  `APP_TARGETS` (D3).
+- **Unused fixtures.** Every `pub fn` or `pub async fn` in
+  `persistence-postgres`'s `testing` module is called somewhere in another
+  crate's tests or benches.
+- **Log targets.** Every lib and bin target in the workspace (name with `-`
+  turned into `_`) is in server's `APP_TARGETS` (D3).
 
 Each crate in the table has a rank:
 
@@ -381,8 +441,10 @@ The test fails when:
 
 - an edge isn't in the table
 - a workspace member has no row
-- any edge in the table goes from a lower rank to a higher one, or between
-  two rank-3 adapters
+- any edge in the table doesn't go to a strictly lower rank. That rules out
+  edges between the two rank-0 crates (`domain` → `shared` included) and
+  between rank-3 adapters. Only `application` may use `shared`.
+  `testkit` is the one exception: dev edges may point at it.
 
 It runs under `just test-integration`, which is already in `just ci`.
 
@@ -413,6 +475,17 @@ the dev stage). If they differ, the cached deps are built with a different
 feature set (for example with swagger-ui), and the real build recompiles
 them.
 
+The recipe comes from a separate **planner stage**: `COPY . .`, then
+`cargo chef prepare --recipe-path recipe.json`. Both the release builder
+and the dev stage do `COPY --from=planner /app/recipe.json recipe.json`
+before `cargo chef cook`. `cargo chef prepare` needs every member's
+manifest, and `COPY crates/*/Cargo.toml` flattens the directories. Running
+`COPY . .` in the builder before cook would break the cache on every source
+edit. The recipe only changes when manifests or the lockfile do, so the cook
+layer stays cached. In the dev stage, the cook layer keeps today's
+`&& chmod -R a+rX "$CARGO_HOME/registry"` before
+`ENV CARGO_NET_OFFLINE=true`.
+
 - Alternative: a script that generates stubs from `cargo metadata`. Fewer
   tools, but more of our own code to keep correct.
 
@@ -441,8 +514,10 @@ All of these go through `just`, so commands keep their names (spec:
 | bench | `cargo bench -p server --bench …` |
 | `just dev` fallback (no cargo-watch) | `cargo run -p server` |
 | `just models` (`scripts/models.sh`) | `cargo nextest run -p <crate> --test model_conformance` (`server` in slice 1, `persistence-postgres` from slice (b)) |
-| CI release-feature clippy | `cargo clippy -p server --lib --bins --no-default-features` |
-| CI offline-cache check | `just db-prepare-check`, so CI prints the same message as the gate |
+| CI release-feature clippy | `cargo clippy --workspace --lib --bins --no-default-features` (`-p server` would lint only server; `#[cfg(not(feature = "swagger-ui"))]` code lives in `api`) |
+| CI offline-cache check | `cargo sqlx prepare --workspace --check -- --all-targets \|\| { echo "::error::SQLx offline cache is stale. Run 'just db-prepare' and commit backend/.sqlx/"; exit 1; }`. The backend job has no `just` or mise, so it can't call the recipe. This matches the "API spec current" step. |
+| CI "API spec current" | `cargo run --quiet -p server --example export_openapi` (`-p api` from slice (c)) |
+| CI `verify` job (Kani action) | `args: '--workspace -j --output-format=terse'` |
 | Dockerfile dev stage | `cargo build --locked -p server` after cook (no `touch src/…`), and `CMD cargo watch -x 'run -p server'` |
 
 A bare `cargo run` / `bench` / `clippy` at a virtual workspace root
@@ -465,6 +540,15 @@ the files they name, and again in each later slice that moves those files:
   `crates/api/`).
 - `.github/workflows/bench.yml` filters on `backend/crates/**`, and its
   warm-cache build runs `cargo bench --locked --no-run -p server`.
+- `backend/README.md` (layout section), and the path comments in
+  `models/attempt_claim.qnt` and `models/refresh_rotation.qnt`.
+- `.gitignore`: `backend/proptest-regressions/` becomes
+  `backend/**/proptest-regressions/`, since proptest writes regressions
+  under each crate's own directory.
+- Outward rustdoc links in application ports (`client_report_sink.rs`,
+  `mx_validator.rs`, `user_repository.rs` link to `crate::infrastructure::…`)
+  become plain code spans. The `shared::fingerprint` doctest's
+  `use overkill_todo::shared::…` becomes `use shared::…`.
 - `scripts/bench-compare.sh` finds each side's bench at
   `backend/crates/server/benches/<b>.rs` or, for a base before the split,
   `backend/benches/<b>.rs`, and adds `-p server` only when the
@@ -475,8 +559,10 @@ false positives move to each crate's `[package.metadata.cargo-machete]`.
 
 `just db-prepare-check` wraps `cargo sqlx prepare --check`. When the check
 fails, the recipe prints `run 'just db-prepare' and commit backend/.sqlx/`,
-because sqlx's own hint names `cargo sqlx prepare`, not the recipe (spec: "A
-stale offline query cache is still caught").
+because sqlx's own hint names `cargo sqlx prepare`, not the recipe. CI
+prints the same text through its own `::error::` fallback (table above), so
+both fail the same way (spec: "A stale offline query cache is still
+caught").
 
 ## Hypothesis
 
