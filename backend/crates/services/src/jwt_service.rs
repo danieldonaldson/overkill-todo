@@ -74,11 +74,14 @@ impl CryptoJwtService {
     }
 }
 
-/// Parses a UUID-backed identifier from a token claim, mapping failures to
-/// an authorization error.
+/// Parses a UUID-backed identifier from a token claim, logging the parse error
+/// at debug and returning the generic rejection message so internal detail
+/// never reaches clients.
 fn parse_token_uuid(value: &str, field: &str) -> Result<uuid::Uuid, DomainError> {
-    uuid::Uuid::parse_str(value)
-        .map_err(|e| DomainError::Authorization(format!("Invalid {field} in token: {e}")))
+    uuid::Uuid::parse_str(value).map_err(|e| {
+        tracing::debug!(error = %e, field, "one-time token rejected: invalid UUID claim");
+        DomainError::Authorization(REJECTED.into())
+    })
 }
 
 impl JwtService for CryptoJwtService {
@@ -112,9 +115,10 @@ impl JwtService for CryptoJwtService {
     fn validate_reset_token(&self, token: &str) -> Result<(UserId, ResetCodeId), DomainError> {
         let claims = self.validate_token(token, TokenType::Reset)?;
         let user_id = UserId::from_uuid(parse_token_uuid(&claims.sub, "user ID")?);
-        let jti = claims
-            .jti
-            .ok_or_else(|| DomainError::Authorization("Reset token missing jti".into()))?;
+        let jti = claims.jti.ok_or_else(|| {
+            tracing::debug!("one-time token rejected: reset token missing jti");
+            DomainError::Authorization(REJECTED.into())
+        })?;
         let reset_code_id = ResetCodeId::from_uuid(parse_token_uuid(&jti, "reset code ID")?);
         Ok((user_id, reset_code_id))
     }
