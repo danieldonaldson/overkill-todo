@@ -26,7 +26,7 @@ sccache = "latest"      # compiler cache shared by every worktree (justfile sets
 "npm:@informalsystems/quint" = "0.33.1"
 # Java for Apalache, the symbolic checker behind `quint verify` (Quint downloads
 # the Apalache release it was built against on first use).
-java = "temurin-21.0.12+101.0.LTS"
+java = "temurin-21.0.13.1+2.0.LTS"
 # Tamarin prover for the protocol model (`just protocols`, OT-010), from the
 # official GitHub releases (no maintained image or registry package exists),
 # plus Maude, its rewriting engine. Pinned exactly: CI installs the same.
