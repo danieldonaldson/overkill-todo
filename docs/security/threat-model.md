@@ -765,7 +765,7 @@ they're left to the proptests.
   - `backend/crates/platform/src/crypto/keyring.rs::prop_random_segments_never_verify`
   - `backend/crates/api/src/cookies.rs::extract_cookie_returns_none_for_non_utf8_header`
   - `backend/crates/server/tests/oauth_integration.rs::callback_with_malformed_user_id_in_state_is_rejected`
-- Gap: Sampled. Fuzzing every operation is OT-011 (API fuzzing); link its checks here when it lands.
+- Gap: Sampled. Every described API operation is fuzzed in `just ci` and CI via `just fuzz-api` (OT-011, Schemathesis) and nightly runs, but fuzzing is probabilistic rather than exhaustive.
 
 ### P-32: Malformed bodies, queries and paths get the JSON 400 before any handler logic
 
@@ -775,7 +775,7 @@ they're left to the proptests.
   - `backend/crates/server/tests/api_contract_integration.rs::malformed_json_body_gets_standard_error`
   - `backend/crates/server/tests/api_contract_integration.rs::malformed_query_parameter_gets_standard_error`
   - `backend/crates/server/tests/api_contract_integration.rs::malformed_path_parameter_gets_standard_error`
-- Gap: Sampled. Fuzzing every operation is OT-011 (API fuzzing); link its checks here when it lands.
+- Gap: Sampled. Every described API operation is fuzzed in `just ci` and CI via `just fuzz-api` (OT-011, Schemathesis) and nightly runs, but fuzzing is probabilistic rather than exhaustive.
 
 ## Spec coverage
 

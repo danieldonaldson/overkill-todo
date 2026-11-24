@@ -27,7 +27,7 @@ use application::ports::{
 };
 use domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome, RESEND_COOLDOWN_MINUTES};
 use domain::entities::{
-    EmailVerificationCode, PasswordResetCode, RefreshToken, RefreshTokenStatus, User,
+    AuditEvent, EmailVerificationCode, PasswordResetCode, RefreshToken, RefreshTokenStatus, User,
     email_verification_code, password_reset_code,
 };
 use domain::errors::DomainError;
@@ -822,7 +822,10 @@ impl TokenReplay<'_> {
                 }
                 "refreshRevokeAll" => {
                     self.refreshes[&who]
-                        .revoke_all_for_user(&user)
+                        .revoke_all_for_user_audited(
+                            &user,
+                            &AuditEvent::sessions_revoked_after_reuse(user),
+                        )
                         .await
                         .unwrap();
                     coverage.reuse += 1;

@@ -175,3 +175,172 @@ async fn heartbeat(lock: &mut impl LeaderLock, label: &str) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    use opentelemetry::metrics::MeterProvider as _;
+    use opentelemetry_sdk::metrics::{
+        InMemoryMetricExporter, PeriodicReader, SdkMeterProvider,
+        data::{AggregatedMetrics, MetricData},
+    };
+    use platform::persistence::DatabaseError;
+
+    struct FakeLocks {
+        fail_ping: bool,
+        acquired: Arc<AtomicUsize>,
+        released: Arc<AtomicUsize>,
+        on_release: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    }
+
+    struct FakeLock {
+        fail_ping: bool,
+        released: Arc<AtomicUsize>,
+        on_release: Option<Arc<dyn Fn(usize) + Send + Sync>>,
+    }
+
+    impl LeaderLocks for FakeLocks {
+        type Lock = FakeLock;
+
+        fn try_lock(
+            &self,
+            _key: i64,
+        ) -> impl Future<Output = Result<Option<Self::Lock>, DatabaseError>> + Send {
+            self.acquired.fetch_add(1, Ordering::SeqCst);
+            std::future::ready(Ok(Some(FakeLock {
+                fail_ping: self.fail_ping,
+                released: Arc::clone(&self.released),
+                on_release: self.on_release.clone(),
+            })))
+        }
+    }
+
+    impl LeaderLock for FakeLock {
+        fn ping(&mut self) -> impl Future<Output = Result<(), DatabaseError>> + Send {
+            std::future::ready(if self.fail_ping {
+                Err(DatabaseError::new(std::io::Error::other(
+                    "connection closed",
+                )))
+            } else {
+                Ok(())
+            })
+        }
+
+        fn release(self) -> impl Future<Output = ()> + Send {
+            let count = self.released.fetch_add(1, Ordering::SeqCst) + 1;
+            if let Some(cb) = &self.on_release {
+                cb(count);
+            }
+            std::future::ready(())
+        }
+    }
+
+    struct DropFlag(Arc<AtomicBool>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    fn latest_is_leader(exporter: &InMemoryMetricExporter, provider: &SdkMeterProvider) -> u64 {
+        provider.force_flush().unwrap();
+        let metrics = exporter.get_finished_metrics().unwrap();
+        let mut latest = None;
+        for rm in &metrics {
+            for sm in rm.scope_metrics() {
+                for m in sm.metrics() {
+                    if m.name() == "leader.is_leader"
+                        && let AggregatedMetrics::U64(MetricData::Gauge(g)) = m.data()
+                        && let Some(pt) = g.data_points().last()
+                    {
+                        latest = Some(pt.value());
+                    }
+                }
+            }
+        }
+        latest.expect("leader.is_leader metric recorded")
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn heartbeat_failure_cancels_worker_releases_lock_and_clears_metric() {
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_reader(PeriodicReader::builder(exporter.clone()).build())
+            .build();
+        let metrics = LeaderMetrics::new(&provider.meter("test"));
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let acquired = Arc::new(AtomicUsize::new(0));
+        let released = Arc::new(AtomicUsize::new(0));
+        let worker_dropped = Arc::new(AtomicBool::new(false));
+
+        let tx_clone = shutdown_tx.clone();
+        let locks = Arc::new(FakeLocks {
+            fail_ping: true,
+            acquired: Arc::clone(&acquired),
+            released: Arc::clone(&released),
+            on_release: Some(Arc::new(move |_| {
+                let _ = tx_clone.send(true);
+            })),
+        });
+
+        let dropped_flag = Arc::clone(&worker_dropped);
+        run_as_leader(locks, 1, "test-lock", shutdown_rx, metrics, move || {
+            let guard = DropFlag(Arc::clone(&dropped_flag));
+            async move {
+                let _guard = guard;
+                std::future::pending::<()>().await;
+            }
+        })
+        .await;
+
+        assert_eq!(acquired.load(Ordering::SeqCst), 1);
+        assert_eq!(released.load(Ordering::SeqCst), 1);
+        assert!(
+            worker_dropped.load(Ordering::SeqCst),
+            "worker future must be dropped when heartbeat fails"
+        );
+        assert_eq!(latest_is_leader(&exporter, &provider), 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn unexpected_worker_exit_releases_lock_and_reelects() {
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_reader(PeriodicReader::builder(exporter.clone()).build())
+            .build();
+        let metrics = LeaderMetrics::new(&provider.meter("test"));
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let acquired = Arc::new(AtomicUsize::new(0));
+        let released = Arc::new(AtomicUsize::new(0));
+        let worker_runs = Arc::new(AtomicUsize::new(0));
+
+        let locks = Arc::new(FakeLocks {
+            fail_ping: false,
+            acquired: Arc::clone(&acquired),
+            released: Arc::clone(&released),
+            on_release: None,
+        });
+
+        let runs = Arc::clone(&worker_runs);
+        run_as_leader(locks, 1, "test-lock", shutdown_rx, metrics, move || {
+            let runs = Arc::clone(&runs);
+            let tx = shutdown_tx.clone();
+            async move {
+                let n = runs.fetch_add(1, Ordering::SeqCst) + 1;
+                if n >= 2 {
+                    let _ = tx.send(true);
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(worker_runs.load(Ordering::SeqCst), 2);
+        assert_eq!(acquired.load(Ordering::SeqCst), 2);
+        assert_eq!(released.load(Ordering::SeqCst), 2);
+        assert_eq!(latest_is_leader(&exporter, &provider), 0);
+    }
+}

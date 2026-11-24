@@ -12,12 +12,17 @@
 
 use std::sync::Arc;
 
-use application::ports::{PasswordResetRepository, UserRepository};
-use domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome, MAX_ATTEMPTS};
-use domain::entities::{PasswordResetCode, User};
-use domain::value_objects::{Email, ResetCodeId, UserId};
+use application::ports::{EmailVerificationRepository, PasswordResetRepository, UserRepository};
+use domain::entities::attempt_lockout::{
+    AttemptOutcome, IssueOutcome, LOCK_WINDOWS_MINUTES, MAX_ATTEMPTS, RESEND_COOLDOWN_MINUTES,
+};
+use domain::entities::{EmailVerificationCode, PasswordResetCode, User};
+use domain::value_objects::{Email, ResetCodeId, UserId, VerificationCodeId};
 use jiff::{SignedDuration, Timestamp};
-use persistence_postgres::{Database, PostgresPasswordResetRepository, PostgresUserRepository};
+use persistence_postgres::{
+    Database, PostgresEmailVerificationRepository, PostgresPasswordResetRepository,
+    PostgresUserRepository,
+};
 use sqlx::PgPool;
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -142,5 +147,223 @@ async fn claim_naming_a_replaced_code_finds_no_code(pool: PgPool) {
         let stored = reset_repo.find_by_user(&user_id).await.unwrap().unwrap();
         assert_eq!(stored.id(), current.id());
         assert_eq!(stored.attempts(), expected_attempts);
+    }
+}
+
+fn expected_lock_window_minutes(lockouts: i32) -> i64 {
+    let max_idx = i32::try_from(LOCK_WINDOWS_MINUTES.len() - 1).unwrap();
+    let idx = usize::try_from(lockouts.clamp(0, max_idx)).unwrap();
+    LOCK_WINDOWS_MINUTES[idx]
+}
+
+fn reset_code_at(user_id: UserId, sent_at: Timestamp) -> PasswordResetCode {
+    PasswordResetCode::from_persistence(
+        ResetCodeId::new(),
+        user_id,
+        "hash".to_string(),
+        sent_at + SignedDuration::from_mins(15),
+        0,
+        sent_at,
+        sent_at,
+    )
+}
+
+fn verification_code_at(user_id: UserId, sent_at: Timestamp) -> EmailVerificationCode {
+    EmailVerificationCode::from_persistence(
+        VerificationCodeId::new(),
+        user_id,
+        "hash".to_string(),
+        sent_at + SignedDuration::from_hours(24),
+        0,
+        sent_at,
+        sent_at,
+        None,
+        Some(sent_at + SignedDuration::from_hours(24)),
+    )
+}
+
+/// Pins the SQL P-11 lockout and cooldown guards in both code repositories at
+/// exact `±1s` boundaries and across edge `lockouts` values (`-1`, `0`, `1`,
+/// `6`, `7`, `8`, `1000`), verifying 1-based Postgres array clamping matches
+/// `LOCK_WINDOWS_MINUTES`.
+#[sqlx::test(migrations = "../../migrations")]
+async fn sql_lockout_and_cooldown_guards_hold_at_exact_boundaries(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool.clone()));
+    let user_repo = PostgresUserRepository::new(db.clone());
+    let reset_repo = PostgresPasswordResetRepository::new(db.clone());
+    let verify_repo = PostgresEmailVerificationRepository::new(db);
+
+    let user = User::new(
+        Email::new("boundaries@example.com").unwrap(),
+        Some("password_hash".to_string()),
+        "Bound".to_string(),
+        "Test".to_string(),
+    );
+    user_repo.save(&user).await.unwrap();
+    let user_id = *user.id();
+
+    let base = Timestamp::from_second(1_700_000_000).unwrap();
+    let cooldown = SignedDuration::from_mins(RESEND_COOLDOWN_MINUTES);
+    let one_sec = SignedDuration::from_secs(1);
+
+    // 1. Cooldown boundaries (attempts = 0, unlocked) for both repositories.
+    assert_eq!(
+        reset_repo
+            .save(&reset_code_at(user_id, base))
+            .await
+            .unwrap(),
+        IssueOutcome::Issued
+    );
+    assert_eq!(
+        reset_repo
+            .save(&reset_code_at(user_id, base + cooldown - one_sec))
+            .await
+            .unwrap(),
+        IssueOutcome::Withheld,
+        "reset code must be withheld at cooldown - 1s"
+    );
+    assert_eq!(
+        reset_repo
+            .save(&reset_code_at(user_id, base + cooldown))
+            .await
+            .unwrap(),
+        IssueOutcome::Issued,
+        "reset code must be issued at exact cooldown"
+    );
+    assert_eq!(
+        reset_repo
+            .save(&reset_code_at(
+                user_id,
+                base + cooldown + cooldown + one_sec
+            ))
+            .await
+            .unwrap(),
+        IssueOutcome::Issued,
+        "reset code must be issued at cooldown + 1s"
+    );
+
+    assert_eq!(
+        verify_repo
+            .save(&verification_code_at(user_id, base))
+            .await
+            .unwrap(),
+        IssueOutcome::Issued
+    );
+    assert_eq!(
+        verify_repo
+            .save(&verification_code_at(user_id, base + cooldown - one_sec))
+            .await
+            .unwrap(),
+        IssueOutcome::Withheld,
+        "verification code must be withheld at cooldown - 1s"
+    );
+    assert_eq!(
+        verify_repo
+            .save(&verification_code_at(user_id, base + cooldown))
+            .await
+            .unwrap(),
+        IssueOutcome::Issued,
+        "verification code must be issued at exact cooldown"
+    );
+    assert_eq!(
+        verify_repo
+            .save(&verification_code_at(
+                user_id,
+                base + cooldown + cooldown + one_sec
+            ))
+            .await
+            .unwrap(),
+        IssueOutcome::Issued,
+        "verification code must be issued at cooldown + 1s"
+    );
+
+    // 2. Negative `lockouts` is rejected by the schema's CHECK constraint on both tables.
+    for sql in [
+        "UPDATE password_reset_codes SET lockouts = -1 WHERE user_id = $1",
+        "UPDATE email_verification_codes SET lockouts = -1 WHERE user_id = $1",
+    ] {
+        let err = sqlx::query(sql)
+            .bind(user_id.as_uuid())
+            .execute(&pool)
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("lockouts_check"),
+            "expected lockouts CHECK constraint violation for `{sql}`, got {err}"
+        );
+    }
+
+    // 3. Lockout window boundaries (attempts = MAX_ATTEMPTS) across edge lockouts.
+    for lockouts in [0, 1, 6, 7, 8, 1000] {
+        let window = SignedDuration::from_mins(expected_lock_window_minutes(lockouts));
+
+        for is_reset in [true, false] {
+            let label = if is_reset {
+                "password_reset_codes"
+            } else {
+                "email_verification_codes"
+            };
+            let update_sql = if is_reset {
+                "UPDATE password_reset_codes SET attempts = $1, lockouts = $2, last_sent_at = to_timestamp($3) WHERE user_id = $4"
+            } else {
+                "UPDATE email_verification_codes SET attempts = $1, lockouts = $2, last_sent_at = to_timestamp($3) WHERE user_id = $4"
+            };
+            let select_sql = if is_reset {
+                "SELECT lockouts FROM password_reset_codes WHERE user_id = $1"
+            } else {
+                "SELECT lockouts FROM email_verification_codes WHERE user_id = $1"
+            };
+
+            let set_locked = async |pool: &PgPool| {
+                sqlx::query(update_sql)
+                    .bind(MAX_ATTEMPTS)
+                    .bind(lockouts)
+                    .bind(f64::from(i32::try_from(base.as_second()).unwrap()))
+                    .bind(user_id.as_uuid())
+                    .execute(pool)
+                    .await
+                    .unwrap();
+            };
+
+            let save_at = async |t: Timestamp| {
+                if is_reset {
+                    reset_repo.save(&reset_code_at(user_id, t)).await.unwrap()
+                } else {
+                    verify_repo
+                        .save(&verification_code_at(user_id, t))
+                        .await
+                        .unwrap()
+                }
+            };
+
+            set_locked(&pool).await;
+            assert_eq!(
+                save_at(base + window - one_sec).await,
+                IssueOutcome::Withheld,
+                "{label}: lockouts={lockouts} must be withheld at window - 1s"
+            );
+            assert_eq!(
+                save_at(base + window).await,
+                IssueOutcome::Issued,
+                "{label}: lockouts={lockouts} must be issued at exact window"
+            );
+            let stored_lockouts: i32 = sqlx::query_scalar(select_sql)
+                .bind(user_id.as_uuid())
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                stored_lockouts,
+                lockouts + 1,
+                "{label}: replacing locked row must increment lockouts"
+            );
+
+            set_locked(&pool).await;
+            assert_eq!(
+                save_at(base + window + one_sec).await,
+                IssueOutcome::Issued,
+                "{label}: lockouts={lockouts} must be issued at window + 1s"
+            );
+        }
     }
 }

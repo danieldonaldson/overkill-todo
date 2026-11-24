@@ -831,13 +831,16 @@ mod tests {
         let mut user = UserBuilder::new().build();
         assert!(!user.is_scheduled_for_deletion());
 
-        let scheduled = user.schedule_deletion(Timestamp::now()).unwrap();
+        let now = Timestamp::now();
+        let scheduled = user.schedule_deletion(now).unwrap();
 
         assert!(user.is_scheduled_for_deletion());
         assert_eq!(user.deletion_scheduled_at(), Some(scheduled));
-        assert!(scheduled > Timestamp::now());
-        // Grace period is 14 days; not ready yet.
-        assert!(!user.is_ready_for_deletion(Timestamp::now()));
+        assert_eq!(
+            scheduled,
+            now + jiff::SignedDuration::from_hours(DELETION_GRACE_PERIOD_DAYS * 24)
+        );
+        assert!(!user.is_ready_for_deletion(now));
     }
 
     #[test]

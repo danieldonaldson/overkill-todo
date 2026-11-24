@@ -246,6 +246,11 @@ fmt-check:
 lint:
     cd {{backend}} && SQLX_OFFLINE=true cargo clippy --workspace --all-targets -- -D warnings
 
+# Release-feature clippy (matches the Dockerfile's --no-default-features build).
+[group('format & lint')]
+lint-release:
+    cd {{backend}} && SQLX_OFFLINE=true cargo clippy --workspace --lib --bins --no-default-features -- -D warnings
+
 # Frontend lint.
 [group('format & lint')]
 lint-js:
@@ -553,10 +558,11 @@ docker-build:
 
 # ── CI ───────────────────────────────────────────────────────────────────────────
 
-# Everything CI gates on. Green here means green CI. The formal checks (Kani, Quint,
-# Tamarin) are independent of each other and of the rest, so they run alongside
-# `ci-checks` rather than after it; wall time is the slowest of the four, not the sum.
-# Their output interleaves; to read one stage's output, rerun it alone (`just models`).
+# Everything CI gates on (coverage is standalone via `just coverage`). Green here
+# means green CI. The formal checks (Kani, Quint, Tamarin) are independent of each
+# other and of the rest, so they run alongside `ci-checks` rather than after it;
+# wall time is the slowest of the four, not the sum. Their output interleaves; to
+# read one stage's output, rerun it alone (`just models`).
 [group('ci')]
 [parallel]
 [doc('Everything CI gates on; green here means green CI. Formal checks run alongside ci-checks.')]
@@ -564,4 +570,4 @@ ci: ci-checks verify models protocols
 
 # The rest of `ci`, in order: static checks first, then tests.
 [group('ci')]
-ci-checks: toolchain-check fmt-check fmt-check-js lint machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web e2e
+ci-checks: toolchain-check fmt-check fmt-check-js lint lint-release deny machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web e2e
