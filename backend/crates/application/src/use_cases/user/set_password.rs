@@ -51,6 +51,13 @@ impl SetPasswordUseCase {
             .await?
             .ok_or_else(|| DomainError::NotFound("User not found".into()))?;
 
+        // Email must be verified before setting a password
+        if !user.email_verified() {
+            return Err(DomainError::Validation(
+                "Email must be verified before setting a password".into(),
+            ));
+        }
+
         // Verify user doesn't already have a password
         if user.has_password() {
             return Err(DomainError::Validation(
@@ -83,12 +90,14 @@ mod tests {
     use proptest::prelude::*;
 
     fn create_oauth_only_user() -> User {
-        User::new(
+        let mut user = User::new(
             Email::new("oauth@example.com").unwrap(),
             None,
             "OAuth".to_string(),
             "User".to_string(),
-        )
+        );
+        user.mark_email_verified();
+        user
     }
 
     /// A password hasher that returns a fixed hash without invoking Argon2.
@@ -101,12 +110,14 @@ mod tests {
     }
 
     fn create_user_with_password() -> User {
-        User::new(
+        let mut user = User::new(
             Email::new("test@example.com").unwrap(),
             Some("$argon2id$existing".to_string()),
             "Test".to_string(),
             "User".to_string(),
-        )
+        );
+        user.mark_email_verified();
+        user
     }
 
     #[tokio::test]
@@ -144,6 +155,31 @@ mod tests {
         let result = use_case.execute(&UserId::new(), "new_password").await;
 
         assert!(matches!(result, Err(DomainError::NotFound(_))));
+    }
+
+    #[tokio::test]
+    async fn test_set_password_unverified_user_rejected() {
+        let user = User::new(
+            Email::new("unverified@example.com").unwrap(),
+            None,
+            "Unverified".to_string(),
+            "User".to_string(),
+        );
+        let user_id = *user.id();
+        let user_clone = user.clone();
+
+        let mut mock_repo = MockUserRepository::new();
+        mock_repo
+            .expect_find_by_id()
+            .times(1)
+            .returning(move |_| Ok(Some(user_clone.clone())));
+        mock_repo.expect_save_audited().never();
+
+        let use_case =
+            SetPasswordUseCase::new(Arc::new(mock_repo), Arc::new(MockPasswordHasher::new()));
+        let result = use_case.execute(&user_id, "new_password").await;
+
+        assert!(matches!(result, Err(DomainError::Validation(_))));
     }
 
     #[tokio::test]

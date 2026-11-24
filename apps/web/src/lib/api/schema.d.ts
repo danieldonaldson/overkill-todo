@@ -649,7 +649,6 @@ export interface components {
             last_name: string;
             /** @description All OAuth providers linked to this account. */
             linked_oauth_accounts: components["schemas"]["LinkedOAuthAccountExport"][];
-            pending_email?: string;
             role: components["schemas"]["RoleName"];
             /** Format: date-time */
             updated_at: string;
@@ -1119,13 +1118,6 @@ export interface components {
             last_name: string;
             /** @description List of linked OAuth providers (e.g., `["google", "apple"]`). */
             oauth_providers: components["schemas"]["OAuthProviderName"][];
-            /** @description Pending email address awaiting verification (for email change flow). */
-            pending_email?: string;
-            /**
-             * Format: date-time
-             * @description When the pending email change was requested.
-             */
-            pending_email_requested_at?: string;
             /** @description User's role ("user", "admin", or "`super_admin`"). */
             role: components["schemas"]["RoleName"];
         };

@@ -823,7 +823,11 @@ async fn reuse_revocation_writes_exactly_one_event(pool: PgPool) {
     seed_session(&pool, id, "h2").await;
 
     let revoked = PostgresRefreshTokenRepository::new(db(&pool))
-        .revoke_all_for_user_audited(&id, &AuditEvent::sessions_revoked_after_reuse(id))
+        .revoke_all_for_user_audited(
+            &id,
+            domain::entities::RevocationReason::ReuseDetected,
+            &AuditEvent::sessions_revoked_after_reuse(id),
+        )
         .await
         .unwrap();
 
@@ -840,7 +844,11 @@ async fn reuse_revocation_writes_exactly_one_event(pool: PgPool) {
 async fn reuse_revocation_with_no_live_session_leaves_no_event(pool: PgPool) {
     let id = *seed_with_role(&pool, UserRole::User).await.id();
     let revoked = PostgresRefreshTokenRepository::new(db(&pool))
-        .revoke_all_for_user_audited(&id, &AuditEvent::sessions_revoked_after_reuse(id))
+        .revoke_all_for_user_audited(
+            &id,
+            domain::entities::RevocationReason::ReuseDetected,
+            &AuditEvent::sessions_revoked_after_reuse(id),
+        )
         .await
         .unwrap();
     assert_eq!(revoked, 0);
@@ -854,7 +862,11 @@ async fn failed_event_insert_rolls_back_the_reuse_revocation(pool: PgPool) {
     refuse_every_event(&pool).await;
 
     let err = PostgresRefreshTokenRepository::new(db(&pool))
-        .revoke_all_for_user_audited(&id, &AuditEvent::sessions_revoked_after_reuse(id))
+        .revoke_all_for_user_audited(
+            &id,
+            domain::entities::RevocationReason::ReuseDetected,
+            &AuditEvent::sessions_revoked_after_reuse(id),
+        )
         .await
         .unwrap_err();
 

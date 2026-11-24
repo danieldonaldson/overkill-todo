@@ -35,12 +35,13 @@ async fn register_attempt_caps_under_concurrency(pool: PgPool) {
     let reset_repo = Arc::new(PostgresPasswordResetRepository::new(db));
 
     // Seed a user with a fresh reset code (attempts = 0).
-    let user = User::new(
+    let mut user = User::new(
         Email::new("race@example.com").unwrap(),
         Some("password_hash".to_string()),
         "Race".to_string(),
         "Tester".to_string(),
     );
+    user.mark_email_verified();
     user_repo.save(&user).await.unwrap();
     let user_id = *user.id();
     let code = PasswordResetCode::new(user_id, "hashed_code".to_string());
@@ -103,12 +104,13 @@ async fn claim_naming_a_replaced_code_finds_no_code(pool: PgPool) {
     let db = Arc::new(Database::from_pool(pool));
     let user_repo = PostgresUserRepository::new(db.clone());
     let reset_repo = PostgresPasswordResetRepository::new(db);
-    let user = User::new(
+    let mut user = User::new(
         Email::new("replaced@example.com").unwrap(),
         Some("password_hash".to_string()),
         "Replaced".to_string(),
         "Code".to_string(),
     );
+    user.mark_email_verified();
     user_repo.save(&user).await.unwrap();
     let user_id = *user.id();
 
@@ -193,12 +195,13 @@ async fn sql_lockout_and_cooldown_guards_hold_at_exact_boundaries(pool: PgPool) 
     let reset_repo = PostgresPasswordResetRepository::new(db.clone());
     let verify_repo = PostgresEmailVerificationRepository::new(db);
 
-    let user = User::new(
+    let mut user = User::new(
         Email::new("boundaries@example.com").unwrap(),
         Some("password_hash".to_string()),
         "Bound".to_string(),
         "Test".to_string(),
     );
+    user.mark_email_verified();
     user_repo.save(&user).await.unwrap();
     let user_id = *user.id();
 

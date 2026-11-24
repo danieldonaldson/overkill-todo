@@ -49,6 +49,11 @@ impl CompleteSignupUseCase {
     ///   to complete)
     /// - whatever the JWT service returns if signing fails
     pub fn issue_signup_token(&self, user: &User) -> Result<String, DomainError> {
+        if !user.email_verified() {
+            return Err(DomainError::BusinessRule(
+                "Email must be verified before setting a password".into(),
+            ));
+        }
         if user.has_password() {
             return Err(DomainError::BusinessRule(
                 "Account already has a password set".into(),
@@ -99,6 +104,13 @@ impl CompleteSignupUseCase {
             Email::new(email).map_err(|_| DomainError::Validation("Email mismatch".into()))?;
         if user.email() != &email {
             return Err(DomainError::Validation("Email mismatch".into()));
+        }
+
+        // Email must be verified before setting a password
+        if !user.email_verified() {
+            return Err(DomainError::Validation(
+                "Email must be verified before setting a password".into(),
+            ));
         }
 
         // User must not already have a password
@@ -310,6 +322,51 @@ mod tests {
             .issue_signup_token(&user_with_password(user_id, None))
             .unwrap();
         assert_eq!(token, "signup-token");
+    }
+
+    #[test]
+    fn refuses_signup_token_when_email_unverified() {
+        let mut jwt = MockJwtService::new();
+        jwt.expect_create_signup_token().never();
+
+        let unverified = UserBuilder::new()
+            .email(EMAIL)
+            .password_hash(None)
+            .email_verified(false)
+            .build();
+        let uc = CompleteSignupUseCase::new(
+            Arc::new(MockUserRepository::new()),
+            Arc::new(jwt),
+            unused_hasher(),
+        );
+        let err = uc.issue_signup_token(&unverified).unwrap_err();
+        assert!(matches!(err, DomainError::BusinessRule(_)));
+    }
+
+    #[tokio::test]
+    async fn rejects_when_email_unverified() {
+        let user_id = UserId::new();
+        let unverified = UserBuilder::new()
+            .id(user_id)
+            .email(EMAIL)
+            .password_hash(None)
+            .email_verified(false)
+            .build();
+        let mut repo = MockUserRepository::new();
+        repo.expect_find_by_id()
+            .returning(move |_| Ok(Some(unverified.clone())));
+        repo.expect_save().never();
+
+        let uc = CompleteSignupUseCase::new(
+            Arc::new(repo),
+            Arc::new(jwt_returning(user_id)),
+            unused_hasher(),
+        );
+        let err = uc
+            .execute("token", EMAIL, "new-password")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DomainError::Validation(_)));
     }
 
     #[test]

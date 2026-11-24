@@ -68,8 +68,6 @@ pub struct UserRow {
     pub first_name: String,
     pub last_name: String,
     pub email_verified: bool,
-    pub pending_email: Option<String>,
-    pub pending_email_requested_at: Option<Timestamp>,
     pub deleted_at: Option<Timestamp>,
     pub deletion_scheduled_at: Option<Timestamp>,
     pub role: DbUserRole,
@@ -86,6 +84,7 @@ pub struct RefreshTokenRow {
     pub device_fingerprint: String,
     pub expires_at: Timestamp,
     pub revoked_at: Option<Timestamp>,
+    pub revoked_reason: Option<String>,
     pub created_at: Timestamp,
 }
 

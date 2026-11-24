@@ -1999,9 +1999,6 @@
             },
             "description": "All OAuth providers linked to this account."
           },
-          "pending_email": {
-            "type": "string"
-          },
           "role": {
             "$ref": "#/components/schemas/RoleName"
           },
@@ -3124,15 +3121,6 @@
               "$ref": "#/components/schemas/OAuthProviderName"
             },
             "description": "List of linked OAuth providers (e.g., `[\"google\", \"apple\"]`)."
-          },
-          "pending_email": {
-            "type": "string",
-            "description": "Pending email address awaiting verification (for email change flow)."
-          },
-          "pending_email_requested_at": {
-            "type": "string",
-            "format": "date-time",
-            "description": "When the pending email change was requested."
           },
           "role": {
             "$ref": "#/components/schemas/RoleName",

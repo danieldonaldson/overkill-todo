@@ -3,7 +3,6 @@
 use super::schema_enums::{OAuthProviderName, RoleName};
 use super::validation::validate_verification_code;
 use domain::entities::User;
-use domain::value_objects::PendingEmailChange;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -261,14 +260,6 @@ pub struct UserResponse {
     /// List of linked OAuth providers (e.g., `["google", "apple"]`).
     #[schema(value_type = Vec<OAuthProviderName>)]
     pub oauth_providers: Vec<String>,
-    /// Pending email address awaiting verification (for email change flow).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
-    pub pending_email: Option<String>,
-    /// When the pending email change was requested.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
-    pub pending_email_requested_at: Option<Timestamp>,
     /// When the account is scheduled for deletion (during 14-day grace period).
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
@@ -281,6 +272,7 @@ pub struct UserResponse {
 
 impl UserResponse {
     /// Creates a `UserResponse` from a User with OAuth provider info.
+    #[must_use]
     pub fn from_user_with_oauth(user: User, oauth_providers: Vec<String>) -> Self {
         let has_password = user.has_password();
         let parts = user.into_parts();
@@ -292,13 +284,6 @@ impl UserResponse {
             email_verified: parts.email_verified,
             has_password,
             oauth_providers,
-            pending_email_requested_at: parts
-                .pending_email_change
-                .as_ref()
-                .map(PendingEmailChange::requested_at),
-            pending_email: parts
-                .pending_email_change
-                .map(|change| change.into_new_email().into_string()),
             deletion_scheduled_at: parts.status.deletion_scheduled_at(),
             role: parts.role.to_db_str().to_string(),
             created_at: parts.created_at,
@@ -346,8 +331,6 @@ mod tests {
             email_verified: true,
             has_password: true,
             oauth_providers: Vec::new(),
-            pending_email: None,
-            pending_email_requested_at: None,
             deletion_scheduled_at: None,
             role: "user".to_string(),
             created_at: Timestamp::now(),

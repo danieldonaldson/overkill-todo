@@ -2,7 +2,7 @@
 
 use crate::ports::UserRepository;
 use crate::ports::{JwtService, PasswordHasher, PasswordResetRepository, RefreshTokenRepository};
-use domain::entities::{AuditEvent, User};
+use domain::entities::{AuditEvent, RevocationReason, User};
 use domain::errors::DomainError;
 use jiff::Timestamp;
 use std::sync::Arc;
@@ -116,7 +116,7 @@ impl ResetPasswordUseCase {
         // returns, so the new token is never caught by this sweep.
         let revoked = self
             .refresh_token_repo
-            .revoke_all_for_user(&user_id)
+            .revoke_all_for_user(&user_id, RevocationReason::PasswordChange)
             .await?;
         tracing::info!(user_id = %user.id(), revoked, "Revoked existing sessions on password reset");
 
@@ -204,8 +204,9 @@ mod tests {
         let mut mock_refresh_repo = MockRefreshTokenRepository::new();
         mock_refresh_repo
             .expect_revoke_all_for_user()
+            .withf(|_, reason| *reason == RevocationReason::PasswordChange)
             .times(1)
-            .returning(|_| Ok(2));
+            .returning(|_, _| Ok(2));
 
         let use_case = ResetPasswordUseCase::new(
             Arc::new(mock_user_repo),

@@ -357,21 +357,16 @@ mod tests {
     #[test]
     fn response_field_presence_matches_serialization() {
         let user = schema("UserResponse");
-        for field in [
-            "pending_email",
-            "pending_email_requested_at",
-            "deletion_scheduled_at",
-        ] {
-            assert!(
-                !is_required(&user, field),
-                "UserResponse.{field} is omitted when empty"
-            );
-            // Omitted, never sent as `null`.
-            assert!(
-                !is_nullable(&user, field),
-                "UserResponse.{field} is never null"
-            );
-        }
+        let field = "deletion_scheduled_at";
+        assert!(
+            !is_required(&user, field),
+            "UserResponse.{field} is omitted when empty"
+        );
+        // Omitted, never sent as `null`.
+        assert!(
+            !is_nullable(&user, field),
+            "UserResponse.{field} is never null"
+        );
         for field in ["id", "email", "email_verified", "role", "oauth_providers"] {
             assert!(
                 is_required(&user, field),

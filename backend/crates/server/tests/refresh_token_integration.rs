@@ -27,12 +27,13 @@ async fn concurrent_rotate_lets_exactly_one_winner(pool: PgPool) {
     let repo = Arc::new(PostgresRefreshTokenRepository::new(db));
 
     // FK parent + the token both racers try to rotate.
-    let user = User::new(
+    let mut user = User::new(
         Email::new("rotate-race@example.com").unwrap(),
         Some("hash".to_string()),
         "Race".to_string(),
         "Condition".to_string(),
     );
+    user.mark_email_verified();
     user_repo.save(&user).await.expect("save user");
     let user_id = user.id().as_uuid();
 

@@ -151,7 +151,6 @@ mod tests {
             first_name: String::new(),
             last_name: String::new(),
             email_verified: false, // Not verified
-            pending_email_change: None,
             status: AccountStatus::Active,
             role: UserRole::User,
             created_at: Timestamp::now(),
@@ -168,7 +167,6 @@ mod tests {
             first_name: "John".to_string(),
             last_name: "Doe".to_string(),
             email_verified: true, // Verified
-            pending_email_change: None,
             status: AccountStatus::Active,
             role: UserRole::User,
             created_at: Timestamp::now(),

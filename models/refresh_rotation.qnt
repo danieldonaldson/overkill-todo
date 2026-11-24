@@ -31,6 +31,8 @@ module refresh_rotation {
   type Token = {
     exists: bool,
     revoked: bool,
+    // Why the token was revoked: "", "rotated", "logout", or "reuse_detected".
+    revokedReason: str,
     expires: int,
     // The token this one was rotated from, or -1.
     parent: int,
@@ -77,7 +79,8 @@ module refresh_rotation {
     val tok = tokens.get(t)
     val nextPc =
       if (not(tok.exists)) "done"
-      else if (tok.revoked) "revokeAll"
+      else if (tok.revoked and tok.revokedReason != "logout") "revokeAll"
+      else if (tok.revoked) "done"
       else if (tok.expires <= now) "done"
       else "rotate"
     all {
@@ -87,6 +90,7 @@ module refresh_rotation {
       refreshToken' = refreshToken.set(p, t),
       refreshOut' = refreshOut.set(p,
         if (not(tok.exists)) "invalid"
+        else if (tok.revoked and tok.revokedReason == "logout") "revoked"
         else if (nextPc == "done") "expired"
         else ""),
       sawRotated' = sawRotated.set(p, tok.exists and rotated.contains(t)),
@@ -108,8 +112,8 @@ module refresh_rotation {
       refreshPc' = refreshPc.set(p, "done"),
       if (won) all {
         tokens' = tokens
-          .set(t, tok.with("revoked", true))
-          .set(nextId, { exists: true, revoked: false, expires: now + TTL, parent: t }),
+          .set(t, tok.with("revoked", true).with("revokedReason", "rotated"))
+          .set(nextId, { exists: true, revoked: false, revokedReason: "", expires: now + TTL, parent: t }),
         nextId' = nextId + 1,
         rotated' = rotated.union(Set(t)),
         refreshOut' = refreshOut.set(p, "rotated"),
@@ -132,7 +136,9 @@ module refresh_rotation {
     refreshPc' = refreshPc.set(p, "done"),
     refreshOut' = refreshOut.set(p, "reuse"),
     tokens' = TOKEN_IDS.mapBy(t =>
-      if (tokens.get(t).exists) tokens.get(t).with("revoked", true) else tokens.get(t)),
+      if (tokens.get(t).exists and not(tokens.get(t).revoked))
+        tokens.get(t).with("revoked", true).with("revokedReason", "reuse_detected")
+      else tokens.get(t)),
     reuseDetected' = true,
     now' = now, nextId' = nextId, refreshToken' = refreshToken,
     logoutPc' = logoutPc, logoutToken' = logoutToken,
@@ -155,11 +161,13 @@ module refresh_rotation {
 
   action logoutRevoke(l: int): bool = {
     val t = logoutToken.get(l)
+    val tok = tokens.get(t)
     all {
       logoutPc.get(l) == "revoke",
       logoutPc' = logoutPc.set(l, "done"),
-      tokens' = if (tokens.get(t).exists) tokens.set(t, tokens.get(t).with("revoked", true))
-        else tokens,
+      tokens' = if (tok.exists and not(tok.revoked))
+        tokens.set(t, tok.with("revoked", true).with("revokedReason", "logout"))
+      else tokens,
       now' = now, nextId' = nextId, logoutToken' = logoutToken,
       refreshPc' = refreshPc, refreshToken' = refreshToken, refreshOut' = refreshOut,
       rotated' = rotated, sawRotated' = sawRotated, replayedRotated' = replayedRotated,
@@ -193,7 +201,7 @@ module refresh_rotation {
 
   action init = all {
     tokens' = TOKEN_IDS.mapBy(t =>
-      { exists: t == 0, revoked: false, expires: if (t == 0) TTL else 0, parent: -1 }),
+      { exists: t == 0, revoked: false, revokedReason: "", expires: if (t == 0) TTL else 0, parent: -1 }),
     now' = 0,
     nextId' = 1,
     refreshPc' = REFRESHES.mapBy(_ => "read"),

@@ -294,8 +294,13 @@ fn session_token_is_rejected_as_a_reset_token() {
 #[test]
 fn oauth_state_token_is_rejected_as_a_session_token() {
     let crypto = Crypto::for_testing();
-    let (state, _) = api::oauth_state::create_oauth_state(crypto.tokens(), "google", "login", None)
-        .expect("creates oauth state");
+    let (state, _) = api::oauth_state::create_oauth_state(
+        crypto.tokens(),
+        "google",
+        application::dto::OAuthMode::Login,
+        None,
+    )
+    .expect("creates oauth state");
     let err = api::jwt::verify_jwt(&state, crypto.tokens()).unwrap_err();
     assert!(matches!(err, api::error::AppError::Authorization { .. }));
 }

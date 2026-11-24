@@ -1,7 +1,7 @@
 //! Refresh token repository port.
 
 use async_trait::async_trait;
-use domain::entities::{AuditEvent, RefreshToken};
+use domain::entities::{AuditEvent, RefreshToken, RevocationReason};
 use domain::errors::DomainError;
 use domain::value_objects::{RefreshTokenId, UserId};
 
@@ -22,16 +22,24 @@ pub trait RefreshTokenRepository: Send + Sync {
     /// This is the primary lookup method used during token refresh.
     async fn find_by_hash(&self, token_hash: &str) -> Result<Option<RefreshToken>, DomainError>;
 
-    /// Revokes a specific token by its ID.
+    /// Revokes a specific token by its ID with `reason`.
     ///
-    /// Sets the `revoked_at` timestamp to the current time.
-    async fn revoke(&self, id: &RefreshTokenId) -> Result<(), DomainError>;
+    /// Sets `revoked_at` and `revoked_reason` when the token is still active.
+    async fn revoke(
+        &self,
+        id: &RefreshTokenId,
+        reason: RevocationReason,
+    ) -> Result<(), DomainError>;
 
-    /// Revokes all tokens for a specific user.
+    /// Revokes all active tokens for a specific user with `reason`.
     ///
     /// Useful for "logout all devices" functionality or when
     /// a security concern requires invalidating all sessions.
-    async fn revoke_all_for_user(&self, user_id: &UserId) -> Result<u64, DomainError>;
+    async fn revoke_all_for_user(
+        &self,
+        user_id: &UserId,
+        reason: RevocationReason,
+    ) -> Result<u64, DomainError>;
 
     /// [`Self::revoke_all_for_user`] for the token-reuse defence: when any
     /// session was revoked, `event` is stored in the same transaction; when
@@ -40,11 +48,12 @@ pub trait RefreshTokenRepository: Send + Sync {
     async fn revoke_all_for_user_audited(
         &self,
         user_id: &UserId,
+        reason: RevocationReason,
         event: &AuditEvent,
     ) -> Result<u64, DomainError>;
 
     /// Revokes all of a user's tokens *except* the one whose hash is
-    /// `keep_token_hash`.
+    /// `keep_token_hash`, recording `reason`.
     ///
     /// Powers "log out other devices": the caller's current session (identified
     /// by its refresh-token hash) stays valid while every other device is
@@ -53,6 +62,7 @@ pub trait RefreshTokenRepository: Send + Sync {
         &self,
         user_id: &UserId,
         keep_token_hash: &str,
+        reason: RevocationReason,
     ) -> Result<u64, DomainError>;
 
     /// Atomically revokes `old_id` and saves `new_token` in a single transaction.

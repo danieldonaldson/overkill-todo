@@ -8,7 +8,7 @@ use std::sync::Arc;
 use crate::ports::PasswordHasher;
 use crate::ports::UserRepository;
 use crate::ports::{RefreshTokenRepository, TokenService};
-use domain::entities::AuditEvent;
+use domain::entities::{AuditEvent, RevocationReason};
 use domain::errors::DomainError;
 use domain::value_objects::UserId;
 
@@ -116,7 +116,11 @@ impl ChangePasswordUseCase {
             Some(token) => {
                 let keep_hash = self.token_service.hash_token(token);
                 self.refresh_token_repository
-                    .revoke_all_for_user_except(user_id, &keep_hash)
+                    .revoke_all_for_user_except(
+                        user_id,
+                        &keep_hash,
+                        RevocationReason::PasswordChange,
+                    )
                     .await?
             }
             // No refresh cookie on the request: nothing to preserve, so revoke
@@ -124,7 +128,7 @@ impl ChangePasswordUseCase {
             // working until it expires).
             None => {
                 self.refresh_token_repository
-                    .revoke_all_for_user(user_id)
+                    .revoke_all_for_user(user_id, RevocationReason::PasswordChange)
                     .await?
             }
         };
@@ -198,8 +202,9 @@ mod tests {
         let mut mock_refresh_repo = MockRefreshTokenRepository::new();
         mock_refresh_repo
             .expect_revoke_all_for_user_except()
+            .withf(|_, _, reason| *reason == RevocationReason::PasswordChange)
             .times(1)
-            .returning(|_, _| Ok(1));
+            .returning(|_, _, _| Ok(1));
 
         let use_case = ChangePasswordUseCase::new(
             Arc::new(mock_repo),
@@ -252,8 +257,9 @@ mod tests {
         let mut mock_refresh_repo = MockRefreshTokenRepository::new();
         mock_refresh_repo
             .expect_revoke_all_for_user()
+            .withf(|_, reason| *reason == RevocationReason::PasswordChange)
             .times(1)
-            .returning(|_| Ok(3));
+            .returning(|_, _| Ok(3));
 
         let use_case = ChangePasswordUseCase::new(
             Arc::new(mock_repo),

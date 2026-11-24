@@ -27,8 +27,8 @@ use application::ports::{
 };
 use domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome, RESEND_COOLDOWN_MINUTES};
 use domain::entities::{
-    AuditEvent, EmailVerificationCode, PasswordResetCode, RefreshToken, RefreshTokenStatus, User,
-    email_verification_code, password_reset_code,
+    AuditEvent, EmailVerificationCode, PasswordResetCode, RefreshToken, RefreshTokenStatus,
+    RevocationReason, User, email_verification_code, password_reset_code,
 };
 use domain::errors::DomainError;
 use domain::value_objects::{Email, RefreshTokenId, ResetCodeId, UserId, VerificationCodeId};
@@ -114,12 +114,13 @@ async fn session(pool: &PgPool) -> Arc<Database> {
 }
 
 async fn new_user(pool: &PgPool, label: &str) -> UserId {
-    let user = User::new(
+    let mut user = User::new(
         Email::new(&format!("{label}@conformance.example.com")).unwrap(),
         Some("hash".to_string()),
         "Model".to_string(),
         "Replay".to_string(),
     );
+    user.mark_email_verified();
     PostgresUserRepository::new(Arc::new(Database::from_pool(pool.clone())))
         .save(&user)
         .await
@@ -785,8 +786,13 @@ impl TokenReplay<'_> {
                             assert_eq!(out, "invalid", "{at_step}: unknown token");
                             coverage.unknown += 1;
                         }
-                        Some(RefreshTokenStatus::Revoked) => {
-                            assert_eq!(pc, "revokeAll", "{at_step}: revoked token");
+                        Some(RefreshTokenStatus::Revoked(reason))
+                            if reason.triggers_reuse_detection() =>
+                        {
+                            assert_eq!(pc, "revokeAll", "{at_step}: reuse-revoked token");
+                        }
+                        Some(RefreshTokenStatus::Revoked(_)) => {
+                            assert_eq!(out, "revoked", "{at_step}: logout-revoked token");
                         }
                         Some(RefreshTokenStatus::Expired) => {
                             assert_eq!(out, "expired", "{at_step}: expired token");
@@ -824,6 +830,7 @@ impl TokenReplay<'_> {
                     self.refreshes[&who]
                         .revoke_all_for_user_audited(
                             &user,
+                            RevocationReason::ReuseDetected,
                             &AuditEvent::sessions_revoked_after_reuse(user),
                         )
                         .await
@@ -847,7 +854,7 @@ impl TokenReplay<'_> {
                 }
                 "logoutRevoke" => {
                     self.logouts[&who]
-                        .revoke(&read[&("logout", who)])
+                        .revoke(&read[&("logout", who)], RevocationReason::Logout)
                         .await
                         .unwrap();
                     coverage.logged_out += 1;

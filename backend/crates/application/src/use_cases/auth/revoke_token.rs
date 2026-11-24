@@ -2,6 +2,7 @@
 
 use crate::ports::RefreshTokenRepository;
 use crate::ports::TokenService;
+use domain::entities::RevocationReason;
 use domain::errors::DomainError;
 use std::sync::Arc;
 
@@ -50,7 +51,7 @@ impl RevokeTokenUseCase {
             // Only revoke if not already revoked
             if !refresh_token.is_revoked() {
                 self.refresh_token_repository
-                    .revoke(refresh_token.id())
+                    .revoke(refresh_token.id(), RevocationReason::Logout)
                     .await?;
             }
         }
@@ -91,7 +92,11 @@ mod tests {
             .expect_find_by_hash()
             .times(1)
             .returning(|_| Ok(Some(create_valid_refresh_token())));
-        mock_repo.expect_revoke().times(1).returning(|_| Ok(()));
+        mock_repo
+            .expect_revoke()
+            .withf(|_, reason| *reason == RevocationReason::Logout)
+            .times(1)
+            .returning(|_, _| Ok(()));
 
         let use_case =
             RevokeTokenUseCase::new(Arc::new(mock_repo), Arc::new(create_mock_token_service()));
@@ -122,7 +127,7 @@ mod tests {
         let mut mock_repo = MockRefreshTokenRepository::new();
         mock_repo.expect_find_by_hash().times(1).returning(|_| {
             let mut token = create_valid_refresh_token();
-            token.revoke(Timestamp::now());
+            token.revoke(Timestamp::now(), RevocationReason::Logout);
             Ok(Some(token))
         });
         // revoke should NOT be called since already revoked

@@ -33,12 +33,13 @@ use persistence_postgres::{
 /// Inserts a persisted user (via the real user repo) and returns its id.
 async fn seed_user(db: &Arc<Database>, email: &str) -> UserId {
     let user_repo = PostgresUserRepository::new(db.clone());
-    let user = User::new(
+    let mut user = User::new(
         Email::new(email).unwrap(),
         Some("password_hash".to_string()),
         "Test".to_string(),
         "User".to_string(),
     );
+    user.mark_email_verified();
     user_repo.save(&user).await.expect("save user");
     *user.id()
 }
@@ -53,12 +54,13 @@ async fn user_save_optimistic_version_conflict_and_increment(pool: PgPool) {
     let repo = PostgresUserRepository::new(db.clone());
 
     // Fresh user: INSERT branch, version starts at 0.
-    let user = User::new(
+    let mut user = User::new(
         Email::new("optimistic@example.com").unwrap(),
         Some("hash".to_string()),
         "Opti".to_string(),
         "Mistic".to_string(),
     );
+    user.mark_email_verified();
     repo.save(&user).await.expect("initial insert");
     let id = *user.id();
 

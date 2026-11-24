@@ -9,7 +9,7 @@ use crate::connection::Database;
 use crate::error::persist_err;
 use crate::models::RefreshTokenRow;
 use application::ports::RefreshTokenRepository;
-use domain::entities::{AuditEvent, RefreshToken};
+use domain::entities::{AuditEvent, RefreshToken, RevocationReason};
 use domain::errors::DomainError;
 use domain::value_objects::{RefreshTokenId, UserId};
 
@@ -24,13 +24,18 @@ impl PostgresRefreshTokenRepository {
     }
 
     fn row_to_entity(row: RefreshTokenRow) -> RefreshToken {
+        let revoked_at = row.revoked_at.to_domain();
+        let revoked_reason = revoked_at
+            .is_some()
+            .then(|| RevocationReason::from_db_str(row.revoked_reason.as_deref()));
         RefreshToken::from_persistence(
             RefreshTokenId::from_uuid(row.id),
             UserId::from_uuid(row.user_id),
             row.token_hash,
             row.device_fingerprint,
             row.expires_at.to_domain(),
-            row.revoked_at.to_domain(),
+            revoked_at,
+            revoked_reason,
             row.created_at.to_domain(),
         )
     }
@@ -40,10 +45,11 @@ impl PostgresRefreshTokenRepository {
 impl RefreshTokenRepository for PostgresRefreshTokenRepository {
     #[tracing::instrument(name = "repo.refresh_token.save", skip_all, fields(db.system = "postgresql", user_id = %token.user_id()))]
     async fn save(&self, token: &RefreshToken) -> Result<(), DomainError> {
+        let revoked_reason = token.revoked_reason().and_then(RevocationReason::as_db_str);
         sqlx::query!(
             r#"
-            INSERT INTO refresh_tokens (id, user_id, token_hash, device_fingerprint, expires_at, revoked_at, created_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO refresh_tokens (id, user_id, token_hash, device_fingerprint, expires_at, revoked_at, revoked_reason, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             "#,
             token.id().as_uuid(),
             token.user_id().as_uuid(),
@@ -51,6 +57,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
             token.device_fingerprint(),
             token.expires_at().to_db(),
             token.revoked_at().to_db(),
+            revoked_reason,
             token.created_at().to_db(),
         )
         .execute(self.db.pool())
@@ -65,7 +72,7 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         let row = sqlx::query_as!(
             RefreshTokenRow,
             r#"
-            SELECT id, user_id, token_hash, device_fingerprint, expires_at, revoked_at, created_at
+            SELECT id, user_id, token_hash, device_fingerprint, expires_at, revoked_at, revoked_reason, created_at
             FROM refresh_tokens
             WHERE token_hash = $1
             "#,
@@ -79,14 +86,19 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
     }
 
     #[tracing::instrument(name = "repo.refresh_token.revoke", skip_all, fields(db.system = "postgresql", token_id = %id))]
-    async fn revoke(&self, id: &RefreshTokenId) -> Result<(), DomainError> {
+    async fn revoke(
+        &self,
+        id: &RefreshTokenId,
+        reason: RevocationReason,
+    ) -> Result<(), DomainError> {
         sqlx::query!(
             r#"
             UPDATE refresh_tokens
-            SET revoked_at = NOW()
+            SET revoked_at = NOW(), revoked_reason = $2
             WHERE id = $1 AND revoked_at IS NULL
             "#,
-            id.as_uuid()
+            id.as_uuid(),
+            reason.as_db_str(),
         )
         .execute(self.db.pool())
         .await
@@ -96,14 +108,19 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
     }
 
     #[tracing::instrument(name = "repo.refresh_token.revoke_all_for_user", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
-    async fn revoke_all_for_user(&self, user_id: &UserId) -> Result<u64, DomainError> {
+    async fn revoke_all_for_user(
+        &self,
+        user_id: &UserId,
+        reason: RevocationReason,
+    ) -> Result<u64, DomainError> {
         let result = sqlx::query!(
             r#"
             UPDATE refresh_tokens
-            SET revoked_at = NOW()
+            SET revoked_at = NOW(), revoked_reason = $2
             WHERE user_id = $1 AND revoked_at IS NULL
             "#,
-            user_id.as_uuid()
+            user_id.as_uuid(),
+            reason.as_db_str(),
         )
         .execute(self.db.pool())
         .await
@@ -116,16 +133,18 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
     async fn revoke_all_for_user_audited(
         &self,
         user_id: &UserId,
+        reason: RevocationReason,
         event: &AuditEvent,
     ) -> Result<u64, DomainError> {
         let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
         let result = sqlx::query!(
             r#"
             UPDATE refresh_tokens
-            SET revoked_at = NOW()
+            SET revoked_at = NOW(), revoked_reason = $2
             WHERE user_id = $1 AND revoked_at IS NULL
             "#,
-            user_id.as_uuid()
+            user_id.as_uuid(),
+            reason.as_db_str(),
         )
         .execute(&mut *tx)
         .await
@@ -144,15 +163,17 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         &self,
         user_id: &UserId,
         keep_token_hash: &str,
+        reason: RevocationReason,
     ) -> Result<u64, DomainError> {
         let result = sqlx::query!(
             r#"
             UPDATE refresh_tokens
-            SET revoked_at = NOW()
+            SET revoked_at = NOW(), revoked_reason = $3
             WHERE user_id = $1 AND revoked_at IS NULL AND token_hash <> $2
             "#,
             user_id.as_uuid(),
-            keep_token_hash
+            keep_token_hash,
+            reason.as_db_str(),
         )
         .execute(self.db.pool())
         .await
@@ -172,10 +193,11 @@ impl RefreshTokenRepository for PostgresRefreshTokenRepository {
         let revoked = sqlx::query!(
             r#"
             UPDATE refresh_tokens
-            SET revoked_at = NOW()
+            SET revoked_at = NOW(), revoked_reason = $2
             WHERE id = $1 AND revoked_at IS NULL
             "#,
-            old_id.as_uuid()
+            old_id.as_uuid(),
+            RevocationReason::Rotated.as_db_str(),
         )
         .execute(&mut *tx)
         .await

@@ -1,7 +1,5 @@
 use crate::errors::DomainError;
-use crate::value_objects::{
-    AccountStatus, AlreadyDeleted, Email, PendingEmailChange, UserId, UserRole,
-};
+use crate::value_objects::{AccountStatus, AlreadyDeleted, Email, UserId, UserRole};
 use jiff::Timestamp;
 
 /// How long a user can cancel a deletion request before the account is purged.
@@ -17,13 +15,6 @@ pub const DELETION_GRACE_PERIOD_DAYS: i64 = 14;
 /// - Users who register via email/password will have `Some(hash)`
 /// - Users who sign up via OAuth (Google/Apple) may have `None`
 /// - Users can add a password later via password reset flow
-///
-/// # Email Change
-///
-/// Users can request to change their email. The flow is:
-/// 1. User requests email change, a [`PendingEmailChange`] is recorded
-/// 2. Verification code is sent to the new email
-/// 3. User confirms with the code, email is swapped
 ///
 /// # Account Deletion
 ///
@@ -60,7 +51,6 @@ pub struct User {
     first_name: String,
     last_name: String,
     email_verified: bool,
-    pending_email_change: Option<PendingEmailChange>,
     status: AccountStatus,
     // Authorization
     role: UserRole,
@@ -85,7 +75,6 @@ pub struct UserParts {
     pub first_name: String,
     pub last_name: String,
     pub email_verified: bool,
-    pub pending_email_change: Option<PendingEmailChange>,
     pub status: AccountStatus,
     pub role: UserRole,
     pub created_at: Timestamp,
@@ -137,7 +126,6 @@ impl User {
             first_name,
             last_name,
             email_verified: false,
-            pending_email_change: None,
             status: AccountStatus::Active,
             role: UserRole::User,
             created_at: now,
@@ -159,7 +147,6 @@ impl User {
             first_name,
             last_name,
             email_verified,
-            pending_email_change,
             status,
             role,
             created_at,
@@ -173,7 +160,6 @@ impl User {
             first_name,
             last_name,
             email_verified,
-            pending_email_change,
             status,
             role,
             created_at,
@@ -248,34 +234,6 @@ impl User {
         self.email_verified
     }
 
-    /// Returns the pending email change, if any.
-    #[must_use]
-    pub const fn pending_email_change(&self) -> Option<&PendingEmailChange> {
-        self.pending_email_change.as_ref()
-    }
-
-    /// Returns the pending email address, if any.
-    #[must_use]
-    pub fn pending_email(&self) -> Option<&Email> {
-        self.pending_email_change
-            .as_ref()
-            .map(PendingEmailChange::new_email)
-    }
-
-    /// Returns when the pending email was requested, if any.
-    #[must_use]
-    pub fn pending_email_requested_at(&self) -> Option<Timestamp> {
-        self.pending_email_change
-            .as_ref()
-            .map(PendingEmailChange::requested_at)
-    }
-
-    /// Returns true if there is a pending email change request.
-    #[must_use]
-    pub const fn has_pending_email(&self) -> bool {
-        self.pending_email_change.is_some()
-    }
-
     /// Returns the user's role.
     #[must_use]
     pub const fn role(&self) -> UserRole {
@@ -317,36 +275,6 @@ impl User {
     pub fn update_password(&mut self, password_hash: String) {
         self.password_hash = Some(password_hash);
         self.updated_at = Timestamp::now();
-    }
-
-    /// Requests an email change to a new address.
-    ///
-    /// Replaces any earlier pending change. The change must be confirmed by
-    /// verifying the new email address.
-    pub fn request_email_change(&mut self, new_email: Email) {
-        let now = Timestamp::now();
-        self.pending_email_change = Some(PendingEmailChange::new(new_email, now));
-        self.updated_at = now;
-    }
-
-    /// Confirms the pending email change.
-    ///
-    /// This swaps the current email for the pending one and clears the pending
-    /// change. The `email_verified` flag is set to true since the new email was
-    /// verified. A no-op when nothing is pending.
-    pub fn confirm_email_change(&mut self) {
-        if let Some(change) = self.pending_email_change.take() {
-            self.email = change.into_new_email();
-            self.email_verified = true;
-            self.updated_at = Timestamp::now();
-        }
-    }
-
-    /// Cancels any pending email change request.
-    pub fn cancel_email_change(&mut self) {
-        if self.pending_email_change.take().is_some() {
-            self.updated_at = Timestamp::now();
-        }
     }
 
     /// Returns where the account is in its deletion lifecycle.
@@ -434,7 +362,6 @@ impl User {
         self.password_hash = None;
         self.first_name = "Deleted".to_string();
         self.last_name = "User".to_string();
-        self.pending_email_change = None;
         self.updated_at = now;
         Ok(())
     }
@@ -458,7 +385,6 @@ impl User {
             first_name: self.first_name,
             last_name: self.last_name,
             email_verified: self.email_verified,
-            pending_email_change: self.pending_email_change,
             status: self.status,
             role: self.role,
             created_at: self.created_at,
@@ -529,7 +455,6 @@ impl UserBuilder {
                 first_name: "Test".to_string(),
                 last_name: "User".to_string(),
                 email_verified: true,
-                pending_email_change: None,
                 status: AccountStatus::Active,
                 role: UserRole::User,
                 created_at: now,
@@ -763,70 +688,6 @@ mod tests {
     }
 
     #[test]
-    fn test_request_email_change_sets_pending_fields() {
-        let mut user = UserBuilder::new().build();
-        assert!(!user.has_pending_email());
-        assert!(user.pending_email().is_none());
-        assert!(user.pending_email_requested_at().is_none());
-
-        let new_email = Email::new("new@example.com").unwrap();
-        user.request_email_change(new_email.clone());
-
-        assert!(user.has_pending_email());
-        assert_eq!(user.pending_email(), Some(&new_email));
-        assert!(user.pending_email_requested_at().is_some());
-    }
-
-    #[test]
-    fn test_confirm_email_change_swaps_email() {
-        let mut user = UserBuilder::new().email_verified(false).build();
-        let new_email = Email::new("new@example.com").unwrap();
-        user.request_email_change(new_email.clone());
-
-        user.confirm_email_change();
-
-        assert_eq!(user.email(), &new_email);
-        assert!(user.email_verified());
-        assert!(!user.has_pending_email());
-        assert!(user.pending_email_requested_at().is_none());
-    }
-
-    #[test]
-    fn test_confirm_email_change_without_pending_is_noop() {
-        let mut user = UserBuilder::new().build();
-        let before = user.email().clone();
-        let updated_before = user.updated_at();
-
-        user.confirm_email_change();
-
-        assert_eq!(user.email(), &before);
-        assert_eq!(user.updated_at(), updated_before);
-    }
-
-    #[test]
-    fn test_cancel_email_change_clears_pending() {
-        let mut user = UserBuilder::new().build();
-        user.request_email_change(Email::new("new@example.com").unwrap());
-        assert!(user.has_pending_email());
-
-        user.cancel_email_change();
-
-        assert!(!user.has_pending_email());
-        assert!(user.pending_email_requested_at().is_none());
-    }
-
-    #[test]
-    fn test_cancel_email_change_without_pending_is_noop() {
-        let mut user = UserBuilder::new().build();
-        let updated_before = user.updated_at();
-
-        user.cancel_email_change();
-
-        assert!(!user.has_pending_email());
-        assert_eq!(user.updated_at(), updated_before);
-    }
-
-    #[test]
     fn test_schedule_deletion_sets_future_timestamp() {
         let mut user = UserBuilder::new().build();
         assert!(!user.is_scheduled_for_deletion());
@@ -887,7 +748,6 @@ mod tests {
     #[test]
     fn test_anonymize_replaces_pii_and_soft_deletes() {
         let mut user = UserBuilder::new().build();
-        user.request_email_change(Email::new("new@example.com").unwrap());
         user.schedule_deletion(Timestamp::now()).unwrap();
         assert!(!user.is_deleted());
 
@@ -898,8 +758,6 @@ mod tests {
         assert!(!user.has_password());
         assert_eq!(user.first_name(), "Deleted");
         assert_eq!(user.last_name(), "User");
-        assert!(!user.has_pending_email());
-        assert!(user.pending_email_requested_at().is_none());
         assert!(user.is_deleted());
         assert!(user.deleted_at().is_some());
         assert!(!user.is_scheduled_for_deletion());

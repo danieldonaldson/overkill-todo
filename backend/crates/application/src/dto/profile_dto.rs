@@ -1,7 +1,6 @@
 //! Profile-related DTOs for user account management.
 
 use super::schema_enums::{OAuthProviderName, RoleName};
-use super::validation::validate_verification_code;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -54,30 +53,6 @@ pub struct SetPasswordRequest {
     pub new_password: String,
 }
 
-/// Request to change email address.
-#[derive(Debug, Deserialize, Validate, ToSchema)]
-pub struct RequestEmailChangeRequest {
-    /// Current password for verification.
-    #[schema(max_length = 256)]
-    #[validate(length(max = 256, message = "Password too long"))]
-    pub current_password: String,
-
-    /// New email address.
-    #[schema(format = Email)]
-    #[validate(email(message = "Invalid email format"))]
-    pub new_email: String,
-}
-
-/// Request to confirm email change with verification code.
-#[derive(Debug, Deserialize, Validate, ToSchema)]
-pub struct ConfirmEmailChangeRequest {
-    /// 6-digit verification code sent to new email.
-    // Exactly 6 ASCII digits once separators are stripped (validation.rs).
-    #[schema(max_length = 32, pattern = "^[^0-9]*([0-9][^0-9]*){6}$")] // MAX_FORMATTED_CODE_LEN
-    #[validate(custom(function = "validate_verification_code"))]
-    pub code: String,
-}
-
 /// Request to delete account.
 #[derive(Debug, Deserialize, Validate, ToSchema)]
 pub struct RequestDeletionRequest {
@@ -121,9 +96,6 @@ pub struct AccountExportResponse {
     pub email_verified: bool,
     /// Whether a password is set (the hash itself is never exported).
     pub has_password: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(nullable = false)]
-    pub pending_email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(nullable = false)]
     pub deletion_scheduled_at: Option<Timestamp>,

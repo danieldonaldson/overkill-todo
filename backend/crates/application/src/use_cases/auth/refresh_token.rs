@@ -3,7 +3,7 @@
 use crate::ports::UserRepository;
 use crate::ports::{RefreshTokenRepository, TokenService};
 use domain::entities::User;
-use domain::entities::{AuditEvent, RefreshToken, RefreshTokenStatus};
+use domain::entities::{AuditEvent, RefreshToken, RefreshTokenStatus, RevocationReason};
 use domain::errors::DomainError;
 use jiff::{SignedDuration, Timestamp};
 use std::sync::Arc;
@@ -28,8 +28,12 @@ pub enum RefreshError {
     Invalid,
     /// The token has expired.
     Expired,
-    /// The token was already rotated or revoked and was presented again. Every
-    /// session of the account has been signed out.
+    /// The token was revoked for a benign reason (explicit sign-out or password
+    /// change). Refused without revoking other sessions or alerting as theft.
+    Revoked,
+    /// The token was already rotated (or revoked for reuse / unknown legacy
+    /// reason) and was presented again. Every session of the account has been
+    /// signed out.
     Reused,
     /// The token was issued to a different device.
     DeviceMismatch,
@@ -48,7 +52,9 @@ impl From<RefreshError> for DomainError {
         match error {
             RefreshError::Invalid => Self::Authorization("Invalid refresh token".into()),
             RefreshError::Expired => Self::Authorization("Refresh token has expired".into()),
-            RefreshError::Reused => Self::Authorization("Refresh token has been revoked".into()),
+            RefreshError::Revoked | RefreshError::Reused => {
+                Self::Authorization("Refresh token has been revoked".into())
+            }
             RefreshError::DeviceMismatch => {
                 Self::Authorization("Device fingerprint mismatch".into())
             }
@@ -118,21 +124,34 @@ impl RefreshTokenUseCase {
         match refresh_token.status(Timestamp::now()) {
             RefreshTokenStatus::Active => {}
             // `status()` reports a revoked-and-expired token as `Revoked`, so a
-            // stolen token replayed after its natural expiry still lands here
-            // and triggers full-family revocation.
-            RefreshTokenStatus::Revoked => {
-                // Revoked token presented again — likely stolen; invalidate all sessions.
+            // stolen rotated token replayed after its natural expiry still lands
+            // here and triggers full-family revocation.
+            RefreshTokenStatus::Revoked(reason) if reason.triggers_reuse_detection() => {
+                // Rotated/reuse/legacy revoked token presented again — likely
+                // stolen; invalidate all sessions.
                 tracing::warn!(
                     user_id = %refresh_token.user_id(),
+                    ?reason,
                     "Revoked refresh token reuse detected — revoking all sessions for user"
                 );
                 self.refresh_token_repository
                     .revoke_all_for_user_audited(
                         refresh_token.user_id(),
+                        RevocationReason::ReuseDetected,
                         &AuditEvent::sessions_revoked_after_reuse(*refresh_token.user_id()),
                     )
                     .await?;
                 return Err(RefreshError::Reused);
+            }
+            RefreshTokenStatus::Revoked(reason) => {
+                // Benign revocation (logout or password change): refuse the
+                // token without evicting the user's other active sessions.
+                tracing::info!(
+                    user_id = %refresh_token.user_id(),
+                    ?reason,
+                    "Refresh rejected: token was revoked"
+                );
+                return Err(RefreshError::Revoked);
             }
             RefreshTokenStatus::Expired => {
                 return Err(RefreshError::Expired);
@@ -240,7 +259,7 @@ mod tests {
         )
     }
 
-    /// A token that is both revoked AND naturally expired.
+    /// A token that is both rotated-revoked AND naturally expired.
     fn revoked_and_expired_token(user_id: UserId) -> RefreshToken {
         RefreshToken::from_persistence(
             RefreshTokenId::new(),
@@ -249,7 +268,21 @@ mod tests {
             FINGERPRINT.to_string(),
             Timestamp::now() - SignedDuration::from_hours(24),
             Some(Timestamp::now() - SignedDuration::from_hours(1)),
+            Some(RevocationReason::Rotated),
             Timestamp::now() - SignedDuration::from_hours(24 * 31),
+        )
+    }
+
+    fn revoked_token_with_reason(user_id: UserId, reason: RevocationReason) -> RefreshToken {
+        RefreshToken::from_persistence(
+            RefreshTokenId::new(),
+            user_id,
+            "stored-hash".to_string(),
+            FINGERPRINT.to_string(),
+            Timestamp::now() + SignedDuration::from_hours(24 * 30),
+            Some(Timestamp::now() - SignedDuration::from_hours(1)),
+            Some(reason),
+            Timestamp::now() - SignedDuration::from_hours(2),
         )
     }
 
@@ -260,6 +293,7 @@ mod tests {
             "stored-hash".to_string(),
             FINGERPRINT.to_string(),
             Timestamp::now() - SignedDuration::from_hours(1),
+            None,
             None,
             Timestamp::now() - SignedDuration::from_hours(24 * 31),
         )
@@ -336,10 +370,12 @@ mod tests {
             .returning(move |_| Ok(Some(token.clone())));
         repo.expect_revoke_all_for_user_audited()
             .times(1)
-            .withf(move |uid, event| {
-                uid == &user_id && *event == AuditEvent::sessions_revoked_after_reuse(user_id)
+            .withf(move |uid, reason, event| {
+                uid == &user_id
+                    && *reason == RevocationReason::ReuseDetected
+                    && *event == AuditEvent::sessions_revoked_after_reuse(user_id)
             })
-            .returning(|_, _| Ok(3));
+            .returning(|_, _, _| Ok(3));
         repo.expect_rotate().never();
 
         let uc = RefreshTokenUseCase::new(
@@ -350,6 +386,35 @@ mod tests {
 
         let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
         assert!(matches!(err, RefreshError::Reused));
+    }
+
+    /// Replaying a token revoked by logout or password change must be refused
+    /// without nuking the user's other active sessions or auditing as theft.
+    #[tokio::test]
+    async fn benign_revocation_does_not_trigger_reuse_detection() {
+        for reason in [RevocationReason::Logout, RevocationReason::PasswordChange] {
+            let user_id = UserId::new();
+            let token = revoked_token_with_reason(user_id, reason);
+
+            let mut repo = MockRefreshTokenRepository::new();
+            repo.expect_find_by_hash()
+                .times(1)
+                .returning(move |_| Ok(Some(token.clone())));
+            repo.expect_revoke_all_for_user_audited().never();
+            repo.expect_rotate().never();
+
+            let uc = RefreshTokenUseCase::new(
+                Arc::new(repo),
+                Arc::new(MockUserRepository::new()),
+                Arc::new(token_service()),
+            );
+
+            let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
+            assert!(
+                matches!(err, RefreshError::Revoked),
+                "{reason:?} -> {err:?}"
+            );
+        }
     }
 
     /// An expired-but-never-revoked token is a normal expiry: reject without
@@ -469,6 +534,7 @@ mod tests {
         let cases = [
             (RefreshError::Invalid, "Invalid refresh token"),
             (RefreshError::Expired, "Refresh token has expired"),
+            (RefreshError::Revoked, "Refresh token has been revoked"),
             (RefreshError::Reused, "Refresh token has been revoked"),
             (RefreshError::DeviceMismatch, "Device fingerprint mismatch"),
             (

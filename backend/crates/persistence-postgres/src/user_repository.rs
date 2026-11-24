@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use domain::{
     entities::{AuditEvent, User, UserParts},
     errors::DomainError,
-    value_objects::{AccountStatus, Email, PendingEmailChange, UserId},
+    value_objects::{AccountStatus, Email, UserId},
 };
 use jiff::Timestamp;
 use std::sync::Arc;
@@ -27,7 +27,6 @@ impl PostgresUserRepository {
 
     fn row_to_user(row: UserRow) -> Result<User, DomainError> {
         let email = Email::new(&row.email)?;
-        let pending_email = row.pending_email.map(|e| Email::new(&e)).transpose()?;
         Ok(User::from_persistence(UserParts {
             id: UserId::from_uuid(row.id),
             email,
@@ -35,10 +34,6 @@ impl PostgresUserRepository {
             first_name: row.first_name,
             last_name: row.last_name,
             email_verified: row.email_verified,
-            pending_email_change: PendingEmailChange::from_columns(
-                pending_email,
-                row.pending_email_requested_at.to_domain(),
-            ),
             status: AccountStatus::from_columns(
                 row.deleted_at.to_domain(),
                 row.deletion_scheduled_at.to_domain(),
@@ -62,22 +57,20 @@ async fn save_on<'e>(executor: impl sqlx::PgExecutor<'e>, user: &User) -> Result
     // `Conflict` instead of silently clobbering the other write.
     let result = sqlx::query!(
         r#"
-        INSERT INTO users (id, email, password_hash, first_name, last_name, email_verified, pending_email, pending_email_requested_at, deleted_at, deletion_scheduled_at, role, created_at, updated_at, version)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        INSERT INTO users (id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role, created_at, updated_at, version)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         ON CONFLICT (id) DO UPDATE SET
             email = EXCLUDED.email,
             password_hash = EXCLUDED.password_hash,
             first_name = EXCLUDED.first_name,
             last_name = EXCLUDED.last_name,
             email_verified = EXCLUDED.email_verified,
-            pending_email = EXCLUDED.pending_email,
-            pending_email_requested_at = EXCLUDED.pending_email_requested_at,
             deleted_at = EXCLUDED.deleted_at,
             deletion_scheduled_at = EXCLUDED.deletion_scheduled_at,
             role = EXCLUDED.role,
             updated_at = EXCLUDED.updated_at,
             version = users.version + 1
-        WHERE users.version = $14
+        WHERE users.version = $12
         "#,
         user.id().as_uuid(),
         user.email().as_str(),
@@ -85,8 +78,6 @@ async fn save_on<'e>(executor: impl sqlx::PgExecutor<'e>, user: &User) -> Result
         user.first_name(),
         user.last_name(),
         user.email_verified(),
-        user.pending_email().map(Email::as_str),
-        user.pending_email_requested_at().to_db(),
         user.deleted_at().to_db(),
         user.deletion_scheduled_at().to_db(),
         DbUserRole::from(user.role()) as _,
@@ -129,7 +120,7 @@ impl UserRepository for PostgresUserRepository {
         let row = sqlx::query_as!(
             UserRow,
             r#"
-            SELECT id, email, password_hash, first_name, last_name, email_verified, pending_email, pending_email_requested_at, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
+            SELECT id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
             FROM users
             WHERE id = $1
             "#,
@@ -147,7 +138,7 @@ impl UserRepository for PostgresUserRepository {
         let row = sqlx::query_as!(
             UserRow,
             r#"
-            SELECT id, email, password_hash, first_name, last_name, email_verified, pending_email, pending_email_requested_at, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
+            SELECT id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
             FROM users
             WHERE email = $1
             "#,
@@ -165,7 +156,7 @@ impl UserRepository for PostgresUserRepository {
         let rows = sqlx::query_as!(
             UserRow,
             r#"
-            SELECT id, email, password_hash, first_name, last_name, email_verified, pending_email, pending_email_requested_at, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
+            SELECT id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
             FROM users
             WHERE deleted_at IS NULL
             ORDER BY created_at DESC, id DESC
@@ -362,7 +353,7 @@ impl AccountLifecycleRepository for PostgresUserRepository {
         let rows = sqlx::query_as!(
             UserRow,
             r#"
-            SELECT id, email, password_hash, first_name, last_name, email_verified, pending_email, pending_email_requested_at, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
+            SELECT id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
             FROM users
             WHERE deletion_scheduled_at IS NOT NULL
               AND deletion_scheduled_at <= NOW()
@@ -428,8 +419,6 @@ impl AccountLifecycleRepository for PostgresUserRepository {
                 password_hash = NULL,
                 first_name = $3,
                 last_name = $4,
-                pending_email = NULL,
-                pending_email_requested_at = NULL,
                 deleted_at = $5,
                 deletion_scheduled_at = NULL,
                 tokens_valid_after = NOW(),
@@ -536,8 +525,6 @@ mod tests {
             first_name: "Test".to_string(),
             last_name: "User".to_string(),
             email_verified: true,
-            pending_email: None,
-            pending_email_requested_at: None,
             deleted_at: None,
             deletion_scheduled_at: None,
             role: DbUserRole::User,
@@ -583,8 +570,6 @@ mod tests {
                 first_name,
                 last_name,
                 email_verified: true,
-                pending_email: None,
-                pending_email_requested_at: None,
                 deleted_at: None,
                 deletion_scheduled_at: None,
                 role: DbUserRole::User,
@@ -611,69 +596,6 @@ mod tests {
             prop_assert!(result.is_err(), "Invalid email '{}' should fail", email);
         }
 
-        /// Pending email validation: valid pending_email should work
-        #[test]
-        fn prop_valid_pending_email_converts(
-            email in valid_email_strategy(),
-            pending_email in valid_email_strategy(),
-        ) {
-            let now = Timestamp::now();
-            let row = UserRow {
-                id: Uuid::new_v4(),
-                email,
-                password_hash: None,
-                first_name: "Test".to_string(),
-                last_name: "User".to_string(),
-                email_verified: false,
-                pending_email: Some(pending_email.clone()),
-                pending_email_requested_at: Some(now.to_db()),
-                deleted_at: None,
-                deletion_scheduled_at: None,
-                role: DbUserRole::User,
-                created_at: now.to_db(),
-                updated_at: now.to_db(),
-                version: 0,
-            };
-
-            let result = PostgresUserRepository::row_to_user(row);
-            prop_assert!(result.is_ok());
-
-            let user = result.unwrap();
-            prop_assert!(user.pending_email().is_some());
-            prop_assert_eq!(
-                user.pending_email().unwrap().as_str(),
-                pending_email.trim().to_lowercase()
-            );
-        }
-
-        /// Invalid pending_email should cause conversion to fail
-        #[test]
-        fn prop_invalid_pending_email_fails(
-            email in valid_email_strategy(),
-            pending_email in invalid_email_strategy(),
-        ) {
-            let now = Timestamp::now();
-            let row = UserRow {
-                id: Uuid::new_v4(),
-                email,
-                password_hash: None,
-                first_name: "Test".to_string(),
-                last_name: "User".to_string(),
-                email_verified: false,
-                pending_email: Some(pending_email.clone()),
-                pending_email_requested_at: Some(now.to_db()),
-                deleted_at: None,
-                deletion_scheduled_at: None,
-                role: DbUserRole::User,
-                created_at: now.to_db(),
-                updated_at: now.to_db(),
-                version: 0,
-            };
-
-            let result = PostgresUserRepository::row_to_user(row);
-            prop_assert!(result.is_err(), "Invalid pending_email '{}' should fail", pending_email);
-        }
-
         /// UUID roundtrip: user id should be preserved
         #[test]
         fn prop_user_id_preserved(
@@ -688,8 +610,6 @@ mod tests {
                 first_name: "Test".to_string(),
                 last_name: "User".to_string(),
                 email_verified: true,
-                pending_email: None,
-                pending_email_requested_at: None,
                 deleted_at: None,
                 deletion_scheduled_at: None,
                 role: DbUserRole::User,
@@ -719,8 +639,6 @@ mod tests {
                 first_name: "Test".to_string(),
                 last_name: "User".to_string(),
                 email_verified,
-                pending_email: None,
-                pending_email_requested_at: None,
                 deleted_at: None,
                 deletion_scheduled_at: None,
                 role: DbUserRole::User,

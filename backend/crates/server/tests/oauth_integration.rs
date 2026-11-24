@@ -548,8 +548,13 @@ async fn callback_with_malformed_user_id_in_state_is_rejected(pool: PgPool) {
     let app = app(pool);
     // A correctly signed state whose `user_id` claim isn't a UUID.
     let crypto = common::ensure_test_crypto();
-    let (state, nonce) =
-        api::create_oauth_state(crypto.tokens(), "google", "link", Some("not-a-uuid")).unwrap();
+    let (state, nonce) = api::create_oauth_state(
+        crypto.tokens(),
+        "google",
+        application::dto::OAuthMode::Link,
+        Some("not-a-uuid"),
+    )
+    .unwrap();
 
     let resp = callback(
         &app,

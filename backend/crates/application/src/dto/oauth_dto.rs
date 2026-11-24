@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 /// OAuth flow mode.
-#[derive(Debug, Clone, Copy, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum OAuthMode {
     /// Login or register via OAuth.
@@ -46,7 +46,7 @@ pub struct OAuthCallbackQuery {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OAuthStateClaims {
     pub nonce: String,
-    pub mode: String,
+    pub mode: OAuthMode,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     pub provider: String,

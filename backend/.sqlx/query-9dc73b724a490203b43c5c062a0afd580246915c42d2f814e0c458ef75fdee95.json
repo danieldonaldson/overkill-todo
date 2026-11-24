@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n            SELECT id, email, password_hash, first_name, last_name, email_verified, pending_email, pending_email_requested_at, deleted_at, deletion_scheduled_at, role as \"role: _\", created_at, updated_at, version\n            FROM users\n            WHERE deleted_at IS NULL\n            ORDER BY created_at DESC, id DESC\n            LIMIT $1 OFFSET $2\n            ",
+  "query": "\n            SELECT id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role as \"role: _\", created_at, updated_at, version\n            FROM users\n            WHERE id = $1\n            ",
   "describe": {
     "columns": [
       {
@@ -71,28 +71,6 @@
       },
       {
         "ordinal": 6,
-        "name": "pending_email",
-        "type_info": "Varchar",
-        "origin": {
-          "Table": {
-            "table": "users",
-            "name": "pending_email"
-          }
-        }
-      },
-      {
-        "ordinal": 7,
-        "name": "pending_email_requested_at",
-        "type_info": "Timestamptz",
-        "origin": {
-          "Table": {
-            "table": "users",
-            "name": "pending_email_requested_at"
-          }
-        }
-      },
-      {
-        "ordinal": 8,
         "name": "deleted_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -103,7 +81,7 @@
         }
       },
       {
-        "ordinal": 9,
+        "ordinal": 7,
         "name": "deletion_scheduled_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -114,7 +92,7 @@
         }
       },
       {
-        "ordinal": 10,
+        "ordinal": 8,
         "name": "role: _",
         "type_info": {
           "Custom": {
@@ -136,7 +114,7 @@
         }
       },
       {
-        "ordinal": 11,
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -147,7 +125,7 @@
         }
       },
       {
-        "ordinal": 12,
+        "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz",
         "origin": {
@@ -158,7 +136,7 @@
         }
       },
       {
-        "ordinal": 13,
+        "ordinal": 11,
         "name": "version",
         "type_info": "Int8",
         "origin": {
@@ -171,8 +149,7 @@
     ],
     "parameters": {
       "Left": [
-        "Int8",
-        "Int8"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -184,13 +161,11 @@
       false,
       true,
       true,
-      true,
-      true,
       false,
       false,
       false,
       false
     ]
   },
-  "hash": "2f7c4e82b2c3703669524bca2c1bb27595d51030846889136570eb1a639a5f38"
+  "hash": "9dc73b724a490203b43c5c062a0afd580246915c42d2f814e0c458ef75fdee95"
 }

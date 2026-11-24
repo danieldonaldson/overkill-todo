@@ -96,11 +96,24 @@ fn csrf(c: &mut Criterion) {
 
 fn oauth_state(c: &mut Criterion) {
     let crypto = common::ensure_test_crypto();
-    let (state, _) = create_oauth_state(crypto.tokens(), "google", "login", None).unwrap();
+    let (state, _) = create_oauth_state(
+        crypto.tokens(),
+        "google",
+        application::dto::OAuthMode::Login,
+        None,
+    )
+    .unwrap();
 
     let mut g = c.benchmark_group("oauth_state");
     g.bench_function("create", |b| {
-        b.iter(|| create_oauth_state(crypto.tokens(), "google", "login", None));
+        b.iter(|| {
+            create_oauth_state(
+                crypto.tokens(),
+                "google",
+                application::dto::OAuthMode::Login,
+                None,
+            )
+        });
     });
     g.bench_function("verify", |b| {
         b.iter(|| verify_oauth_state(crypto.tokens(), black_box(&state)));

@@ -48,12 +48,13 @@ async fn age_codes(pool: &PgPool, table: &str) {
 
 async fn seed_user(db: &Arc<Database>, email: &str) -> UserId {
     let user_repo = PostgresUserRepository::new(db.clone());
-    let user = User::new(
+    let mut user = User::new(
         Email::new(email).unwrap(),
         Some("password_hash".to_string()),
         "Test".to_string(),
         "User".to_string(),
     );
+    user.mark_email_verified();
     user_repo.save(&user).await.expect("save user");
     *user.id()
 }
@@ -171,10 +172,27 @@ async fn refresh_token_save_find_revoke_and_revoke_all(pool: PgPool) {
     assert!(found.revoked_at().is_none());
 
     // Revoke by id; the row is now revoked. Re-revoking is a harmless no-op.
-    repo.revoke(token.id()).await.unwrap();
+    repo.revoke(token.id(), domain::entities::RevocationReason::Logout)
+        .await
+        .unwrap();
     let after = repo.find_by_hash("hash-1").await.unwrap().unwrap();
     assert!(after.revoked_at().is_some());
-    repo.revoke(token.id()).await.unwrap();
+    assert_eq!(
+        after.revoked_reason(),
+        Some(domain::entities::RevocationReason::Logout)
+    );
+    repo.revoke(token.id(), domain::entities::RevocationReason::Rotated)
+        .await
+        .unwrap();
+    assert_eq!(
+        repo.find_by_hash("hash-1")
+            .await
+            .unwrap()
+            .unwrap()
+            .revoked_reason(),
+        Some(domain::entities::RevocationReason::Logout),
+        "re-revoking must keep the original reason"
+    );
 
     // revoke_all_for_user only touches still-active tokens.
     let token2 = RefreshToken::new(
@@ -191,10 +209,18 @@ async fn refresh_token_save_find_revoke_and_revoke_all(pool: PgPool) {
     );
     repo.save(&token2).await.unwrap();
     repo.save(&token3).await.unwrap();
-    let revoked = repo.revoke_all_for_user(&user_id).await.unwrap();
+    let revoked = repo
+        .revoke_all_for_user(&user_id, domain::entities::RevocationReason::PasswordChange)
+        .await
+        .unwrap();
     assert_eq!(revoked, 2, "only the two active tokens are revoked");
     // Nothing active left → second call revokes zero.
-    assert_eq!(repo.revoke_all_for_user(&user_id).await.unwrap(), 0);
+    assert_eq!(
+        repo.revoke_all_for_user(&user_id, domain::entities::RevocationReason::PasswordChange)
+            .await
+            .unwrap(),
+        0
+    );
 }
 
 /// `revoke_all_for_user_except` (powers "log out other devices") revokes every
@@ -230,7 +256,11 @@ async fn refresh_token_revoke_all_except_keeps_current(pool: PgPool) {
     repo.save(&other_b).await.unwrap();
 
     let revoked = repo
-        .revoke_all_for_user_except(&user_id, "keep")
+        .revoke_all_for_user_except(
+            &user_id,
+            "keep",
+            domain::entities::RevocationReason::PasswordChange,
+        )
         .await
         .unwrap();
     assert_eq!(revoked, 2, "both other devices are revoked");
@@ -264,9 +294,13 @@ async fn refresh_token_revoke_all_except_keeps_current(pool: PgPool) {
 
     // Idempotent: nothing else active to revoke.
     assert_eq!(
-        repo.revoke_all_for_user_except(&user_id, "keep")
-            .await
-            .unwrap(),
+        repo.revoke_all_for_user_except(
+            &user_id,
+            "keep",
+            domain::entities::RevocationReason::PasswordChange,
+        )
+        .await
+        .unwrap(),
         0
     );
 }

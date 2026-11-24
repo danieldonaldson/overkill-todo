@@ -232,7 +232,7 @@ pub async fn oauth_start(
     let (state, nonce) = create_oauth_state(
         deps.crypto.tokens(),
         &provider,
-        mode_str,
+        query.mode,
         user_id.as_deref(),
     )?;
 
@@ -378,9 +378,9 @@ async fn oauth_callback_inner(
         }
     }
 
-    let mode = match state_claims.mode.as_str() {
-        "link" => OAuthCallbackMode::Link,
-        _ => OAuthCallbackMode::Login,
+    let mode = match state_claims.mode {
+        OAuthMode::Login => OAuthCallbackMode::Login,
+        OAuthMode::Link => OAuthCallbackMode::Link,
     };
 
     // The state JWT carries the linking user id as a string; parse it back into a
@@ -449,7 +449,7 @@ async fn oauth_callback_inner(
 fn default_test_claims(provider: &str) -> OAuthStateClaims {
     OAuthStateClaims {
         nonce: "test".to_string(),
-        mode: "login".to_string(),
+        mode: OAuthMode::Login,
         user_id: None,
         provider: provider.to_string(),
         exp: 0,
@@ -575,7 +575,7 @@ mod tests {
         let claims = default_test_claims("google");
 
         assert_eq!(claims.nonce, "test");
-        assert_eq!(claims.mode, "login");
+        assert_eq!(claims.mode, OAuthMode::Login);
         assert!(claims.user_id.is_none());
         assert_eq!(claims.provider, "google");
         assert_eq!(claims.exp, 0);
@@ -587,7 +587,7 @@ mod tests {
         let claims = default_test_claims("apple");
 
         assert_eq!(claims.provider, "apple");
-        assert_eq!(claims.mode, "login");
+        assert_eq!(claims.mode, OAuthMode::Login);
     }
 
     #[cfg(debug_assertions)]
