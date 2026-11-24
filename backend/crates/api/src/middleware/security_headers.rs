@@ -16,8 +16,11 @@ const HSTS_VALUE: &str = "max-age=63072000; includeSubDomains";
 /// Adds security headers to the outgoing response.
 ///
 /// - `X-Content-Type-Options: nosniff` — disable MIME sniffing
-/// - `X-Frame-Options: DENY` — block framing (clickjacking)
-/// - `Referrer-Policy: no-referrer` — never leak URLs as referrers
+/// - `X-Frame-Options: DENY` — block framing (clickjacking); stricter than the
+///   web Caddyfile's `SAMEORIGIN` because JSON API responses are never framed
+/// - `Referrer-Policy: no-referrer` — never leak URLs as referrers; stricter
+///   than the web Caddyfile's `strict-origin-when-cross-origin` because API
+///   responses do not initiate browser navigations
 /// - `Cross-Origin-Opener-Policy: same-origin` — isolate the browsing context
 /// - `Strict-Transport-Security` — force HTTPS (production only)
 pub async fn security_headers_middleware(req: Request, next: Next) -> Response {

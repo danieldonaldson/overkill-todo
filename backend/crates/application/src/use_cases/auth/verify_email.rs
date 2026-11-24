@@ -6,6 +6,7 @@ use domain::entities::User;
 use domain::entities::attempt_lockout::AttemptOutcome;
 use domain::entities::email_verification_code::MAX_ATTEMPTS;
 use domain::errors::DomainError;
+use domain::value_objects::Email;
 use std::sync::Arc;
 
 /// Error details for verification failures.
@@ -86,10 +87,12 @@ impl VerifyEmailUseCase {
     /// can use to provide detailed feedback to the frontend.
     #[tracing::instrument(name = "usecase.verify_email", skip_all)]
     pub async fn execute(&self, email: &str, code: &str) -> Result<User, VerifyEmailError> {
-        // Find the user by email
+        // Find the user by normalized email
+        let email = Email::new(email)
+            .map_err(|_| VerifyEmailError::NotFound("No account with this email".into()))?;
         let user = self
             .user_repo
-            .find_by_email(email)
+            .find_by_email(&email)
             .await
             .map_err(|e| VerifyEmailError::Internal(e.to_string()))?
             .ok_or_else(|| VerifyEmailError::NotFound("No account with this email".into()))?;

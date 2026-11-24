@@ -68,7 +68,7 @@ impl RegisterUserUseCase {
         let email_vo = Email::new(email)?;
         self.warn_if_domain_lacks_mx(&email_vo).await;
 
-        if let Some(existing_user) = self.user_repository.find_by_email(email).await? {
+        if let Some(existing_user) = self.user_repository.find_by_email(&email_vo).await? {
             if existing_user.has_password() && existing_user.email_verified() {
                 tracing::info!(
                     user_id = %existing_user.id(),

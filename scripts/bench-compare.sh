@@ -79,7 +79,7 @@ if [ $backend = 1 ]; then
       # that repairs an uncompilable base. The PR side must still pass.
       case $2 in
         bench-base-*)
-          if ! { [ -d "$CRITERION_HOME" ] && find "$CRITERION_HOME" -type f -path "*/$2/estimates.json" | grep -q .; }; then
+          if [ ! -d "$CRITERION_HOME" ] || [ -z "$(find "$CRITERION_HOME" -type f -path "*/$2/estimates.json" -print -quit)" ]; then
             if [ "${BENCH_ALLOW_BROKEN_BASE:-0}" = 1 ]; then
               echo "::warning::backend benches failed on the base side ($2) with no results (allowed via BENCH_ALLOW_BROKEN_BASE=1)"
             else

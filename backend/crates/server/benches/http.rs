@@ -123,7 +123,8 @@ async fn log_in(app: &Router, email: &str) -> Session {
 
 async fn promote_to_super_admin(pool: &PgPool, email: &str) {
     let users = PostgresUserRepository::new(Arc::new(Database::from_pool(pool.clone())));
-    let mut user = users.find_by_email(email).await.unwrap().unwrap();
+    let email = domain::value_objects::Email::new(email).unwrap();
+    let mut user = users.find_by_email(&email).await.unwrap().unwrap();
     let event = AuditEvent::role_changed(
         *user.id(),
         Actor::Operator,

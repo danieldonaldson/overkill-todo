@@ -5,6 +5,7 @@ use crate::ports::{CodeGenerator, EmailService, PasswordHasher, PasswordResetRep
 use domain::entities::PasswordResetCode;
 use domain::entities::attempt_lockout::IssueOutcome;
 use domain::errors::DomainError;
+use domain::value_objects::Email;
 use std::sync::Arc;
 
 /// Use case for requesting a password reset.
@@ -47,8 +48,11 @@ impl RequestPasswordResetUseCase {
     /// Returns an error if repository operations or email service fails.
     #[tracing::instrument(name = "usecase.request_password_reset", skip_all)]
     pub async fn execute(&self, email: &str) -> Result<bool, DomainError> {
-        // Find the user by email
-        let Some(user) = self.user_repo.find_by_email(email).await? else {
+        // Find the user by normalized email
+        let Ok(email) = Email::new(email) else {
+            return Ok(false);
+        };
+        let Some(user) = self.user_repo.find_by_email(&email).await? else {
             // Email doesn't exist - return false per our open enumeration policy
             return Ok(false);
         };

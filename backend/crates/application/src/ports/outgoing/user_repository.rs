@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use domain::entities::{AuditEvent, User};
 use domain::errors::DomainError;
-use domain::value_objects::{UserId, UserRole};
+use domain::value_objects::{Email, UserId, UserRole};
 use jiff::Timestamp;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,13 +31,13 @@ pub trait UserRepository: Send + Sync {
     /// Finds a user by their unique ID.
     async fn find_by_id(&self, id: &UserId) -> Result<Option<User>, DomainError>;
 
-    /// Finds a user by their email address.
-    async fn find_by_email(&self, email: &str) -> Result<Option<User>, DomainError>;
+    /// Finds a user by their normalized email address.
+    async fn find_by_email(&self, email: &Email) -> Result<Option<User>, DomainError>;
 
-    /// Finds a user by their email address, but only if email is verified.
+    /// Finds a user by their normalized email address, but only if email is verified.
     ///
     /// Used for OAuth hybrid auto-linking - only link to verified email accounts.
-    async fn find_by_verified_email(&self, email: &str) -> Result<Option<User>, DomainError>;
+    async fn find_by_verified_email(&self, email: &Email) -> Result<Option<User>, DomainError>;
 
     /// Retrieves all users with pagination.
     async fn find_all(&self, limit: i64, offset: i64) -> Result<Vec<User>, DomainError>;

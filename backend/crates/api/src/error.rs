@@ -273,14 +273,10 @@ impl From<argon2::Error> for AppError {
     }
 }
 
-impl From<jsonwebtoken::errors::Error> for AppError {
-    fn from(error: jsonwebtoken::errors::Error) -> Self {
-        Self::Authorization {
-            code: auth_codes::TOKEN_INVALID,
-            message: format!("JWT error: {error}"),
-        }
-    }
-}
+// Intentionally no `From<jsonwebtoken::errors::Error>` for `AppError`:
+// `AppError::Authorization` messages are echoed to clients, so JWT verification
+// call sites must map failures explicitly (logging details at debug and
+// returning `AppError::token_rejected()` / `AppError::token_expired()`).
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
@@ -392,20 +388,6 @@ mod tests {
     fn test_display_database_error() {
         let error = AppError::Database("connection failed".into());
         assert_eq!(format!("{error}"), "Database error: connection failed");
-    }
-
-    #[test]
-    fn test_from_jwt_error() {
-        let result = jsonwebtoken::decode::<serde_json::Value>(
-            "invalid",
-            &jsonwebtoken::DecodingKey::from_secret(b"secret"),
-            &jsonwebtoken::Validation::default(),
-        );
-        let jwt_error = result.unwrap_err();
-        let app_error: AppError = jwt_error.into();
-        assert!(
-            matches!(&app_error, AppError::Authorization { message, .. } if message.contains("JWT error"))
-        );
     }
 
     #[tokio::test]

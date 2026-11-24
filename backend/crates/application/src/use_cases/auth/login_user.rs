@@ -3,6 +3,7 @@
 use crate::ports::{PasswordHasher, UserRepository};
 use domain::entities::User;
 use domain::errors::DomainError;
+use domain::value_objects::Email;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 
@@ -78,7 +79,10 @@ impl LoginUserUseCase {
     /// - [`LoginError::Domain`] if the user lookup fails.
     #[tracing::instrument(name = "usecase.login_user", skip_all)]
     pub async fn execute(&self, email: &str, password: &str) -> Result<User, LoginError> {
-        let user = self.user_repository.find_by_email(email).await?;
+        let user = match Email::new(email) {
+            Ok(email) => self.user_repository.find_by_email(&email).await?,
+            Err(_) => None,
+        };
 
         // An unknown email and a password-less account (mid-signup, or
         // OAuth-only) fail like a wrong password, after the same Argon2 work.

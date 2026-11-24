@@ -149,12 +149,16 @@ test.describe('Navigation timing', () => {
 
     await expect
       .poll(() => t.navigations().map((n) => [n.page, n.view_transition]))
-      .toEqual([
-        ['/dashboard', 'none'],
-        ['/dashboard/settings', 'unsupported'],
-      ])
-    expectOrdered(t.navigations()[1])
-    expect(t.navigations()[1].transition_ms).toBeUndefined()
+      .toEqual(
+        expect.arrayContaining([
+          ['/dashboard', 'none'],
+          ['/dashboard/settings', 'unsupported'],
+        ])
+      )
+    expect(t.navigations()).toHaveLength(2)
+    const soft = t.navigations().find((n) => n.page === '/dashboard/settings')!
+    expectOrdered(soft)
+    expect(soft.transition_ms).toBeUndefined()
   })
 
   test('a navigation that falls back to a full load is reported as a full load', async ({

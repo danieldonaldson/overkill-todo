@@ -131,7 +131,7 @@ impl OAuthCallbackUseCase {
         // Try to find existing user by email (for auto-linking)
         if let Some(ref email_str) = user_info.email
             && let Ok(email) = Email::new(email_str)
-            && let Some(existing_user) = self.user_repo.find_by_email(email.as_str()).await?
+            && let Some(existing_user) = self.user_repo.find_by_email(&email).await?
         {
             // Hybrid auto-link: only if BOTH emails are verified
             // This prevents account takeover attacks

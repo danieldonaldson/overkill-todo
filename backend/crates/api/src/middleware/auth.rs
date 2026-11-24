@@ -101,7 +101,14 @@ fn resolve_principal(keys: &TokenKeyring, headers: &HeaderMap) -> Result<AuthUse
     let token = extract_token(headers).ok_or_else(AppError::token_missing)?;
     let claims = verify_jwt(&token, keys)?;
     let user_id = claims.user_id()?;
-    let role = UserRole::from_db_str(&claims.role).unwrap_or_default();
+    let role = UserRole::from_db_str(&claims.role).unwrap_or_else(|| {
+        tracing::warn!(
+            user_id = %user_id,
+            role = %claims.role,
+            "unknown role claim in session token; defaulting to user"
+        );
+        UserRole::default()
+    });
     Ok(AuthUser {
         user_id: UserId::from_uuid(user_id),
         email_verified: claims.verified,

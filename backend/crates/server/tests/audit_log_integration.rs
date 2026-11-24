@@ -311,7 +311,7 @@ async fn events_after_a_full_account_lifecycle_hold_no_personal_data(pool: PgPoo
     let token = token.unwrap();
     let csrf = body["csrf_token"].as_str().unwrap().to_string();
     let user = user_repo(&pool)
-        .find_by_email(email)
+        .find_by_email(&domain::value_objects::Email::new(email).unwrap())
         .await
         .unwrap()
         .unwrap();

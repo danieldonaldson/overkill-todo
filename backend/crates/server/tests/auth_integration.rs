@@ -270,3 +270,168 @@ async fn signup_flow_succeeds(pool: PgPool) {
     assert_eq!(body["email"], email);
     assert_eq!(body["email_verified"], true);
 }
+
+/// Mixed-case addresses normalize consistently across register, verify-email,
+/// complete-signup, and re-registration (no 409 account-existence oracle).
+#[sqlx::test(migrations = "../../migrations")]
+async fn mixed_case_signup_verify_and_reregister_succeed(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    let mixed = "e2e-Mixed.Case@Example.com";
+    let upper = "e2e-MIXED.CASE@EXAMPLE.COM";
+    let lower = "e2e-mixed.case@example.com";
+
+    // Register with mixed case.
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/register",
+            &json!({ "email": mixed }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "mixed-case register failed");
+
+    // Verify with different casing.
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/verify-email",
+            &json!({ "email": upper, "code": "123456" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "mixed-case verify-email failed"
+    );
+    let signup_token = body_json(resp.into_body()).await["signup_token"]
+        .as_str()
+        .expect("signup_token")
+        .to_string();
+
+    // Complete signup with mixed case; stored email is lowercase.
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/complete-signup",
+            &json!({
+                "signup_token": signup_token,
+                "email": mixed,
+                "password": "hunter2hunter2"
+            }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "mixed-case complete-signup failed"
+    );
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["user"]["email"], lower);
+
+    // Re-registering with either casing returns 200 OK (never 409 Conflict).
+    for candidate in [mixed, lower] {
+        let resp = app
+            .clone()
+            .oneshot(post_json(
+                "/api/v1/auth/register",
+                &json!({ "email": candidate }),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "re-register for {candidate} must not leak account existence"
+        );
+    }
+}
+
+/// Login succeeds regardless of email casing.
+#[sqlx::test(migrations = "../../migrations")]
+async fn mixed_case_login_succeeds(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    let password = "securepassword99";
+
+    complete_signup_for(app.clone(), "e2e-Login.Case@Example.com", password).await;
+
+    let resp = app
+        .oneshot(post_json(
+            "/api/v1/auth/login",
+            &json!({ "email": "e2e-LOGIN.CASE@EXAMPLE.COM", "password": password }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "mixed-case login failed");
+    assert!(common::cookie_value(&resp, "__Host-auth_token").is_some());
+    let body = body_json(resp.into_body()).await;
+    assert_eq!(body["user"]["email"], "e2e-login.case@example.com");
+}
+
+/// Password reset (forgot-password → verify-reset-code → reset-password)
+/// succeeds regardless of email casing.
+#[sqlx::test(migrations = "../../migrations")]
+async fn mixed_case_password_reset_flow_succeeds(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    let mixed = "e2e-Reset.Case@Example.com";
+    let upper = "e2e-RESET.CASE@EXAMPLE.COM";
+
+    complete_signup_for(app.clone(), mixed, "oldpassword123").await;
+
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/forgot-password",
+            &json!({ "email": upper }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "mixed-case forgot-password failed"
+    );
+
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/verify-reset-code",
+            &json!({ "email": mixed, "code": "123456" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "mixed-case verify-reset-code failed"
+    );
+    let reset_token = body_json(resp.into_body()).await["reset_token"]
+        .as_str()
+        .expect("reset_token")
+        .to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(post_json(
+            "/api/v1/auth/reset-password",
+            &json!({ "reset_token": reset_token, "new_password": "newpassword456" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "reset-password failed");
+
+    let resp = app
+        .oneshot(post_json(
+            "/api/v1/auth/login",
+            &json!({ "email": upper, "password": "newpassword456" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "login after mixed-case reset failed"
+    );
+}

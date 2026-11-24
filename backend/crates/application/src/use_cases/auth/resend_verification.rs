@@ -5,7 +5,7 @@ use crate::ports::{CodeGenerator, EmailService, EmailVerificationRepository, Pas
 use domain::entities::attempt_lockout::IssueOutcome;
 use domain::entities::email_verification_code::RESEND_COOLDOWN_MINUTES;
 use domain::entities::{EmailVerificationCode, Reissue};
-use domain::value_objects::UserId;
+use domain::value_objects::{Email, UserId};
 use std::sync::Arc;
 
 /// Result of a resend operation, including metadata for the frontend.
@@ -71,10 +71,12 @@ impl ResendVerificationUseCase {
     /// Returns `ResendVerificationError` for specific error types.
     #[tracing::instrument(name = "usecase.resend_verification", skip_all)]
     pub async fn execute(&self, email: &str) -> Result<ResendResult, ResendVerificationError> {
-        // Find the user by email
+        // Find the user by normalized email
+        let email = Email::new(email)
+            .map_err(|_| ResendVerificationError::NotFound("No account with this email".into()))?;
         let user = self
             .user_repo
-            .find_by_email(email)
+            .find_by_email(&email)
             .await
             .map_err(|e| ResendVerificationError::Internal(e.to_string()))?
             .ok_or_else(|| {

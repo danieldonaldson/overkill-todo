@@ -5,6 +5,7 @@ use crate::ports::{JwtService, PasswordHasher, PasswordResetRepository};
 use domain::entities::attempt_lockout::AttemptOutcome;
 use domain::entities::password_reset_code::MAX_ATTEMPTS;
 use domain::errors::DomainError;
+use domain::value_objects::Email;
 use jiff::{SignedDuration, Timestamp};
 use std::sync::Arc;
 
@@ -108,7 +109,10 @@ impl ValidateResetCodeUseCase {
         // request endpoint (`request_password_reset`) deliberately doesn't reveal
         // whether an account exists, and this endpoint must not undo that by
         // handing back a distinguishable NotFound for unknown emails.
-        let Some(user) = self.user_repo.find_by_email(email).await? else {
+        let Ok(email) = Email::new(email) else {
+            return Err(ResetCodeError::NoCode);
+        };
+        let Some(user) = self.user_repo.find_by_email(&email).await? else {
             return Err(ResetCodeError::NoCode);
         };
 

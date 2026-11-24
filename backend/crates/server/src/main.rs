@@ -307,22 +307,23 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
     // OAuth providers, registered by provider in the dispatch map.
     let mut oauth_clients: HashMap<OAuthProvider, Arc<dyn OAuthProviderClient>> = HashMap::new();
     if settings.google_oauth.enabled {
-        if let (Some(id), Some(secret), Some(uri)) = (
+        let (Some(id), Some(secret), Some(uri)) = (
             settings.google_oauth.client_id.as_ref(),
             settings.google_oauth.client_secret.as_ref(),
             settings.google_oauth.redirect_uri.as_ref(),
-        ) {
-            oauth_clients.insert(
-                OAuthProvider::Google,
-                Arc::new(GoogleOAuthClient::new(
-                    id.clone(),
-                    secret.clone(),
-                    uri.clone(),
-                )),
+        ) else {
+            unreachable!(
+                "Settings::from_env enforces Google OAuth credentials when GOOGLE_OAUTH_ENABLED=true"
             );
-        } else {
-            tracing::warn!("GOOGLE_OAUTH_ENABLED=true but credentials missing");
-        }
+        };
+        oauth_clients.insert(
+            OAuthProvider::Google,
+            Arc::new(GoogleOAuthClient::new(
+                id.clone(),
+                secret.clone(),
+                uri.clone(),
+            )),
+        );
     }
 
     // Auth outcome counters (OT-007), shared by the sign-in and code handlers.

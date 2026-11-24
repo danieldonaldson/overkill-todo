@@ -8,6 +8,7 @@
 use crate::ports::{JwtService, PasswordHasher, UserRepository};
 use domain::entities::User;
 use domain::errors::DomainError;
+use domain::value_objects::Email;
 use jiff::{SignedDuration, Timestamp};
 use std::sync::Arc;
 
@@ -93,8 +94,10 @@ impl CompleteSignupUseCase {
             .await?
             .ok_or_else(|| DomainError::NotFound("User not found".into()))?;
 
-        // Verify email matches (prevents token theft)
-        if user.email().as_str() != email {
+        // Verify normalized email matches (prevents token theft)
+        let email =
+            Email::new(email).map_err(|_| DomainError::Validation("Email mismatch".into()))?;
+        if user.email() != &email {
             return Err(DomainError::Validation("Email mismatch".into()));
         }
 

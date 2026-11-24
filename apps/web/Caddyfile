@@ -25,6 +25,9 @@
 	# Security headers — set ONCE, here, unmatched. Unlike nginx's add_header, Caddy's
 	# header directives don't shadow one another per block, but a second directive naming
 	# one of these fields WOULD overwrite it; tests/caddy-headers.spec.ts guards both.
+	# Deliberately looser than the JSON API's `DENY` / `no-referrer` (security_headers.rs):
+	# HTML pages allow same-origin framing (matching `frame-ancestors 'self'`) and send
+	# origin-only referrers on cross-origin navigations.
 	header {
 		X-Frame-Options "SAMEORIGIN"
 		X-Content-Type-Options "nosniff"

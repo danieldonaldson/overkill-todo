@@ -143,7 +143,7 @@ impl UserRepository for PostgresUserRepository {
     }
 
     #[tracing::instrument(name = "repo.user.find_by_email", skip_all, fields(db.system = "postgresql"))]
-    async fn find_by_email(&self, email: &str) -> Result<Option<User>, DomainError> {
+    async fn find_by_email(&self, email: &Email) -> Result<Option<User>, DomainError> {
         let row = sqlx::query_as!(
             UserRow,
             r#"
@@ -151,7 +151,7 @@ impl UserRepository for PostgresUserRepository {
             FROM users
             WHERE email = $1
             "#,
-            email
+            email.as_str()
         )
         .fetch_optional(self.db.pool())
         .await
@@ -161,7 +161,7 @@ impl UserRepository for PostgresUserRepository {
     }
 
     #[tracing::instrument(name = "repo.user.find_by_verified_email", skip_all, fields(db.system = "postgresql"))]
-    async fn find_by_verified_email(&self, email: &str) -> Result<Option<User>, DomainError> {
+    async fn find_by_verified_email(&self, email: &Email) -> Result<Option<User>, DomainError> {
         let row = sqlx::query_as!(
             UserRow,
             r#"
@@ -169,7 +169,7 @@ impl UserRepository for PostgresUserRepository {
             FROM users
             WHERE email = $1 AND email_verified = true
             "#,
-            email
+            email.as_str()
         )
         .fetch_optional(self.db.pool())
         .await
