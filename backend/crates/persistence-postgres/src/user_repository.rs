@@ -160,24 +160,6 @@ impl UserRepository for PostgresUserRepository {
         row.map(Self::row_to_user).transpose()
     }
 
-    #[tracing::instrument(name = "repo.user.find_by_verified_email", skip_all, fields(db.system = "postgresql"))]
-    async fn find_by_verified_email(&self, email: &Email) -> Result<Option<User>, DomainError> {
-        let row = sqlx::query_as!(
-            UserRow,
-            r#"
-            SELECT id, email, password_hash, first_name, last_name, email_verified, pending_email, pending_email_requested_at, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
-            FROM users
-            WHERE email = $1 AND email_verified = true
-            "#,
-            email.as_str()
-        )
-        .fetch_optional(self.db.pool())
-        .await
-        .map_err(persist_err)?;
-
-        row.map(Self::row_to_user).transpose()
-    }
-
     #[tracing::instrument(name = "repo.user.find_all", skip_all, fields(db.system = "postgresql"))]
     async fn find_all(&self, limit: i64, offset: i64) -> Result<Vec<User>, DomainError> {
         let rows = sqlx::query_as!(

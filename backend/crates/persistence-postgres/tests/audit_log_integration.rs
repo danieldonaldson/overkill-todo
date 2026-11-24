@@ -18,7 +18,6 @@ use domain::entities::{
 use domain::errors::DomainError;
 use domain::value_objects::{Email, UserId, UserRole};
 use jiff::{SignedDuration, Timestamp};
-use persistence_postgres::testing::{self, audit_event_kinds};
 use persistence_postgres::{
     Database, PostgresAuditLogRepository, PostgresOAuthAccountRepository,
     PostgresRefreshTokenRepository, PostgresUserRepository,
@@ -103,8 +102,17 @@ fn user_repo(pool: &PgPool) -> PostgresUserRepository {
 
 /// Inserts a verified account with `role` and loads it through the repository.
 async fn seed_with_role(pool: &PgPool, role: UserRole) -> User {
-    let email = format!("audit-{}@example.com", Uuid::now_v7());
-    let id = testing::insert_verified_user(pool, &email, role).await;
+    let id = Uuid::now_v7();
+    let email = format!("audit-{id}@example.com");
+    sqlx::query(
+        "INSERT INTO users (id, email, role, email_verified) VALUES ($1, $2, $3::user_role, true)",
+    )
+    .bind(id)
+    .bind(&email)
+    .bind(role.to_db_str())
+    .execute(pool)
+    .await
+    .unwrap();
     user_repo(pool)
         .find_by_id(&UserId::from_uuid(id))
         .await
@@ -321,7 +329,13 @@ async fn failed_event_insert_rolls_back_the_role_change(pool: PgPool) {
     let member = seed_with_role(&pool, UserRole::User).await;
     let member_id = *member.id();
     // Make every role-change event fail to insert, as if the table refused it.
-    testing::refuse_role_changed_audit_events(&pool).await;
+    sqlx::query(
+        "ALTER TABLE audit_events ADD CONSTRAINT test_refuse_role_changed
+         CHECK (kind <> 'role_changed') NOT VALID",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
 
     let err = change_role(&pool, member, *actor.id(), UserRole::Admin)
         .await
@@ -399,7 +413,10 @@ async fn refuse_every_event(pool: &PgPool) {
 }
 
 async fn stored_kinds(pool: &PgPool) -> Vec<String> {
-    audit_event_kinds(pool).await
+    sqlx::query_scalar("SELECT kind FROM audit_events ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .unwrap()
 }
 
 async fn stored_password_hash(pool: &PgPool, id: &UserId) -> Option<String> {
@@ -660,7 +677,13 @@ async fn failed_event_insert_rolls_back_the_unlink(pool: PgPool) {
 /// would, ready for `anonymize_account`.
 async fn due_for_purge(pool: &PgPool) -> User {
     let user = seed_with_role(pool, UserRole::User).await;
-    testing::backdate_deletion_scheduled(pool, *user.id().as_uuid(), 1).await;
+    sqlx::query(
+        "UPDATE users SET deletion_scheduled_at = NOW() - make_interval(days => 1) WHERE id = $1",
+    )
+    .bind(user.id().as_uuid())
+    .execute(pool)
+    .await
+    .unwrap();
     let mut due = user_repo(pool)
         .find_by_id(user.id())
         .await

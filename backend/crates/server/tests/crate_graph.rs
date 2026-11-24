@@ -492,6 +492,40 @@ fn contains_ident(haystack: &str, ident: &str) -> bool {
     false
 }
 
+fn check_sql_in_source(path: &Path, raw: &str) {
+    let stripped = strip_rust_comments(raw);
+    for (idx, line) in stripped.lines().enumerate() {
+        let line_no = idx + 1;
+        if let Some(use_pos) = line.find("use sqlx") {
+            let tail = line[use_pos + "use sqlx".len()..].trim();
+            assert!(
+                tail.starts_with("::") && !tail.contains('{') && !tail.contains('*'),
+                "{}:{line_no}: forbidden `use sqlx` outside persistence-postgres (only `{:?}` allowed): {line}",
+                path.display(),
+                ALLOWED_SQLX_PATHS
+            );
+        }
+        let mut pos = 0;
+        while let Some(found) = line[pos..].find("sqlx::") {
+            let abs = pos + found;
+            let before_ok = abs == 0 || !is_ident_char(line.as_bytes()[abs - 1]);
+            if before_ok {
+                let sqlx_path: String = line[abs..]
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
+                    .collect();
+                assert!(
+                    ALLOWED_SQLX_PATHS.contains(&sqlx_path.as_str()),
+                    "{}:{line_no}: forbidden `sqlx` path `{sqlx_path}` outside persistence-postgres (only `{:?}` allowed)",
+                    path.display(),
+                    ALLOWED_SQLX_PATHS
+                );
+            }
+            pos = abs + "sqlx::".len();
+        }
+    }
+}
+
 fn check_no_sql_outside_postgres(packages: &[&Value]) {
     for pkg in packages {
         let name = pkg["name"].as_str().expect("pkg name");
@@ -509,41 +543,13 @@ fn check_no_sql_outside_postgres(packages: &[&Value]) {
                 continue;
             }
             let raw = fs::read_to_string(&path).expect("read rust source");
-            let stripped = strip_rust_comments(&raw);
-            for (idx, line) in stripped.lines().enumerate() {
-                let line_no = idx + 1;
-                if let Some(use_pos) = line.find("use sqlx") {
-                    let tail = line[use_pos + "use sqlx".len()..].trim();
-                    assert!(
-                        tail.starts_with("::") && !tail.contains('{') && !tail.contains('*'),
-                        "{}:{line_no}: forbidden `use sqlx` outside persistence-postgres (only `{:?}` allowed): {line}",
-                        path.display(),
-                        ALLOWED_SQLX_PATHS
-                    );
-                }
-                let mut pos = 0;
-                while let Some(found) = line[pos..].find("sqlx::") {
-                    let abs = pos + found;
-                    let before_ok = abs == 0 || !is_ident_char(line.as_bytes()[abs - 1]);
-                    if before_ok {
-                        let sqlx_path: String = line[abs..]
-                            .chars()
-                            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == ':')
-                            .collect();
-                        assert!(
-                            ALLOWED_SQLX_PATHS.contains(&sqlx_path.as_str()),
-                            "{}:{line_no}: forbidden `sqlx` path `{sqlx_path}` outside persistence-postgres (only `{:?}` allowed)",
-                            path.display(),
-                            ALLOWED_SQLX_PATHS
-                        );
-                    }
-                    pos = abs + "sqlx::".len();
-                }
-            }
+            check_sql_in_source(&path, &raw);
         }
     }
 }
 
+// Textual-reference proxy: a fixture referenced only from an `#[ignore]`d test
+// still counts as used.
 fn check_all_testing_fixtures_are_used(packages: &[&Value]) {
     let pg_pkg = packages
         .iter()
@@ -675,4 +681,74 @@ fn workspace_crate_graph_and_inner_deps_follow_hexagonal_rules() {
     check_all_testing_fixtures_are_used(&packages);
     check_app_targets(&packages);
     check_workspace_lints(&packages);
+}
+
+#[test]
+fn strip_rust_comments_handles_nested_blocks_strings_and_chars() {
+    let src = r##"
+        // line comment with sqlx::query!
+        let a = "not // a /* comment */";
+        let b = r#"raw /* comment */ // kept"#;
+        let c = '"';
+        let d = b'"';
+        /* outer /* nested */ still comment */
+        let e = 1;
+    "##;
+    let stripped = strip_rust_comments(src);
+    assert!(!stripped.contains("sqlx::query"));
+    assert!(!stripped.contains("still comment"));
+    assert!(stripped.contains("\"not // a /* comment */\""));
+    assert!(stripped.contains("r#\"raw /* comment */ // kept\"#"));
+    assert!(stripped.contains("let e = 1;"));
+}
+
+#[test]
+fn manifest_uses_workspace_lints_accepts_and_rejects_correctly() {
+    assert!(manifest_uses_workspace_lints("[lints]\nworkspace = true\n"));
+    assert!(manifest_uses_workspace_lints("lints.workspace = true\n"));
+    assert!(!manifest_uses_workspace_lints(
+        "[lints]\n# workspace = true\n"
+    ));
+    assert!(!manifest_uses_workspace_lints(
+        "[lints]\nworkspace = false\n"
+    ));
+    assert!(!manifest_uses_workspace_lints(
+        "[package]\nworkspace = true\n"
+    ));
+}
+
+#[test]
+fn sql_scan_allows_permitted_paths_and_comments() {
+    let src = r"
+        // sqlx::query! in a comment is ignored
+        use sqlx::PgPool;
+        use sqlx::postgres::PgPoolOptions;
+        #[sqlx::test]
+        async fn ok(_pool: PgPool) {}
+    ";
+    check_sql_in_source(Path::new("virtual.rs"), src);
+}
+
+#[test]
+#[should_panic(expected = "forbidden `sqlx` path `sqlx::query`")]
+fn sql_scan_rejects_query_calls() {
+    check_sql_in_source(
+        Path::new("virtual.rs"),
+        "let _ = sqlx::query(\"SELECT 1\");",
+    );
+}
+
+#[test]
+#[should_panic(expected = "forbidden `use sqlx`")]
+fn sql_scan_rejects_glob_and_grouped_imports() {
+    check_sql_in_source(Path::new("virtual.rs"), "use sqlx::{PgPool, query};");
+}
+
+#[test]
+#[should_panic(expected = "edges must point strictly inward")]
+fn edge_table_rejects_outward_or_same_rank_edge() {
+    let names = BTreeSet::from(["domain", "api"]);
+    let ranks = BTreeMap::from([("domain", 0u8), ("api", 3u8)]);
+    let allowed = BTreeMap::from([("domain", &["api"][..]), ("api", &[][..])]);
+    check_edge_table(&names, &ranks, &allowed);
 }

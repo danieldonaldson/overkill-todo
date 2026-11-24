@@ -239,20 +239,20 @@ mod tests {
         assert_rejected(test_service().validate_reset_token(&token));
     }
 
+    #[derive(Serialize)]
+    struct RawOneTime {
+        sub: String,
+        typ: &'static str,
+        iss: &'static str,
+        aud: &'static str,
+        iat: i64,
+        exp: i64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        jti: Option<String>,
+    }
+
     #[test]
     fn one_time_tokens_reject_foreign_audience_and_issuer() {
-        #[derive(Serialize)]
-        struct RawOneTime {
-            sub: String,
-            typ: &'static str,
-            iss: &'static str,
-            aud: &'static str,
-            iat: i64,
-            exp: i64,
-            #[serde(skip_serializing_if = "Option::is_none")]
-            jti: Option<String>,
-        }
-
         let crypto = Arc::new(Crypto::for_testing());
         let service = CryptoJwtService::new(Arc::clone(&crypto));
         let now = Timestamp::now();
@@ -290,6 +290,47 @@ mod tests {
             } else {
                 assert_rejected(service.validate_reset_token(&foreign_aud));
                 assert_rejected(service.validate_reset_token(&foreign_iss));
+            }
+        }
+    }
+
+    #[test]
+    fn malformed_uuid_claims_and_missing_jti_use_the_generic_rejection() {
+        let crypto = Arc::new(Crypto::for_testing());
+        let service = CryptoJwtService::new(Arc::clone(&crypto));
+        let now = Timestamp::now();
+        let exp = (now + SignedDuration::from_hours(1)).as_second();
+
+        for (typ, sub, jti) in [
+            ("signup", "not-a-uuid".to_string(), None),
+            (
+                "reset",
+                "not-a-uuid".to_string(),
+                Some(ResetCodeId::new().to_string()),
+            ),
+            (
+                "reset",
+                UserId::new().to_string(),
+                Some("not-a-uuid".into()),
+            ),
+            ("reset", UserId::new().to_string(), None),
+        ] {
+            let token = crypto
+                .tokens()
+                .sign(&RawOneTime {
+                    sub,
+                    typ,
+                    iss: platform::crypto::TOKEN_ISSUER,
+                    aud: platform::crypto::TOKEN_AUDIENCE,
+                    iat: now.as_second(),
+                    exp,
+                    jti,
+                })
+                .unwrap();
+            if typ == "signup" {
+                assert_rejected(service.validate_signup_token(&token));
+            } else {
+                assert_rejected(service.validate_reset_token(&token));
             }
         }
     }

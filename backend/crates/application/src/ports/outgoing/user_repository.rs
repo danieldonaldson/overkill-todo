@@ -34,11 +34,6 @@ pub trait UserRepository: Send + Sync {
     /// Finds a user by their normalized email address.
     async fn find_by_email(&self, email: &Email) -> Result<Option<User>, DomainError>;
 
-    /// Finds a user by their normalized email address, but only if email is verified.
-    ///
-    /// Used for OAuth hybrid auto-linking - only link to verified email accounts.
-    async fn find_by_verified_email(&self, email: &Email) -> Result<Option<User>, DomainError>;
-
     /// Retrieves all users with pagination.
     async fn find_all(&self, limit: i64, offset: i64) -> Result<Vec<User>, DomainError>;
 

@@ -33,7 +33,3 @@ tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
 
 [lints]
 workspace = true
-
-[[test]]
-name = "audit_log_integration"
-required-features = ["test-support"]
