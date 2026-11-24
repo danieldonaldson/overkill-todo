@@ -65,8 +65,7 @@ pub fn test_token_key(kid: &str, fill: u8) -> String {
     reason = "`common` is compiled into every test binary; not all of them use this"
 )]
 pub fn crypto_with_token_keys(signing: &str, trusted: Option<&str>) -> Arc<Crypto> {
-    // `Crypto::for_testing()` is library-test-only (`cfg(test)`) and not
-    // reachable from this integration-test crate, so build the slice here.
+    // Build a Crypto slice with fast test Argon2 params and caller-supplied token keys.
     let crypto = platform::config::CryptoSettings {
         argon2_memory_cost: 4096,
         argon2_time_cost: 1,

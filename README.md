@@ -23,7 +23,7 @@ cd ~/Work/myproject && rm -rf node_modules backend/target && git init
 ```
 
 Then rename: `app` / `@overkill-todo/*` / `App` are placeholders (package names, Compose
-project, DB name, JWT issuer and audience in `backend/crates/server/src/infrastructure/api/jwt.rs`,
+project, DB name, JWT issuer and audience in `backend/crates/platform/src/crypto/token.rs`,
 `APP_NAME`, page titles, the leader-lock key in `backend/crates/server/src/main.rs`).
 
 ```bash
@@ -55,6 +55,13 @@ and the backend refuses to start with them: replace both with
 `JWT_SIGNING_KEY=$(just jwt-keygen dev)`, or regenerate the file with
 `FORCE=1 ./scripts/gen-dev-env.sh`. Committed secrets use post-quantum age keys
 only (`deploy/secrets/README.md`).
+
+**First-deploy / OT-012 token cutover:** all four application JWT kinds
+(session, signup, password-reset and OAuth state) now require `iss`, `aud` and
+`iat` (plus `typ` on OAuth state). Pre-OT-012 signup, reset and OAuth-state
+tokens lack those claims and are rejected after upgrade, and pre-OT-012
+binaries reject post-OT-012 tokens carrying `aud`, so do a clean cutover rather
+than a rolling deploy or rollback across OT-012.
 
 | Recipe                                 | What it runs                                                       |
 | -------------------------------------- | ------------------------------------------------------------------ |

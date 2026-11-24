@@ -49,24 +49,6 @@ fn default_role() -> String {
 }
 
 impl Claims {
-    /// Creates new claims for the given user with an expiration time in minutes.
-    #[must_use]
-    pub fn new(user_id: Uuid, email_verified: bool, role: &str, expiration_minutes: i64) -> Self {
-        let now = Timestamp::now();
-        let exp = now + SignedDuration::from_mins(expiration_minutes);
-
-        Self {
-            sub: user_id.to_string(),
-            typ: SESSION_TOKEN_TYPE.to_string(),
-            iss: TOKEN_ISSUER.to_string(),
-            aud: TOKEN_AUDIENCE.to_string(),
-            verified: email_verified,
-            role: role.to_string(),
-            exp: exp.as_second(),
-            iat: now.as_second(),
-        }
-    }
-
     /// Extracts the user ID from the claims.
     ///
     /// # Errors
@@ -237,9 +219,14 @@ mod tests {
         let mut header = Header::new(Algorithm::RS256);
         header.kid = Some("test-a".into());
         let rsa = EncodingKey::from_rsa_pem(TEST_RSA_PRIVATE_KEY.as_bytes()).unwrap();
-        let claims = Claims::new(Uuid::now_v7(), true, "super_admin", 15);
+        let k = keys();
+        let claims = verify_jwt(
+            &create_jwt(Uuid::now_v7(), true, "super_admin", &k, 15).unwrap(),
+            &k,
+        )
+        .unwrap();
         let token = encode(&header, &claims, &rsa).expect("encode failed");
-        assert_rejected(verify_jwt(&token, &keys()));
+        assert_rejected(verify_jwt(&token, &k));
     }
 
     /// SECURITY: an HS256 token under the right key is refused.
@@ -247,38 +234,58 @@ mod tests {
     fn test_verify_jwt_wrong_algorithm() {
         let mut header = Header::new(Algorithm::HS256);
         header.kid = Some("test-a".into());
-        let claims = Claims::new(Uuid::now_v7(), true, "user", 15);
+        let k = keys();
+        let claims = verify_jwt(
+            &create_jwt(Uuid::now_v7(), true, "user", &k, 15).unwrap(),
+            &k,
+        )
+        .unwrap();
         let token =
             encode(&header, &claims, &EncodingKey::from_secret(&[1u8; 64])).expect("encode failed");
-        assert_rejected(verify_jwt(&token, &keys()));
+        assert_rejected(verify_jwt(&token, &k));
     }
 
     /// SECURITY: a validly-signed session token whose `iss` is not
     /// [`TOKEN_ISSUER`] must be rejected (cross-service token reuse).
     #[test]
     fn test_wrong_issuer_rejected() {
-        let mut claims = Claims::new(Uuid::now_v7(), true, "user", 15);
+        let k = keys();
+        let mut claims = verify_jwt(
+            &create_jwt(Uuid::now_v7(), true, "user", &k, 15).unwrap(),
+            &k,
+        )
+        .unwrap();
         claims.iss = "some-other-service".to_string();
-        let token = keys().sign(&claims).unwrap();
-        assert_rejected(verify_jwt(&token, &keys()));
+        let token = k.sign(&claims).unwrap();
+        assert_rejected(verify_jwt(&token, &k));
     }
 
     /// SECURITY: a validly-signed session token whose `aud` is not
     /// [`TOKEN_AUDIENCE`] must be rejected (token minted for another audience).
     #[test]
     fn test_wrong_audience_rejected() {
-        let mut claims = Claims::new(Uuid::now_v7(), true, "user", 15);
+        let k = keys();
+        let mut claims = verify_jwt(
+            &create_jwt(Uuid::now_v7(), true, "user", &k, 15).unwrap(),
+            &k,
+        )
+        .unwrap();
         claims.aud = "some-other-audience".to_string();
-        let token = keys().sign(&claims).unwrap();
-        assert_rejected(verify_jwt(&token, &keys()));
+        let token = k.sign(&claims).unwrap();
+        assert_rejected(verify_jwt(&token, &k));
     }
 
     #[test]
-    fn test_claims_new() {
+    fn test_create_and_verify_jwt_timestamps_and_fields() {
+        let k = keys();
         let user_id = Uuid::now_v7();
-        let claims = Claims::new(user_id, true, "admin", 30);
+        let token = create_jwt(user_id, true, "admin", &k, 30).expect("creates");
+        let claims = verify_jwt(&token, &k).expect("verifies");
 
         assert_eq!(claims.sub, user_id.to_string());
+        assert_eq!(claims.typ, SESSION_TOKEN_TYPE);
+        assert_eq!(claims.iss, TOKEN_ISSUER);
+        assert_eq!(claims.aud, TOKEN_AUDIENCE);
         assert!(claims.verified);
         assert_eq!(claims.role, "admin");
         assert!(claims.exp > claims.iat);
@@ -289,8 +296,10 @@ mod tests {
 
     #[test]
     fn test_claims_user_id_valid() {
+        let k = keys();
         let user_id = Uuid::now_v7();
-        let claims = Claims::new(user_id, true, "user", 15);
+        let token = create_jwt(user_id, true, "user", &k, 15).expect("creates");
+        let claims = verify_jwt(&token, &k).expect("verifies");
 
         let extracted = claims.user_id().expect("Should extract user_id");
         assert_eq!(extracted, user_id);
@@ -421,11 +430,13 @@ mod tests {
             prop_assert!(is_auth_err);
         }
 
-        /// Claims::new always produces valid exp > iat.
+        /// create_jwt followed by verify_jwt always produces valid exp > iat.
         #[test]
-        fn prop_claims_new_timestamps_valid(expiration_minutes in 1i64..10000) {
+        fn prop_create_and_verify_jwt_timestamps_valid(expiration_minutes in 1i64..10000) {
+            let k = keys();
             let user_id = Uuid::now_v7();
-            let claims = Claims::new(user_id, true, "user", expiration_minutes);
+            let token = create_jwt(user_id, true, "user", &k, expiration_minutes).unwrap();
+            let claims = verify_jwt(&token, &k).unwrap();
             prop_assert!(claims.exp > claims.iat);
             // exp should be approximately expiration_minutes * 60 seconds after iat
             let diff = claims.exp - claims.iat;
@@ -433,19 +444,23 @@ mod tests {
             prop_assert!(diff >= expected - 1 && diff <= expected + 1);
         }
 
-        /// Claims::new preserves the user_id.
+        /// create_jwt followed by verify_jwt preserves the user_id.
         #[test]
-        fn prop_claims_new_preserves_user_id(_seed in 0u64..1000) {
+        fn prop_create_and_verify_jwt_preserves_user_id(_seed in 0u64..1000) {
+            let k = keys();
             let user_id = Uuid::now_v7();
-            let claims = Claims::new(user_id, true, "user", 15);
+            let token = create_jwt(user_id, true, "user", &k, 15).unwrap();
+            let claims = verify_jwt(&token, &k).unwrap();
             let extracted = claims.user_id().unwrap();
             prop_assert_eq!(extracted, user_id);
         }
 
-        /// Claims::new preserves verified flag.
+        /// create_jwt followed by verify_jwt preserves verified flag.
         #[test]
-        fn prop_claims_new_preserves_verified(verified in proptest::bool::ANY) {
-            let claims = Claims::new(Uuid::now_v7(), verified, "user", 15);
+        fn prop_create_and_verify_jwt_preserves_verified(verified in proptest::bool::ANY) {
+            let k = keys();
+            let token = create_jwt(Uuid::now_v7(), verified, "user", &k, 15).unwrap();
+            let claims = verify_jwt(&token, &k).unwrap();
             prop_assert_eq!(claims.verified, verified);
         }
 

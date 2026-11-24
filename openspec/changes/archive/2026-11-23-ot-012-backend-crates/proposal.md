@@ -34,9 +34,13 @@ single crate.
 - Developer commands (`just …`), committed generated files (the offline query
   cache and the API description) and the release image stay where they are and
   behave as they do now.
-- No API, schema, frontend or runtime behaviour changes. Default logs and
-  traces stay the same. The one change for operators is that a hand-set
-  `RUST_LOG` names the new crates rather than `overkill_todo`.
+- No API, schema or frontend behaviour changes. Default logs and traces stay
+  the same. Two operator-visible changes are documented: a hand-set `RUST_LOG`
+  names the new crates rather than `overkill_todo`, and unifying all four
+  application JWT kinds under `platform::crypto::token` now requires `iss`,
+  `aud`, `iat` (and `typ` on OAuth state), making OT-012 a clean cutover
+  rather than rolling-compatible with pre-OT-012 signup, reset or OAuth-state
+  tokens.
 
 ## Capabilities
 

@@ -79,9 +79,16 @@ inner layers.
 ### Requirement: Restructuring the backend changes no observable behaviour
 
 Splitting the backend into units SHALL leave unchanged everything an API
-client, the web app or the operator can observe. The one exception: a
-hand-set log filter names each unit rather than the old single crate, and the
-operator docs SHALL say so.
+client, the web app or the operator can observe. Two intentional exceptions
+apply and SHALL be documented for operators:
+
+- A hand-set `RUST_LOG` filter names each unit rather than the old single crate.
+- Unifying application JWTs under `platform::crypto::token` stamps and requires
+  `iss`, `aud` and `iat` on all four token kinds (and `typ` on OAuth state).
+  Pre-OT-012 signup, password-reset and OAuth-state tokens lack those claims and
+  are rejected after upgrade, and pre-OT-012 binaries reject post-OT-012 tokens
+  carrying `aud`. With no production deployment yet, this is a one-time clean
+  cutover rather than carrying backwards-compatibility code.
 
 #### Scenario: Logs and traces are unchanged
 

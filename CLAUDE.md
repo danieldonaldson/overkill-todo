@@ -22,7 +22,7 @@ Rust/Axum backend + Astro/Svelte frontend. Read `README.md` and
 - Dependencies point inward only: `server` (tasks, wiring) → adapters (`persistence-postgres`, `services`, `api`) → `{application, platform}`, with `application → {domain, shared}` and `platform → {shared}`. Adapters never depend on each other; `platform` is pure infrastructure (`shared`-only) and `domain` has no I/O crates.
 - New external service = outgoing port + real adapter (`crates/services/src/`) + no-op adapter, chosen in
   `crates/server/src/main.rs`, with production refusing the no-op.
-- `sqlx::query!` / `query_as!` only (`crates/persistence-postgres/src/`). Migrations are forward-only and must stay
+- `sqlx::query!` / `query_as!` only in production code (`crates/persistence-postgres/src/`; `testing.rs` fixtures may use runtime `sqlx::query` only for DDL, `VACUUM`, or dynamic table dumps that Postgres cannot prepare). Migrations are forward-only and must stay
   compatible with the previous release (expand, deploy, then contract).
 - Mount routes with `.routes(routes!(handler))` in `api_routes()` (`crates/api/src/routes.rs`),
   so they're in the OpenAPI description; plain `.route(...)` fails lint. Protect

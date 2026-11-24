@@ -14,6 +14,8 @@
 //!    is referenced by another crate's tests or benches (zero dead fixtures).
 //! 6. Every workspace lib and bin target name (with `-` -> `_`) is in
 //!    `server::APP_TARGETS`, so no crate's logs or spans are silently dropped.
+//! 7. Every workspace crate opts into `[lints] workspace = true` so pedantic
+//!    and nursery lints cannot be silently skipped.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -604,6 +606,44 @@ fn check_all_testing_fixtures_are_used(packages: &[&Value]) {
     }
 }
 
+fn manifest_uses_workspace_lints(manifest: &str) -> bool {
+    let mut in_lints_section = false;
+    for raw_line in manifest.lines() {
+        let line = raw_line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_lints_section = line == "[lints]";
+            continue;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let expected_key = if in_lints_section {
+                "workspace"
+            } else {
+                "lints.workspace"
+            };
+            if key.trim() == expected_key && value.trim() == "true" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn check_workspace_lints(packages: &[&Value]) {
+    for pkg in packages {
+        let name = pkg["name"].as_str().expect("pkg name");
+        let manifest_path = Path::new(pkg["manifest_path"].as_str().expect("manifest_path"));
+        let manifest = fs::read_to_string(manifest_path).expect("read crate Cargo.toml");
+        assert!(
+            manifest_uses_workspace_lints(&manifest),
+            "workspace crate `{name}` ({}) must opt into workspace lints with `[lints]\\nworkspace = true`",
+            manifest_path.display()
+        );
+    }
+}
+
 #[test]
 fn workspace_crate_graph_and_inner_deps_follow_hexagonal_rules() {
     let metadata = cargo_metadata();
@@ -634,4 +674,5 @@ fn workspace_crate_graph_and_inner_deps_follow_hexagonal_rules() {
     check_no_sql_outside_postgres(&packages);
     check_all_testing_fixtures_are_used(&packages);
     check_app_targets(&packages);
+    check_workspace_lints(&packages);
 }

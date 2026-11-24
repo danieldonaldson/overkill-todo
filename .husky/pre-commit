@@ -1,4 +1,4 @@
-if git diff --cached --name-only | grep -Eq '^(\.husky/pre-commit|justfile|backend/(Cargo\.(toml|lock)|build\.rs|rust-toolchain.*|\.cargo/|\.sqlx/|migrations/|crates/))'; then
+if git diff --cached --name-only | grep -Eq '^(\.husky/pre-commit|justfile|backend/(Cargo\.(toml|lock)|build\.rs|rust-toolchain.*|\.cargo/|\.sqlx/|migrations/|crates/|tests/))'; then
     echo "Running backend fmt check..."
     just fmt-check || { echo "  rustfmt failed. Run: just fmt"; exit 1; }
 

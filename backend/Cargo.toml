@@ -40,7 +40,7 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 async-trait = "0.1"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "form"] }
-# Process-wide TLS provider with post-quantum key exchange (infrastructure/tls.rs).
+# Process-wide TLS provider with post-quantum key exchange (crates/platform/src/tls.rs).
 rustls = { version = "0.23", features = ["aws_lc_rs"] }
 hickory-resolver = { version = "0.26", features = ["tokio"] }
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "hostname", "builder"] }
