@@ -57,7 +57,25 @@ Checked in source on 2026-11-25: sops-secrets-operator 0.22.5 embeds SOPS 3.13.3
 and age 1.3.2, and SOPS parses hybrid (`age1pq1`, `AGE-SECRET-KEY-PQ-1`) keys from
 3.12.0. Nothing has been run.
 
-**Result:** pending slice 1.
+**Result (2026-11-25): holds, with two changes to the plan.**
+
+- Values match Git byte for byte (compared by hash), awkward ones included. A
+  changed secret was served 56 s after the push. With only its own key, the
+  cluster can't read the Talos secrets or any `prod` file.
+- A dump of ArgoCD's Redis contains the `SopsSecret` and its ciphertext (the
+  controls) and no plaintext or base64 of it. The repo-server has no key; a
+  search of its files found no plaintext, but also no ciphertext, so that search
+  alone proves nothing.
+- Undecryptable secret plus new image, five runs: the old pod served throughout,
+  the new image never started.
+- **Changed: secret names carry a version (D3).** With the operator unreachable,
+  its stale "Healthy" let the new image start with the old secret. Repeated with
+  a versioned name, the workload waited, stayed blocked when the operator came
+  back and couldn't decrypt, and recovered 29 s after the revert.
+- **Changed: `retry.refresh` (D10).** With unlimited retries alone, a failing sync
+  retried its own revision and ignored the revert (7 minutes, until terminated by
+  hand). With it, reverts recovered in 41–46 s.
+- About 10,000 requests across all runs, none failed.
 
 ## Decisions
 
@@ -98,7 +116,11 @@ handles ciphertext, which is the style its docs recommend.
 - `SopsSecret`s sync in an earlier wave, with a custom health check that is
   healthy only when the operator says so. Waves across separate Applications
   wouldn't hold back an ordinary commit, since each syncs on its own.
-- Reloader restarts pods when a Secret they use changes.
+- The `SopsSecret` and its Secret share a versioned name (`canary-v2`), which
+  workloads refer to. Any change to the values bumps it: a new name has no status
+  until the operator decrypts it, and a pod can't start without its Secret.
+  `PruneLast` keeps the previous version until the new one is in use.
+- Reloader restarts pods if a Secret is changed in place all the same.
 - The age key is mounted only in the operator.
 
 Accepted limits: the operator doesn't verify SOPS's file-level MAC, so removing
@@ -106,8 +128,7 @@ or replacing a field isn't detected by decryption (Git review is the control);
 anyone who can create a `SopsSecret` in a namespace and read its Secrets can
 decrypt with it, here only the operator of the cluster; and its ClusterRole can
 manage all Secrets. Its status has no observed generation, so an old "Healthy"
-could briefly be read for a new revision: slice 1 tests that. If it happens, use
-versioned Secret names, so a pod can't start until its version exists.
+is read for a new revision while the operator is down (tested).
 
 _Alternatives:_ decrypting while ArgoCD renders, by a plugin or KSOPS (puts
 plaintext in ArgoCD's Redis and the key in its repo-server; KSOPS 4.5.1 does
@@ -183,15 +204,16 @@ be pushed to deploy. App images come from `main`, and a newer digest brings its
 migrations with it: merge `main` first so manifests and image match.
 Polling is every 60 s with no jitter (`timeout.reconciliation`; the
 default is 2 minutes plus up to 1). Automated sync with `prune`, `selfHeal`,
-and `ServerSideApply`, and a `retry` with backoff and no limit, so a
-failure that clears doesn't need a hand. `selfHeal` reverts manual changes.
+and `ServerSideApply`, and a `retry` with backoff, no limit and
+`refresh: true`, so a failure that clears doesn't need a hand and a revert is
+picked up. `selfHeal` reverts manual changes.
 Deployments set `progressDeadlineSeconds: 300`, so a stuck rollout turns the
 Application Degraded.
 
 **D11. What ArgoCD doesn't manage.** Only the Talos machine config, the
-cluster's age key, and the first application of ArgoCD and Cilium. ArgoCD's
-manifests are committed, applied once by `k8s-up`, and then managed by an
-Application of their own; a root Application holds the rest. There is no Git
+cluster's age key, and the first application of ArgoCD and Cilium. ArgoCD
+is its Helm chart at a pinned version with committed values, applied once by `k8s-up`, and then managed by an
+Application of their own; a root Application holds the rest, itself included. There is no Git
 credential: the repository is public. Order is by sync wave: controllers, their
 config, then workloads. ArgoCD no longer assesses Application health by default,
 so we restore that check for waves to wait, and custom resources use
