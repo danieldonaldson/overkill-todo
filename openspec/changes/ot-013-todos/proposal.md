@@ -93,9 +93,8 @@ todos):
 
 ## Dependencies
 
-- OT-012 (backend split into crates) moves every backend file and hasn't
-  started. Implementation starts once it is done; the planning can go ahead
-  now.
+- None blocking. OT-012 (backend split into crates) is done and was archived on
+  2026-11-23, so implementation can start once planning is complete.
 - One additive, forward-only migration. No external services.
 - No production deploy exists yet. Deploy checks are recorded for the first
   deploy.
