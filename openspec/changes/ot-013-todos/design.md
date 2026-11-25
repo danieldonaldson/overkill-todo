@@ -42,9 +42,12 @@ edit, because that would turn someone else's change into a silent overwrite.
 
 - A seeded random test runs two copies of the client queue against an in-memory
   server that follows D4's rules. It randomly delays, fails and loses answers,
-  and mixes in refetches. Once the connection recovers and both queues drain,
-  both tabs must match the server, no add may be duplicated, and no accepted
-  edit may have overwritten a version its tab had not seen.
+  and mixes in refetches. Throughout, no add may be duplicated and no accepted
+  edit may have overwritten a version its tab had not seen. Once the connection
+  recovers and both queues drain, neither tab may show a change the server
+  doesn't have as its own. Tabs aren't live, so they match the server only
+  after a load: the test then refetches once in each tab and requires both to
+  match it exactly.
 - `#[sqlx::test]` cases run the same version and repeat rules against the real
   repository, including concurrent transactions.
 - A two-tab flow in `tests/integration/` runs against the real backend.
@@ -111,7 +114,9 @@ server's ID when it sends the next edit.
 - **Rejected: client-made IDs.** A collision response would let anyone who was
   once sent a list's address probe whether it still exists.
 - Cost: a new list has no address until its creation is answered. It is shown
-  at once, and its address replaces `/dashboard/lists` when the answer comes.
+  at once, and its address replaces `/dashboard/lists` when the answer comes,
+  with `history.replaceState`, keeping the router's own `history.state`. Not
+  `navigateReplace()`: that is a full load, which would discard the queue.
 
 ### D4. Every list write locks its list first (persistence-postgres)
 
@@ -124,7 +129,8 @@ changes.
 
 Creating a list locks the `users` row instead (and requires
 `deleted_at IS NULL`), so the list limit holds and a purge can't be followed by
-a new list from a token that hasn't expired. Lock order is always users →
+a new list from a token that hasn't expired. For a deleted account it answers
+401 `token_invalid`, so the client refreshes, fails, and goes to sign-in. Lock order is always users →
 lists → todos, the purge included.
 
 An edit with a stale version is compared with the stored row under the lock:
@@ -142,7 +148,7 @@ above `require_csrf()`:
 
 | Request | Body or query | Answer |
 |---|---|---|
-| `GET /lists` | | lists with open counts |
+| `GET /lists` | | lists, oldest first |
 | `POST /lists` | `key`, `name` | the list |
 | `GET /lists/{id}` | | the list and all its todos |
 | `PATCH /lists/{id}` | `version`, `name` | the list |
@@ -152,13 +158,23 @@ above `require_csrf()`:
 | `DELETE /lists/{id}/todos/{todo_id}` | `version` | 204 |
 | `POST /lists/{id}/todos/{todo_id}/move` | `above`, `below` (D6) | open todo IDs in order |
 
+Every list in an answer carries `id`, `name`, `version`, `open_count` and
+`todo_count`. Todos carry no position: array order is the contract (open todos
+in order, then done ones, most recently completed first).
+
 - `version` and `todo_count` are required, so a request without them gets the
   existing JSON 400.
 - **Exactly one field per PATCH** matters for repeats. If a stale edit finds
   the state it wanted at exactly its version + 1, nothing else can have
   changed, so the client may carry on from there (D7).
-- Stale edits answer 409 with `code: "stale"` and `current`. Limits answer 409
-  with `code: "limit_reached"` and a message naming the limit. 404s carry
+  It is an untagged enum of two objects that refuse unknown fields, so the API
+  description says `oneOf` and a body with both fields is invalid there too.
+- **Deleting a list** is offered only on the open list, where every todo is
+  loaded, and is sent after the queue drains. Its 409 carries the current name,
+  version and `todo_count`, so the Member is asked again without a refetch.
+- Stale edits answer 409 with `code: "stale"` and `current`, declared in the
+  DTOs. Limits answer 409 with
+  `code: "limit_reached"` and a message naming the limit. 404s carry
   `list_not_found` or `todo_not_found`. The client treats a 404 on a delete as
   success.
 - Use cases return an outcome (`Applied`, `Stale(current)`, `LimitReached`)
@@ -168,10 +184,13 @@ above `require_csrf()`:
   access token until it expires.
 - **Validation:** `ListName` and `TodoTitle` in the domain trim, count code
   points, and refuse control characters and U+2028/U+2029. The rule counts
-  after trimming, which `#[validate(length)]` can't express. The schema states
-  it as a pattern; if the fuzzer still disagrees, those operations skip that
-  check in `apifuzz/schemathesis.toml`, with the reason. Their `Debug` output
-  hides the text.
+  after trimming, which `#[validate(length)]` can't express, and a `maxLength`
+  in the schema would call accepted padded text invalid. So the schema states
+  a pattern (one line, not blank) and the limit is in its description, and
+  `positive_data_acceptance` is off in `apifuzz/schemathesis.toml` for the
+  operations taking a name or title, with that reason. The UI counts trimmed
+  code points and never uses `maxlength`, which counts UTF-16 units. The
+  `Debug` output of both types hides the text.
 
 ### D6. Order is a gapped integer, renumbered when a gap runs out (domain, persistence-postgres)
 
@@ -181,10 +200,14 @@ statement, under the list lock. The midpoint rule is a pure domain function, so
 it is property-tested.
 
 A move sends up to 20 open todo IDs above the target position and 20 below,
-nearest first. The server ignores any that aren't open in this list, including
-foreign IDs, and then places the todo directly below the first remaining ID in
+nearest first. The server ignores the moved todo's own ID and any that aren't
+open in this list, including foreign IDs, and then places the todo directly below the first remaining ID in
 `above`, else directly above the first remaining one in `below`, else at the
 bottom. An empty `above` means the top. Moving a done todo answers `stale`.
+
+The answer holds IDs only, since full rows would be up to 500 KB per move. If
+its set of IDs differs from the open todos the tab knows, something changed
+elsewhere, and the tab refetches the list.
 
 - **Rejected: fractional string keys.** They grow without bound, and their main
   benefit, ordering without a lock, isn't needed.
@@ -198,8 +221,17 @@ A module-level runes store holds what the server last confirmed and a queue of
 the Member's unsaved operations. The screen is the queue applied to the
 confirmed state, so undoing a failed save is removing it from the queue.
 
-- **One queue per tab**, one request at a time, in the order made. Refetches
-  go through the same queue, so they never overlap a save.
+- **One queue of saves per tab**, one at a time, in the order made. An
+  operation on an item still being added waits for its ID, moves included; a
+  neighbour that still has no ID when a move is sent is left out.
+- **Loads run beside the queue**, so a slow save doesn't delay opening another
+  list. Each list has a counter that goes up when a load of it starts and when a
+  save to it is sent or finishes. A load's answer is used only if the counter
+  hasn't moved and no save to that list is in flight; otherwise it is dropped,
+  and the list is loaded again once its saves are done. `GET /lists` follows the
+  same rule across all lists.
+- **Counts:** a loaded list's open count comes from its todos with the queue
+  applied; other lists use `GET /lists`.
 - **Versions:** an operation stores the version on screen when the Member
   acted. When a save moves a todo from version n to n + 1, later queued
   operations on that todo at n move to n + 1. Nothing else changes a stored
@@ -235,6 +267,8 @@ UUID shows "list not found" without a request.
 
 - The `[id]` file name makes the existing page-template test expect
   `/dashboard/lists/[id]`, the name the specs use.
+- The rewrite and the template match by prefix, so a malformed address gets the
+  same shell and the same page name.
 - **Rejected: `/dashboard/lists?id=…`.** No rewrite needed, but the address is
   worth being a path, and query strings are stripped from telemetry by design.
 - **Slice 1 checks early** that the plugin works in `astro preview`. If not,
@@ -242,15 +276,24 @@ UUID shows "list not found" without a request.
 
 ### D9. Keeping content and list IDs out of telemetry (web, application)
 
-- **Page template:** the browser maps list addresses to `/dashboard/lists/[id]`
-  before sending, and the server's `page_template` does so again.
+- **Page template:** anything under `/dashboard/lists/` becomes
+  `/dashboard/lists/[id]`, malformed IDs included. In the browser this happens
+  in `pageOf`, which every kind of report uses; on the server in
+  `page_template`, which is an exact match today.
 - **Scrubbing:** a new rule, in both copies and the shared fixture, replaces
-  the ID in `/dashboard/lists/<id>` anywhere in a message, stack or source.
+  any segment after `/dashboard/lists/`, and any UUID after `/lists/` or
+  `/todos/` in an API path, in a message, stack or source.
 - **API failures** pass `route`, so reports hold the route template.
-- **Analytics:** a before-send hook in `analytics.js` rewrites the page and
-  referrer. List pages keep the fixed title "Lists". If the deployed Umami
-  version has no such hook, automatic tracking is turned off and the loader
-  sends page views itself.
+- **Analytics:** `analytics.js` defines a window function before the tracker
+  loads and names it in `data-before-send` (the pinned Umami, 3.5.0, supports
+  it). It rewrites the page and referrer and pins the title to "Lists".
+- **Edge access logs** keep list IDs, in the address and `Referer`. Accepted:
+  an ID gives no access, only the operator reads these logs, they already hold
+  client addresses, and they expire in 30 days. The specs bar list IDs from
+  browser reports and analytics only; names and titles are never in an address.
+- **Cloudflare Web Analytics:** the script policy allows the beacon Cloudflare
+  can inject, which would record real list addresses. It must be off for the
+  site; that is a first-deploy check.
 - **Backend:** spans and logs carry list, todo and user IDs only. `skip_all`
   everywhere, and the `Debug` rule in D5.
 - **Postgres logs:** errors can log row values in their DETAIL line. Validation
@@ -263,14 +306,16 @@ UUID shows "list not found" without a request.
 
 - **Purge:** `anonymize_account` deletes the Member's lists in its existing
   transaction, so a failure leaves the account due and the next run retries.
-- **Sweep:** each purge run also deletes lists whose account is already
-  deleted. Without it, a purge by the previous release, during a roll or after
+- **Sweep:** each purge run first deletes lists whose account is already
+  deleted, before `run_once` returns early when no account is due. Without it, a purge by the previous release, during a roll or after
   a rollback, would leave lists behind for good.
-- **Export:** `lists` is added to the export response. The worst case (100,000
-  titles of 500 characters) is about 200 MB, too much to build in memory. Slice
-  1 builds it in memory; before the feature is done, the handler streams the
-  body one list at a time. A failure part-way aborts the response, so the
-  browser reports a failed download rather than saving a partial file.
+- **Export:** `lists` is added to the export response, with creation and
+  completion times. The worst case (100,000 titles of 500 characters) is about
+  200 MB, too much to build in memory on any deploy, so from slice 1 the body is
+  streamed one list at a time. Each list is consistent in itself; the export as
+  a whole isn't one snapshot. A failure part-way aborts the response, so the
+  browser reports a failed download rather than saving a partial file. The
+  audit event is recorded before the first byte.
 
 ### D11. No feature flag
 
@@ -280,7 +325,7 @@ what makes the feature visible.
 
 ### D12. Threat model
 
-A new property, P-33, covers the `security` delta. Its checks are route tests
+A new property, P-35 (the next free number), covers the `security` delta. Its checks are route tests
 that try every list operation as another Member, an Admin, a Super Admin, an
 unverified Member and a Visitor, comparing each 404 with that of an unknown ID.
 The existing route-guard walk covers the Visitor case for future routes.
