@@ -29,6 +29,9 @@ services:
   db:
     logging: *logging
     image: postgres:18
+    # Without an init, Postgres is PID 1 and inherits orphans, such as a timed-out
+    # healthcheck; one that exits non-zero makes it restart every connection.
+    init: true
     # pg_stat_statements is created by the initial migration; it must be preloaded.
     # `log_error_verbosity=terse` drops the DETAIL line, which can hold row values
     # such as titles (OT-013 D9). Failing statements are still logged.
