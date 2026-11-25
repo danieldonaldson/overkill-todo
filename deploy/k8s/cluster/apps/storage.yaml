@@ -19,6 +19,9 @@ spec:
       prune: true
       selfHeal: true
     retry:
+      # Retry the newest commit: without it a failing sync retries its own
+      # revision for ever and never sees the revert.
+      refresh: true
       limit: -1
       backoff:
         duration: 10s

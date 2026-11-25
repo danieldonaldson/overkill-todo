@@ -96,7 +96,7 @@ bootstrap_argocd() {
   kubectl wait --for=condition=Established crd/applications.argoproj.io --timeout=60s >/dev/null
   kubectl -n argocd rollout status deployment/argocd-repo-server --timeout=300s
   kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
-  "${apply[@]}" -f deploy/k8s/cluster/root.yaml >/dev/null
+  "${apply[@]}" -f deploy/k8s/cluster/apps/root.yaml >/dev/null
 }
 
 cmd_up() {

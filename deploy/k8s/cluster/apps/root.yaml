@@ -1,4 +1,4 @@
-# The only Application applied by hand (scripts/k8s.sh): it owns everything in apps/.
+# Applied once by hand (scripts/k8s.sh); it owns everything in apps/, itself included.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -18,6 +18,9 @@ spec:
       prune: true
       selfHeal: true
     retry:
+      # Retry the newest commit: without it a failing sync retries its own
+      # revision for ever and never sees the revert.
+      refresh: true
       limit: -1
       backoff:
         duration: 10s
