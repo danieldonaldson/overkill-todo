@@ -70,6 +70,8 @@ export class ApiErrorException extends Error implements ApiError {
   attempts_remaining?: ApiError['attempts_remaining']
   cooldown_seconds?: ApiError['cooldown_seconds']
   email?: ApiError['email']
+  /** The server's own message, without the trace ID added for support. */
+  serverMessage?: string
   /** The current row in a `stale` conflict (OT-013). */
   current?: ApiError['current']
 
@@ -85,9 +87,16 @@ export class ApiErrorException extends Error implements ApiError {
     if (body) Object.assign(this, body)
     // After the body, whose own `message` / `status` fields would shadow these.
     this.message = message
+    this.serverMessage = getErrorMessage(body)
     this.status = options.status
   }
 }
+
+/**
+ * Thrown after the client has already redirected: the session ended or the
+ * email isn't verified. A definite refusal, not an unknown outcome.
+ */
+export class SessionEndedError extends Error {}
 
 /** True when `err` is an {@link ApiErrorException} for an HTTP `status` response. */
 export function isApiStatus(err: unknown, status: number): boolean {

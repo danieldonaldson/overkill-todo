@@ -61,6 +61,12 @@ advance a queued version) fails. The real two-tab flow reaches a stale 409 when
 the second tab ticks a todo after the first tab changed it twice, and both tabs
 then show the server's current state.
 
+A review after slice 1 found that this test can't see wrong order, lost edits or
+endless loads, because it refetches before comparing. `regressions.test.ts` adds
+a one-tab random test without faults that compares with no refetch and allows no
+conflict message. The two-tab test now also fails some loads, and still passes
+for 10,000 seeds.
+
 ## Decisions
 
 ### D1. One version per todo and per list (domain)
@@ -231,30 +237,49 @@ confirmed state, so undoing a failed save is removing it from the queue.
   operation on an item still being added waits for its ID, moves included; a
   neighbour that still has no ID when a move is sent is left out.
 - **Loads run beside the queue**, so a slow save doesn't delay opening another
-  list. Each list has a counter that goes up when a load of it starts and when a
-  save to it is sent or finishes. A load's answer is used only if the counter
-  hasn't moved and no save to that list is in flight; otherwise it is dropped,
-  and the list is loaded again once its saves are done. `GET /lists` follows the
-  same rule across all lists.
+  list. A newer load of a list replaces an older one, whose answer is dropped
+  and not repeated. A save to the list sent, finished or in flight since the load
+  started also makes its answer stale: it is dropped, and the list is loaded
+  again once no save to it is queued. `GET /lists` follows the same rule across
+  all lists. Loads and saves are counted apart: with one counter, as first
+  built, two overlapping loads repeated each other without end.
+- **Refreshing** never hides confirmed todos. They stay on screen with the queue
+  applied, and a failed refresh is shown above them with a retry.
+- **One name per item:** a new todo's client key and its ID name the same item,
+  so an edit queued before the ID arrived and one queued after it depend on each
+  other, for versions and for dropping.
+- **Order:** open todos, then done ones newest first, as the server orders them.
+  An answer moves a todo only if it was ticked or unticked.
 - **Counts:** a loaded list's open count comes from its todos with the queue
-  applied; other lists use `GET /lists`.
+  applied, unless `GET /lists` answered later and nothing is queued for it;
+  other lists use `GET /lists`.
+- **Account check:** cookies are shared by all tabs, so a save is sent only if
+  the account last confirmed in any tab (an ID in `localStorage`) is this tab's.
+  If not, `/auth/me` decides first; the screen doesn't wait. Another account
+  clears the store. A switch while a request is already on its way isn't caught.
+- **Session ended:** when the client has already redirected, the save isn't
+  repeated and no message is shown.
 - **Versions:** an operation stores the version on screen when the Member
   acted. When a save moves a todo from version n to n + 1, later queued
   operations on that todo at n move to n + 1. Nothing else changes a stored
   version: not a refetch, and not a success whose version isn't n + 1.
 - **409 or 404:** the operation and later queued ones on the same item are
   dropped, the current version is shown (or the item removed), and the Member
-  sees one message. Dropped text stays available to submit again.
+  sees one message. Dropped text stays available to submit again: it goes back
+  into an empty input, else it is listed below with "Try again". No text replaces
+  another, or what is being typed.
 - **400 or limit:** the same, without changing the confirmed item.
 - **Network failure, 15-second timeout or 5xx:** the outcome is unknown. The
-  save is repeated once; if that fails too, it is dropped as above, and the
-  list is refetched as soon as the server answers again (on `online`, focus or
-  the next action).
+  save is repeated once; if that fails too, it is dropped as above and the list
+  is refetched: at once, and again on `online`, focus and the next save the
+  server answers, until a refetch succeeds. A save is never repeated after the
+  store was cleared, when the cookie may belong to another Member.
 - **List deletion** waits for the server, because it is permanent.
 - **Out-of-order loads:** an answer is applied only to the list it names.
 - **Leaving:** the store survives in-site moves. `beforeunload` asks to confirm
   while the queue isn't empty. The store is in memory only, and is cleared on
-  sign-out and when the account changes.
+  sign-out and when the account changes, also when the background `/auth/me`
+  check is what finds the other account; open panels then load again.
 - **Messages** use the sonner toaster, mounted in the persisted header, so a
   failure is seen and announced on any dashboard page.
 
@@ -288,8 +313,9 @@ UUID shows "list not found" without a request.
   in `pageOf`, which every kind of report uses; on the server in
   `page_template`, which is an exact match today.
 - **Scrubbing:** a new rule, in both copies and the shared fixture, replaces
-  any segment after `/dashboard/lists/`, and any UUID after `/lists/` or
-  `/todos/` in an API path, in a message, stack or source.
+  the rest of the path after `/dashboard/lists/` (keeping a `:line:column`), and
+  any UUID after `/lists/` or `/todos/` in an API path, whatever follows it, in a
+  message, stack or source.
 - **API failures** pass `route`, so reports hold the route template.
 - **Analytics:** `analytics.js` defines a window function before the tracker
   loads and names it in `data-before-send` (the pinned Umami, 3.5.0, supports
@@ -305,7 +331,7 @@ UUID shows "list not found" without a request.
   everywhere, and the `Debug` rule in D5.
 - **Postgres logs:** errors can log row values in their DETAIL line. Validation
   and locking mean the constraints shouldn't fire; `log_error_verbosity=terse`
-  is set in the local and production compose files as a second net.
+  is set in the compose files and the Kubernetes cluster as a second net.
 - A test writes marker strings through every route, including refused and
   failed saves, and searches the captured logs and spans for them.
 

@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { ApiErrorException } from '../api/errors'
-import { ListsEngine, type ListsApi } from './engine'
+import { ListsEngine, type ListsApi, type TodoView } from './engine'
 import { MemoryListsServer } from './memory-server'
 
 const SEEDS = Number(import.meta.env.VITE_HYPOTHESIS_SEEDS ?? 200)
@@ -30,7 +30,11 @@ async function yieldTicks(rng: () => number): Promise<void> {
 }
 
 /** A tab's transport with seeded delays, 5xx failures and lost answers. */
-function faultyApi(server: MemoryListsServer, rng: () => number): ListsApi {
+function faultyApi(
+  server: MemoryListsServer,
+  rng: () => number,
+  faults: { reads: boolean }
+): ListsApi {
   const write = async <T>(apply: () => T, fault: boolean): Promise<T> => {
     await yieldTicks(rng)
     if (fault) {
@@ -44,16 +48,15 @@ function faultyApi(server: MemoryListsServer, rng: () => number): ListsApi {
     }
     return apply()
   }
+  const read = async <T>(answer: () => T): Promise<T> => {
+    await yieldTicks(rng)
+    if (faults.reads && rng() < 0.1) throw new TypeError('read failed')
+    return answer()
+  }
   return {
-    list: async () => {
-      await yieldTicks(rng)
-      return server.list()
-    },
+    list: () => read(() => server.list()),
     createList: (key, name) => write(() => server.createList(key, name), true),
-    getList: async (id) => {
-      await yieldTicks(rng)
-      return server.getList(id)
-    },
+    getList: (id) => read(() => server.getList(id)),
     addTodo: (listId, key, title) => write(() => server.addTodo(listId, key, title), true),
     markTodo: (listId, todoId, version, done) =>
       write(() => server.markTodo(listId, todoId, version, done), true),
@@ -78,25 +81,63 @@ function keys(prefix: string) {
   return () => `${prefix}-${++next}`
 }
 
-async function runSeed(seed: number): Promise<void> {
+/**
+ * Wraps a tab's transport to check each accepted edit: its version must be one
+ * this tab showed when the Member acted, or the result of its own last save.
+ */
+function watchVersions(
+  server: MemoryListsServer,
+  api: ListsApi,
+  seen: Map<string, Set<number>>,
+  violations: string[]
+): ListsApi {
+  return {
+    ...api,
+    markTodo: async (listId, todoId, version, done) => {
+      const todo = server.getList(listId).todos.find((candidate) => candidate.id === todoId)
+      const versions = todo && seen.get(todo.title)
+      if (todo && !versions?.has(version)) violations.push(`${todo.title} at ${version}`)
+      const answer = await api.markTodo(listId, todoId, version, done)
+      if (answer.version === version + 1) versions?.add(answer.version)
+      return answer
+    },
+  }
+}
+
+async function runSeed(seed: number, refetchAdvancesQueue = false): Promise<void> {
   const rng = rngFor(seed)
   const server = new MemoryListsServer()
   const listId = server.seededList('Work', ['one', 'two'])
+  // A second list: its saves hold the queue while list one is refetched.
+  const otherId = server.seededList('Other', [])
+  const faults = { reads: false }
+  const violations: string[] = []
+  const seenA = new Map<string, Set<number>>()
+  const seenB = new Map<string, Set<number>>()
   const tabA = new ListsEngine({
-    api: faultyApi(server, rng),
+    api: watchVersions(server, faultyApi(server, rng, faults), seenA, violations),
     newKey: keys('a'),
     timeoutMs: Number.POSITIVE_INFINITY,
+    refetchAdvancesQueue,
   })
   const tabB = new ListsEngine({
-    api: faultyApi(server, rng),
+    api: watchVersions(server, faultyApi(server, rng, faults), seenB, violations),
     newKey: keys('b'),
     timeoutMs: Number.POSITIVE_INFINITY,
+    refetchAdvancesQueue,
   })
   await tabA.loadLists()
   await tabA.loadList(listId)
   await tabB.loadLists()
   await tabB.loadList(listId)
+  faults.reads = true
 
+  const mark = (tab: ListsEngine, todo: TodoView) => {
+    const seen = tab === tabA ? seenA : seenB
+    if (!seen.has(todo.title)) seen.set(todo.title, new Set())
+    seen.get(todo.title)!.add(todo.version)
+    tab.markTodo(listId, todo, !todo.done)
+  }
   for (let step = 0; step < 18; step++) {
     const tab = rng() < 0.5 ? tabA : tabB
     const other = tab === tabA ? tabB : tabA
@@ -108,25 +149,31 @@ async function runSeed(seed: number): Promise<void> {
         const pending = tab
           .snapshot()
           .details[listId].todos.find((candidate) => candidate.key === key)
-        if (pending) tab.markTodo(listId, pending, true)
+        if (pending) mark(tab, pending)
       }
     } else {
       const todo = todos[Math.floor(rng() * todos.length)]
-      tab.markTodo(listId, todo, !todo.done)
+      mark(tab, todo)
     }
+    if (rng() < 0.3) tab.addTodo(otherId, `o-${seed}-${step}`)
+    await yieldTicks(rng)
     if (rng() < 0.25) void tab.loadList(listId)
     if (rng() < 0.1) void other.loadList(listId)
   }
 
   await settle(tabA)
   await settle(tabB)
+  faults.reads = false
   // Tabs aren't live: compare only after one final load each.
   await tabA.loadList(listId)
   await tabB.loadList(listId)
 
+  expect(violations, `seed ${seed}: no unseen version`).toEqual([])
   const serverTodos = server.getList(listId).todos
-  const ids = serverTodos.map((todo) => todo.id)
-  expect(new Set(ids).size, `seed ${seed}: no duplicated todo`).toBe(ids.length)
+  for (const id of [listId, otherId]) {
+    const titles = server.getList(id).todos.map((todo) => todo.title)
+    expect(new Set(titles).size, `seed ${seed}: no duplicated todo`).toBe(titles.length)
+  }
 
   const shape = (todos: { id: string | null; title: string; done: boolean; version: number }[]) =>
     todos.map((todo) => [todo.id, todo.title, todo.done, todo.version])
@@ -148,6 +195,16 @@ describe('two-tab lists queue', () => {
   it('a refetch never advances a queued edit', async () => {
     expect(await refetchAdvancedQueuedVersion(false)).toBe(false)
   })
+
+  it('the random test catches a refetch that advances queued edits', async () => {
+    let caught = 0
+    for (let seed = 1; seed <= 200; seed++) {
+      await runSeed(seed, true).catch(() => {
+        caught += 1
+      })
+    }
+    expect(caught).toBeGreaterThan(0)
+  }, 600_000)
 
   it('the broken variant is caught', async () => {
     // Documents the failure mode: with the flag on, a refetch rewrites the

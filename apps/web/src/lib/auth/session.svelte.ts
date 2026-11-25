@@ -18,12 +18,14 @@
  */
 
 import { api } from '../api'
-import { ApiErrorException } from '../api/errors'
+import { ApiErrorException, SessionEndedError } from '../api/errors'
 import { navigateReplace } from '../navigation'
 import type { User } from '../types'
 import {
+  ACCOUNT_KEY,
   clearSessionUser,
   confirmSessionUser,
+  getConfirmedAccount,
   getSessionUser,
   isSessionUserConfirmed,
   setSessionUser,
@@ -51,10 +53,19 @@ function isUnreachable(err: unknown): boolean {
   return err instanceof TypeError || (err instanceof ApiErrorException && (err.status ?? 0) >= 500)
 }
 
+/**
+ * A different Member signing in must not inherit the first one's lists or
+ * queued saves (OT-013 design D7). Call before replacing `state.user`.
+ */
+function forgetOtherAccount(next: User): void {
+  if (state.user && state.user.id !== next.id) lists.switchAccount()
+}
+
 async function runCheck(): Promise<void> {
   try {
     const user = await api.auth.me()
     if (signedOut) return
+    forgetOtherAccount(user)
     state.user = user
     confirmSessionUser(user)
     state.status = 'confirmed'
@@ -65,6 +76,7 @@ async function runCheck(): Promise<void> {
     if (!signedOut && isUnreachable(err)) {
       state.status = 'unreachable'
     }
+    if (err instanceof SessionEndedError) state.status = 'unconfirmed'
     // Anything else (401, 403 unverified): HttpClient has already redirected.
   }
 }
@@ -119,9 +131,7 @@ export const session = {
 
   /** Replace the account, e.g. with a server response after an action. */
   set(user: User): void {
-    // A different Member signing in must not inherit the first one's lists or
-    // queued saves (OT-013 design D7).
-    if (state.user && state.user.id !== user.id) lists.reset()
+    forgetOtherAccount(user)
     state.user = user
     setSessionUser(user)
   },
@@ -161,6 +171,34 @@ export const session = {
     clearTokenExpiry()
     navigateReplace('/login')
   },
+}
+
+/**
+ * Before a list save (OT-013 design D7): the cookies are shared by all tabs, so
+ * another Member may have signed in from a different one. Saves wait for the
+ * answer in the background; the screen never does. Throws if the save must not
+ * be sent, with the lists already cleared when the account is another one.
+ */
+async function ensureSameAccount(): Promise<void> {
+  const before = state.user?.id
+  const confirmed = getConfirmedAccount()
+  if (signedOut) throw new SessionEndedError('Signed out')
+  if (confirmed === undefined || (before && confirmed === before)) return
+  check = runCheck()
+  await check
+  if (signedOut) throw new SessionEndedError('Signed out')
+  if (!state.user || state.status !== 'confirmed') throw new TypeError('Account not confirmed')
+  if (before && state.user.id !== before) throw new SessionEndedError('Another account')
+}
+
+lists.guardSaves(ensureSameAccount)
+
+if (typeof window !== 'undefined') {
+  // Another tab confirmed a different account: drop this one's lists at once.
+  window.addEventListener('storage', (event) => {
+    if (event.key !== ACCOUNT_KEY || !event.newValue || signedOut) return
+    if (state.user && event.newValue !== state.user.id) void session.retry()
+  })
 }
 
 /** Reset to a fresh document's state, re-reading the cache. For tests. */

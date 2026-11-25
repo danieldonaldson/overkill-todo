@@ -293,4 +293,138 @@ describe('ListsPanel', () => {
     await screen.getByRole('button', { name: /Home/ }).click()
     expect(navigate).toHaveBeenCalledWith(`/dashboard/lists/${OTHER_ID}`)
   })
+
+  it('never says there are no lists before the server has answered', async () => {
+    setPath('/dashboard/lists')
+    const answer = Promise.withResolvers<List[]>()
+    vi.mocked(api.lists.list).mockReturnValue(answer.promise)
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByTestId('lists-skeleton')).toBeInTheDocument()
+    expect(screen.getByText('No lists yet.', { exact: false }).elements()).toHaveLength(0)
+    expect(screen.getByText('Create your first list', { exact: false }).elements()).toHaveLength(0)
+
+    answer.reject(new TypeError('offline'))
+    await expect.element(screen.getByText("Couldn't load your lists.")).toBeInTheDocument()
+    expect(screen.getByText('Create your first list', { exact: false }).elements()).toHaveLength(0)
+  })
+
+  it('opens a new list once, so the overview can be opened again', async () => {
+    setPath('/dashboard/lists/')
+    vi.mocked(api.lists.create).mockResolvedValue(list({ name: 'Groceries' }))
+    vi.mocked(api.lists.get).mockResolvedValue(detail([], list({ name: 'Groceries' })))
+    const first = await render(ListsPanel)
+    await first.getByLabelText('New list name').fill('Groceries')
+    await first.getByRole('button', { name: 'Create' }).click()
+    await vi.waitFor(() => expect(location.pathname).toBe(`/dashboard/lists/${LIST_ID}`))
+    await first.unmount()
+
+    setPath('/dashboard/lists')
+    vi.mocked(api.lists.list).mockResolvedValue([list({ name: 'Groceries' })])
+    const second = await render(ListsPanel)
+    await expect.element(second.getByText('Select a list to see its todos.')).toBeInTheDocument()
+    expect(location.pathname).toBe('/dashboard/lists')
+  })
+
+  it('keeps every failed title and the one being typed', async () => {
+    mockLoaded([])
+    vi.mocked(api.lists.addTodo).mockRejectedValue(
+      new ApiErrorException(null, { status: 400, message: 'refused' })
+    )
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByRole('heading', { name: 'Work' })).toBeInTheDocument()
+    lists.addTodo(LIST_ID, 'A')
+    lists.addTodo(LIST_ID, 'B')
+    typeInto(screen.getByPlaceholder('Add a todo...'), 'D')
+
+    const notSaved = screen.getByRole('list', { name: 'Not saved' })
+    await expect.element(notSaved.getByText('A', { exact: true })).toBeInTheDocument()
+    await expect.element(notSaved.getByText('B', { exact: true })).toBeInTheDocument()
+    expect((screen.getByPlaceholder('Add a todo...').element() as HTMLInputElement).value).toBe('D')
+
+    vi.mocked(api.lists.addTodo).mockResolvedValue(todo({ id: 'saved', title: 'A' }))
+    await notSaved.getByRole('button', { name: 'Try again' }).first().click()
+    await expect
+      .element(screen.getByRole('checkbox', { name: 'Mark "A" done' }))
+      .toBeInTheDocument()
+    expect(notSaved.getByText('A', { exact: true }).elements()).toHaveLength(0)
+  })
+
+  it('keeps the input and its focus while the list refreshes, and says if that fails', async () => {
+    mockLoaded([todo()])
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText('Buy milk')).toBeInTheDocument()
+    const input = screen.getByPlaceholder('Add a todo...')
+    const element = input.element()
+    typeInto(input, 'half typed')
+    const answer = Promise.withResolvers<ListDetail>()
+    vi.mocked(api.lists.get).mockReturnValue(answer.promise)
+    void lists.loadList(LIST_ID)
+    expect(element.isConnected).toBe(true)
+    expect(document.activeElement).toBe(element)
+    answer.reject(new TypeError('offline'))
+    await expect.element(screen.getByText(/Couldn't refresh this list/)).toBeInTheDocument()
+    await expect.element(screen.getByText('Buy milk')).toBeInTheDocument()
+    expect(element.isConnected).toBe(true)
+  })
+
+  it("replaces one Member's lists and drafts with the next one's", async () => {
+    mockLoaded([todo()])
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText('Buy milk')).toBeInTheDocument()
+    typeInto(screen.getByPlaceholder('Add a todo...'), 'private draft')
+    mockLoaded([todo({ id: 'theirs', title: 'Other todo' })], list({ name: 'Theirs' }))
+    lists.switchAccount()
+    await expect.element(screen.getByText('Other todo')).toBeInTheDocument()
+    expect(screen.getByText('Buy milk').elements()).toHaveLength(0)
+    expect((screen.getByPlaceholder('Add a todo...').element() as HTMLInputElement).value).toBe('')
+  })
+
+  it('shows list not found for a nested address without a request', async () => {
+    setPath(`/dashboard/lists/${LIST_ID}/extra`)
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText('List not found')).toBeInTheDocument()
+    expect(api.lists.get).not.toHaveBeenCalled()
+  })
+
+  it('opens an upper-case address as the same list', async () => {
+    setPath(`/dashboard/lists/${LIST_ID.toUpperCase()}`)
+    mockLoaded([todo()])
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByRole('heading', { name: 'Work' })).toBeInTheDocument()
+    expect(api.lists.get).toHaveBeenCalledWith(LIST_ID)
+  })
+
+  it('turns line breaks pasted into a list name into spaces', async () => {
+    mockLoaded([])
+    const screen = await render(ListsPanel)
+    const input = screen.getByLabelText('New list name').element() as HTMLInputElement
+    const data = new DataTransfer()
+    data.setData('text/plain', 'Work\nHome')
+    const paste = new ClipboardEvent('paste', { bubbles: true, cancelable: true })
+    Object.defineProperty(paste, 'clipboardData', { value: data })
+    input.dispatchEvent(paste)
+    expect(input.value).toBe('Work Home')
+  })
+
+  it('keeps keyboard focus in the list after a tick, and shows no empty group', async () => {
+    mockLoaded([todo({ id: 'a', title: 'first' }), todo({ id: 'b', title: 'second' })])
+    vi.mocked(api.lists.markTodo).mockReturnValue(new Promise(() => {}))
+    const screen = await render(ListsPanel)
+    await screen.getByRole('checkbox', { name: 'Mark "first" done' }).click()
+    await expect.element(screen.getByRole('checkbox', { name: 'Mark "second" done' })).toHaveFocus()
+    await screen.getByRole('checkbox', { name: 'Mark "second" done' }).click()
+    await expect.element(screen.getByLabelText('New todo title')).toHaveFocus()
+    expect(screen.getByRole('list', { name: 'Todos' }).elements()).toHaveLength(0)
+  })
+
+  it('marks the panel ready only when the open list has an answer', async () => {
+    const answer = Promise.withResolvers<ListDetail>()
+    vi.mocked(api.lists.list).mockResolvedValue([list()])
+    vi.mocked(api.lists.get).mockReturnValue(answer.promise)
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText('1 / 100')).toBeInTheDocument()
+    expect(markReady).not.toHaveBeenCalled()
+    answer.resolve(detail([]))
+    await vi.waitFor(() => expect(markReady).toHaveBeenCalled())
+  })
 })

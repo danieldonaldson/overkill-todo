@@ -86,3 +86,26 @@ test('two tabs tick the same todo; the stale answer loses and the current versio
     await second.close()
   }
 })
+
+test('an add whose answer is lost is saved once', async ({ page }) => {
+  await register(page)
+  await page.goto('/dashboard/lists')
+  await page.getByLabel('New list name').fill('Lost answer')
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Lost answer' })).toBeVisible()
+
+  // The backend saves the first attempt; the browser never hears about it.
+  let sent = 0
+  await page.route('**/api/v1/lists/*/todos', async (route) => {
+    sent += 1
+    if (sent > 1) return route.continue()
+    await route.fetch()
+    await route.abort('connectionreset')
+  })
+  await page.getByLabel('New todo title').fill('Only once')
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect.poll(() => sent).toBe(2)
+
+  await page.reload()
+  await expect(page.getByRole('list', { name: 'Todos' }).getByText('Only once')).toHaveCount(1)
+})

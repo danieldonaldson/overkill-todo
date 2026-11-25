@@ -5,7 +5,7 @@
 // with each other; a refetch never advances a queued operation, so another
 // tab's change can't be turned into a silent overwrite.
 
-import { ApiErrorException } from '../api/errors'
+import { ApiErrorException, SessionEndedError } from '../api/errors'
 import type { List, ListDetail, Todo } from '../types'
 
 /** The API surface the engine needs. Tests substitute an in-memory server. */
@@ -44,7 +44,20 @@ export type DetailStatus = 'idle' | 'loading' | 'ready' | 'error' | 'not_found'
 export type ListsStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 export interface ListDetailView {
+  /** Stays `ready` during a refresh: confirmed todos are never hidden again. */
   status: DetailStatus
+  /** The last refresh failed, so the todos may be out of date. */
+  refreshFailed: boolean
+  todos: TodoView[]
+}
+
+interface Detail {
+  status: DetailStatus
+  /** The server has answered for this list, so `todos` is its confirmed state. */
+  loaded: boolean
+  refreshFailed: boolean
+  /** When the server last answered about this list (see `clock`). */
+  knownAt: number
   todos: TodoView[]
 }
 
@@ -56,8 +69,8 @@ export interface Snapshot {
   /** Queued operations in order, for tests and the broken-variant check. */
   queue: { kind: Operation['kind']; version?: number }[]
   saving: boolean
-  /** Set after a new list is saved, for the address replacement (D3). */
-  lastCreatedListId: string | null
+  /** The newest list this tab saved, by its client key, to open it (D3). */
+  lastCreated: { key: string; id: string } | null
 }
 
 export interface NoticeRestore {
@@ -68,13 +81,15 @@ export interface NoticeRestore {
 
 export interface Notice {
   text: string
-  restore?: NoticeRestore
+  /** Texts dropped with the failed save. */
+  restore?: NoticeRestore[]
 }
 
-type FailureKind = 'stale' | 'not_found' | 'limit' | 'invalid' | 'unknown'
+type FailureKind = 'stale' | 'not_found' | 'limit' | 'invalid' | 'unknown' | 'ended'
 
 interface Failure {
   kind: FailureKind
+  code?: string
   current?: Todo
   message?: string
 }
@@ -107,25 +122,14 @@ export interface EngineOptions {
 
 const DEFAULT_TIMEOUT_MS = 15_000
 
-const itemKey = (op: Operation): string => {
-  switch (op.kind) {
-    case 'create_list':
-      return `list-key:${op.key}`
-    case 'add_todo':
-      return `todo-key:${op.key}`
-    case 'mark_todo':
-      return op.todoId ? `todo-id:${op.todoId}` : `todo-key:${op.todoKey}`
-  }
-}
-
+/**
+ * Todos are kept as the server orders them: open ones, then done ones newest
+ * first. A todo that is added or unticked goes last among the open ones, and
+ * one that is ticked goes first among the done ones, so it is the same index.
+ */
 function insertTodo(todos: TodoView[], todo: TodoView): void {
-  if (!todo.done) {
-    const doneAt = todos.findIndex((t) => t.done)
-    if (doneAt === -1) todos.push(todo)
-    else todos.splice(doneAt, 0, todo)
-  } else {
-    todos.unshift(todo)
-  }
+  const doneAt = todos.findIndex((candidate) => candidate.done)
+  todos.splice(doneAt === -1 ? todos.length : doneAt, 0, todo)
 }
 
 function removeTodo(
@@ -139,13 +143,31 @@ function removeTodo(
   return todos.splice(index, 1)[0]
 }
 
-function moveTodo(todos: TodoView[], todo: TodoView): void {
-  const index = todos.findIndex((t) =>
-    todo.id != null ? t.id === todo.id : t.key != null && t.key === todo.key
-  )
+/** Put in the server's answer for a todo, moving it only if its state changed. */
+function putTodo(todos: TodoView[], todo: TodoView): void {
+  const index = todos.findIndex((candidate) => candidate.id === todo.id)
+  if (index !== -1 && todos[index].done === todo.done) {
+    todos[index] = todo
+    return
+  }
   if (index !== -1) todos.splice(index, 1)
   insertTodo(todos, todo)
 }
+
+/** What the Member typed for this save, to offer again if it fails. */
+function textOf(op: Operation): NoticeRestore[] {
+  if (op.kind === 'create_list') return [{ target: 'list', text: op.name }]
+  if (op.kind === 'add_todo') return [{ target: 'todo', listId: op.listId, text: op.title }]
+  return []
+}
+
+const unloaded = (status: DetailStatus): Detail => ({
+  status,
+  loaded: false,
+  refreshFailed: false,
+  knownAt: 0,
+  todos: [],
+})
 
 const toListView = (list: List): ListView => ({
   id: list.id,
@@ -177,18 +199,31 @@ export class ListsEngine {
 
   private lists: ListView[] = []
   private listsStatus: ListsStatus = 'idle'
-  private details = new Map<string, { status: DetailStatus; todos: TodoView[] }>()
+  private listsLoaded = false
+  /** Orders the server's answers, so the newer count of a list is shown. */
+  private clock = 0
+  private listsKnownAt = 0
+  private details = new Map<string, Detail>()
   private queue: Operation[] = []
   private running = false
   private epoch = 0
   private savesInFlight = 0
-  private globalGeneration = 0
-  private listGenerations = new Map<string, number>()
+  // A newer load replaces an older one; only a save makes a load repeat (D7).
+  // Counting both with one number made overlapping loads repeat each other.
+  private listsLoad = 0
+  private listsSaves = 0
+  private listLoads = new Map<string, number>()
+  private listSaves = new Map<string, number>()
   private inFlightByList = new Map<string, number>()
   private listReloads = new Set<string>()
   private listsReloadPending = false
-  private recoveryNeeded = false
-  private lastCreatedListId: string | null = null
+  /** What still has to be fetched once the server answers again. */
+  private listRecovery = new Set<string>()
+  private listsRecovery = false
+  /** A new todo's client key and its ID, so both name the same item. */
+  private idByKey = new Map<string, string>()
+  private keyById = new Map<string, string>()
+  private lastCreated: { key: string; id: string } | null = null
 
   constructor(options: EngineOptions) {
     this.api = options.api
@@ -210,7 +245,7 @@ export class ListsEngine {
         version: 'version' in op ? op.version : undefined,
       })),
       saving: this.savesInFlight > 0,
-      lastCreatedListId: this.lastCreatedListId,
+      lastCreated: this.lastCreated,
     }
   }
 
@@ -249,25 +284,29 @@ export class ListsEngine {
   /** Load the caller's lists (beside the queue; a stale answer is dropped). */
   async loadLists(): Promise<void> {
     const epoch = this.epoch
-    const generation = ++this.globalGeneration
-    this.listsStatus = 'loading'
+    const load = ++this.listsLoad
+    const saves = this.listsSaves
+    // A newer load replaced this one, or a save made its answer stale.
+    const dropped = (): boolean => {
+      if (load !== this.listsLoad) return true
+      if (saves === this.listsSaves && this.savesInFlight === 0) return false
+      this.listsReloadPending = true
+      return true
+    }
+    this.listsStatus = this.listsLoaded ? 'ready' : 'loading'
     this.notify()
     try {
-      const lists = await this.api.list()
-      if (epoch !== this.epoch) return
-      if (generation !== this.globalGeneration || this.savesInFlight > 0) {
-        this.listsReloadPending = true
-        return
-      }
+      const lists = await this.timeout(this.api.list())
+      if (epoch !== this.epoch || dropped()) return
       this.lists = lists.map(toListView)
+      this.listsLoaded = true
+      this.listsKnownAt = ++this.clock
       this.listsStatus = 'ready'
+      this.listsRecovery = false
     } catch {
-      if (epoch !== this.epoch) return
-      if (generation !== this.globalGeneration || this.savesInFlight > 0) {
-        this.listsReloadPending = true
-        return
-      }
+      if (epoch !== this.epoch || dropped()) return
       this.listsStatus = 'error'
+      this.listsRecovery = true
     } finally {
       if (epoch === this.epoch) {
         this.notify()
@@ -279,37 +318,40 @@ export class ListsEngine {
   /** Load one list and its todos (beside the queue). */
   async loadList(id: string): Promise<void> {
     const epoch = this.epoch
-    const generation = this.bump(id)
-    const previous = this.details.get(id)
-    this.details.set(id, { status: 'loading', todos: previous?.todos ?? [] })
+    const load = (this.listLoads.get(id) ?? 0) + 1
+    this.listLoads.set(id, load)
+    const saves = this.listSaves.get(id) ?? 0
+    const dropped = (): boolean => {
+      if (load !== this.listLoads.get(id)) return true
+      if (saves === (this.listSaves.get(id) ?? 0) && this.inFlight(id) === 0) return false
+      this.listReloads.add(id)
+      return true
+    }
+    if (!this.details.get(id)?.loaded) {
+      this.details.set(id, unloaded('loading'))
+    }
     this.notify()
     try {
-      const detail = await this.api.getList(id)
-      if (epoch !== this.epoch) return
-      if (generation !== this.generation(id) || this.inFlight(id) > 0) {
-        this.listReloads.add(id)
-        return
-      }
-      const list = toListView(detail.list)
-      const index = this.lists.findIndex((candidate) => candidate.id === id)
-      if (index === -1) this.lists.push(list)
-      else this.lists[index] = list
+      const detail = await this.timeout(this.api.getList(id))
+      if (epoch !== this.epoch || dropped()) return
+      this.putList(toListView(detail.list))
       this.details.set(id, {
         status: 'ready',
-        todos: detail.todos.map((todo) => toTodoView(todo)),
+        loaded: true,
+        refreshFailed: false,
+        knownAt: ++this.clock,
+        todos: detail.todos.map((todo) => toTodoView(todo, this.keyById.get(todo.id))),
       })
+      this.listRecovery.delete(id)
       if (this.refetchAdvancesQueue) this.advanceQueuedVersions(id, detail.todos)
     } catch (error) {
-      if (epoch !== this.epoch) return
-      if (generation !== this.generation(id) || this.inFlight(id) > 0) {
-        this.listReloads.add(id)
-        return
-      }
+      if (epoch !== this.epoch || dropped()) return
+      const known = this.details.get(id)
       if (error instanceof ApiErrorException && error.status === 404) {
-        this.details.set(id, { status: 'not_found', todos: [] })
-        this.lists = this.lists.filter((list) => list.id !== id)
+        this.listGone(id)
       } else {
-        this.details.set(id, { status: 'error', todos: previous?.todos ?? [] })
+        this.listRecovery.add(id)
+        this.details.set(id, known?.loaded ? { ...known, refreshFailed: true } : unloaded('error'))
       }
     } finally {
       if (epoch === this.epoch) {
@@ -319,41 +361,67 @@ export class ListsEngine {
     }
   }
 
-  /** Refetch after an unknown outcome, once the server is reachable again. */
+  /**
+   * Fetch what failed or has an unknown outcome, when the server may be
+   * reachable again. Each entry stays until its own load succeeds.
+   */
   retry(): void {
-    if (!this.recoveryNeeded) return
-    this.recoveryNeeded = false
-    if (this.listsStatus !== 'idle') void this.loadLists()
-    for (const [id, detail] of this.details) {
-      if (detail.status === 'ready' || detail.status === 'error') void this.loadList(id)
-    }
+    if (this.listsRecovery) this.listsReloadPending = true
+    for (const id of this.listRecovery) this.listReloads.add(id)
+    this.flushReloads()
   }
 
   /** Forget everything: sign-out or a different account signing in. */
   reset(): void {
     this.epoch += 1
+    this.running = false
     this.lists = []
     this.listsStatus = 'idle'
+    this.listsLoaded = false
+    this.listsKnownAt = 0
     this.details.clear()
     this.queue = []
-    this.listGenerations.clear()
+    this.listLoads.clear()
+    this.listSaves.clear()
     this.inFlightByList.clear()
     this.listReloads.clear()
     this.listsReloadPending = false
-    this.recoveryNeeded = false
-    this.lastCreatedListId = null
+    this.listRecovery.clear()
+    this.listsRecovery = false
+    this.idByKey.clear()
+    this.keyById.clear()
+    this.lastCreated = null
     this.savesInFlight = 0
     this.notify()
   }
 
-  private generation(id: string): number {
-    return this.listGenerations.get(id) ?? 0
+  private countSave(listId: string | null): void {
+    this.listsSaves += 1
+    if (listId) this.listSaves.set(listId, (this.listSaves.get(listId) ?? 0) + 1)
   }
 
-  private bump(id: string): number {
-    const next = this.generation(id) + 1
-    this.listGenerations.set(id, next)
-    return next
+  private putList(list: ListView): void {
+    const index = this.lists.findIndex((candidate) => candidate.id === list.id)
+    if (index === -1) this.lists.push(list)
+    else this.lists[index] = list
+  }
+
+  private listGone(id: string): void {
+    this.details.set(id, unloaded('not_found'))
+    this.lists = this.lists.filter((list) => list.id !== id)
+    this.listRecovery.delete(id)
+  }
+
+  private todoIdOf(op: { todoId?: string; todoKey?: string }): string | undefined {
+    return op.todoId ?? (op.todoKey ? this.idByKey.get(op.todoKey) : undefined)
+  }
+
+  /** One name per item, whether or not it had an ID when the edit was queued. */
+  private itemKey(op: Operation): string {
+    if (op.kind === 'create_list') return `list-key:${op.key}`
+    const id = op.kind === 'add_todo' ? this.idByKey.get(op.key) : this.todoIdOf(op)
+    if (id) return `todo-id:${id}`
+    return `todo-key:${op.kind === 'add_todo' ? op.key : op.todoKey}`
   }
 
   private inFlight(id: string): number {
@@ -370,8 +438,8 @@ export class ListsEngine {
     const view: Record<string, ListDetailView> = {}
     for (const [id, detail] of this.details) {
       const todos = detail.todos.map((todo) => ({ ...todo }))
-      if (detail.status === 'ready') this.applyQueueToTodos(id, todos)
-      view[id] = { status: detail.status, todos }
+      if (detail.loaded) this.applyQueueToTodos(id, todos)
+      view[id] = { status: detail.status, refreshFailed: detail.refreshFailed, todos }
     }
     return view
   }
@@ -379,7 +447,10 @@ export class ListsEngine {
   private listsView(): ListView[] {
     const lists = this.lists.map((list) => ({ ...list }))
     for (const [id, detail] of this.details) {
-      if (detail.status !== 'ready') continue
+      if (!detail.loaded) continue
+      // GET /lists answered after this list was last known: its count is newer.
+      const queued = this.queue.some((op) => op.kind !== 'create_list' && op.listId === id)
+      if (!queued && detail.knownAt < this.listsKnownAt) continue
       const todos = detail.todos.map((todo) => ({ ...todo }))
       this.applyQueueToTodos(id, todos)
       const index = lists.findIndex((list) => list.id === id)
@@ -406,7 +477,7 @@ export class ListsEngine {
   private applyQueueToTodos(listId: string, todos: TodoView[]): void {
     for (const op of this.queue) {
       if (op.kind === 'add_todo' && op.listId === listId) {
-        todos.push({
+        insertTodo(todos, {
           id: null,
           key: op.key,
           title: op.title,
@@ -417,16 +488,18 @@ export class ListsEngine {
         continue
       }
       if (op.kind !== 'mark_todo' || op.listId !== listId) continue
-      const target = todos.find(
-        (todo) =>
-          (op.todoId != null && todo.id === op.todoId) ||
-          (op.todoKey != null && todo.key === op.todoKey)
+      const id = this.todoIdOf(op)
+      const index = todos.findIndex(
+        (todo) => (id != null && todo.id === id) || (op.todoKey != null && todo.key === op.todoKey)
       )
-      if (!target) continue
-      target.done = op.done
+      if (index === -1) continue
+      const target = todos[index]
       target.version = op.version
+      if (target.done === op.done) continue
+      todos.splice(index, 1)
+      target.done = op.done
       target.completed_at = op.done ? new Date().toISOString() : undefined
-      moveTodo(todos, target)
+      insertTodo(todos, target)
     }
   }
 
@@ -439,8 +512,10 @@ export class ListsEngine {
     this.running = true
     const epoch = this.epoch
     void this.drain(epoch).finally(() => {
+      // A reset has already released the queue to a new run.
+      if (this.epoch !== epoch) return
       this.running = false
-      if (this.epoch === epoch && this.queue.length > 0) this.kick()
+      if (this.queue.length > 0) this.kick()
     })
   }
 
@@ -448,33 +523,43 @@ export class ListsEngine {
     while (this.queue.length > 0 && this.epoch === epoch) {
       const op = this.queue[0]
       const listId = op.kind === 'create_list' ? null : op.listId
-      if (listId) this.bump(listId)
-      this.globalGeneration += 1
+      this.countSave(listId)
       this.savesInFlight += 1
       if (listId) this.setInFlight(listId, 1)
       this.notify()
 
-      const result = await this.sendWithRepeat(op)
+      const result = await this.sendWithRepeat(op, epoch)
       if (this.epoch !== epoch) return
 
       this.savesInFlight -= 1
-      this.globalGeneration += 1
-      if (listId) {
-        this.setInFlight(listId, -1)
-        this.bump(listId)
+      this.countSave(listId)
+      if (listId) this.setInFlight(listId, -1)
+      // Off the queue first: an answer that can't be applied must not leave the
+      // save at its head, to be sent again without end.
+      this.queue.shift()
+      if (result.ok) {
+        try {
+          this.applySuccess(op, result.value)
+        } catch {
+          this.applyFailure(op, { kind: 'unknown' })
+        }
+      } else {
+        this.applyFailure(op, result.error)
       }
-      if (result.ok) this.applySuccess(op, result.value)
-      else this.applyFailure(op, result.error)
       this.notify()
-      this.flushReloads()
+      // Any answer, a refusal included, means the server is reachable again.
+      if (result.ok || (result.error.kind !== 'unknown' && result.error.kind !== 'ended'))
+        this.retry()
+      else this.flushReloads()
     }
   }
 
-  private async sendWithRepeat(op: Operation): Promise<SendResult> {
+  private async sendWithRepeat(op: Operation, epoch: number): Promise<SendResult> {
     const first = await this.send(op)
     // One retry with the same key or version, so a lost answer can't create a
-    // duplicate or apply twice.
-    if (first.ok || first.error.kind !== 'unknown') return first
+    // duplicate or apply twice. Never after a reset: the cookie may by then
+    // belong to another Member.
+    if (first.ok || first.error.kind !== 'unknown' || this.epoch !== epoch) return first
     return this.send(op)
   }
 
@@ -489,7 +574,7 @@ export class ListsEngine {
             value: await this.timeout(this.api.addTodo(op.listId, op.key, op.title)),
           }
         case 'mark_todo': {
-          const todoId = op.todoId ?? this.resolveTodoKey(op.todoKey)
+          const todoId = this.todoIdOf(op)
           if (!todoId) return { ok: false, error: { kind: 'not_found' } }
           return {
             ok: true,
@@ -502,30 +587,21 @@ export class ListsEngine {
     }
   }
 
-  private resolveTodoKey(key: string | undefined): string | undefined {
-    if (!key) return undefined
-    for (const detail of this.details.values()) {
-      const todo = detail.todos.find((candidate) => candidate.key === key && candidate.id)
-      if (todo?.id) return todo.id
-    }
-    return undefined
-  }
-
   private timeout<T>(promise: Promise<T>): Promise<T> {
     if (!Number.isFinite(this.timeoutMs)) return promise
-    const { promise: timedOut, resolve, reject } = Promise.withResolvers<T>()
-    const timer = setTimeout(() => reject(new Error('request timed out')), this.timeoutMs)
-    promise.then(
-      (value) => {
-        clearTimeout(timer)
-        resolve(value)
-      },
-      (error: unknown) => {
-        clearTimeout(timer)
-        reject(error instanceof Error ? error : new Error(String(error)))
-      }
-    )
-    return timedOut
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('request timed out')), this.timeoutMs)
+      promise.then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (error: unknown) => {
+          clearTimeout(timer)
+          reject(error instanceof Error ? error : new Error(String(error)))
+        }
+      )
+    })
   }
 
   private classify(error: unknown): Failure {
@@ -533,49 +609,56 @@ export class ListsEngine {
       if (error.status === 409 && error.code === 'stale') {
         return { kind: 'stale', current: error.current as Todo | undefined }
       }
-      if (error.status === 409) return { kind: 'limit', message: error.message }
-      if (error.status === 404) return { kind: 'not_found' }
-      if (error.status === 400) return { kind: 'invalid', message: error.message }
+      const message = error.serverMessage ?? error.message
+      if (error.status === 409) return { kind: 'limit', message }
+      if (error.status === 404) return { kind: 'not_found', code: error.code }
+      if (error.status === 400) return { kind: 'invalid', message }
       if ((error.status ?? 0) >= 500) return { kind: 'unknown' }
-      return { kind: 'invalid', message: error.message }
+      return { kind: 'invalid', message }
     }
+    if (error instanceof SessionEndedError) return { kind: 'ended' }
     return { kind: 'unknown' }
   }
 
   private applySuccess(op: Operation, value: List | Todo): void {
-    this.recoveryNeeded = false
     switch (op.kind) {
       case 'create_list': {
         const list = value as List
-        this.lists.push(toListView(list))
-        this.lastCreatedListId = list.id
-        this.details.set(list.id, { status: 'idle', todos: [] })
+        this.putList(toListView(list))
+        this.lastCreated = { key: op.key, id: list.id }
+        // A list just created is known to be empty, so it opens at once.
+        const empty = list.todo_count === 0
+        this.details.set(list.id, {
+          status: empty ? 'ready' : 'idle',
+          loaded: empty,
+          refreshFailed: false,
+          knownAt: ++this.clock,
+          todos: [],
+        })
         break
       }
       case 'add_todo': {
         const todo = value as Todo
+        this.idByKey.set(op.key, todo.id)
+        this.keyById.set(todo.id, op.key)
         const detail = this.details.get(op.listId)
-        if (detail) detail.todos.push(toTodoView(todo, op.key))
+        if (detail) {
+          detail.knownAt = ++this.clock
+          putTodo(detail.todos, toTodoView(todo, op.key))
+        }
         break
       }
       case 'mark_todo': {
-        const todo = toTodoView(value as Todo, this.keyOf(op))
+        const answer = value as Todo
         const detail = this.details.get(op.listId)
-        if (detail) moveTodo(detail.todos, todo)
-        this.rebaseQueuedVersions(op, todo.version)
+        if (detail) {
+          detail.knownAt = ++this.clock
+          putTodo(detail.todos, toTodoView(answer, this.keyById.get(answer.id)))
+        }
+        this.rebaseQueuedVersions(op, answer.version)
         break
       }
     }
-    this.queue.shift()
-  }
-
-  private keyOf(op: Extract<Operation, { kind: 'mark_todo' }>): string | undefined {
-    if (op.todoKey) return op.todoKey
-    for (const detail of this.details.values()) {
-      const todo = detail.todos.find((candidate) => candidate.id === op.todoId)
-      if (todo?.key) return todo.key
-    }
-    return undefined
   }
 
   /** A save that moved `n → n + 1` moves later queued edits of it to `n + 1`. */
@@ -585,84 +668,82 @@ export class ListsEngine {
   ): void {
     const oldVersion = op.version
     if (newVersion !== oldVersion + 1) return
-    const key = itemKey(op)
+    const key = this.itemKey(op)
     for (const queued of this.queue) {
       if (queued === op) continue
-      if (queued.kind === 'mark_todo' && itemKey(queued) === key && queued.version === oldVersion) {
+      if (
+        queued.kind === 'mark_todo' &&
+        this.itemKey(queued) === key &&
+        queued.version === oldVersion
+      ) {
         queued.version = newVersion
       }
     }
   }
 
   private applyFailure(op: Operation, failure: Failure): void {
-    const key = itemKey(op)
-    this.queue.shift()
+    const key = this.itemKey(op)
     // Later edits of the same item depend on this one; drop them together and
     // keep a single message.
-    this.queue = this.queue.filter((queued) => itemKey(queued) !== key)
+    this.queue = this.queue.filter((queued) => this.itemKey(queued) !== key)
 
     switch (failure.kind) {
       case 'stale': {
         if (failure.current) {
-          const todo = toTodoView(failure.current)
+          const todo = toTodoView(failure.current, this.keyById.get(failure.current.id))
           const detail = op.kind === 'create_list' ? undefined : this.details.get(op.listId)
-          if (detail) {
-            const existing = detail.todos.find((candidate) => candidate.id === todo.id)
-            if (existing?.key) todo.key = existing.key
-            moveTodo(detail.todos, todo)
-          }
+          if (detail) putTodo(detail.todos, todo)
         }
         this.onNotice({ text: 'This changed elsewhere. The current version is shown.' })
         break
       }
       case 'not_found': {
-        if (op.kind === 'add_todo' || op.kind === 'mark_todo') {
-          const detail = this.details.get(op.listId)
-          if (detail) {
-            if (op.kind === 'mark_todo') {
-              removeTodo(detail.todos, { id: op.todoId, key: op.todoKey })
-            } else {
-              removeTodo(detail.todos, { key: op.key })
-            }
-          }
-          if (op.kind === 'add_todo') {
-            this.lists = this.lists.filter((list) => list.id !== op.listId)
-            this.details.set(op.listId, { status: 'not_found', todos: [] })
-            this.onNotice({ text: 'This list was deleted elsewhere.' })
-          } else {
-            this.onNotice({ text: 'This todo was deleted elsewhere.' })
-          }
-        } else {
-          this.onNotice({ text: 'This list was deleted elsewhere.' })
+        if (op.kind === 'create_list') break
+        // Adding answers 404 only for the list; marking names what is missing.
+        if (op.kind === 'add_todo' || failure.code === 'list_not_found') {
+          const { listId } = op
+          const dropped = [op, ...this.queue].filter(
+            (other) => other.kind !== 'create_list' && other.listId === listId
+          )
+          this.queue = this.queue.filter((queued) => !dropped.includes(queued))
+          this.listGone(listId)
+          this.onNotice({
+            text: 'This list was deleted elsewhere.',
+            restore: dropped.flatMap(textOf),
+          })
+          break
         }
+        const detail = this.details.get(op.listId)
+        if (detail) removeTodo(detail.todos, { id: this.todoIdOf(op), key: op.todoKey })
+        this.onNotice({ text: 'This todo was deleted elsewhere.' })
+        break
+      }
+      case 'ended': {
+        // The page is being replaced by the sign-in or verification page.
+        this.queue = []
         break
       }
       case 'limit':
       case 'invalid': {
         this.onNotice({
           text: failure.message ?? 'That change could not be saved.',
-          ...(op.kind === 'add_todo'
-            ? { restore: { target: 'todo' as const, listId: op.listId, text: op.title } }
-            : {}),
-          ...(op.kind === 'create_list'
-            ? { restore: { target: 'list' as const, text: op.name } }
-            : {}),
+          restore: textOf(op),
         })
         break
       }
       case 'unknown': {
         this.onNotice({
           text: "Couldn't save your change. The list will refresh when the server is reachable.",
-          ...(op.kind === 'add_todo'
-            ? { restore: { target: 'todo' as const, listId: op.listId, text: op.title } }
-            : {}),
-          ...(op.kind === 'create_list'
-            ? { restore: { target: 'list' as const, text: op.name } }
-            : {}),
+          restore: textOf(op),
         })
-        this.recoveryNeeded = true
-        if (op.kind !== 'create_list') this.listReloads.add(op.listId)
-        else this.listsReloadPending = true
+        // Tried at once, then again by retry() until the load succeeds.
+        if (op.kind === 'create_list') {
+          this.listsRecovery = true
+          this.listsReloadPending = true
+        } else {
+          this.listRecovery.add(op.listId)
+          this.listReloads.add(op.listId)
+        }
         break
       }
     }
@@ -684,13 +765,14 @@ export class ListsEngine {
   }
 
   private flushReloads(): void {
+    // Wait for the queue, or every queued save would drop the reload again.
     if (this.savesInFlight > 0) return
-    if (this.listsReloadPending) {
+    if (this.listsReloadPending && this.queue.length === 0) {
       this.listsReloadPending = false
       void this.loadLists()
     }
     for (const id of [...this.listReloads]) {
-      if (this.inFlight(id) > 0) continue
+      if (this.queue.some((op) => op.kind !== 'create_list' && op.listId === id)) continue
       this.listReloads.delete(id)
       void this.loadList(id)
     }

@@ -21,6 +21,30 @@ const AUTH_SESSION_KEY = 'overkill-todo-auth-user'
 const CONFIRMED_UNTIL_KEY = 'overkill-todo-auth-user-confirmed-until'
 
 /**
+ * ID of the account the server last confirmed in any tab (localStorage, so it
+ * follows the shared cookies). A tab whose own user differs is stale.
+ */
+export const ACCOUNT_KEY = 'overkill-todo-account'
+
+/** The confirmed account's ID, null if none, undefined if storage is blocked. */
+export function getConfirmedAccount(): string | null | undefined {
+  try {
+    return localStorage.getItem(ACCOUNT_KEY)
+  } catch {
+    return undefined
+  }
+}
+
+function setConfirmedAccount(id: string | null): void {
+  try {
+    if (id === null) localStorage.removeItem(ACCOUNT_KEY)
+    else localStorage.setItem(ACCOUNT_KEY, id)
+  } catch {
+    // Blocked storage: tabs can't tell each other.
+  }
+}
+
+/**
  * Get the cached user from session storage.
  * Returns null if no user is cached or if parsing fails.
  */
@@ -47,6 +71,7 @@ export function setSessionUser(user: User): void {
  */
 export function confirmSessionUser(user: User): void {
   setSessionUser(user)
+  setConfirmedAccount(user.id)
   const expiry = getTokenExpiry()
   if (expiry === null) {
     sessionStorage.removeItem(CONFIRMED_UNTIL_KEY)
@@ -70,6 +95,7 @@ export function isSessionUserConfirmed(): boolean {
  * Called on logout or auth errors.
  */
 export function clearSessionUser(): void {
+  setConfirmedAccount(null)
   sessionStorage.removeItem(AUTH_SESSION_KEY)
   sessionStorage.removeItem(CONFIRMED_UNTIL_KEY)
 }

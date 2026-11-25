@@ -6,6 +6,7 @@ vi.mock('../api', () => ({
       me: vi.fn(),
       logout: vi.fn(),
     },
+    lists: { create: vi.fn(), list: vi.fn(), get: vi.fn() },
   },
 }))
 
@@ -16,6 +17,7 @@ vi.mock('../navigation', () => ({
 import { api } from '../api'
 import { ApiErrorException } from '../api/errors'
 import { navigateReplace } from '../navigation'
+import { lists } from '../lists/store.svelte'
 import type { User } from '../types'
 import { resetSession, session, SIGN_OUT_TIMEOUT_MS } from './session.svelte'
 import { getSessionUser, setSessionUser } from './session'
@@ -85,6 +87,53 @@ describe('session.init (session-hint backstop)', () => {
     expect(session.init()).toBe(true)
     expect(navigateReplace).not.toHaveBeenCalled()
     expect(me).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('another Member signing in', () => {
+  it('forgets the lists when the check finds a different account', async () => {
+    const switched = vi.spyOn(lists, 'switchAccount')
+    setSessionUser(user)
+    resetSession()
+    me.mockResolvedValue(user)
+    await session.retry()
+    expect(switched).not.toHaveBeenCalled()
+
+    me.mockResolvedValue({ ...user, id: 'user-2' })
+    await session.retry()
+    expect(switched).toHaveBeenCalledTimes(1)
+    switched.mockRestore()
+  })
+
+  it('checks the account before a save when another tab changed it', async () => {
+    me.mockResolvedValue(user)
+    await session.retry()
+    expect(localStorage.getItem('overkill-todo-account')).toBe('user-1')
+    const create = api.lists.create as Mock
+    create.mockClear()
+    create.mockResolvedValue({ id: 'l', name: 'x', version: 1, open_count: 0, todo_count: 0 })
+
+    me.mockClear()
+    lists.createList('mine')
+    await vi.waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(me).not.toHaveBeenCalled()
+
+    // Member B signs in from another tab: A's text must not reach B's account.
+    localStorage.setItem('overkill-todo-account', 'user-2')
+    me.mockResolvedValue({ ...user, id: 'user-2' })
+    lists.createList("A's private plan")
+    await vi.waitFor(() => expect(session.user?.id).toBe('user-2'))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(lists.snapshot.queueLength).toBe(0)
+
+    // Signed out elsewhere and not back in: nothing is sent either.
+    localStorage.removeItem('overkill-todo-account')
+    me.mockRejectedValue(new TypeError('offline'))
+    lists.createList('still mine')
+    await vi.waitFor(() => expect(lists.unsaved).toHaveLength(1))
+    expect(create).toHaveBeenCalledTimes(1)
+    lists.reset()
   })
 })
 

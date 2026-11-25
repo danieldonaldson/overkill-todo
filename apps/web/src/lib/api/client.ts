@@ -11,7 +11,13 @@ import {
 } from '../auth/token'
 import { API_BASE } from '../config'
 import type { ApiError } from './errors'
-import { ApiErrorException, getErrorCode, getErrorMessage, isApiError } from './errors'
+import {
+  ApiErrorException,
+  SessionEndedError,
+  getErrorCode,
+  getErrorMessage,
+  isApiError,
+} from './errors'
 import { reportApiFailure, reportApiReachable, routeTemplate } from '../telemetry/api-failures'
 
 /**
@@ -120,7 +126,7 @@ export class HttpClient {
         clearTokenExpiry()
         clearSessionUser()
         redirect(hadSession ? '/login?session=expired' : '/login')
-        throw new Error('Session expired')
+        throw new SessionEndedError('Session expired')
       }
     }
 
@@ -188,7 +194,7 @@ export class HttpClient {
       clearTokenExpiry()
       clearSessionUser()
       redirect(hadSession ? '/login?session=expired' : '/login')
-      throw new Error('Session expired')
+      throw new SessionEndedError('Session expired')
     }
 
     // Handle 403 with CSRF error - attempt refresh and retry once
@@ -214,11 +220,11 @@ export class HttpClient {
         const errorBody: ApiError = await response.clone().json()
         if (getErrorCode(errorBody) === 'email_not_verified') {
           redirect('/verify-email')
-          throw new Error('Email not verified')
+          throw new SessionEndedError('Email not verified')
         }
       } catch (e) {
         // If this was our own "Email not verified" error, re-throw it
-        if (e instanceof Error && e.message === 'Email not verified') {
+        if (e instanceof SessionEndedError) {
           throw e
         }
         // Otherwise, continue with normal error handling

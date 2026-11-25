@@ -158,7 +158,7 @@ describe('lists engine', () => {
   it('removes an addition refused at the limit and keeps its text', async () => {
     const server = new MemoryListsServer()
     const listId = server.seededList('Work', [])
-    const notices: { text: string; restore?: { target: string; text: string } }[] = []
+    const notices: { text: string; restore?: { target: string; text: string }[] }[] = []
     const base = serverApi(server)
     const engine = new ListsEngine({
       api: {
@@ -182,7 +182,7 @@ describe('lists engine', () => {
 
     expect(engine.snapshot().details[listId].todos).toHaveLength(0)
     expect(notices).toHaveLength(1)
-    expect(notices[0].restore?.text).toBe('overflow')
+    expect(notices[0].restore?.map((item) => item.text)).toEqual(['overflow'])
   })
 
   it('refetches after an unknown addition outcome', async () => {
