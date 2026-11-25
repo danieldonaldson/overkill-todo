@@ -178,6 +178,8 @@ cmd_down() {
 }
 
 cmd_env() {
+  # Without it kubectl falls back to localhost:8080, the compose edge's port.
+  [[ -f $KUBECONFIG ]] || die "no cluster: run \`just k8s-up\` first"
   printf 'export KUBECONFIG=%q\nexport TALOSCONFIG=%q\n' "$KUBECONFIG" "$TALOSCONFIG"
 }
 
