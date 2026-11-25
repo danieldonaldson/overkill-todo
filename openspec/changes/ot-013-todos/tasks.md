@@ -116,8 +116,46 @@ Delivers these scenarios:
 - [ ] 5.3 Full lists: `content-visibility: auto` on rows. Check adding, marking, renaming and reordering on 1,000 todos with a Vitest bench and a Playwright flow, with interactions under 200 ms on the CI runner. Record the numbers in design.md Risks.
 - [ ] 5.4 Get `just ci` green. Note for the first deploy: `just smoke <url>`, then open a list on a phone.
 
-## 6. Feature done
+## 6. Slice 6: proofs and the formal coverage gate
 
-- [ ] 6.1 Every scenario in the spec deltas is delivered by a slice above and has a test; list any exception with its reason. Verify by walking the specs against the tests.
-- [ ] 6.2 README, `backend/ARCHITECTURE.md` and the threat model match what was built, and the first-deploy checks are recorded. There is no flag to remove (D11). Verify with `just ci`.
-- [ ] 6.3 Archive the change with `/opsx:archive`, and verify with `openspec validate --specs --strict`.
+Delivers these scenarios (security): breaking a list guarantee fails the gate;
+a model that drifts from the code fails replay; bounds and assumptions are
+visible; a guarantee with no check fails.
+
+- [ ] 6.1 Add a `docs/formal-coverage.yaml` manifest for the machine-checked list requirement in the security delta, mapping every OT-013 requirement and P-35 to a proof, a model, a conformance test, or its test plus the reason no proof or model applies. Add `just formal-coverage`, which fails when an entry is missing or names a check that no longer exists, and run it red before any proof. Put it in `just ci`.
+- [ ] 6.2 Kani proofs for the pure rules (D13): `append_position` is monotonic and exact unless saturated; the midpoint and renumbering functions from 4.1 land strictly between their neighbours or ask for renumbering, and renumbering keeps the order; list names and todo titles trim, count code points and refuse control characters within the stated bounds; a todo is open or done and its transitions bump the version by one. Each harness states its bounds. Break each rule on a scratch edit and see `just verify` fail.
+- [ ] 6.3 `just verify` green and CI runs it; record runtime. Update README and `backend/ARCHITECTURE.md` with the new proofs, their bounds and assumptions.
+
+## 7. Slice 7: server concurrency model
+
+Delivers these scenarios (lists): edits made elsewhere are never silently
+overwritten; a repeated save takes effect once; concurrent moves settle on one
+order; lists and todos have limits; lists and todos are private to their
+Member.
+
+- [ ] 7.1 `models/list_writes.qnt`: two Members, two lists and three todos. Each action is the SQL the repository runs, one model step per statement or transaction, under the list lock: create, rename and delete a list; add, rename, mark and delete a todo; move a todo. A list delete compares both `version` and `todo_count`. State the 8-step Apalache bound.
+- [ ] 7.2 Invariants: a write at a stale version changes nothing; a repeated save changes nothing more; an accepted write moves the version by one unless the state already matched; the 100-list and 1,000-todo limits hold; one Member's writes never touch another's rows; list deletion leaves no todos; open positions stay unique and strictly ordered; concurrent moves leave every todo exactly once and one order. Check every invariant with `quint verify`, then run 10,000 random traces at 30 steps.
+- [ ] 7.3 Broken modules for every guard (`no_version_check`, `no_count_check`, `no_lock`, `no_limit`, `no_owner_check`); each must produce a counterexample, so no invariant is vacuous.
+- [ ] 7.4 Export ITF traces and replay every list step through the real repository in `tests/model_conformance.rs` or a sibling, checking results and stored rows after each step. A model step without a passing replay fails.
+- [ ] 7.5 `just models` and its replay green; record runtime and bounds in `backend/ARCHITECTURE.md` and `just ci`.
+
+## 8. Slice 8: client queue model
+
+Delivers these scenarios (dashboard): list changes appear at once and save in
+the background; a crashing panel is contained; rapid edits in one tab; edit a
+todo that is still being added; save fails; unknown outcome. Delivers these
+scenarios (lists): edits made elsewhere are never silently overwritten; changes
+to something deleted elsewhere are handled; concurrent moves settle on one
+order.
+
+- [ ] 8.1 Freeze D7 after review, then `models/list_client.qnt`: two clients with confirmed state, queue, versions and unsaved text; sends, answers (success, stale, 404, lost) and refetches. State the Apalache bound.
+- [ ] 8.2 Invariants: a queued edit sends the version the Member saw; a refetch never advances a queued version; another tab's change is never silently overwritten; a dependent edit is dropped with one message; a 404 removes the item; both queues drain to one order; no todo is lost or duplicated.
+- [ ] 8.3 Broken clients (send a stale version, apply a success without the expected version, ignore a 404); each must fail an invariant.
+- [ ] 8.4 Replay the ITF traces through the real `ListsEngine` and memory server in a web test. Decode only the ITF this model emits; map each action to the public engine API; compare state after every step. Keep the trace fixtures out of the normal web test run.
+- [ ] 8.5 `just models`, `just test-web` and `just ci` green; record runtime and bounds.
+
+## 9. Feature done
+
+- [ ] 9.1 Every scenario in the spec deltas is delivered by a slice above and has a test; list any exception with its reason. Verify by walking the specs against the tests and the formal coverage manifest.
+- [ ] 9.2 README, `backend/ARCHITECTURE.md` and the threat model match what was built, and the first-deploy checks are recorded. There is no flag to remove (D11). Verify with `just ci`.
+- [ ] 9.3 Archive the change with `/opsx:archive`, and verify with `openspec validate --specs --strict`.

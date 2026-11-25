@@ -47,6 +47,11 @@ silently overwritten. Manual order holds up under concurrent moves.
 - Todo titles and list names never appear in logs, traces, metrics, browser
   reports or analytics. List pages are recorded in analytics and browser
   measurements as one page (`/dashboard/lists/[id]`), never per list.
+- Every list guarantee gets the strongest check that fits it: proofs for the
+  pure ordering, validation and version rules, models for the server writes and
+  the client queue, and conformance tests that replay model traces through the
+  real code. A guarantee that cannot be checked formally names its test and the
+  reason.
 
 Mockup (desktop; on mobile the list picker becomes a drawer; counts are open
 todos):
@@ -74,7 +79,9 @@ todos):
 - `dashboard`: lists join the dashboard navigation and pages, keep the
   optimistic, contained-failure behaviour, and get addressable list pages.
 - `security`: a Member can reach only their own lists and todos, and staff
-  can't reach them at all, written down as a security property with a check.
+  can't reach them at all, written down as a security property with a check;
+  every list guarantee is proved, modelled or names its test and the reason no
+  proof applies.
 - `observability`: todo titles and list names join the content telemetry and
   browser reports must never contain; list pages are measured as one page.
 - `analytics`: list pages are recorded as one page, not one per list.
@@ -90,25 +97,32 @@ todos):
 - **Offline use.** Changes need a connection; a failed save is undone.
 - **Auditing todo actions.** The audit log records security activity, not
   content changes.
+- **Formal proofs of rendering, layout, CSS, SQL text, HTTP wiring or
+  third-party code.** Those guarantees name their tests and why no proof or
+  model applies.
 
 ## Dependencies
 
 - None blocking. OT-012 (backend split into crates) is done and was archived on
   2026-11-23, so implementation can start once planning is complete.
 - One additive, forward-only migration. No external services.
+- Kani, Quint, Apalache and Tamarin are already pinned for OT-010; the new
+  slices extend their models and proofs, and add no services.
 - No production deploy exists yet. Deploy checks are recorded for the first
   deploy.
 
 ## Appetite
 
-3 weeks.
+5 weeks.
 
 ## Ready
 
-- **Riskiest unknown:** Making optimistic edits safe. Rapid edits to the same
-  todo in one tab must not conflict with each other, while a real conflict from
-  another tab is caught, and a failed save is rolled back cleanly. This is
-  also what collaboration will build on.
+- **Riskiest unknown:** Making optimistic edits safe, and proving it. Rapid
+  edits to the same todo in one tab must not conflict with each other, while a
+  real conflict from another tab is caught, and a failed save is rolled back
+  cleanly. The client queue must be modelled and replayed against the real
+  engine without freezing a bug into the model. This is also what collaboration
+  will build on.
 - **First slice:** A Member creates a list, opens it at its own address, adds
   todos and ticks them done, with conflict-safe saves end to end and the
   lists included in export and erasure.
