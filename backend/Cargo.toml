@@ -15,7 +15,7 @@ tower-http = { version = "0.7", features = ["trace", "compression-gzip", "timeou
 sqlx = { version = "0.9", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "migrate", "json", "sqlx-toml"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "12", features = ["aws_lc_rs"] }
 # `parallel` runs the ARGON2_PARALLELISM lanes on separate threads (rayon);
 # without it the lanes run one after another. Hash output is unchanged.
 argon2 = { version = "0.6", features = ["parallel"] }

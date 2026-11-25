@@ -240,8 +240,12 @@ mod tests {
             &k,
         )
         .unwrap();
-        let token =
-            encode(&header, &claims, &EncodingKey::from_secret(&[1u8; 64])).expect("encode failed");
+        let token = encode(
+            &header,
+            &claims,
+            &EncodingKey::from_secret(&[1u8; 64]).unwrap(),
+        )
+        .expect("encode failed");
         assert_rejected(verify_jwt(&token, &k));
     }
 

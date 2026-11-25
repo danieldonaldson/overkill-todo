@@ -127,13 +127,27 @@ fn parse_entry(
         kid: kid.clone(),
     })?;
     if bytes.len() < MIN_TOKEN_KEY_LEN {
-        return Err(KeyringError::TooShort {
-            setting,
-            kid,
-            len: bytes.len(),
-        });
+        return Err(too_short(setting, &kid, &bytes));
     }
     Ok((kid, bytes))
+}
+
+fn too_short(setting: &'static str, kid: &str, secret: &[u8]) -> KeyringError {
+    KeyringError::TooShort {
+        setting,
+        kid: kid.to_owned(),
+        len: secret.len(),
+    }
+}
+
+/// Build a verification key. jsonwebtoken refuses only an empty secret, which
+/// [`parse_entry`] has already ruled out, so a failure is reported as too short.
+fn decoding_key(
+    setting: &'static str,
+    kid: &str,
+    secret: &[u8],
+) -> Result<DecodingKey, KeyringError> {
+    DecodingKey::from_secret(secret).map_err(|_| too_short(setting, kid, secret))
 }
 
 /// The active signing key plus every key trusted for verification.
@@ -168,7 +182,10 @@ impl TokenKeyring {
         let (active_kid, active_secret) = parse_entry(SIGNING_KEY_SETTING, 1, signing)?;
 
         let mut keys = HashMap::new();
-        keys.insert(active_kid.clone(), DecodingKey::from_secret(&active_secret));
+        keys.insert(
+            active_kid.clone(),
+            decoding_key(SIGNING_KEY_SETTING, &active_kid, &active_secret)?,
+        );
         // Number entries before skipping empty ones, so an error's position
         // matches the comma-separated item the operator sees.
         let entries = trusted
@@ -181,11 +198,13 @@ impl TokenKeyring {
             if keys.contains_key(&kid) {
                 return Err(KeyringError::DuplicateKid { kid });
             }
-            keys.insert(kid, DecodingKey::from_secret(&secret));
+            let key = decoding_key(TRUSTED_KEYS_SETTING, &kid, &secret)?;
+            keys.insert(kid, key);
         }
 
         Ok(Self {
-            active: EncodingKey::from_secret(&active_secret),
+            active: EncodingKey::from_secret(&active_secret)
+                .map_err(|_| too_short(SIGNING_KEY_SETTING, &active_kid, &active_secret))?,
             active_kid,
             trusted: keys,
         })
@@ -345,7 +364,7 @@ mod tests {
         let ring = TokenKeyring::for_testing();
         let token = forge(
             &hs512_with_kid(Some("test-b")),
-            &EncodingKey::from_secret(&secret(2)),
+            &EncodingKey::from_secret(&secret(2)).unwrap(),
         );
         assert!(verify(&ring, &token).is_ok());
     }
@@ -365,7 +384,7 @@ mod tests {
     #[test]
     fn refuses_a_missing_or_unknown_kid_without_trying_other_keys() {
         let ring = TokenKeyring::for_testing();
-        let active = EncodingKey::from_secret(&secret(1));
+        let active = EncodingKey::from_secret(&secret(1)).unwrap();
         // Correctly signed by the active key, but naming no key or another one.
         for kid in [None, Some("nope"), Some("test-b")] {
             let token = forge(&hs512_with_kid(kid), &active);
@@ -381,7 +400,7 @@ mod tests {
         let ring = TokenKeyring::for_testing();
         let mut header = Header::new(Algorithm::HS256);
         header.kid = Some("test-a".into());
-        let token = forge(&header, &EncodingKey::from_secret(&secret(1)));
+        let token = forge(&header, &EncodingKey::from_secret(&secret(1)).unwrap());
         assert_eq!(
             verify(&ring, &token).unwrap_err().kind(),
             &ErrorKind::InvalidAlgorithm
