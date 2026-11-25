@@ -42,6 +42,9 @@ pub struct ListDetailResponse {
     pub todos: Vec<TodoResponse>,
 }
 
+// The patterns below spell out Rust's whitespace: the server trims with it, and
+// JSON Schema's `\s` differs (no U+0085, but U+FEFF).
+
 /// Create a list. `key` is the client's creation key: repeating the request
 /// with the same key returns the first list instead of creating another.
 #[derive(Debug, Deserialize, ToSchema)]
@@ -50,7 +53,7 @@ pub struct CreateListRequest {
     pub key: Uuid,
     /// 1–100 trimmed characters, one line.
     #[schema(
-        pattern = "^\\s*\\S(?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*\\S)?\\s*$",
+        pattern = "^[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000](?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])?[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*$",
         example = "Work"
     )]
     pub name: String,
@@ -63,7 +66,7 @@ pub struct AddTodoRequest {
     pub key: Uuid,
     /// 1–500 trimmed characters, one line.
     #[schema(
-        pattern = "^\\s*\\S(?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*\\S)?\\s*$",
+        pattern = "^[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000](?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])?[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*$",
         example = "Buy milk"
     )]
     pub title: String,
