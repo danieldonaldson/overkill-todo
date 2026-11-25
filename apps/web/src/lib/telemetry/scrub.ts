@@ -1,6 +1,6 @@
 // Scrubbing for browser report text (OT-006 Decision 4), applied before a
 // report leaves the browser. The server applies the same rules again and its
-// copy (`backend/src/application/use_cases/telemetry/scrub.rs`) is the
+// copy (`backend/crates/application/src/use_cases/telemetry/scrub.rs`) is the
 // authoritative one. Both run every case in
 // `backend/tests/fixtures/client_scrub_cases.json`, so a change here needs the
 // same change there, and a new case in the fixture.

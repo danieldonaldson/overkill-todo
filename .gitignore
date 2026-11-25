@@ -30,7 +30,7 @@ secrets.plain.yaml
 
 # proptest saves a failing-seed file per crate on failure; not tracked (a
 # committed failing seed makes the test hard-fail for everyone).
-backend/proptest-regressions/
+backend/**/proptest-regressions/
 
 # single-host deploy: decrypted secrets (`just secrets-decrypt`) and local dumps
 deploy/compose/.secrets/

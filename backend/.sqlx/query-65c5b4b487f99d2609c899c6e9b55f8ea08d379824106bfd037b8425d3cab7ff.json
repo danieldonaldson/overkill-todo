@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT attempts, lockouts FROM email_verification_codes WHERE user_id = $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "attempts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "email_verification_codes",
+            "name": "attempts"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "lockouts",
+        "type_info": "Int4",
+        "origin": {
+          "Table": {
+            "table": "email_verification_codes",
+            "name": "lockouts"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "65c5b4b487f99d2609c899c6e9b55f8ea08d379824106bfd037b8425d3cab7ff"
+}

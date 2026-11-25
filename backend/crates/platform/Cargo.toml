@@ -1,0 +1,46 @@
+[package]
+name = "platform"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[features]
+test-support = ["opentelemetry_sdk/testing"]
+
+[dependencies]
+shared = { path = "../shared" }
+
+aes-gcm.workspace = true
+anyhow.workspace = true
+argon2.workspace = true
+base64.workspace = true
+config.workspace = true
+dotenvy.workspace = true
+hex.workspace = true
+http.workspace = true
+jiff.workspace = true
+jsonwebtoken.workspace = true
+opentelemetry.workspace = true
+opentelemetry_sdk.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry-semantic-conventions.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
+tracing.workspace = true
+tracing-opentelemetry.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+proptest.workspace = true
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread"] }
+
+[lints]
+workspace = true

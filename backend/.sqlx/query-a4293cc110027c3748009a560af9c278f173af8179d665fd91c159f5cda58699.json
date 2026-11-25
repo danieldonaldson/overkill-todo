@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE email_verification_codes\n                 SET last_sent_at = NOW() - make_interval(mins => $2)\n                 WHERE user_id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "a4293cc110027c3748009a560af9c278f173af8179d665fd91c159f5cda58699"
+}

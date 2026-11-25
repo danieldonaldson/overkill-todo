@@ -1,0 +1,601 @@
+//! Use case for refreshing authentication tokens.
+
+use crate::ports::UserRepository;
+use crate::ports::{RefreshTokenRepository, TokenService};
+use domain::entities::User;
+use domain::entities::{AuditEvent, RefreshToken, RefreshTokenStatus, RevocationReason};
+use domain::errors::DomainError;
+use jiff::{SignedDuration, Timestamp};
+use std::sync::Arc;
+
+/// Result of a successful token refresh operation.
+#[derive(Debug)]
+pub struct RefreshResult {
+    /// The authenticated user.
+    pub user: User,
+    /// The new refresh token (plaintext, to be sent to client).
+    pub new_refresh_token: String,
+}
+
+/// Why a refresh was refused.
+///
+/// The handler counts session anomalies from these variants. The response
+/// comes from the [`DomainError`] each maps to, which is the same message the
+/// endpoint has always returned.
+#[derive(Debug)]
+pub enum RefreshError {
+    /// No refresh token with this value.
+    Invalid,
+    /// The token has expired.
+    Expired,
+    /// The token was revoked for a benign reason (explicit sign-out or password
+    /// change). Refused without revoking other sessions or alerting as theft.
+    Revoked,
+    /// The token was already rotated (or revoked for reuse / unknown legacy
+    /// reason) and was presented again. Every session of the account has been
+    /// signed out.
+    Reused,
+    /// The token was issued to a different device.
+    DeviceMismatch,
+    /// Anything else, including an account that no longer exists.
+    Domain(DomainError),
+}
+
+impl From<DomainError> for RefreshError {
+    fn from(error: DomainError) -> Self {
+        Self::Domain(error)
+    }
+}
+
+impl From<RefreshError> for DomainError {
+    fn from(error: RefreshError) -> Self {
+        match error {
+            RefreshError::Invalid => Self::Authorization("Invalid refresh token".into()),
+            RefreshError::Expired => Self::Authorization("Refresh token has expired".into()),
+            RefreshError::Revoked | RefreshError::Reused => {
+                Self::Authorization("Refresh token has been revoked".into())
+            }
+            RefreshError::DeviceMismatch => {
+                Self::Authorization("Device fingerprint mismatch".into())
+            }
+            RefreshError::Domain(e) => e,
+        }
+    }
+}
+
+/// Use case for refreshing authentication tokens.
+///
+/// Validates the provided refresh token and device fingerprint,
+/// then issues a new refresh token (rotation) while revoking the old one.
+pub struct RefreshTokenUseCase {
+    refresh_token_repository: Arc<dyn RefreshTokenRepository>,
+    user_repository: Arc<dyn UserRepository>,
+    token_service: Arc<dyn TokenService>,
+}
+
+impl RefreshTokenUseCase {
+    /// Creates a new instance with the given dependencies.
+    pub fn new(
+        refresh_token_repository: Arc<dyn RefreshTokenRepository>,
+        user_repository: Arc<dyn UserRepository>,
+        token_service: Arc<dyn TokenService>,
+    ) -> Self {
+        Self {
+            refresh_token_repository,
+            user_repository,
+            token_service,
+        }
+    }
+
+    /// Refreshes an authentication token.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The current refresh token (plaintext)
+    /// * `device_fingerprint` - The device fingerprint hash from the client
+    ///
+    /// # Returns
+    ///
+    /// A [`RefreshResult`] containing the user and new refresh token on success.
+    ///
+    /// # Errors
+    ///
+    /// - [`RefreshError::Invalid`], [`RefreshError::Expired`],
+    ///   [`RefreshError::Reused`] or [`RefreshError::DeviceMismatch`] for a
+    ///   token that can't be used
+    /// - [`RefreshError::Domain`] if the user no longer exists
+    ///   (`Authorization`) or for infrastructure failures
+    #[tracing::instrument(name = "usecase.refresh_token", skip_all)]
+    pub async fn execute(
+        &self,
+        token: &str,
+        device_fingerprint: &str,
+    ) -> Result<RefreshResult, RefreshError> {
+        // Hash the provided token to look it up
+        let token_hash = self.token_service.hash_token(token);
+
+        // Find the token in the database
+        let refresh_token = self
+            .refresh_token_repository
+            .find_by_hash(&token_hash)
+            .await?
+            .ok_or(RefreshError::Invalid)?;
+
+        match refresh_token.status(Timestamp::now()) {
+            RefreshTokenStatus::Active => {}
+            // `status()` reports a revoked-and-expired token as `Revoked`, so a
+            // stolen rotated token replayed after its natural expiry still lands
+            // here and triggers full-family revocation.
+            RefreshTokenStatus::Revoked(reason) if reason.triggers_reuse_detection() => {
+                // Rotated/reuse/legacy revoked token presented again — likely
+                // stolen; invalidate all sessions.
+                tracing::warn!(
+                    user_id = %refresh_token.user_id(),
+                    ?reason,
+                    "Revoked refresh token reuse detected — revoking all sessions for user"
+                );
+                self.refresh_token_repository
+                    .revoke_all_for_user_audited(
+                        refresh_token.user_id(),
+                        RevocationReason::ReuseDetected,
+                        &AuditEvent::sessions_revoked_after_reuse(*refresh_token.user_id()),
+                    )
+                    .await?;
+                return Err(RefreshError::Reused);
+            }
+            RefreshTokenStatus::Revoked(reason) => {
+                // Benign revocation (logout or password change): refuse the
+                // token without evicting the user's other active sessions.
+                tracing::info!(
+                    user_id = %refresh_token.user_id(),
+                    ?reason,
+                    "Refresh rejected: token was revoked"
+                );
+                return Err(RefreshError::Revoked);
+            }
+            RefreshTokenStatus::Expired => {
+                return Err(RefreshError::Expired);
+            }
+        }
+
+        // Validate device fingerprint
+        if !refresh_token.validate_fingerprint(device_fingerprint) {
+            // Log this as a potential security issue
+            tracing::warn!(
+                user_id = %refresh_token.user_id(),
+                "Device fingerprint mismatch during token refresh - possible token theft"
+            );
+            return Err(RefreshError::DeviceMismatch);
+        }
+
+        // Get the user
+        let user = self
+            .user_repository
+            .find_by_id(refresh_token.user_id())
+            .await?
+            .ok_or_else(|| {
+                RefreshError::Domain(DomainError::Authorization("User not found".into()))
+            })?;
+
+        // Atomically revoke the old token and save the new one
+        let new_token = self.token_service.generate_token();
+        let new_hash = self.token_service.hash_token(&new_token);
+        let expiration_days = self.token_service.refresh_token_expiration_days();
+        let new_expires = Timestamp::now() + SignedDuration::from_hours(24 * expiration_days);
+
+        let new_refresh_token = RefreshToken::new(
+            *user.id(),
+            new_hash,
+            device_fingerprint.to_string(),
+            new_expires,
+        );
+
+        self.refresh_token_repository
+            .rotate(refresh_token.id(), &new_refresh_token)
+            .await?;
+
+        tracing::info!(user_id = %user.id(), "Token refreshed successfully");
+
+        Ok(RefreshResult {
+            user,
+            new_refresh_token: new_token,
+        })
+    }
+
+    /// Creates a new refresh token for a user (used after login/signup).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if token creation or repository operations fail.
+    pub async fn create_for_user(
+        &self,
+        user_id: &domain::value_objects::UserId,
+        device_fingerprint: &str,
+    ) -> Result<String, DomainError> {
+        let token_plaintext = self.token_service.generate_token();
+        let token_hash = self.token_service.hash_token(&token_plaintext);
+        let expires_at = Timestamp::now()
+            + SignedDuration::from_hours(24 * self.token_service.refresh_token_expiration_days());
+
+        let refresh_token = RefreshToken::new(
+            *user_id,
+            token_hash,
+            device_fingerprint.to_string(),
+            expires_at,
+        );
+
+        self.refresh_token_repository.save(&refresh_token).await?;
+
+        Ok(token_plaintext)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ports::outgoing::refresh_token_repository::MockRefreshTokenRepository;
+    use crate::ports::outgoing::token_service::MockTokenService;
+    use crate::ports::outgoing::user_repository::MockUserRepository;
+    use domain::entities::UserBuilder;
+    use domain::value_objects::{RefreshTokenId, UserId};
+
+    const FINGERPRINT: &str = "device-fingerprint";
+
+    fn test_user(id: UserId) -> User {
+        UserBuilder::new()
+            .id(id)
+            .email("refresh@example.com")
+            .password_hash(Some("hash"))
+            .build()
+    }
+
+    /// A live (not expired, not revoked) refresh token bound to `FINGERPRINT`.
+    fn valid_token(user_id: UserId) -> RefreshToken {
+        RefreshToken::new(
+            user_id,
+            "stored-hash".to_string(),
+            FINGERPRINT.to_string(),
+            Timestamp::now() + SignedDuration::from_hours(24 * 30),
+        )
+    }
+
+    /// A token that is both rotated-revoked AND naturally expired.
+    fn revoked_and_expired_token(user_id: UserId) -> RefreshToken {
+        RefreshToken::from_persistence(
+            RefreshTokenId::new(),
+            user_id,
+            "stored-hash".to_string(),
+            FINGERPRINT.to_string(),
+            Timestamp::now() - SignedDuration::from_hours(24),
+            Some(Timestamp::now() - SignedDuration::from_hours(1)),
+            Some(RevocationReason::Rotated),
+            Timestamp::now() - SignedDuration::from_hours(24 * 31),
+        )
+    }
+
+    fn revoked_token_with_reason(user_id: UserId, reason: RevocationReason) -> RefreshToken {
+        RefreshToken::from_persistence(
+            RefreshTokenId::new(),
+            user_id,
+            "stored-hash".to_string(),
+            FINGERPRINT.to_string(),
+            Timestamp::now() + SignedDuration::from_hours(24 * 30),
+            Some(Timestamp::now() - SignedDuration::from_hours(1)),
+            Some(reason),
+            Timestamp::now() - SignedDuration::from_hours(2),
+        )
+    }
+
+    fn expired_token(user_id: UserId) -> RefreshToken {
+        RefreshToken::from_persistence(
+            RefreshTokenId::new(),
+            user_id,
+            "stored-hash".to_string(),
+            FINGERPRINT.to_string(),
+            Timestamp::now() - SignedDuration::from_hours(1),
+            None,
+            None,
+            Timestamp::now() - SignedDuration::from_hours(24 * 31),
+        )
+    }
+
+    fn token_service() -> MockTokenService {
+        let mut svc = MockTokenService::new();
+        svc.expect_hash_token().returning(|t| format!("hashed:{t}"));
+        svc.expect_generate_token()
+            .returning(|| "new-plaintext-token".to_string());
+        svc.expect_refresh_token_expiration_days().returning(|| 30);
+        svc
+    }
+
+    #[tokio::test]
+    async fn rotates_token_on_valid_refresh() {
+        let user_id = UserId::new();
+        let token = valid_token(user_id);
+        let old_id = *token.id();
+
+        let mut repo = MockRefreshTokenRepository::new();
+        repo.expect_find_by_hash()
+            .times(1)
+            .returning(move |_| Ok(Some(token.clone())));
+        repo.expect_rotate()
+            .times(1)
+            .withf(move |id, new| id == &old_id && new.device_fingerprint() == FINGERPRINT)
+            .returning(|_, _| Ok(()));
+        repo.expect_revoke_all_for_user_audited().never();
+
+        let mut user_repo = MockUserRepository::new();
+        user_repo
+            .expect_find_by_id()
+            .times(1)
+            .returning(move |_| Ok(Some(test_user(user_id))));
+
+        let uc = RefreshTokenUseCase::new(
+            Arc::new(repo),
+            Arc::new(user_repo),
+            Arc::new(token_service()),
+        );
+
+        let result = uc.execute("plaintext", FINGERPRINT).await.unwrap();
+        assert_eq!(result.new_refresh_token, "new-plaintext-token");
+        assert_eq!(result.user.id(), &user_id);
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_token() {
+        let mut repo = MockRefreshTokenRepository::new();
+        repo.expect_find_by_hash().times(1).returning(|_| Ok(None));
+        repo.expect_revoke_all_for_user_audited().never();
+
+        let uc = RefreshTokenUseCase::new(
+            Arc::new(repo),
+            Arc::new(MockUserRepository::new()),
+            Arc::new(token_service()),
+        );
+
+        let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
+        assert!(matches!(err, RefreshError::Invalid));
+    }
+
+    /// A revoked token that is *also* expired must still trigger
+    /// full-family revocation — the revoked check runs before the expiry check.
+    #[tokio::test]
+    async fn revoked_reuse_revokes_all_even_when_also_expired() {
+        let user_id = UserId::new();
+        let token = revoked_and_expired_token(user_id);
+
+        let mut repo = MockRefreshTokenRepository::new();
+        repo.expect_find_by_hash()
+            .times(1)
+            .returning(move |_| Ok(Some(token.clone())));
+        repo.expect_revoke_all_for_user_audited()
+            .times(1)
+            .withf(move |uid, reason, event| {
+                uid == &user_id
+                    && *reason == RevocationReason::ReuseDetected
+                    && *event == AuditEvent::sessions_revoked_after_reuse(user_id)
+            })
+            .returning(|_, _, _| Ok(3));
+        repo.expect_rotate().never();
+
+        let uc = RefreshTokenUseCase::new(
+            Arc::new(repo),
+            Arc::new(MockUserRepository::new()),
+            Arc::new(token_service()),
+        );
+
+        let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
+        assert!(matches!(err, RefreshError::Reused));
+    }
+
+    /// Replaying a token revoked by logout or password change must be refused
+    /// without nuking the user's other active sessions or auditing as theft.
+    #[tokio::test]
+    async fn benign_revocation_does_not_trigger_reuse_detection() {
+        for reason in [RevocationReason::Logout, RevocationReason::PasswordChange] {
+            let user_id = UserId::new();
+            let token = revoked_token_with_reason(user_id, reason);
+
+            let mut repo = MockRefreshTokenRepository::new();
+            repo.expect_find_by_hash()
+                .times(1)
+                .returning(move |_| Ok(Some(token.clone())));
+            repo.expect_revoke_all_for_user_audited().never();
+            repo.expect_rotate().never();
+
+            let uc = RefreshTokenUseCase::new(
+                Arc::new(repo),
+                Arc::new(MockUserRepository::new()),
+                Arc::new(token_service()),
+            );
+
+            let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
+            assert!(
+                matches!(err, RefreshError::Revoked),
+                "{reason:?} -> {err:?}"
+            );
+        }
+    }
+
+    /// An expired-but-never-revoked token is a normal expiry: reject without
+    /// nuking the user's other sessions.
+    #[tokio::test]
+    async fn expired_token_does_not_revoke_all() {
+        let user_id = UserId::new();
+        let token = expired_token(user_id);
+
+        let mut repo = MockRefreshTokenRepository::new();
+        repo.expect_find_by_hash()
+            .times(1)
+            .returning(move |_| Ok(Some(token.clone())));
+        repo.expect_revoke_all_for_user_audited().never();
+        repo.expect_rotate().never();
+
+        let uc = RefreshTokenUseCase::new(
+            Arc::new(repo),
+            Arc::new(MockUserRepository::new()),
+            Arc::new(token_service()),
+        );
+
+        let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
+        assert!(matches!(err, RefreshError::Expired));
+    }
+
+    #[tokio::test]
+    async fn rejects_device_fingerprint_mismatch() {
+        let user_id = UserId::new();
+        let token = valid_token(user_id);
+
+        let mut repo = MockRefreshTokenRepository::new();
+        repo.expect_find_by_hash()
+            .times(1)
+            .returning(move |_| Ok(Some(token.clone())));
+        repo.expect_rotate().never();
+        repo.expect_revoke_all_for_user_audited().never();
+
+        let uc = RefreshTokenUseCase::new(
+            Arc::new(repo),
+            Arc::new(MockUserRepository::new()),
+            Arc::new(token_service()),
+        );
+
+        let err = uc.execute("plaintext", "wrong-device").await.unwrap_err();
+        assert!(matches!(err, RefreshError::DeviceMismatch));
+    }
+
+    #[tokio::test]
+    async fn rejects_when_user_no_longer_exists() {
+        let user_id = UserId::new();
+        let token = valid_token(user_id);
+
+        let mut repo = MockRefreshTokenRepository::new();
+        repo.expect_find_by_hash()
+            .times(1)
+            .returning(move |_| Ok(Some(token.clone())));
+        repo.expect_rotate().never();
+
+        let mut user_repo = MockUserRepository::new();
+        user_repo
+            .expect_find_by_id()
+            .times(1)
+            .returning(|_| Ok(None));
+
+        let uc = RefreshTokenUseCase::new(
+            Arc::new(repo),
+            Arc::new(user_repo),
+            Arc::new(token_service()),
+        );
+
+        let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
+        assert!(matches!(
+            err,
+            RefreshError::Domain(DomainError::Authorization(_))
+        ));
+    }
+
+    /// The concurrency loser: `rotate` returns `Conflict` (the row was already
+    /// rotated by a peer). The error propagates rather than minting a token.
+    #[tokio::test]
+    async fn propagates_rotate_conflict() {
+        let user_id = UserId::new();
+        let token = valid_token(user_id);
+
+        let mut repo = MockRefreshTokenRepository::new();
+        repo.expect_find_by_hash()
+            .times(1)
+            .returning(move |_| Ok(Some(token.clone())));
+        repo.expect_rotate()
+            .times(1)
+            .returning(|_, _| Err(DomainError::Conflict("already rotated".into())));
+
+        let mut user_repo = MockUserRepository::new();
+        user_repo
+            .expect_find_by_id()
+            .times(1)
+            .returning(move |_| Ok(Some(test_user(user_id))));
+
+        let uc = RefreshTokenUseCase::new(
+            Arc::new(repo),
+            Arc::new(user_repo),
+            Arc::new(token_service()),
+        );
+
+        let err = uc.execute("plaintext", FINGERPRINT).await.unwrap_err();
+        assert!(matches!(
+            err,
+            RefreshError::Domain(DomainError::Conflict(_))
+        ));
+    }
+
+    /// Each variant maps to exactly the message the endpoint returned before
+    /// the error was typed, so responses don't change.
+    #[test]
+    fn errors_map_to_the_original_messages() {
+        let cases = [
+            (RefreshError::Invalid, "Invalid refresh token"),
+            (RefreshError::Expired, "Refresh token has expired"),
+            (RefreshError::Revoked, "Refresh token has been revoked"),
+            (RefreshError::Reused, "Refresh token has been revoked"),
+            (RefreshError::DeviceMismatch, "Device fingerprint mismatch"),
+            (
+                RefreshError::Domain(DomainError::Authorization("User not found".into())),
+                "User not found",
+            ),
+        ];
+        for (error, message) in cases {
+            match DomainError::from(error) {
+                DomainError::Authorization(msg) => assert_eq!(msg, message),
+                other => panic!("expected Authorization, got {other:?}"),
+            }
+        }
+    }
+
+    /// `create_for_user` mints a fresh token bound to the given user + device,
+    /// persists it (hashed), and returns the plaintext to the caller.
+    #[tokio::test]
+    async fn create_for_user_issues_and_persists_token() {
+        let user_id = UserId::new();
+
+        let mut repo = MockRefreshTokenRepository::new();
+        repo.expect_save()
+            .times(1)
+            .withf(move |rt| {
+                rt.user_id() == &user_id
+                    && rt.device_fingerprint() == FINGERPRINT
+                    // generate_token() → "new-plaintext-token", hashed by the
+                    // mock token service to "hashed:new-plaintext-token".
+                    && rt.token_hash() == "hashed:new-plaintext-token"
+            })
+            .returning(|_| Ok(()));
+        repo.expect_rotate().never();
+
+        let uc = RefreshTokenUseCase::new(
+            Arc::new(repo),
+            Arc::new(MockUserRepository::new()),
+            Arc::new(token_service()),
+        );
+
+        let token = uc.create_for_user(&user_id, FINGERPRINT).await.unwrap();
+        assert_eq!(token, "new-plaintext-token");
+    }
+
+    /// A persistence failure while saving the new token propagates.
+    #[tokio::test]
+    async fn create_for_user_propagates_save_error() {
+        let user_id = UserId::new();
+
+        let mut repo = MockRefreshTokenRepository::new();
+        repo.expect_save()
+            .times(1)
+            .returning(|_| Err(DomainError::Persistence("save boom".into())));
+
+        let uc = RefreshTokenUseCase::new(
+            Arc::new(repo),
+            Arc::new(MockUserRepository::new()),
+            Arc::new(token_service()),
+        );
+
+        let err = uc.create_for_user(&user_id, FINGERPRINT).await.unwrap_err();
+        assert!(matches!(err, DomainError::Persistence(_)));
+    }
+}

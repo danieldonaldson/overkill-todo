@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO users (id, email, password_hash, first_name, last_name, email_verified, deletion_scheduled_at)\n         VALUES ($1, $2, 'hash', 'Real', 'Name', true, NOW() + make_interval(days => $3))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Varchar",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "db7d766b23f1b510f88b51d3eea20b8f1c708eff8914029cbd8a395fc1c7d104"
+}

@@ -122,8 +122,8 @@ finish
 # code must make says which integration test shows the code makes it, in a
 # comment block right above the rule:
 #
-#   // Checks: backend/tests/<file>.rs::<fn>
-#   //         backend/tests/<file>.rs::<fn>
+#   // Checks: backend/crates/<crate>/tests/<file>.rs::<fn>
+#   //         backend/crates/<crate>/tests/<file>.rs::<fn>
 #   rule Name:
 #
 # Each named test must resolve as above, and the block must end at a rule.
@@ -152,8 +152,8 @@ for model in models/*.spthy; do
       fail "$check"
       continue
     fi
-    [[ $check == backend/tests/*.rs::* ]] ||
-      fail "$where: '$check' isn't an integration test (backend/tests/<file>.rs::<fn>)"
+    [[ $check == backend/crates/*/tests/*.rs::* ]] ||
+      fail "$where: '$check' isn't an integration test (backend/crates/<crate>/tests/<file>.rs::<fn>)"
     resolve "$where" "$check"
     rules=$((rules + 1))
   done <<< "$links"

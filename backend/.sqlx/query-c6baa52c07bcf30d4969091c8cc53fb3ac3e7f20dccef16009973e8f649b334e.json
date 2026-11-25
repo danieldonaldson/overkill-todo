@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE users SET tokens_valid_after = NOW() - INTERVAL '1 minute' WHERE id = $1\n         RETURNING role::text",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "role",
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "c6baa52c07bcf30d4969091c8cc53fb3ac3e7f20dccef16009973e8f649b334e"
+}

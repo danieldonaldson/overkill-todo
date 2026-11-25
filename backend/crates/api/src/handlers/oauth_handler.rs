@@ -1,0 +1,608 @@
+//! OAuth authentication handlers.
+
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode, header},
+    response::Redirect,
+};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::cookies::{
+    OAUTH_DEVICE_FINGERPRINT_COOKIE, OAUTH_STATE_COOKIE, clear_oauth_device_fingerprint_cookie,
+    clear_oauth_state_cookie, create_oauth_device_fingerprint_cookie, create_oauth_state_cookie,
+    extract_cookie,
+};
+use crate::error::AppError;
+use crate::extractors::{ApiJson, ApiPath, ApiQuery};
+use crate::handlers::session::build_session;
+use crate::middleware::{AuthUser, OptionalAuthUser};
+use crate::{create_oauth_state, verify_oauth_state};
+#[cfg(not(debug_assertions))]
+use application::dto::OAuthCallbackQuery;
+#[cfg(debug_assertions)]
+use application::dto::OAuthTestBypassQuery;
+use application::dto::{
+    OAuthDeviceFingerprintRequest, OAuthMode, OAuthProviderName, OAuthStartQuery, OAuthStateClaims,
+    OAuthUserInfo,
+};
+use application::ports::OAuthProviderClient;
+use application::use_cases::{
+    OAuthCallbackMode, OAuthCallbackResult, OAuthCallbackUseCase, OAuthUnlinkUseCase,
+    RefreshTokenUseCase,
+};
+use domain::entities::OAuthProvider;
+use domain::value_objects::UserId;
+use platform::crypto::Crypto;
+
+/// Check if test bypass mode is enabled.
+#[cfg(debug_assertions)]
+fn is_test_bypass_enabled() -> bool {
+    std::env::var("TEST_OAUTH_BYPASS").is_ok()
+}
+
+#[cfg(debug_assertions)]
+type CallbackQuery = OAuthTestBypassQuery;
+#[cfg(not(debug_assertions))]
+type CallbackQuery = OAuthCallbackQuery;
+
+/// Dependencies for OAuth handlers.
+pub struct OAuthHandlerDeps {
+    pub callback_use_case: Arc<OAuthCallbackUseCase>,
+    pub unlink_use_case: Arc<OAuthUnlinkUseCase>,
+    pub refresh_token_use_case: Arc<RefreshTokenUseCase>,
+    /// Registered OAuth provider clients, keyed by provider. Adding a provider is
+    /// a registration here (in `main`) — no handler dispatch changes.
+    pub oauth_clients: HashMap<OAuthProvider, Arc<dyn OAuthProviderClient>>,
+    pub crypto: Arc<Crypto>,
+}
+
+impl OAuthHandlerDeps {
+    /// Look up the client for `provider`, or a 4xx error if it isn't configured.
+    fn oauth_client(&self, provider: OAuthProvider) -> Result<&dyn OAuthProviderClient, AppError> {
+        self.oauth_clients
+            .get(&provider)
+            .map(AsRef::as_ref)
+            .ok_or_else(|| {
+                AppError::Validation(format!("{} OAuth is not supported", provider.as_str()))
+            })
+    }
+}
+
+fn extract_oauth_device_fingerprint_cookie(headers: &HeaderMap) -> Option<String> {
+    extract_cookie(headers, OAUTH_DEVICE_FINGERPRINT_COOKIE)
+}
+
+/// Read the OAuth state-binding nonce stored at `oauth_start`.
+fn extract_oauth_state_cookie(headers: &HeaderMap) -> Option<String> {
+    extract_cookie(headers, OAUTH_STATE_COOKIE)
+}
+
+/// Append the `Set-Cookie` headers that clear the OAuth handoff cookies (the
+/// state nonce and device fingerprint set during the redirect dance). Every
+/// callback outcome must clear them.
+fn append_clear_oauth_handoff_cookies(headers: &mut HeaderMap) {
+    headers.append(header::SET_COOKIE, clear_oauth_device_fingerprint_cookie());
+    headers.append(header::SET_COOKIE, clear_oauth_state_cookie());
+}
+
+/// A fresh `HeaderMap` containing only the OAuth handoff-cookie clears, for the
+/// callback outcomes that issue no session cookies.
+fn cleared_oauth_handoff_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    append_clear_oauth_handoff_cookies(&mut headers);
+    headers
+}
+
+/// Run the real OAuth flow: verify the state JWT, confirm the provider matches,
+/// and exchange the authorization code for the provider's user info. Shared by
+/// the debug and release callback paths so the exchange logic lives in one place.
+async fn run_real_oauth_flow(
+    deps: &OAuthHandlerDeps,
+    provider: &str,
+    provider_enum: OAuthProvider,
+    state: &str,
+    code: &str,
+) -> Result<(OAuthUserInfo, OAuthStateClaims), AppError> {
+    if state.is_empty() {
+        return Err(AppError::Validation("Missing state parameter".into()));
+    }
+    if code.is_empty() {
+        return Err(AppError::Validation("Missing code parameter".into()));
+    }
+    let state_claims = verify_oauth_state(deps.crypto.tokens(), state)?;
+
+    if state_claims.provider != provider {
+        return Err(AppError::Validation("Provider mismatch in state".into()));
+    }
+
+    let user_info = deps
+        .oauth_client(provider_enum)?
+        .exchange_code(code)
+        .await?;
+
+    Ok((user_info, state_claims))
+}
+
+/// Longest device fingerprint stored in the OAuth binding cookie.
+const MAX_DEVICE_FINGERPRINT_LEN: usize = 128;
+
+/// 1 to [`MAX_DEVICE_FINGERPRINT_LEN`] ASCII letters, digits, `-` or `_`: safe
+/// to place in a cookie value unquoted. Matches the DTO's schema `pattern`.
+fn is_cookie_safe_token(value: &str) -> bool {
+    (1..=MAX_DEVICE_FINGERPRINT_LEN).contains(&value.len())
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// Store the browser-generated OAuth device binding in an `HttpOnly` scoped cookie.
+#[utoipa::path(
+    post,
+    path = "/oauth/device-fingerprint",
+    tag = "OAuth",
+    request_body = OAuthDeviceFingerprintRequest,
+    responses(
+        (status = 204, description = "OAuth device fingerprint cookie stored"),
+        (status = 400, description = "Invalid fingerprint")
+    )
+)]
+/// # Errors
+///
+/// Returns a validation error (400) if the fingerprint is blank or isn't a
+/// cookie-safe token.
+pub async fn oauth_store_device_fingerprint(
+    ApiJson(request): ApiJson<OAuthDeviceFingerprintRequest>,
+) -> Result<(HeaderMap, StatusCode), AppError> {
+    let fingerprint = request.device_fingerprint.trim();
+    if fingerprint.is_empty() {
+        return Err(AppError::Validation(
+            "Device fingerprint is required".to_string(),
+        ));
+    }
+    // The value goes into `Set-Cookie` verbatim, so anything beyond a plain
+    // token (`;`, `,`, spaces, controls) could add cookie attributes.
+    if !is_cookie_safe_token(fingerprint) {
+        return Err(AppError::Validation(format!(
+            "Device fingerprint must be 1-{MAX_DEVICE_FINGERPRINT_LEN} letters, digits, '-' or '_'"
+        )));
+    }
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::SET_COOKIE,
+        create_oauth_device_fingerprint_cookie(fingerprint).ok_or_else(|| {
+            AppError::Internal("a validated device fingerprint is a valid header value".into())
+        })?,
+    );
+
+    Ok((headers, StatusCode::NO_CONTENT))
+}
+
+/// Parse provider string to enum.
+fn parse_provider(provider: &str) -> Result<OAuthProvider, AppError> {
+    OAuthProvider::parse(provider)
+        .ok_or_else(|| AppError::Validation(format!("Unknown provider: {provider}")))
+}
+
+/// Start OAuth flow - redirect to provider.
+#[utoipa::path(
+    get,
+    path = "/oauth/{provider}",
+    tag = "OAuth",
+    params(
+        ("provider" = OAuthProviderName, Path, description = "OAuth provider"),
+        ("mode" = OAuthMode, Query, description = "Flow mode (login or link)")
+    ),
+    responses(
+        (status = 307, description = "Redirect to the OAuth provider"),
+        (status = 400, description = "Invalid provider"),
+        (status = 401, description = "Auth required for link mode")
+    ),
+    // Sign-in mode needs no session; link mode needs the session cookie
+    // (`openapi::SESSION_COOKIE_SCHEME`).
+    security((), ("session_cookie" = []))
+)]
+/// # Errors
+///
+/// Returns an error if the provider is invalid, authentication is required but not provided, or service errors occur.
+#[axum::debug_handler]
+pub async fn oauth_start(
+    State(deps): State<Arc<OAuthHandlerDeps>>,
+    ApiPath(provider): ApiPath<String>,
+    ApiQuery(query): ApiQuery<OAuthStartQuery>,
+    OptionalAuthUser(auth_user): OptionalAuthUser,
+) -> Result<(HeaderMap, Redirect), AppError> {
+    let provider_enum = parse_provider(&provider)?;
+
+    let mode_str = match query.mode {
+        OAuthMode::Login => "login",
+        OAuthMode::Link => "link",
+    };
+
+    // For link mode, require authentication
+    let user_id = match query.mode {
+        OAuthMode::Link => {
+            let user = auth_user.ok_or_else(AppError::token_missing)?;
+            Some(user.user_id.to_string())
+        }
+        OAuthMode::Login => None,
+    };
+
+    let (state, nonce) = create_oauth_state(
+        deps.crypto.tokens(),
+        &provider,
+        query.mode,
+        user_id.as_deref(),
+    )?;
+
+    // Bind the flow to this browser by storing the state nonce in an
+    // HttpOnly cookie; the callback rejects any state whose nonce doesn't match.
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::SET_COOKIE,
+        create_oauth_state_cookie(&nonce)
+            .ok_or_else(|| AppError::Internal("Invalid OAuth state characters".into()))?,
+    );
+
+    let auth_url = deps.oauth_client(provider_enum)?.authorization_url(&state);
+
+    tracing::info!(provider = %provider, mode = %mode_str, "Starting OAuth flow");
+    Ok((headers, Redirect::temporary(&auth_url)))
+}
+
+/// OAuth callback from provider.
+///
+/// Handles both real OAuth flow and test bypass mode. Always answers with a
+/// redirect: the browser arrives here by top-level navigation from the
+/// provider, so a JSON error body would strand the user on a raw error page.
+/// Provider-reported errors (e.g. a cancelled consent) and every internal
+/// failure go back to `/login` with a fixed error code; the cause is logged,
+/// never put in the URL.
+#[utoipa::path(
+    get,
+    path = "/oauth/{provider}/callback",
+    tag = "OAuth",
+    params(
+        ("provider" = OAuthProviderName, Path, description = "OAuth provider"),
+        ("code" = Option<String>, Query, description = "Authorization code"),
+        ("state" = Option<String>, Query, description = "State parameter"),
+        ("error" = Option<String>, Query, description = "Error reported by the provider, e.g. access_denied")
+    ),
+    responses(
+        (status = 307, description = "Redirect to the app with the result, or to /login?error=oauth_cancelled|oauth_failed")
+    )
+)]
+pub async fn oauth_callback(
+    State(deps): State<Arc<OAuthHandlerDeps>>,
+    headers: HeaderMap,
+    ApiPath(provider): ApiPath<String>,
+    ApiQuery(query): ApiQuery<CallbackQuery>,
+) -> (HeaderMap, Redirect) {
+    if let Some(error) = query.error.as_deref() {
+        tracing::info!(provider = %provider, error, "OAuth provider reported an error");
+        let code = if error == "access_denied" {
+            "oauth_cancelled"
+        } else {
+            "oauth_failed"
+        };
+        return login_error_redirect(code);
+    }
+
+    match oauth_callback_inner(&deps, &headers, &provider, query).await {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::warn!(provider = %provider, error = %e, "OAuth callback failed");
+            login_error_redirect("oauth_failed")
+        }
+    }
+}
+
+/// Redirect to the login page with a fixed error code, clearing the OAuth
+/// handoff cookies so a retry starts clean.
+fn login_error_redirect(code: &'static str) -> (HeaderMap, Redirect) {
+    (
+        cleared_oauth_handoff_headers(),
+        Redirect::temporary(&format!("/login?error={code}")),
+    )
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "one linear OAuth callback flow; each step depends on the previous one"
+)]
+async fn oauth_callback_inner(
+    deps: &OAuthHandlerDeps,
+    headers: &HeaderMap,
+    provider: &str,
+    query: CallbackQuery,
+) -> Result<(HeaderMap, Redirect), AppError> {
+    let provider = provider.to_owned();
+    let provider_enum = parse_provider(&provider)?;
+
+    // Handle test bypass mode for E2E tests (debug builds only)
+    #[cfg(debug_assertions)]
+    let (user_info, state_claims, enforce_binding) =
+        if is_test_bypass_enabled() && query.is_test_bypass() {
+            tracing::warn!(provider = %provider, "Using OAuth test bypass mode");
+
+            let user_info = OAuthUserInfo {
+                sub: query.sub.unwrap_or_else(|| "test-sub-123".to_string()),
+                email: query.email.clone(),
+                email_verified: query.email_verified.unwrap_or(true),
+                name: None,
+                given_name: Some("Test".to_string()),
+                family_name: Some("User".to_string()),
+            };
+
+            // For test bypass, state determines mode (optional)
+            let claims = if let Some(ref state) = query.state {
+                if state.is_empty() {
+                    default_test_claims(&provider)
+                } else {
+                    verify_oauth_state(deps.crypto.tokens(), state)?
+                }
+            } else {
+                default_test_claims(&provider)
+            };
+
+            // Test bypass does not exercise the browser cookie handshake.
+            (user_info, claims, false)
+        } else {
+            // Real OAuth flow (debug build, bypass not active).
+            let state = query.state.as_deref().unwrap_or("");
+            let code = query.code.as_deref().unwrap_or("");
+            let (user_info, state_claims) =
+                run_real_oauth_flow(deps, &provider, provider_enum, state, code).await?;
+            (user_info, state_claims, true)
+        };
+
+    // Real OAuth flow (release build — CallbackQuery is OAuthCallbackQuery)
+    #[cfg(not(debug_assertions))]
+    let (user_info, state_claims, enforce_binding) = {
+        let state = query.state.as_deref().unwrap_or("");
+        let code = query.code.as_deref().unwrap_or("");
+        let (user_info, state_claims) =
+            run_real_oauth_flow(deps, &provider, provider_enum, state, code).await?;
+        (user_info, state_claims, true)
+    };
+
+    // Reject a callback whose state nonce isn't bound to this browser. An
+    // attacker replaying a valid code+state from their own flow has no matching
+    // `oauth_state` cookie in the victim's browser, so this fails closed.
+    if enforce_binding {
+        let provided_nonce = extract_oauth_state_cookie(headers);
+        if provided_nonce.as_deref() != Some(state_claims.nonce.as_str()) {
+            tracing::warn!(provider = %provider, "OAuth state binding mismatch — rejecting callback");
+            return Err(AppError::Validation("OAuth state binding mismatch".into()));
+        }
+    }
+
+    let mode = match state_claims.mode {
+        OAuthMode::Login => OAuthCallbackMode::Login,
+        OAuthMode::Link => OAuthCallbackMode::Link,
+    };
+
+    // The state JWT carries the linking user id as a string; parse it back into a
+    // typed `UserId` at the boundary so the use case never re-parses or compares by
+    // stringified UUID.
+    let linking_user_id = state_claims
+        .user_id
+        .as_deref()
+        .map(str::parse::<UserId>)
+        .transpose()
+        .map_err(|_| AppError::Validation("Invalid user_id in OAuth state".into()))?;
+
+    let result = deps
+        .callback_use_case
+        .execute(provider_enum, user_info, mode, linking_user_id.as_ref())
+        .await?;
+    let device_fingerprint = extract_oauth_device_fingerprint_cookie(headers);
+
+    match result {
+        OAuthCallbackResult::LoggedIn(user) => {
+            let refresh_token = if let Some(device_fingerprint) = device_fingerprint.as_deref() {
+                Some(
+                    deps.refresh_token_use_case
+                        .create_for_user(user.id(), device_fingerprint)
+                        .await?,
+                )
+            } else {
+                None
+            };
+            // Share the single session builder with the login / refresh /
+            // verification / reset paths so JWT, CSRF, cookie attributes, and
+            // error mapping can't drift between them. The redirect carries no body,
+            // so the returned `expires_at`/`csrf_token` are unused here.
+            let mut headers = build_session(&deps.crypto, &user, refresh_token.as_deref())?.headers;
+            append_clear_oauth_handoff_cookies(&mut headers);
+
+            tracing::info!(user_id = %user.id(), provider = %provider, "OAuth login successful");
+            Ok((headers, Redirect::temporary("/dashboard")))
+        }
+        OAuthCallbackResult::Linked => {
+            tracing::info!(provider = %provider, "OAuth provider linked");
+            Ok((
+                cleared_oauth_handoff_headers(),
+                Redirect::temporary("/dashboard/settings?oauth=linked"),
+            ))
+        }
+        OAuthCallbackResult::EmailConflict => {
+            tracing::warn!(provider = %provider, "OAuth email conflict");
+            Ok((
+                cleared_oauth_handoff_headers(),
+                Redirect::temporary("/login?error=oauth_email_conflict"),
+            ))
+        }
+        OAuthCallbackResult::AlreadyLinked => {
+            tracing::warn!(provider = %provider, "OAuth provider already linked to different user");
+            Ok((
+                cleared_oauth_handoff_headers(),
+                Redirect::temporary("/login?error=oauth_already_linked"),
+            ))
+        }
+    }
+}
+
+/// Create default test claims for bypass mode.
+#[cfg(debug_assertions)]
+fn default_test_claims(provider: &str) -> OAuthStateClaims {
+    OAuthStateClaims {
+        nonce: "test".to_string(),
+        mode: OAuthMode::Login,
+        user_id: None,
+        provider: provider.to_string(),
+        exp: 0,
+    }
+}
+
+/// Unlink OAuth provider from account.
+#[utoipa::path(
+    delete,
+    path = "/oauth/{provider}/unlink",
+    tag = "OAuth",
+    params(
+        ("provider" = OAuthProviderName, Path, description = "OAuth provider to unlink")
+    ),
+    responses(
+        (status = 200, description = "Provider unlinked"),
+        (status = 400, description = "Cannot unlink last auth method"),
+        (status = 404, description = "Provider not linked")
+    )
+)]
+/// # Errors
+///
+/// Returns an error if the provider is invalid, not linked, or unlinking fails.
+pub async fn oauth_unlink(
+    State(deps): State<Arc<OAuthHandlerDeps>>,
+    ApiPath(provider): ApiPath<String>,
+    auth_user: AuthUser,
+) -> Result<StatusCode, AppError> {
+    let provider_enum = parse_provider(&provider)?;
+
+    deps.unlink_use_case
+        .execute(&auth_user.user_id, provider_enum)
+        .await?;
+
+    Ok(StatusCode::OK)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // =========================================================================
+    // parse_provider tests
+    // =========================================================================
+
+    #[test]
+    fn parse_provider_google() {
+        let result = parse_provider("google");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), OAuthProvider::Google);
+    }
+
+    #[test]
+    fn parse_provider_apple() {
+        let result = parse_provider("apple");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), OAuthProvider::Apple);
+    }
+
+    #[test]
+    fn parse_provider_unknown() {
+        let result = parse_provider("facebook");
+        assert!(result.is_err());
+        match result {
+            Err(AppError::Validation(msg)) => {
+                assert!(msg.contains("Unknown provider"));
+                assert!(msg.contains("facebook"));
+            }
+            _ => panic!("Expected Validation error"),
+        }
+    }
+
+    #[test]
+    fn parse_provider_empty() {
+        let result = parse_provider("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_provider_case_sensitive() {
+        // OAuthProvider::parse might be case-sensitive
+        let result_upper = parse_provider("GOOGLE");
+        let result_mixed = parse_provider("Google");
+        // Both should fail if parse is case-sensitive, or succeed if not
+        // Just ensure no panic
+        let _ = result_upper;
+        let _ = result_mixed;
+    }
+
+    #[tokio::test]
+    async fn oauth_store_device_fingerprint_sets_host_only_cookie() {
+        let (headers, status) =
+            oauth_store_device_fingerprint(ApiJson(OAuthDeviceFingerprintRequest {
+                device_fingerprint: "fingerprint123".to_string(),
+            }))
+            .await
+            .unwrap();
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        let cookie = headers.get(header::SET_COOKIE).unwrap().to_str().unwrap();
+        assert!(cookie.starts_with("__Host-oauth_device_fingerprint=fingerprint123"));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("Path=/;"));
+    }
+
+    // Cookie construction is covered by tests in `api::cookies`.
+
+    // =========================================================================
+    // is_test_bypass_enabled tests
+    // =========================================================================
+
+    // Note: is_test_bypass_enabled tests are omitted because std::env::set_var
+    // is unsafe in Rust 2024 edition. The function is tested indirectly
+    // through E2E tests that set TEST_OAUTH_BYPASS in the environment.
+
+    // =========================================================================
+    // default_test_claims tests (debug only)
+    // =========================================================================
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn default_test_claims_google() {
+        let claims = default_test_claims("google");
+
+        assert_eq!(claims.nonce, "test");
+        assert_eq!(claims.mode, OAuthMode::Login);
+        assert!(claims.user_id.is_none());
+        assert_eq!(claims.provider, "google");
+        assert_eq!(claims.exp, 0);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn default_test_claims_apple() {
+        let claims = default_test_claims("apple");
+
+        assert_eq!(claims.provider, "apple");
+        assert_eq!(claims.mode, OAuthMode::Login);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn default_test_claims_arbitrary_provider() {
+        let claims = default_test_claims("custom-provider");
+
+        assert_eq!(claims.provider, "custom-provider");
+    }
+
+    // =========================================================================
+    // OAuthHandlerDeps construction tests
+    // =========================================================================
+
+    // Note: Full handler tests would require setting up the complete app context
+    // with mock use cases. The helper function tests above cover the key logic
+    // without needing the full async infrastructure.
+}

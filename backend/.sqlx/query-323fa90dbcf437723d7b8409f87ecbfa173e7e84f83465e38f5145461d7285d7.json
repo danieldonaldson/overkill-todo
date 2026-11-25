@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE email_verification_codes SET expires_at = NOW() - INTERVAL '1 hour'\n                 WHERE user_id = (SELECT id FROM users WHERE email = $1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "323fa90dbcf437723d7b8409f87ecbfa173e7e84f83465e38f5145461d7285d7"
+}

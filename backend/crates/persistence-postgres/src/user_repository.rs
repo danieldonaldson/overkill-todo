@@ -1,0 +1,657 @@
+use super::audit_log::insert_audit_event;
+use super::connection::Database;
+use super::error::persist_err;
+use super::models::{DbUserRole, UserRow};
+use super::time::{ToDb, ToDomain};
+use application::ports::outgoing::{
+    AccountLifecycleRepository, SessionAuthorizationState, UserRepository,
+};
+use async_trait::async_trait;
+use domain::{
+    entities::{AuditEvent, User, UserParts},
+    errors::DomainError,
+    value_objects::{AccountStatus, Email, UserId},
+};
+use jiff::Timestamp;
+use std::sync::Arc;
+
+pub struct PostgresUserRepository {
+    db: Arc<Database>,
+}
+
+impl PostgresUserRepository {
+    #[must_use]
+    pub const fn new(db: Arc<Database>) -> Self {
+        Self { db }
+    }
+
+    fn row_to_user(row: UserRow) -> Result<User, DomainError> {
+        let email = Email::new(&row.email)?;
+        Ok(User::from_persistence(UserParts {
+            id: UserId::from_uuid(row.id),
+            email,
+            password_hash: row.password_hash,
+            first_name: row.first_name,
+            last_name: row.last_name,
+            email_verified: row.email_verified,
+            status: AccountStatus::from_columns(
+                row.deleted_at.to_domain(),
+                row.deletion_scheduled_at.to_domain(),
+            ),
+            role: row.role.into(),
+            created_at: row.created_at.to_domain(),
+            updated_at: row.updated_at.to_domain(),
+            version: row.version,
+        }))
+    }
+}
+
+/// The optimistic-concurrency upsert behind [`UserRepository::save`], on any
+/// executor so [`UserRepository::save_audited`] can run it in a transaction.
+async fn save_on<'e>(executor: impl sqlx::PgExecutor<'e>, user: &User) -> Result<(), DomainError> {
+    // Optimistic concurrency: a fresh user INSERTs at version 0; an update
+    // takes the `ON CONFLICT` branch and applies ONLY when the persisted
+    // `version` still equals the value this entity was loaded at, bumping it
+    // by one. A concurrent writer that already advanced the row makes the
+    // `WHERE` fail, so the statement touches 0 rows and we surface a
+    // `Conflict` instead of silently clobbering the other write.
+    let result = sqlx::query!(
+        r#"
+        INSERT INTO users (id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role, created_at, updated_at, version)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT (id) DO UPDATE SET
+            email = EXCLUDED.email,
+            password_hash = EXCLUDED.password_hash,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name,
+            email_verified = EXCLUDED.email_verified,
+            deleted_at = EXCLUDED.deleted_at,
+            deletion_scheduled_at = EXCLUDED.deletion_scheduled_at,
+            role = EXCLUDED.role,
+            updated_at = EXCLUDED.updated_at,
+            version = users.version + 1
+        WHERE users.version = $12
+        "#,
+        user.id().as_uuid(),
+        user.email().as_str(),
+        user.password_hash(),
+        user.first_name(),
+        user.last_name(),
+        user.email_verified(),
+        user.deleted_at().to_db(),
+        user.deletion_scheduled_at().to_db(),
+        DbUserRole::from(user.role()) as _,
+        user.created_at().to_db(),
+        user.updated_at().to_db(),
+        user.version(),
+    )
+    .execute(executor)
+    .await
+    .map_err(persist_err)?;
+
+    if result.rows_affected() == 0 {
+        return Err(DomainError::Conflict(
+            "User was modified concurrently; reload and retry".into(),
+        ));
+    }
+
+    Ok(())
+}
+
+#[async_trait]
+impl UserRepository for PostgresUserRepository {
+    #[tracing::instrument(name = "repo.user.save", skip_all, fields(db.system = "postgresql", user_id = %user.id()))]
+    async fn save(&self, user: &User) -> Result<(), DomainError> {
+        save_on(self.db.pool(), user).await
+    }
+
+    #[tracing::instrument(name = "repo.user.save_audited", skip_all, fields(db.system = "postgresql", user_id = %user.id(), audit.kind = event.kind().as_str()))]
+    async fn save_audited(&self, user: &User, event: &AuditEvent) -> Result<(), DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+        // A version conflict returns before the event, and a failed event
+        // insert rolls the save back.
+        save_on(&mut *tx, user).await?;
+        insert_audit_event(&mut tx, event).await?;
+        tx.commit().await.map_err(persist_err)
+    }
+
+    #[tracing::instrument(name = "repo.user.find_by_id", skip_all, fields(db.system = "postgresql", user_id = %id))]
+    async fn find_by_id(&self, id: &UserId) -> Result<Option<User>, DomainError> {
+        let row = sqlx::query_as!(
+            UserRow,
+            r#"
+            SELECT id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
+            FROM users
+            WHERE id = $1
+            "#,
+            id.as_uuid()
+        )
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        row.map(Self::row_to_user).transpose()
+    }
+
+    #[tracing::instrument(name = "repo.user.find_by_email", skip_all, fields(db.system = "postgresql"))]
+    async fn find_by_email(&self, email: &Email) -> Result<Option<User>, DomainError> {
+        let row = sqlx::query_as!(
+            UserRow,
+            r#"
+            SELECT id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
+            FROM users
+            WHERE email = $1
+            "#,
+            email.as_str()
+        )
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        row.map(Self::row_to_user).transpose()
+    }
+
+    #[tracing::instrument(name = "repo.user.find_all", skip_all, fields(db.system = "postgresql"))]
+    async fn find_all(&self, limit: i64, offset: i64) -> Result<Vec<User>, DomainError> {
+        let rows = sqlx::query_as!(
+            UserRow,
+            r#"
+            SELECT id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
+            FROM users
+            WHERE deleted_at IS NULL
+            ORDER BY created_at DESC, id DESC
+            LIMIT $1 OFFSET $2
+            "#,
+            limit,
+            offset
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        rows.into_iter().map(Self::row_to_user).collect()
+    }
+
+    #[tracing::instrument(name = "repo.user.count_all", skip_all, fields(db.system = "postgresql"))]
+    async fn count_all(&self) -> Result<i64, DomainError> {
+        sqlx::query_scalar!(r#"SELECT COUNT(*) as "count!" FROM users WHERE deleted_at IS NULL"#)
+            .fetch_one(self.db.pool())
+            .await
+            .map_err(persist_err)
+    }
+
+    #[tracing::instrument(name = "repo.user.save_role_change", skip_all, fields(db.system = "postgresql", user_id = %user.id(), removing_super_admin))]
+    async fn save_role_change(
+        &self,
+        user: &User,
+        removing_super_admin: bool,
+        event: &AuditEvent,
+    ) -> Result<(), DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+
+        if removing_super_admin {
+            // Serialize every super-admin demotion. The lock is held until the
+            // transaction commits, so two concurrent requests cannot both
+            // count the same two admins and remove each one.
+            sqlx::query!("SELECT pg_advisory_xact_lock($1)", 0x5457_524f_4c45_i64)
+                .execute(&mut *tx)
+                .await
+                .map_err(persist_err)?;
+
+            let row = sqlx::query!(
+                r#"SELECT COUNT(*) AS "count!" FROM users WHERE role = $1 AND deleted_at IS NULL"#,
+                DbUserRole::SuperAdmin as _,
+            )
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(persist_err)?;
+
+            if row.count <= 1 {
+                return Err(DomainError::Forbidden(
+                    "Cannot demote the last super-admin".into(),
+                ));
+            }
+        }
+
+        let result = sqlx::query!(
+            r#"
+            UPDATE users
+            SET role = $1, tokens_valid_after = NOW(), updated_at = NOW(), version = version + 1
+            WHERE id = $2 AND version = $3
+            "#,
+            DbUserRole::from(user.role()) as _,
+            user.id().as_uuid(),
+            user.version(),
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+
+        if result.rows_affected() == 0 {
+            return Err(DomainError::Conflict(
+                "User was modified concurrently; reload and retry".into(),
+            ));
+        }
+
+        // After the last-super-admin check and the versioned update, inside
+        // the transaction that holds the advisory lock: a refusal or conflict
+        // above returns before this, and a failure here rolls the change back.
+        insert_audit_event(&mut tx, event).await?;
+
+        tx.commit().await.map_err(persist_err)?;
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "repo.user.session_authorization_state", skip_all, fields(db.system = "postgresql", user_id = %id))]
+    async fn session_authorization_state(
+        &self,
+        id: &UserId,
+    ) -> Result<Option<SessionAuthorizationState>, DomainError> {
+        let row = sqlx::query!(
+            r#"SELECT role AS "role: DbUserRole", tokens_valid_after FROM users WHERE id = $1"#,
+            id.as_uuid(),
+        )
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        Ok(row.map(|r| SessionAuthorizationState {
+            role: r.role.into(),
+            tokens_valid_after: r.tokens_valid_after.to_domain(),
+        }))
+    }
+
+    #[tracing::instrument(name = "repo.user.mark_email_verified", skip_all, fields(db.system = "postgresql", user_id = %id))]
+    async fn mark_email_verified(&self, id: &UserId) -> Result<(), DomainError> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE users
+            SET email_verified = true, version = version + 1, updated_at = NOW()
+            WHERE id = $1
+            "#,
+            id.as_uuid()
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        // A 0-row update means the user was deleted/anonymized between load and
+        // write. Surface it as NotFound instead of a silent success that hides the
+        // fact that nothing was verified.
+        if result.rows_affected() == 0 {
+            return Err(DomainError::NotFound("User not found".into()));
+        }
+
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "repo.user.update_password", skip_all, fields(db.system = "postgresql", user_id = %id))]
+    async fn update_password(
+        &self,
+        id: &UserId,
+        password_hash: &str,
+        event: &AuditEvent,
+    ) -> Result<(), DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+        let result = sqlx::query!(
+            r#"
+            UPDATE users
+            SET password_hash = $2, version = version + 1, updated_at = NOW()
+            WHERE id = $1
+            "#,
+            id.as_uuid(),
+            password_hash
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+
+        // See mark_email_verified: a vanished row must not look like a successful
+        // password change (and must not be audited as one).
+        if result.rows_affected() == 0 {
+            return Err(DomainError::NotFound("User not found".into()));
+        }
+
+        insert_audit_event(&mut tx, event).await?;
+        tx.commit().await.map_err(persist_err)
+    }
+
+    #[tracing::instrument(name = "repo.user.revoke_sessions_issued_before", skip_all, fields(db.system = "postgresql", user_id = %id))]
+    async fn revoke_sessions_issued_before(
+        &self,
+        id: &UserId,
+        cutoff: Timestamp,
+    ) -> Result<(), DomainError> {
+        // GREATEST ignores NULL, and never moves an existing cutoff backwards.
+        // No version bump: the cutoff isn't part of the `User` entity, so it
+        // can't conflict with a concurrent `save`.
+        let result = sqlx::query!(
+            r#"
+            UPDATE users
+            SET tokens_valid_after = GREATEST(tokens_valid_after, $2)
+            WHERE id = $1
+            "#,
+            id.as_uuid(),
+            cutoff.to_db(),
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        if result.rows_affected() == 0 {
+            return Err(DomainError::NotFound("User not found".into()));
+        }
+
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl AccountLifecycleRepository for PostgresUserRepository {
+    #[tracing::instrument(name = "repo.user.find_ready_for_deletion", skip_all, fields(db.system = "postgresql"))]
+    async fn find_ready_for_deletion(&self) -> Result<Vec<User>, DomainError> {
+        let rows = sqlx::query_as!(
+            UserRow,
+            r#"
+            SELECT id, email, password_hash, first_name, last_name, email_verified, deleted_at, deletion_scheduled_at, role as "role: _", created_at, updated_at, version
+            FROM users
+            WHERE deletion_scheduled_at IS NOT NULL
+              AND deletion_scheduled_at <= NOW()
+              AND deleted_at IS NULL
+            "#
+        )
+        .fetch_all(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        rows.into_iter().map(Self::row_to_user).collect()
+    }
+
+    // INVARIANT: tables holding the only durable handle to a live external
+    // resource (a provisioned workload, a billable API key) should reference
+    // `users` with ON DELETE RESTRICT, so a hard delete that skipped external
+    // teardown fails loudly instead of orphaning the resource. Account removal
+    // goes through `anonymize_account`, which scrubs PII and secrets while
+    // leaving audit/financial history intact. This method is not used in
+    // production.
+    #[tracing::instrument(name = "repo.user.delete", skip_all, fields(db.system = "postgresql", user_id = %id))]
+    async fn delete(&self, id: &UserId) -> Result<(), DomainError> {
+        sqlx::query!(
+            r#"
+            DELETE FROM users
+            WHERE id = $1
+            "#,
+            id.as_uuid()
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "repo.user.anonymize_account", skip_all, fields(db.system = "postgresql", user_id = %user.id()))]
+    async fn anonymize_account(
+        &self,
+        user: &User,
+        event: &AuditEvent,
+    ) -> Result<bool, DomainError> {
+        // INVARIANT: every step below runs in ONE transaction. The user
+        // row is scrubbed *and* all secret-bearing child rows (refresh tokens,
+        // OAuth links, verification/reset codes) are deleted
+        // atomically, or nothing is. A partial commit would leave a user that
+        // looks anonymized while live credentials/PII survive in child tables —
+        // so never split this into separate transactions or move a DELETE out.
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+
+        let user_id = user.id().as_uuid();
+
+        // 1. Update user record with anonymized data — only if the account is
+        // still due. The purge lists accounts, then anonymizes them one by one;
+        // a user who cancels in between must keep their account, so the
+        // condition is re-checked here, atomically with the write. 0 rows means
+        // "no longer due": roll back without touching the child tables.
+        // `tokens_valid_after` cuts off access tokens issued before the purge.
+        let updated = sqlx::query!(
+            r#"
+            UPDATE users
+            SET email = $2,
+                password_hash = NULL,
+                first_name = $3,
+                last_name = $4,
+                deleted_at = $5,
+                deletion_scheduled_at = NULL,
+                tokens_valid_after = NOW(),
+                version = version + 1,
+                updated_at = $6
+            WHERE id = $1
+              AND deleted_at IS NULL
+              AND deletion_scheduled_at IS NOT NULL
+              AND deletion_scheduled_at <= NOW()
+            "#,
+            user_id,
+            user.email().as_str(),
+            user.first_name(),
+            user.last_name(),
+            user.deleted_at().to_db(),
+            user.updated_at().to_db(),
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+
+        if updated.rows_affected() == 0 {
+            tx.rollback().await.map_err(persist_err)?;
+            return Ok(false);
+        }
+
+        // 2. Delete refresh tokens
+        sqlx::query!(r#"DELETE FROM refresh_tokens WHERE user_id = $1"#, user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(persist_err)?;
+
+        // 3. Delete OAuth accounts
+        sqlx::query!(
+            r#"DELETE FROM user_oauth_accounts WHERE user_id = $1"#,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+
+        // 4. Delete email verification codes
+        sqlx::query!(
+            r#"DELETE FROM email_verification_codes WHERE user_id = $1"#,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+
+        // 5. Delete password reset codes
+        sqlx::query!(
+            r#"DELETE FROM password_reset_codes WHERE user_id = $1"#,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+
+        // 6. Record the deletion (OT-008). Only reached when the scrub applied;
+        // the account's earlier events stay, attached to the anonymised row.
+        insert_audit_event(&mut tx, event).await?;
+
+        tx.commit().await.map_err(persist_err)?;
+
+        Ok(true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::UserRow;
+    use jiff::Timestamp;
+    use proptest::prelude::*;
+    use uuid::Uuid;
+
+    // ==================== Strategies ====================
+
+    /// Strategy for valid email strings (lowercase with @ and .)
+    fn valid_email_strategy() -> impl Strategy<Value = String> {
+        "[a-z]{1,8}@[a-z]{2,6}\\.[a-z]{2,4}".prop_map(String::from)
+    }
+
+    /// Strategy for invalid email strings (missing @ or .)
+    fn invalid_email_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Missing @
+            "[a-z]{3,10}\\.[a-z]{2,4}".prop_map(String::from),
+            // Missing .
+            "[a-z]{1,8}@[a-z]{3,10}".prop_map(String::from),
+            // Empty
+            Just(String::new()),
+        ]
+    }
+
+    /// Creates a valid `UserRow` with the given email.
+    fn create_user_row(email: String) -> UserRow {
+        let now = Timestamp::now();
+        UserRow {
+            id: Uuid::new_v4(),
+            email,
+            password_hash: Some("fake_hash".to_string()),
+            first_name: "Test".to_string(),
+            last_name: "User".to_string(),
+            email_verified: true,
+            deleted_at: None,
+            deletion_scheduled_at: None,
+            role: DbUserRole::User,
+            created_at: now.to_db(),
+            updated_at: now.to_db(),
+            version: 0,
+        }
+    }
+
+    // ==================== Example-Based Tests ====================
+
+    #[test]
+    fn test_row_to_user_valid() {
+        let row = create_user_row("test@example.com".to_string());
+        let result = PostgresUserRepository::row_to_user(row);
+        assert!(result.is_ok());
+        let user = result.unwrap();
+        assert_eq!(user.email().as_str(), "test@example.com");
+    }
+
+    #[test]
+    fn test_row_to_user_invalid_email() {
+        let row = create_user_row("invalid-email".to_string());
+        let result = PostgresUserRepository::row_to_user(row);
+        assert!(result.is_err());
+    }
+
+    // ==================== Property-Based Tests ====================
+
+    proptest! {
+        /// Valid rows should convert successfully
+        #[test]
+        fn prop_valid_row_converts_successfully(
+            email in valid_email_strategy(),
+            first_name in "\\PC{1,20}",
+            last_name in "\\PC{1,20}",
+        ) {
+            let now = Timestamp::now();
+            let row = UserRow {
+                id: Uuid::new_v4(),
+                email: email.clone(),
+                password_hash: Some("fake_hash".to_string()),
+                first_name,
+                last_name,
+                email_verified: true,
+                deleted_at: None,
+                deletion_scheduled_at: None,
+                role: DbUserRole::User,
+                created_at: now.to_db(),
+                updated_at: now.to_db(),
+                version: 0,
+            };
+
+            let result = PostgresUserRepository::row_to_user(row);
+            prop_assert!(result.is_ok(), "Valid row failed to convert: {:?}", result.err());
+
+            let user = result.unwrap();
+            // Email should be normalized (lowercase, trimmed)
+            prop_assert_eq!(user.email().as_str(), email.trim().to_lowercase());
+        }
+
+        /// Invalid email strings should cause conversion to fail
+        #[test]
+        fn prop_invalid_email_fails(
+            email in invalid_email_strategy(),
+        ) {
+            let row = create_user_row(email.clone());
+            let result = PostgresUserRepository::row_to_user(row);
+            prop_assert!(result.is_err(), "Invalid email '{}' should fail", email);
+        }
+
+        /// UUID roundtrip: user id should be preserved
+        #[test]
+        fn prop_user_id_preserved(
+            email in valid_email_strategy(),
+        ) {
+            let original_id = Uuid::new_v4();
+            let now = Timestamp::now();
+            let row = UserRow {
+                id: original_id,
+                email,
+                password_hash: None,
+                first_name: "Test".to_string(),
+                last_name: "User".to_string(),
+                email_verified: true,
+                deleted_at: None,
+                deletion_scheduled_at: None,
+                role: DbUserRole::User,
+                created_at: now.to_db(),
+                updated_at: now.to_db(),
+                version: 0,
+            };
+
+            let result = PostgresUserRepository::row_to_user(row);
+            prop_assert!(result.is_ok());
+
+            let user = result.unwrap();
+            prop_assert_eq!(*user.id().as_uuid(), original_id);
+        }
+
+        /// Boolean fields should be preserved
+        #[test]
+        fn prop_boolean_fields_preserved(
+            email in valid_email_strategy(),
+            email_verified in proptest::bool::ANY,
+        ) {
+            let now = Timestamp::now();
+            let row = UserRow {
+                id: Uuid::new_v4(),
+                email,
+                password_hash: None,
+                first_name: "Test".to_string(),
+                last_name: "User".to_string(),
+                email_verified,
+                deleted_at: None,
+                deletion_scheduled_at: None,
+                role: DbUserRole::User,
+                created_at: now.to_db(),
+                updated_at: now.to_db(),
+                version: 0,
+            };
+
+            let result = PostgresUserRepository::row_to_user(row);
+            prop_assert!(result.is_ok());
+
+            let user = result.unwrap();
+            prop_assert_eq!(user.email_verified(), email_verified);
+        }
+    }
+}

@@ -1,0 +1,20 @@
+//! Value objects for the auth domain.
+
+#[macro_use]
+pub(crate) mod id_macros;
+
+// UUID ID types
+id_macros::uuid_id!(UserId);
+id_macros::uuid_id!(RefreshTokenId);
+id_macros::uuid_id!(VerificationCodeId);
+id_macros::uuid_id!(ResetCodeId);
+
+pub mod account_status;
+pub mod email;
+
+pub mod user_role;
+
+pub use account_status::{AccountStatus, AlreadyDeleted};
+pub use email::Email;
+
+pub use user_role::{RoleChangeRefusal, UserRole};

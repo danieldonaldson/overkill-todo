@@ -50,9 +50,7 @@ jobs:
               - scripts/bench-report.mjs
             backend:
               - *shared
-              - backend/src/**
-              - backend/benches/**
-              - backend/tests/common/**
+              - backend/crates/**
               - backend/Cargo.toml
               - backend/Cargo.lock
               - backend/rust-toolchain.toml
@@ -90,7 +88,7 @@ jobs:
       - name: Build benches (warm cache)
         if: github.event_name != 'pull_request'
         working-directory: backend
-        run: cargo bench --locked --no-run
+        run: cargo bench -p server --locked --no-run
         env:
           SQLX_OFFLINE: 'true'
 
