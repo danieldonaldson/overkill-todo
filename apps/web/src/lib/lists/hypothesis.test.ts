@@ -56,10 +56,17 @@ function faultyApi(
   return {
     list: () => read(() => server.list()),
     createList: (key, name) => write(() => server.createList(key, name), true),
+    renameList: (id, version, name) => write(() => server.renameList(id, version, name), true),
+    deleteList: (id, version, todoCount) =>
+      write(() => server.deleteList(id, version, todoCount), true),
     getList: (id) => read(() => server.getList(id)),
     addTodo: (listId, key, title) => write(() => server.addTodo(listId, key, title), true),
     markTodo: (listId, todoId, version, done) =>
       write(() => server.markTodo(listId, todoId, version, done), true),
+    renameTodo: (listId, todoId, version, title) =>
+      write(() => server.renameTodo(listId, todoId, version, title), true),
+    deleteTodo: (listId, todoId, version) =>
+      write(() => server.deleteTodo(listId, todoId, version), true),
   }
 }
 
@@ -89,17 +96,46 @@ function watchVersions(
   server: MemoryListsServer,
   api: ListsApi,
   seen: Map<string, Set<number>>,
+  pending: Map<string, Set<number>>,
   violations: string[]
 ): ListsApi {
+  const alias = new Map<string, string>()
+  const check = (listId: string, todoId: string, version: number, label: string) => {
+    const todo = server.getList(listId).todos.find((candidate) => candidate.id === todoId)
+    if (!todo) return undefined
+    const versions = seen.get(todo.id) ?? new Set<number>()
+    // A version noted while the todo had no ID belongs to it now (D7).
+    for (const [key, noted] of pending) {
+      if (alias.get(key) !== todo.id) continue
+      for (const value of noted) versions.add(value)
+      pending.delete(key)
+    }
+    seen.set(todo.id, versions)
+    if (!versions.has(version)) violations.push(`${label} ${todo.title} at ${version}`)
+    return versions
+  }
   return {
     ...api,
+    addTodo: async (listId, key, title) => {
+      const answer = await api.addTodo(listId, key, title)
+      alias.set(key, answer.id)
+      return answer
+    },
     markTodo: async (listId, todoId, version, done) => {
-      const todo = server.getList(listId).todos.find((candidate) => candidate.id === todoId)
-      const versions = todo && seen.get(todo.title)
-      if (todo && !versions?.has(version)) violations.push(`${todo.title} at ${version}`)
+      const versions = check(listId, todoId, version, 'mark')
       const answer = await api.markTodo(listId, todoId, version, done)
       if (answer.version === version + 1) versions?.add(answer.version)
       return answer
+    },
+    renameTodo: async (listId, todoId, version, title) => {
+      const versions = check(listId, todoId, version, 'rename')
+      const answer = await api.renameTodo(listId, todoId, version, title)
+      if (answer.version === version + 1) versions?.add(answer.version)
+      return answer
+    },
+    deleteTodo: async (listId, todoId, version) => {
+      check(listId, todoId, version, 'delete')
+      return api.deleteTodo(listId, todoId, version)
     },
   }
 }
@@ -114,14 +150,16 @@ async function runSeed(seed: number, refetchAdvancesQueue = false): Promise<void
   const violations: string[] = []
   const seenA = new Map<string, Set<number>>()
   const seenB = new Map<string, Set<number>>()
+  const pendingA = new Map<string, Set<number>>()
+  const pendingB = new Map<string, Set<number>>()
   const tabA = new ListsEngine({
-    api: watchVersions(server, faultyApi(server, rng, faults), seenA, violations),
+    api: watchVersions(server, faultyApi(server, rng, faults), seenA, pendingA, violations),
     newKey: keys('a'),
     timeoutMs: Number.POSITIVE_INFINITY,
     refetchAdvancesQueue,
   })
   const tabB = new ListsEngine({
-    api: watchVersions(server, faultyApi(server, rng, faults), seenB, violations),
+    api: watchVersions(server, faultyApi(server, rng, faults), seenB, pendingB, violations),
     newKey: keys('b'),
     timeoutMs: Number.POSITIVE_INFINITY,
     refetchAdvancesQueue,
@@ -132,17 +170,33 @@ async function runSeed(seed: number, refetchAdvancesQueue = false): Promise<void
   await tabB.loadList(listId)
   faults.reads = true
 
-  const mark = (tab: ListsEngine, todo: TodoView) => {
+  const remember = (tab: ListsEngine, todo: TodoView) => {
     const seen = tab === tabA ? seenA : seenB
-    if (!seen.has(todo.title)) seen.set(todo.title, new Set())
-    seen.get(todo.title)!.add(todo.version)
+    const pending = tab === tabA ? pendingA : pendingB
+    const target = todo.id ? seen : pending
+    const key = todo.id ?? todo.key
+    if (!key) return
+    if (!target.has(key)) target.set(key, new Set())
+    target.get(key)!.add(todo.version)
+  }
+  const mark = (tab: ListsEngine, todo: TodoView) => {
+    remember(tab, todo)
     tab.markTodo(listId, todo, !todo.done)
+  }
+  const rename = (tab: ListsEngine, todo: TodoView, title: string) => {
+    remember(tab, todo)
+    tab.renameTodo(listId, todo, title)
+  }
+  const remove = (tab: ListsEngine, todo: TodoView) => {
+    remember(tab, todo)
+    tab.deleteTodo(listId, todo)
   }
   for (let step = 0; step < 18; step++) {
     const tab = rng() < 0.5 ? tabA : tabB
     const other = tab === tabA ? tabB : tabA
     const todos = tab.snapshot().details[listId].todos
-    if (todos.length === 0 || rng() < 0.45) {
+    const roll = rng()
+    if (todos.length === 0 || roll < 0.3) {
       const key = tab.addTodo(listId, `t-${seed}-${step}`)
       // Sometimes mark the addition before its answer (design D7).
       if (rng() < 0.4) {
@@ -153,7 +207,16 @@ async function runSeed(seed: number, refetchAdvancesQueue = false): Promise<void
       }
     } else {
       const todo = todos[Math.floor(rng() * todos.length)]
-      mark(tab, todo)
+      if (roll < 0.55) {
+        mark(tab, todo)
+      } else if (roll < 0.7 && todos.length > 2) {
+        remove(tab, todo)
+      } else if (roll < 0.85) {
+        rename(tab, todo, `r-${seed}-${step}-${Math.floor(rng() * 1e6)}`)
+        // A rename queued on a pending todo is sent after its add (D7).
+      } else {
+        tab.renameList(listId, `l-${seed}-${step}`)
+      }
     }
     if (rng() < 0.3) tab.addTodo(otherId, `o-${seed}-${step}`)
     await yieldTicks(rng)
@@ -182,6 +245,13 @@ async function runSeed(seed: number, refetchAdvancesQueue = false): Promise<void
   )
   expect(shape(tabB.snapshot().details[listId].todos), `seed ${seed}: tab B`).toEqual(
     shape(serverTodos)
+  )
+  const serverName = server.getList(listId).list.name
+  expect(tabA.snapshot().lists.find((list) => list.id === listId)?.name, `seed ${seed}`).toBe(
+    serverName
+  )
+  expect(tabB.snapshot().lists.find((list) => list.id === listId)?.name, `seed ${seed}`).toBe(
+    serverName
   )
 }
 
@@ -234,6 +304,8 @@ async function refetchAdvancedQueuedVersion(refetchAdvancesQueue: boolean): Prom
     api: {
       list: async () => server.list(),
       createList: async (key, name) => server.createList(key, name),
+      renameList: async (id, version, name) => server.renameList(id, version, name),
+      deleteList: async (id, version, todoCount) => server.deleteList(id, version, todoCount),
       getList: async (id) => server.getList(id),
       addTodo: async (listId, key, title) => {
         if (listId === listTwo) await gate.promise
@@ -241,6 +313,9 @@ async function refetchAdvancedQueuedVersion(refetchAdvancesQueue: boolean): Prom
       },
       markTodo: async (listId, todoId, version, done) =>
         server.markTodo(listId, todoId, version, done),
+      renameTodo: async (listId, todoId, version, title) =>
+        server.renameTodo(listId, todoId, version, title),
+      deleteTodo: async (listId, todoId, version) => server.deleteTodo(listId, todoId, version),
     },
     newKey: keys('a'),
     timeoutMs: Number.POSITIVE_INFINITY,

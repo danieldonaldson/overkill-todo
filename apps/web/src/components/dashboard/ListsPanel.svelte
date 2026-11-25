@@ -34,6 +34,14 @@
   let addError = $state('')
   let completedOpen = $state(false)
   let retrying = $state(false)
+  let renamingList = $state(false)
+  let listName = $state('')
+  let listRenameError = $state('')
+  let renamingTodo = $state<string | null>(null)
+  let todoTitle = $state('')
+  let todoRenameError = $state('')
+  let deleteOpen = $state(false)
+  let deleteError = $state('')
   /** The list this panel submitted, to open it once it is saved (D3). */
   let submittedListKey: string | null = null
 
@@ -71,23 +79,36 @@
     }
   })
 
-  const unsavedLists = $derived(lists.unsaved.filter((item) => item.target === 'list'))
-  const unsavedTodos = $derived(
-    lists.unsaved.filter((item) => item.target === 'todo' && item.listId === selectedId)
+  const unsavedNewLists = $derived(
+    lists.unsaved.filter((item) => item.target === 'list' && item.action === 'create')
   )
+  const unsavedListRenames = $derived(
+    lists.unsaved.filter((item) => item.target === 'list' && item.action === 'rename')
+  )
+  const unsavedNewTodos = $derived(
+    lists.unsaved.filter(
+      (item) => item.target === 'todo' && item.action === 'create' && item.listId === selectedId
+    )
+  )
+  const unsavedTodoRenames = $derived(
+    lists.unsaved.filter(
+      (item) => item.target === 'todo' && item.action === 'rename' && item.listId === selectedId
+    )
+  )
+  const deleting = $derived(selectedId ? snapshot.deleting.includes(selectedId) : false)
 
   // A failed text goes back into an empty input; otherwise it is offered below
   // it, so it never replaces what is being typed (D7). Reading the input
   // untracked means emptying it later doesn't put a text in mid-edit.
   $effect(() => {
-    const item = unsavedLists[0]
+    const item = unsavedNewLists[0]
     if (!item || untrack(() => creatingName) !== '') return
     creatingName = item.text
     lists.takeUnsaved(item.id)
   })
 
   $effect(() => {
-    const item = unsavedTodos[0]
+    const item = unsavedNewTodos[0]
     if (!item || detail?.status !== 'ready' || untrack(() => addTitle) !== '') return
     addTitle = item.text
     lists.takeUnsaved(item.id)
@@ -103,16 +124,169 @@
         creatingName = ''
         addTitle = ''
         submittedListKey = null
+        renamingList = false
+        renamingTodo = null
+        deleteOpen = false
+        deleteError = ''
       }
       void lists.loadLists()
       if (selectedId) void lists.loadList(selectedId)
     })
   })
 
+  $effect(() => {
+    void selectedId
+    untrack(() => {
+      renamingList = false
+      renamingTodo = null
+      deleteOpen = false
+      deleteError = ''
+      listRenameError = ''
+      todoRenameError = ''
+    })
+  })
+
+  $effect(() => {
+    if (!deleteOpen) return
+    void tick().then(() => document.getElementById('cancel-delete-list')?.focus())
+  })
+
+  $effect(() => {
+    if (!renamingList) return
+    void tick().then(() => document.getElementById('rename-list-name')?.focus())
+  })
+
+  $effect(() => {
+    if (!renamingTodo) return
+    const id = renamingTodo
+    void tick().then(() => document.getElementById(`rename-todo-${id}`)?.focus())
+  })
+
   function submitAgain(item: UnsavedText) {
     lists.takeUnsaved(item.id)
-    if (item.target === 'list') submittedListKey = lists.createList(item.text)
-    else if (item.listId) lists.addTodo(item.listId, item.text)
+    if (item.action === 'create') {
+      if (item.target === 'list') submittedListKey = lists.createList(item.text)
+      else if (item.listId) lists.addTodo(item.listId, item.text)
+    } else if (item.target === 'list') {
+      if (item.listId) lists.renameList(item.listId, item.text)
+    } else if (item.listId && item.todoId) {
+      const todo = todos.find((candidate) => candidate.id === item.todoId)
+      if (todo) lists.renameTodo(item.listId, todo, item.text)
+    }
+  }
+
+  /** A dropped text can be submitted again only while its item is still shown. */
+  function canResubmit(item: UnsavedText): boolean {
+    if (item.action === 'create') return item.target === 'list' || !!item.listId
+    if (item.target === 'list') {
+      return !!item.listId && snapshot.lists.some((list) => list.id === item.listId)
+    }
+    return !!item.listId && !!item.todoId && todos.some((candidate) => candidate.id === item.todoId)
+  }
+
+  function beginListRename() {
+    if (!currentList) return
+    listName = currentList.name
+    listRenameError = ''
+    renamingList = true
+  }
+
+  function cancelListRename() {
+    renamingList = false
+    listRenameError = ''
+  }
+
+  function submitListRename(event: SubmitEvent) {
+    event.preventDefault()
+    if (!selectedId) return
+    const name = listName.trim()
+    listRenameError = ''
+    if (codePoints(name) === 0) {
+      listRenameError = "A list name can't be empty"
+      return
+    }
+    if (codePoints(name) > 100) {
+      listRenameError = 'A list name can be at most 100 characters'
+      return
+    }
+    lists.renameList(selectedId, name)
+    renamingList = false
+  }
+
+  function beginTodoRename(todo: TodoView) {
+    renamingTodo = todo.key ?? todo.id
+    todoTitle = todo.title
+    todoRenameError = ''
+  }
+
+  function cancelTodoRename() {
+    renamingTodo = null
+    todoRenameError = ''
+  }
+
+  function submitTodoRename(event: SubmitEvent, todo: TodoView) {
+    event.preventDefault()
+    if (!selectedId) return
+    const title = todoTitle.trim()
+    todoRenameError = ''
+    if (codePoints(title) === 0) {
+      todoRenameError = "A todo can't be empty"
+      return
+    }
+    if (codePoints(title) > 500) {
+      todoRenameError = 'A todo can be at most 500 characters'
+      return
+    }
+    lists.renameTodo(selectedId, todo, title)
+    renamingTodo = null
+  }
+
+  /** Delete one todo and keep a keyboard user's place (as after a tick). */
+  async function removeTodo(todo: TodoView, event: Event) {
+    if (!selectedId) return
+    const button = event.currentTarget as HTMLElement
+    const row = button.closest('li')
+    const group = row?.closest('ul')
+    const boxes = () => [
+      ...(group?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []),
+    ]
+    const own = row?.querySelector<HTMLInputElement>('input[type="checkbox"]')
+    const index = own ? boxes().indexOf(own) : -1
+    const focused = row?.contains(document.activeElement) ?? false
+    lists.deleteTodo(selectedId, todo)
+    await tick()
+    if (!focused || row?.isConnected) return
+    const left = group?.isConnected ? boxes() : []
+    const next = left[index] ?? left[left.length - 1]
+    ;(next ?? document.getElementById('new-todo-title'))?.focus()
+  }
+
+  function openDelete() {
+    if (!selectedId) return
+    deleteError = ''
+    deleteOpen = true
+  }
+
+  function cancelDelete() {
+    if (deleting) return
+    deleteOpen = false
+    deleteError = ''
+  }
+
+  async function confirmDelete(event: SubmitEvent) {
+    event.preventDefault()
+    // Deletion is permanent and waits for the server (D7); the queue drains
+    // first so the count the Member confirmed is the one the server sees.
+    if (!selectedId || !currentList || deleting || snapshot.queueLength > 0) return
+    deleteError = ''
+    const deleted = await lists.deleteList(selectedId, currentList.version, currentList.todo_count)
+    if (deleted) {
+      deleteOpen = false
+      navigate('/dashboard/lists')
+    } else {
+      deleteError =
+        'This list changed elsewhere. Check the name and number of todos, then confirm again.'
+    }
   }
 
   const codePoints = (text: string) => [...text.trim()].length
@@ -204,13 +378,13 @@
 
 <TelemetryBoundary name="ListsPanel" {timing}>
   <div class="grid grid-cols-[minmax(0,1fr)] gap-6 md:grid-cols-[16rem_minmax(0,1fr)]">
-    {#snippet unsavedTexts(items: UnsavedText[], canSubmit: boolean)}
+    {#snippet unsavedTexts(items: UnsavedText[], canSubmit: (item: UnsavedText) => boolean)}
       {#if items.length > 0}
         <ul class="space-y-1 rounded-md border border-border p-2 text-sm" aria-label="Not saved">
           {#each items as item (item.id)}
             <li class="flex items-center gap-2">
               <span class="min-w-0 flex-1 wrap-anywhere">{item.text}</span>
-              {#if canSubmit}
+              {#if canSubmit(item)}
                 <Button type="button" size="sm" variant="outline" onclick={() => submitAgain(item)}>
                   Try again
                 </Button>
@@ -227,6 +401,66 @@
           {/each}
         </ul>
       {/if}
+    {/snippet}
+
+    {#snippet todoRow(todo: TodoView, completed: boolean)}
+      <li class="flex flex-wrap items-center gap-2 px-3 py-2">
+        <input
+          type="checkbox"
+          class="size-4"
+          checked={todo.done}
+          aria-label={`Mark "${todo.title}" ${completed ? 'not done' : 'done'}`}
+          onchange={(event) => toggleTodo(todo, event)}
+        />
+        {#if renamingTodo === (todo.key ?? todo.id)}
+          <form
+            class="flex min-w-0 flex-1 flex-wrap items-center gap-2"
+            onsubmit={(event) => submitTodoRename(event, todo)}
+            novalidate
+          >
+            <label class="sr-only" for={`rename-todo-${todo.key ?? todo.id}`}>Todo title</label>
+            <input
+              id={`rename-todo-${todo.key ?? todo.id}`}
+              class="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm"
+              bind:value={todoTitle}
+              onkeydown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  cancelTodoRename()
+                }
+              }}
+            />
+            <Button type="submit" size="sm">Save</Button>
+            <Button type="button" size="sm" variant="ghost" onclick={cancelTodoRename}>
+              Cancel
+            </Button>
+            {#if todoRenameError}
+              <p role="alert" class="basis-full text-xs text-destructive">{todoRenameError}</p>
+            {/if}
+          </form>
+        {:else}
+          <span
+            class="min-w-0 flex-1 wrap-anywhere {completed
+              ? 'text-muted-foreground line-through'
+              : ''}"
+          >
+            {todo.title}
+          </span>
+          <div class="flex shrink-0 gap-1">
+            <Button type="button" size="sm" variant="ghost" onclick={() => beginTodoRename(todo)}>
+              Rename
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onclick={(event) => removeTodo(todo, event)}
+            >
+              Delete
+            </Button>
+          </div>
+        {/if}
+      </li>
     {/snippet}
 
     <aside aria-label="Your lists" class="min-w-0 space-y-3">
@@ -254,7 +488,8 @@
         <p id="new-list-error" role="alert" class="text-xs text-destructive">{createError}</p>
       {/if}
 
-      {@render unsavedTexts(unsavedLists, true)}
+      {@render unsavedTexts(unsavedNewLists, () => true)}
+      {@render unsavedTexts(unsavedListRenames, canResubmit)}
 
       {#if snapshot.listsStatus === 'error'}
         <div role="alert" class="rounded-md border border-border p-3 text-sm">
@@ -295,7 +530,8 @@
 
     <section aria-label="List" class="min-w-0">
       {#if detail?.status !== 'ready'}
-        {@render unsavedTexts(unsavedTodos, false)}
+        {@render unsavedTexts(unsavedNewTodos, () => false)}
+        {@render unsavedTexts(unsavedTodoRenames, () => false)}
       {/if}
       {#if malformedId || detail?.status === 'not_found'}
         <div role="alert" class="rounded-md border border-border p-6 text-sm">
@@ -334,7 +570,53 @@
         </div>
       {:else}
         <div class="space-y-4">
-          <h2 class="text-xl font-semibold wrap-anywhere">{currentList?.name ?? 'List'}</h2>
+          <div class="flex flex-wrap items-start justify-between gap-2">
+            {#if renamingList}
+              <form
+                class="flex min-w-0 flex-1 flex-wrap items-center gap-2"
+                onsubmit={submitListRename}
+                novalidate
+              >
+                <label class="sr-only" for="rename-list-name">List name</label>
+                <input
+                  id="rename-list-name"
+                  class="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xl font-semibold"
+                  bind:value={listName}
+                  onkeydown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault()
+                      cancelListRename()
+                    }
+                  }}
+                />
+                <Button type="submit" size="sm">Save</Button>
+                <Button type="button" size="sm" variant="ghost" onclick={cancelListRename}>
+                  Cancel
+                </Button>
+              </form>
+            {:else}
+              <h2 class="min-w-0 text-xl font-semibold wrap-anywhere">
+                {currentList?.name ?? 'List'}
+              </h2>
+              <div class="flex shrink-0 gap-1">
+                <Button type="button" size="sm" variant="ghost" onclick={beginListRename}>
+                  Rename
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  loading={deleting}
+                  onclick={openDelete}
+                >
+                  Delete list
+                </Button>
+              </div>
+            {/if}
+          </div>
+          {#if listRenameError}
+            <p role="alert" class="text-xs text-destructive">{listRenameError}</p>
+          {/if}
 
           {#if detail.refreshFailed}
             <div role="alert" class="flex items-center gap-2 text-sm text-muted-foreground">
@@ -362,7 +644,8 @@
             <p id="new-todo-error" role="alert" class="text-xs text-destructive">{addError}</p>
           {/if}
 
-          {@render unsavedTexts(unsavedTodos, true)}
+          {@render unsavedTexts(unsavedNewTodos, () => true)}
+          {@render unsavedTexts(unsavedTodoRenames, canResubmit)}
 
           {#if todos.length === 0}
             <div
@@ -374,16 +657,7 @@
             {#if openTodos.length > 0}
               <ul class="divide-y divide-border rounded-md border border-border" aria-label="Todos">
                 {#each openTodos as todo (todo.key ?? todo.id)}
-                  <li class="flex items-center gap-3 px-3 py-2">
-                    <input
-                      type="checkbox"
-                      class="size-4"
-                      checked={todo.done}
-                      aria-label={`Mark "${todo.title}" done`}
-                      onchange={(event) => toggleTodo(todo, event)}
-                    />
-                    <span class="min-w-0 flex-1 wrap-anywhere">{todo.title}</span>
-                  </li>
+                  {@render todoRow(todo, false)}
                 {/each}
               </ul>
             {/if}
@@ -405,20 +679,7 @@
                     aria-label="Completed todos"
                   >
                     {#each doneTodos as todo (todo.key ?? todo.id)}
-                      <li class="flex items-center gap-3 px-3 py-2">
-                        <input
-                          type="checkbox"
-                          class="size-4"
-                          checked={todo.done}
-                          aria-label={`Mark "${todo.title}" not done`}
-                          onchange={(event) => toggleTodo(todo, event)}
-                        />
-                        <span
-                          class="min-w-0 flex-1 wrap-anywhere text-muted-foreground line-through"
-                        >
-                          {todo.title}
-                        </span>
-                      </li>
+                      {@render todoRow(todo, true)}
                     {/each}
                   </ul>
                 {/if}
@@ -429,4 +690,61 @@
       {/if}
     </section>
   </div>
+
+  {#if deleteOpen && currentList}
+    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="delete-list-title"
+        aria-describedby="delete-list-detail"
+        tabindex="-1"
+        class="w-full max-w-md rounded-lg border border-border bg-background p-4 text-sm shadow-lg"
+        onkeydown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault()
+            cancelDelete()
+          }
+        }}
+      >
+        <form class="space-y-3" onsubmit={confirmDelete}>
+          <h2 id="delete-list-title" class="text-lg font-semibold wrap-anywhere">
+            Delete "{currentList.name}"?
+          </h2>
+          <p id="delete-list-detail" class="text-muted-foreground">
+            It holds {currentList.todo_count}
+            {currentList.todo_count === 1 ? 'todo' : 'todos'}, open and done. Deleting a list is
+            permanent.
+          </p>
+          {#if snapshot.queueLength > 0}
+            <p class="text-muted-foreground">Waiting for your changes to save...</p>
+          {/if}
+          {#if deleteError}
+            <p role="alert" class="text-destructive">{deleteError}</p>
+          {/if}
+          <div class="flex justify-end gap-2">
+            <Button
+              id="cancel-delete-list"
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={deleting}
+              onclick={cancelDelete}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              size="sm"
+              variant="destructive"
+              loading={deleting}
+              disabled={snapshot.queueLength > 0}
+            >
+              Delete list
+            </Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  {/if}
 </TelemetryBoundary>

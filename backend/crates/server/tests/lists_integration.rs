@@ -46,11 +46,11 @@ fn authed(method: &str, uri: &str, s: &Session, body: Option<&Value>, csrf: bool
         .method(method)
         .uri(uri)
         .header(header::COOKIE, cookie(s));
+    if csrf {
+        builder = builder.header("x-csrf-token", &s.csrf);
+    }
     if body.is_some() {
         builder = builder.header(header::CONTENT_TYPE, "application/json");
-        if csrf {
-            builder = builder.header("x-csrf-token", &s.csrf);
-        }
     }
     let body = body.map_or_else(Body::empty, |value| {
         Body::from(serde_json::to_vec(value).unwrap())
@@ -430,6 +430,27 @@ async fn unknown_and_foreign_ids_share_the_404_codes(pool: PgPool) {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert_eq!(body_json(resp.into_body()).await["code"], "list_not_found");
+
+        for (method, uri, body) in [
+            (
+                "PATCH",
+                format!("/api/v1/lists/{id}"),
+                Some(json!({ "version": 1, "name": "x" })),
+            ),
+            (
+                "DELETE",
+                format!("/api/v1/lists/{id}?version=1&todo_count=0"),
+                None,
+            ),
+        ] {
+            let resp = app
+                .clone()
+                .oneshot(authed(method, &uri, &session, body.as_ref(), true))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{method} {uri}");
+            assert_eq!(body_json(resp.into_body()).await["code"], "list_not_found");
+        }
     }
 
     let own = create_list(&app, &session, "Mine").await;
@@ -461,29 +482,305 @@ async fn unknown_and_foreign_ids_share_the_404_codes(pool: PgPool) {
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert_eq!(body_json(resp.into_body()).await["code"], "todo_not_found");
+
+        let resp = app
+            .clone()
+            .oneshot(authed(
+                "DELETE",
+                &format!("/api/v1/lists/{own_id}/todos/{todo_id}?version=1"),
+                &session,
+                None,
+                true,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(body_json(resp.into_body()).await["code"], "todo_not_found");
     }
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn cors_allows_patch(pool: PgPool) {
+async fn cors_allows_patch_and_delete(pool: PgPool) {
     let app = common::create_test_app(pool);
+    for method in ["PATCH", "DELETE"] {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("OPTIONS")
+                    .uri("/api/v1/lists")
+                    .header(header::ORIGIN, "http://localhost:4321")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, method)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let allowed = resp
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_METHODS)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(allowed.contains(method), "allow-methods: {allowed}");
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn renaming_and_deleting_lists_and_todos(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    let session = signup_and_session(&app, "e2e-rename@example.com").await;
+    let list = create_list(&app, &session, "Work").await;
+    let list_id = list["id"].as_str().unwrap().to_string();
+
+    // Rename the list, then the same name again at the old version.
     let resp = app
-        .oneshot(
-            Request::builder()
-                .method("OPTIONS")
-                .uri("/api/v1/lists")
-                .header(header::ORIGIN, "http://localhost:4321")
-                .header(header::ACCESS_CONTROL_REQUEST_METHOD, "PATCH")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .clone()
+        .oneshot(authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}"),
+            &session,
+            Some(&json!({ "version": 1, "name": "  Job " })),
+            true,
+        ))
         .await
         .unwrap();
-    let allowed = resp
-        .headers()
-        .get(header::ACCESS_CONTROL_ALLOW_METHODS)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or_default()
-        .to_string();
-    assert!(allowed.contains("PATCH"), "allow-methods: {allowed}");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let renamed = body_json(resp.into_body()).await;
+    assert_eq!(renamed["name"], "Job");
+    assert_eq!(renamed["version"], 2);
+
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}"),
+            &session,
+            Some(&json!({ "version": 1, "name": "Job" })),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(body_json(resp.into_body()).await["version"], 2);
+
+    // A different name at the old version is a 409 naming the current list.
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}"),
+            &session,
+            Some(&json!({ "version": 1, "name": "Other" })),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let stale = body_json(resp.into_body()).await;
+    assert_eq!(stale["code"], "stale");
+    assert_eq!(stale["current"]["name"], "Job");
+    assert_eq!(stale["current"]["version"], 2);
+
+    // A body without a version, and a blank name, are 400s.
+    for body in [
+        json!({ "name": "x" }),
+        json!({ "version": 2, "name": " \n " }),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(authed(
+                "PATCH",
+                &format!("/api/v1/lists/{list_id}"),
+                &session,
+                Some(&body),
+                true,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // Add a todo, rename it, and check exactly one field per PATCH.
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "POST",
+            &format!("/api/v1/lists/{list_id}/todos"),
+            &session,
+            Some(&json!({ "key": uuid::Uuid::now_v7(), "title": "Buy milk" })),
+            true,
+        ))
+        .await
+        .unwrap();
+    let todo = body_json(resp.into_body()).await;
+    let todo_id = todo["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}/todos/{todo_id}"),
+            &session,
+            Some(&json!({ "version": 1, "title": "Buy oat milk" })),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let renamed = body_json(resp.into_body()).await;
+    assert_eq!(renamed["title"], "Buy oat milk");
+    assert_eq!(renamed["version"], 2);
+    assert_eq!(renamed["done"], false);
+
+    for body in [
+        json!({ "version": 2, "title": "x", "done": true }),
+        json!({ "version": 2 }),
+        json!({ "title": "x" }),
+    ] {
+        let resp = app
+            .clone()
+            .oneshot(authed(
+                "PATCH",
+                &format!("/api/v1/lists/{list_id}/todos/{todo_id}"),
+                &session,
+                Some(&body),
+                true,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "body: {body}");
+    }
+
+    // A mark at the old version is stale and names the current title.
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}/todos/{todo_id}"),
+            &session,
+            Some(&json!({ "version": 1, "done": true })),
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let stale = body_json(resp.into_body()).await;
+    assert_eq!(stale["current"]["title"], "Buy oat milk");
+    assert_eq!(stale["current"]["version"], 2);
+    assert_eq!(stale["current"]["done"], false);
+
+    // Delete the todo: stale first, then gone, then 404 on a repeat.
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "DELETE",
+            &format!("/api/v1/lists/{list_id}/todos/{todo_id}?version=1"),
+            &session,
+            None,
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(body_json(resp.into_body()).await["current"]["version"], 2);
+
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "DELETE",
+            &format!("/api/v1/lists/{list_id}/todos/{todo_id}?version=2"),
+            &session,
+            None,
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "DELETE",
+            &format!("/api/v1/lists/{list_id}/todos/{todo_id}?version=2"),
+            &session,
+            None,
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(body_json(resp.into_body()).await["code"], "todo_not_found");
+
+    // Delete the list: a wrong count deletes nothing and names the count.
+    for title in ["one", "two"] {
+        let resp = app
+            .clone()
+            .oneshot(authed(
+                "POST",
+                &format!("/api/v1/lists/{list_id}/todos"),
+                &session,
+                Some(&json!({ "key": uuid::Uuid::now_v7(), "title": title })),
+                true,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "DELETE",
+            &format!("/api/v1/lists/{list_id}?version=2&todo_count=0"),
+            &session,
+            None,
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let stale = body_json(resp.into_body()).await;
+    assert_eq!(stale["current"]["todo_count"], 2);
+    assert_eq!(stale["current"]["name"], "Job");
+
+    // A missing version is a 400.
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "DELETE",
+            &format!("/api/v1/lists/{list_id}?todo_count=2"),
+            &session,
+            None,
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "DELETE",
+            &format!("/api/v1/lists/{list_id}?version=2&todo_count=2"),
+            &session,
+            None,
+            true,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "GET",
+            &format!("/api/v1/lists/{list_id}"),
+            &session,
+            None,
+            false,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

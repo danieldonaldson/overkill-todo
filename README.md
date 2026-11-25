@@ -192,7 +192,7 @@ just load-up            # release images behind Caddy, pinned to cores and cappe
 just load-seed          # 500 verified test Members via the real sign-up flow (about 1 min, repeatable)
 just load smoke         # 30 s, every route, zero errors allowed
 just load auth-mix      # sign in, check session, refresh, sign out at 10/s for 3 min
-just load lists         # open a list, add and tick todos, at 10/s for 3 min
+just load lists         # open a list, add, tick, rename and delete todos and lists, at 10/s for 3 min
 just load lists-large   # the same list of 1,000 todos from several tabs, at 10/s for 3 min
 just load-baseline auth-mix  # make the latest complete run the baseline (commit it)
 just load-reset         # delete the test Members

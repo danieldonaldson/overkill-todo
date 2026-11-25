@@ -21,6 +21,14 @@ const transport: ListsApi = {
     await guard()
     return api.lists.create({ key, name })
   },
+  renameList: async (id, version, name) => {
+    await guard()
+    return api.lists.rename(id, { version, name })
+  },
+  deleteList: async (id, version, todoCount) => {
+    await guard()
+    return api.lists.deleteList(id, version, todoCount)
+  },
   getList: (id) => api.lists.get(id),
   addTodo: async (listId, key, title) => {
     await guard()
@@ -29,6 +37,14 @@ const transport: ListsApi = {
   markTodo: async (listId, todoId, version, done) => {
     await guard()
     return api.lists.markTodo(listId, todoId, { version, done })
+  },
+  renameTodo: async (listId, todoId, version, title) => {
+    await guard()
+    return api.lists.renameTodo(listId, todoId, { version, title })
+  },
+  deleteTodo: async (listId, todoId, version) => {
+    await guard()
+    return api.lists.deleteTodo(listId, todoId, version)
   },
 }
 
@@ -98,9 +114,19 @@ export const lists = {
     unsaved.items = unsaved.items.filter((item) => item.id !== id)
   },
   createList: (name: string): string => engine.createList(name),
+  renameList: (listId: string, name: string): void => engine.renameList(listId, name),
+  deleteList: (listId: string, version: number, todoCount: number): Promise<boolean> =>
+    engine.deleteList(listId, version, todoCount),
   addTodo: (listId: string, title: string): string => engine.addTodo(listId, title),
   markTodo: (listId: string, todo: Parameters<ListsEngine['markTodo']>[1], done: boolean): void =>
     engine.markTodo(listId, todo, done),
+  renameTodo: (
+    listId: string,
+    todo: Parameters<ListsEngine['renameTodo']>[1],
+    title: string
+  ): void => engine.renameTodo(listId, todo, title),
+  deleteTodo: (listId: string, todo: Parameters<ListsEngine['deleteTodo']>[1]): void =>
+    engine.deleteTodo(listId, todo),
   loadLists: (): Promise<void> => engine.loadLists(),
   loadList: (id: string): Promise<void> => engine.loadList(id),
   retry: (): void => engine.retry(),

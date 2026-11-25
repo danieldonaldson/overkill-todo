@@ -12,9 +12,13 @@ import type { List, ListDetail, Todo } from '../types'
 export interface ListsApi {
   list(): Promise<List[]>
   createList(key: string, name: string): Promise<List>
+  renameList(id: string, version: number, name: string): Promise<List>
+  deleteList(id: string, version: number, todoCount: number): Promise<void>
   getList(id: string): Promise<ListDetail>
   addTodo(listId: string, key: string, title: string): Promise<Todo>
   markTodo(listId: string, todoId: string, version: number, done: boolean): Promise<Todo>
+  renameTodo(listId: string, todoId: string, version: number, title: string): Promise<Todo>
+  deleteTodo(listId: string, todoId: string, version: number): Promise<void>
 }
 
 export interface ListView {
@@ -69,13 +73,20 @@ export interface Snapshot {
   /** Queued operations in order, for tests and the broken-variant check. */
   queue: { kind: Operation['kind']; version?: number }[]
   saving: boolean
+  /** Lists with a delete awaiting the server (deletion is not optimistic). */
+  deleting: string[]
   /** The newest list this tab saved, by its client key, to open it (D3). */
   lastCreated: { key: string; id: string } | null
 }
 
 export interface NoticeRestore {
   target: 'list' | 'todo'
+  /** A create resubmits into an add field; a rename offers the text again. */
+  action: 'create' | 'rename'
+  /** The list a todo belongs to, or the list being renamed. */
   listId?: string
+  /** The todo being renamed. */
+  todoId?: string
   text: string
 }
 
@@ -90,14 +101,31 @@ type FailureKind = 'stale' | 'not_found' | 'limit' | 'invalid' | 'unknown' | 'en
 interface Failure {
   kind: FailureKind
   code?: string
-  current?: Todo
+  current?: Todo | List
   message?: string
 }
 
-type SendResult = { ok: true; value: List | Todo } | { ok: false; error: Failure }
+type SendResult = { ok: true; value: List | Todo | undefined } | { ok: false; error: Failure }
 
 type Operation =
   | { kind: 'create_list'; key: string; name: string }
+  | {
+      kind: 'rename_list'
+      listId?: string
+      listKey?: string
+      name: string
+      /** The version on screen when the Member acted. */
+      version: number
+    }
+  | {
+      kind: 'delete_list'
+      listId: string
+      name: string
+      version: number
+      todoCount: number
+      /** UI awaiting the server's answer (deletion is not optimistic). */
+      resolve?: (deleted: boolean) => void
+    }
   | { kind: 'add_todo'; key: string; listId: string; title: string }
   | {
       kind: 'mark_todo'
@@ -106,6 +134,21 @@ type Operation =
       todoKey?: string
       done: boolean
       /** The version on screen when the Member acted. */
+      version: number
+    }
+  | {
+      kind: 'rename_todo'
+      listId: string
+      todoId?: string
+      todoKey?: string
+      title: string
+      version: number
+    }
+  | {
+      kind: 'delete_todo'
+      listId: string
+      todoId?: string
+      todoKey?: string
       version: number
     }
 
@@ -156,9 +199,22 @@ function putTodo(todos: TodoView[], todo: TodoView): void {
 
 /** What the Member typed for this save, to offer again if it fails. */
 function textOf(op: Operation): NoticeRestore[] {
-  if (op.kind === 'create_list') return [{ target: 'list', text: op.name }]
-  if (op.kind === 'add_todo') return [{ target: 'todo', listId: op.listId, text: op.title }]
-  return []
+  switch (op.kind) {
+    case 'create_list':
+      return [{ target: 'list', action: 'create', text: op.name }]
+    case 'rename_list':
+      return [{ target: 'list', action: 'rename', listId: op.listId, text: op.name }]
+    case 'add_todo':
+      return [{ target: 'todo', action: 'create', listId: op.listId, text: op.title }]
+    case 'rename_todo':
+      return [
+        { target: 'todo', action: 'rename', listId: op.listId, todoId: op.todoId, text: op.title },
+      ]
+    case 'delete_list':
+    case 'delete_todo':
+    case 'mark_todo':
+      return []
+  }
 }
 
 const unloaded = (status: DetailStatus): Detail => ({
@@ -223,6 +279,8 @@ export class ListsEngine {
   /** A new todo's client key and its ID, so both name the same item. */
   private idByKey = new Map<string, string>()
   private keyById = new Map<string, string>()
+  /** A new list's client key and its ID, so a rename queued early can wait. */
+  private idByListKey = new Map<string, string>()
   private lastCreated: { key: string; id: string } | null = null
 
   constructor(options: EngineOptions) {
@@ -245,6 +303,7 @@ export class ListsEngine {
         version: 'version' in op ? op.version : undefined,
       })),
       saving: this.savesInFlight > 0,
+      deleting: this.queue.flatMap((op) => (op.kind === 'delete_list' ? [op.listId] : [])),
       lastCreated: this.lastCreated,
     }
   }
@@ -256,6 +315,38 @@ export class ListsEngine {
     this.notify()
     this.kick()
     return key
+  }
+
+  /** Rename a saved list, at the version currently on screen. */
+  renameList(listId: string, name: string): void {
+    const list = this.lists.find((candidate) => candidate.id === listId)
+    if (!list) return
+    const trimmed = name.trim()
+    if (trimmed === list.name) return
+    this.queue.push({ kind: 'rename_list', listId, name: trimmed, version: list.version })
+    this.notify()
+    this.kick()
+  }
+
+  /**
+   * Delete a list and its todos. Not optimistic: resolves `true` only when the
+   * server confirms, so the page stays and the confirmation can ask again.
+   */
+  deleteList(listId: string, version: number, todoCount: number): Promise<boolean> {
+    const list = this.lists.find((candidate) => candidate.id === listId)
+    if (!list) return Promise.resolve(true)
+    const { promise, resolve } = Promise.withResolvers<boolean>()
+    this.queue.push({
+      kind: 'delete_list',
+      listId,
+      name: list.name,
+      version,
+      todoCount,
+      resolve,
+    })
+    this.notify()
+    this.kick()
+    return promise
   }
 
   /** Add a todo at the bottom of a saved list and return its client key. */
@@ -275,6 +366,33 @@ export class ListsEngine {
       listId,
       ...(todo.id ? { todoId: todo.id } : { todoKey: todo.key }),
       done,
+      version: todo.version,
+    })
+    this.notify()
+    this.kick()
+  }
+
+  /** Rename a todo, at the version currently on screen. */
+  renameTodo(listId: string, todo: TodoView, title: string): void {
+    const trimmed = title.trim()
+    if (trimmed === todo.title) return
+    this.queue.push({
+      kind: 'rename_todo',
+      listId,
+      ...(todo.id ? { todoId: todo.id } : { todoKey: todo.key }),
+      title: trimmed,
+      version: todo.version,
+    })
+    this.notify()
+    this.kick()
+  }
+
+  /** Delete a todo, at the version currently on screen. */
+  deleteTodo(listId: string, todo: TodoView): void {
+    this.queue.push({
+      kind: 'delete_todo',
+      listId,
+      ...(todo.id ? { todoId: todo.id } : { todoKey: todo.key }),
       version: todo.version,
     })
     this.notify()
@@ -373,6 +491,9 @@ export class ListsEngine {
 
   /** Forget everything: sign-out or a different account signing in. */
   reset(): void {
+    for (const op of this.queue) {
+      if (op.kind === 'delete_list') op.resolve?.(false)
+    }
     this.epoch += 1
     this.running = false
     this.lists = []
@@ -390,6 +511,7 @@ export class ListsEngine {
     this.listsRecovery = false
     this.idByKey.clear()
     this.keyById.clear()
+    this.idByListKey.clear()
     this.lastCreated = null
     this.savesInFlight = 0
     this.notify()
@@ -416,9 +538,18 @@ export class ListsEngine {
     return op.todoId ?? (op.todoKey ? this.idByKey.get(op.todoKey) : undefined)
   }
 
+  private listIdOf(op: { listId?: string; listKey?: string }): string | undefined {
+    return op.listId ?? (op.listKey ? this.idByListKey.get(op.listKey) : undefined)
+  }
+
   /** One name per item, whether or not it had an ID when the edit was queued. */
   private itemKey(op: Operation): string {
     if (op.kind === 'create_list') return `list-key:${op.key}`
+    if (op.kind === 'rename_list' || op.kind === 'delete_list') {
+      const id = this.listIdOf(op)
+      if (id) return `list-id:${id}`
+      return `list-key:${'listKey' in op ? op.listKey : undefined}`
+    }
     const id = op.kind === 'add_todo' ? this.idByKey.get(op.key) : this.todoIdOf(op)
     if (id) return `todo-id:${id}`
     return `todo-key:${op.kind === 'add_todo' ? op.key : op.todoKey}`
@@ -471,6 +602,14 @@ export class ListsEngine {
         pending: true,
       })
     }
+    for (const op of this.queue) {
+      if (op.kind !== 'rename_list') continue
+      const id = this.listIdOf(op)
+      const target = id
+        ? lists.find((list) => list.id === id)
+        : lists.find((list) => list.key === op.listKey)
+      if (target) target.name = op.name
+    }
     return lists
   }
 
@@ -485,6 +624,22 @@ export class ListsEngine {
           done: false,
           pending: true,
         })
+        continue
+      }
+      if (op.kind === 'rename_todo' && op.listId === listId) {
+        const id = this.todoIdOf(op)
+        const index = todos.findIndex(
+          (todo) =>
+            (id != null && todo.id === id) || (op.todoKey != null && todo.key === op.todoKey)
+        )
+        if (index !== -1) {
+          todos[index].title = op.title
+          todos[index].version = op.version
+        }
+        continue
+      }
+      if (op.kind === 'delete_todo' && op.listId === listId) {
+        removeTodo(todos, { id: this.todoIdOf(op), key: op.todoKey })
         continue
       }
       if (op.kind !== 'mark_todo' || op.listId !== listId) continue
@@ -522,7 +677,7 @@ export class ListsEngine {
   private async drain(epoch: number): Promise<void> {
     while (this.queue.length > 0 && this.epoch === epoch) {
       const op = this.queue[0]
-      const listId = op.kind === 'create_list' ? null : op.listId
+      const listId = op.kind === 'create_list' ? null : (op.listId ?? null)
       this.countSave(listId)
       this.savesInFlight += 1
       if (listId) this.setInFlight(listId, 1)
@@ -568,6 +723,17 @@ export class ListsEngine {
       switch (op.kind) {
         case 'create_list':
           return { ok: true, value: await this.timeout(this.api.createList(op.key, op.name)) }
+        case 'rename_list': {
+          const listId = this.listIdOf(op)
+          if (!listId) return { ok: false, error: { kind: 'not_found' } }
+          return {
+            ok: true,
+            value: await this.timeout(this.api.renameList(listId, op.version, op.name)),
+          }
+        }
+        case 'delete_list':
+          await this.timeout(this.api.deleteList(op.listId, op.version, op.todoCount))
+          return { ok: true, value: undefined }
         case 'add_todo':
           return {
             ok: true,
@@ -580,6 +746,20 @@ export class ListsEngine {
             ok: true,
             value: await this.timeout(this.api.markTodo(op.listId, todoId, op.version, op.done)),
           }
+        }
+        case 'rename_todo': {
+          const todoId = this.todoIdOf(op)
+          if (!todoId) return { ok: false, error: { kind: 'not_found' } }
+          return {
+            ok: true,
+            value: await this.timeout(this.api.renameTodo(op.listId, todoId, op.version, op.title)),
+          }
+        }
+        case 'delete_todo': {
+          const todoId = this.todoIdOf(op)
+          if (!todoId) return { ok: false, error: { kind: 'not_found' } }
+          await this.timeout(this.api.deleteTodo(op.listId, todoId, op.version))
+          return { ok: true, value: undefined }
         }
       }
     } catch (error) {
@@ -607,7 +787,7 @@ export class ListsEngine {
   private classify(error: unknown): Failure {
     if (error instanceof ApiErrorException) {
       if (error.status === 409 && error.code === 'stale') {
-        return { kind: 'stale', current: error.current as Todo | undefined }
+        return { kind: 'stale', current: error.current as Todo | List | undefined }
       }
       const message = error.serverMessage ?? error.message
       if (error.status === 409) return { kind: 'limit', message }
@@ -620,10 +800,11 @@ export class ListsEngine {
     return { kind: 'unknown' }
   }
 
-  private applySuccess(op: Operation, value: List | Todo): void {
+  private applySuccess(op: Operation, value: List | Todo | undefined): void {
     switch (op.kind) {
       case 'create_list': {
         const list = value as List
+        this.idByListKey.set(op.key, list.id)
         this.putList(toListView(list))
         this.lastCreated = { key: op.key, id: list.id }
         // A list just created is known to be empty, so it opens at once.
@@ -635,6 +816,24 @@ export class ListsEngine {
           knownAt: ++this.clock,
           todos: [],
         })
+        break
+      }
+      case 'rename_list': {
+        const answer = value as List
+        this.putList(toListView(answer))
+        this.rebaseQueuedVersions(op, answer.version)
+        break
+      }
+      case 'delete_list': {
+        this.removeListState(op.listId)
+        // Nothing may follow a deletion of the same list.
+        for (const queued of this.queue) {
+          if (this.itemKey(queued) === this.itemKey(op)) {
+            if (queued.kind === 'delete_list') queued.resolve?.(true)
+          }
+        }
+        this.queue = this.queue.filter((queued) => this.itemKey(queued) !== this.itemKey(op))
+        op.resolve?.(true)
         break
       }
       case 'add_todo': {
@@ -658,24 +857,48 @@ export class ListsEngine {
         this.rebaseQueuedVersions(op, answer.version)
         break
       }
+      case 'rename_todo': {
+        const answer = value as Todo
+        const detail = this.details.get(op.listId)
+        if (detail) {
+          detail.knownAt = ++this.clock
+          putTodo(detail.todos, toTodoView(answer, this.keyById.get(answer.id)))
+        }
+        this.rebaseQueuedVersions(op, answer.version)
+        break
+      }
+      case 'delete_todo': {
+        const detail = this.details.get(op.listId)
+        const todoId = this.todoIdOf(op)
+        if (detail) {
+          detail.knownAt = ++this.clock
+          removeTodo(detail.todos, { id: todoId, key: op.todoKey })
+        }
+        if (todoId) {
+          this.keyById.delete(todoId)
+          this.idByKey.delete(op.todoKey ?? '')
+        }
+        break
+      }
     }
   }
 
+  private removeListState(id: string): void {
+    this.lists = this.lists.filter((list) => list.id !== id)
+    this.details.delete(id)
+    this.listRecovery.delete(id)
+    this.listReloads.delete(id)
+    if (this.lastCreated?.id === id) this.lastCreated = null
+  }
+
   /** A save that moved `n → n + 1` moves later queued edits of it to `n + 1`. */
-  private rebaseQueuedVersions(
-    op: Extract<Operation, { kind: 'mark_todo' }>,
-    newVersion: number
-  ): void {
+  private rebaseQueuedVersions(op: Operation & { version: number }, newVersion: number): void {
     const oldVersion = op.version
     if (newVersion !== oldVersion + 1) return
     const key = this.itemKey(op)
     for (const queued of this.queue) {
-      if (queued === op) continue
-      if (
-        queued.kind === 'mark_todo' &&
-        this.itemKey(queued) === key &&
-        queued.version === oldVersion
-      ) {
+      if (!('version' in queued)) continue
+      if (this.itemKey(queued) === key && queued.version === oldVersion) {
         queued.version = newVersion
       }
     }
@@ -684,32 +907,73 @@ export class ListsEngine {
   private applyFailure(op: Operation, failure: Failure): void {
     const key = this.itemKey(op)
     // Later edits of the same item depend on this one; drop them together and
-    // keep a single message.
+    // keep a single message, with every text that was dropped.
+    const dropped = this.queue.filter((queued) => this.itemKey(queued) === key)
+    for (const queued of dropped) {
+      if (queued.kind === 'delete_list') queued.resolve?.(false)
+    }
     this.queue = this.queue.filter((queued) => this.itemKey(queued) !== key)
+    const restore = [op, ...dropped].flatMap(textOf)
 
     switch (failure.kind) {
       case 'stale': {
-        if (failure.current) {
+        if (failure.current && 'name' in failure.current) {
+          this.putList(toListView(failure.current))
+          // The refusal carries the server's current counts: newer than the
+          // last loaded detail, so don't let that detail override them.
+          this.listsKnownAt = ++this.clock
+          this.onNotice({
+            text: 'This list changed elsewhere. The current version is shown.',
+            restore,
+          })
+        } else if (failure.current) {
           const todo = toTodoView(failure.current, this.keyById.get(failure.current.id))
-          const detail = op.kind === 'create_list' ? undefined : this.details.get(op.listId)
+          const listId = 'listId' in op ? op.listId : undefined
+          const detail = listId ? this.details.get(listId) : undefined
           if (detail) putTodo(detail.todos, todo)
+          this.onNotice({
+            text: 'This changed elsewhere. The current version is shown.',
+            restore,
+          })
+        } else {
+          this.onNotice({ text: 'This changed elsewhere.', restore })
         }
-        this.onNotice({ text: 'This changed elsewhere. The current version is shown.' })
+        if (op.kind === 'delete_list') op.resolve?.(false)
         break
       }
       case 'not_found': {
         if (op.kind === 'create_list') break
+        if (op.kind === 'delete_list') {
+          // Deleting something already deleted simply removes it.
+          this.removeListState(op.listId)
+          op.resolve?.(true)
+          break
+        }
+        if (op.kind === 'delete_todo') {
+          const detail = this.details.get(op.listId)
+          if (detail) removeTodo(detail.todos, { id: this.todoIdOf(op), key: op.todoKey })
+          break
+        }
+        if (op.kind === 'rename_list') {
+          const listId = this.listIdOf(op)
+          if (listId) this.listGone(listId)
+          this.onNotice({ text: 'This list was deleted elsewhere.' })
+          break
+        }
         // Adding answers 404 only for the list; marking names what is missing.
         if (op.kind === 'add_todo' || failure.code === 'list_not_found') {
           const { listId } = op
-          const dropped = [op, ...this.queue].filter(
+          const listDropped = [op, ...this.queue].filter(
             (other) => other.kind !== 'create_list' && other.listId === listId
           )
-          this.queue = this.queue.filter((queued) => !dropped.includes(queued))
+          for (const other of listDropped) {
+            if (other.kind === 'delete_list') other.resolve?.(false)
+          }
+          this.queue = this.queue.filter((queued) => !listDropped.includes(queued))
           this.listGone(listId)
           this.onNotice({
             text: 'This list was deleted elsewhere.',
-            restore: dropped.flatMap(textOf),
+            restore: listDropped.flatMap(textOf),
           })
           break
         }
@@ -720,6 +984,10 @@ export class ListsEngine {
       }
       case 'ended': {
         // The page is being replaced by the sign-in or verification page.
+        if (op.kind === 'delete_list') op.resolve?.(false)
+        for (const queued of this.queue) {
+          if (queued.kind === 'delete_list') queued.resolve?.(false)
+        }
         this.queue = []
         break
       }
@@ -727,20 +995,22 @@ export class ListsEngine {
       case 'invalid': {
         this.onNotice({
           text: failure.message ?? 'That change could not be saved.',
-          restore: textOf(op),
+          restore,
         })
+        if (op.kind === 'delete_list') op.resolve?.(false)
         break
       }
       case 'unknown': {
         this.onNotice({
           text: "Couldn't save your change. The list will refresh when the server is reachable.",
-          restore: textOf(op),
+          restore,
         })
+        if (op.kind === 'delete_list') op.resolve?.(false)
         // Tried at once, then again by retry() until the load succeeds.
         if (op.kind === 'create_list') {
           this.listsRecovery = true
           this.listsReloadPending = true
-        } else {
+        } else if (op.listId) {
           this.listRecovery.add(op.listId)
           this.listReloads.add(op.listId)
         }
@@ -752,7 +1022,10 @@ export class ListsEngine {
   /** Test-only broken variant: a refetch advances queued edits' versions. */
   private advanceQueuedVersions(listId: string, todos: Todo[]): void {
     for (const op of this.queue) {
-      if (op.kind !== 'mark_todo' || op.listId !== listId) continue
+      if (op.kind !== 'mark_todo' && op.kind !== 'rename_todo' && op.kind !== 'delete_todo') {
+        continue
+      }
+      if (op.listId !== listId) continue
       const current = todos.find(
         (todo) =>
           (op.todoId != null && todo.id === op.todoId) ||

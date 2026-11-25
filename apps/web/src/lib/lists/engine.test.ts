@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ApiErrorException } from '../api/errors'
-import { ListsEngine, type TodoView } from './engine'
+import { ApiErrorException, SessionEndedError } from '../api/errors'
+import { ListsEngine, type ListsApi, type TodoView } from './engine'
 import type { ListDetail } from '../types'
 import { MemoryListsServer, serverApi } from './memory-server'
 
@@ -30,11 +30,11 @@ function deferred<T>() {
 async function loadedEngine(
   server: MemoryListsServer,
   listId: string,
-  extra: { notices?: string[]; refetchAdvancesQueue?: boolean } = {}
+  extra: { notices?: string[]; refetchAdvancesQueue?: boolean; api?: Partial<ListsApi> } = {}
 ) {
   const notices = extra.notices ?? []
   const engine = new ListsEngine({
-    api: serverApi(server),
+    api: { ...serverApi(server), ...extra.api },
     newKey: keys(),
     timeoutMs: Number.POSITIVE_INFINITY,
     refetchAdvancesQueue: extra.refetchAdvancesQueue,
@@ -374,5 +374,182 @@ describe('lists engine', () => {
     expect(snapshot.details).toEqual({})
     expect(snapshot.queueLength).toBe(0)
     expect(snapshot.listsStatus).toBe('idle')
+  })
+
+  it('renames a todo at once and rebases a queued mark', async () => {
+    const server = new MemoryListsServer()
+    const listId = server.seededList('Work', ['one'])
+    const [todo] = server.getList(listId).todos
+    const { engine, notices } = await loadedEngine(server, listId)
+
+    engine.renameTodo(listId, todoView(todo.id), 'renamed')
+    expect(engine.snapshot().details[listId].todos[0].title).toBe('renamed')
+    engine.markTodo(listId, todoView(todo.id, { title: 'renamed' }), true)
+    await settle(engine)
+
+    expect(notices).toEqual([])
+    const stored = server.getList(listId).todos[0]
+    expect(stored).toMatchObject({ title: 'renamed', done: true, version: 3 })
+    expect(engine.snapshot().details[listId].todos[0]).toMatchObject({
+      title: 'renamed',
+      done: true,
+      version: 3,
+    })
+  })
+
+  it('shows the current title on a stale rename and keeps the text', async () => {
+    const server = new MemoryListsServer()
+    const listId = server.seededList('Work', ['one'])
+    const [todo] = server.getList(listId).todos
+    const notices: { text: string; restore?: { action: string; text: string }[] }[] = []
+    const engine = new ListsEngine({
+      api: serverApi(server),
+      newKey: keys(),
+      timeoutMs: Number.POSITIVE_INFINITY,
+      onNotice: (notice) => notices.push(notice),
+    })
+    await engine.loadLists()
+    await engine.loadList(listId)
+
+    server.renameTodo(listId, todo.id, 1, 'theirs')
+    engine.renameTodo(listId, todoView(todo.id), 'mine')
+    await settle(engine)
+
+    const view = engine.snapshot().details[listId].todos[0]
+    expect(view).toMatchObject({ title: 'theirs', version: 2 })
+    expect(notices[0].text).toContain('changed elsewhere')
+    expect(notices[0].restore).toEqual([
+      { target: 'todo', action: 'rename', listId, todoId: todo.id, text: 'mine' },
+    ])
+  })
+
+  it('deletes a todo at once, and a 404 counts as success', async () => {
+    const server = new MemoryListsServer()
+    const listId = server.seededList('Work', ['one'])
+    const [todo] = server.getList(listId).todos
+    const { engine, notices } = await loadedEngine(server, listId)
+
+    engine.deleteTodo(listId, todoView(todo.id))
+    expect(engine.snapshot().details[listId].todos).toHaveLength(0)
+    await settle(engine)
+    expect(server.getList(listId).todos).toHaveLength(0)
+
+    // Deleted in another tab meanwhile: no message, still gone.
+    server.removeTodo(listId, todo.id)
+    engine.deleteTodo(listId, todoView(todo.id))
+    await settle(engine)
+    expect(notices).toEqual([])
+    expect(engine.snapshot().details[listId].todos).toHaveLength(0)
+  })
+
+  it('restores a todo whose delete failed', async () => {
+    const server = new MemoryListsServer()
+    const listId = server.seededList('Work', ['one'])
+    const [todo] = server.getList(listId).todos
+    const base = serverApi(server)
+    const { engine, notices } = await loadedEngine(server, listId, {
+      notices: [],
+      api: {
+        ...base,
+        deleteTodo: async () => {
+          throw new ApiErrorException(null, { status: 503, message: 'boom' })
+        },
+      },
+    })
+
+    engine.deleteTodo(listId, todoView(todo.id))
+    expect(engine.snapshot().details[listId].todos).toHaveLength(0)
+    await settle(engine)
+
+    expect(engine.snapshot().details[listId].todos).toHaveLength(1)
+    expect(notices[0]).toContain("Couldn't save")
+    expect(server.getList(listId).todos).toHaveLength(1)
+  })
+
+  it('renames a list at once and deletes it only after the server confirms', async () => {
+    const server = new MemoryListsServer()
+    const listId = server.seededList('Work', ['one'])
+    const { engine, notices } = await loadedEngine(server, listId)
+
+    engine.renameList(listId, 'Job')
+    expect(engine.snapshot().lists[0].name).toBe('Job')
+    await settle(engine)
+    expect(server.getList(listId).list.name).toBe('Job')
+
+    const result = engine.deleteList(listId, 2, 1)
+    expect(engine.snapshot().deleting).toEqual([listId])
+    expect(engine.snapshot().lists).toHaveLength(1)
+    await settle(engine)
+    expect(await result).toBe(true)
+    expect(engine.snapshot().lists).toEqual([])
+    expect(engine.snapshot().details[listId]).toBeUndefined()
+    expect(notices).toEqual([])
+    expect(server.list()).toEqual([])
+  })
+
+  it('keeps a list whose delete conflicts, and shows the current count', async () => {
+    const server = new MemoryListsServer()
+    const listId = server.seededList('Work', ['one'])
+    const { engine, notices } = await loadedEngine(server, listId)
+
+    // Another tab adds a sixth todo after the confirmation was shown.
+    server.addTodo(listId, 'other-tab', 'two')
+    const result = engine.deleteList(listId, 1, 1)
+    await settle(engine)
+    expect(await result).toBe(false)
+    expect(engine.snapshot().lists[0].todo_count).toBe(2)
+    expect(notices[0]).toContain('list changed elsewhere')
+    expect(server.getList(listId).todos).toHaveLength(2)
+  })
+
+  it('renames and deletes a todo that is still being added', async () => {
+    const server = new MemoryListsServer()
+    const listId = server.seededList('Work', [])
+    const gate = deferred<void>()
+    const base = serverApi(server)
+    const engine = new ListsEngine({
+      api: {
+        ...base,
+        addTodo: async (list, key, title) => {
+          await gate.promise
+          return base.addTodo(list, key, title)
+        },
+      },
+      newKey: keys(),
+      timeoutMs: Number.POSITIVE_INFINITY,
+    })
+    await engine.loadLists()
+    await engine.loadList(listId)
+
+    engine.addTodo(listId, 'new')
+    const pending = engine.snapshot().details[listId].todos[0]
+    engine.renameTodo(listId, pending, 'renamed')
+    engine.deleteTodo(listId, { ...pending, title: 'renamed' })
+    expect(engine.snapshot().details[listId].todos).toHaveLength(0)
+    gate.resolve()
+    await settle(engine)
+
+    expect(server.getList(listId).todos).toHaveLength(0)
+    expect(engine.snapshot().details[listId].todos).toHaveLength(0)
+  })
+
+  it('deletes a list and settles its queued delete when the session ends', async () => {
+    const server = new MemoryListsServer()
+    const listId = server.seededList('Work', [])
+    const base = serverApi(server)
+    const { engine } = await loadedEngine(server, listId, {
+      notices: [],
+      api: {
+        ...base,
+        deleteList: async () => {
+          throw new SessionEndedError('Session expired')
+        },
+      },
+    })
+
+    const result = engine.deleteList(listId, 1, 0)
+    await settle(engine)
+    expect(await result).toBe(false)
+    expect(engine.snapshot().lists).toHaveLength(1)
   })
 })

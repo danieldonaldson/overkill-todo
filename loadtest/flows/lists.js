@@ -63,3 +63,31 @@ export function markTodo(client, listId, todo, done) {
     body: { version: todo.version, done },
   })
 }
+
+export function renameTodo(client, listId, todo, title) {
+  return client.request('PATCH', '/lists/{id}/todos/{todo_id}', {
+    path: `/lists/${listId}/todos/${todo.id}`,
+    body: { version: todo.version, title },
+  })
+}
+
+export function deleteTodo(client, listId, todo) {
+  return client.request('DELETE', '/lists/{id}/todos/{todo_id}', {
+    path: `/lists/${listId}/todos/${todo.id}?version=${todo.version}`,
+    expect: [204],
+  })
+}
+
+export function renameList(client, list, name) {
+  return client.request('PATCH', '/lists/{id}', {
+    path: `/lists/${list.id}`,
+    body: { version: list.version, name },
+  })
+}
+
+export function deleteList(client, list, todoCount) {
+  return client.request('DELETE', '/lists/{id}', {
+    path: `/lists/${list.id}?version=${list.version}&todo_count=${todoCount}`,
+    expect: [204],
+  })
+}

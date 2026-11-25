@@ -4,15 +4,23 @@ use domain::errors::DomainError;
 
 pub mod add_todo;
 pub mod create_list;
+pub mod delete_list;
+pub mod delete_todo;
 pub mod get_list;
 pub mod list_lists;
 pub mod mark_todo;
+pub mod rename_list;
+pub mod rename_todo;
 
 pub use add_todo::AddTodoUseCase;
 pub use create_list::CreateListUseCase;
+pub use delete_list::DeleteListUseCase;
+pub use delete_todo::DeleteTodoUseCase;
 pub use get_list::GetListUseCase;
 pub use list_lists::ListListsUseCase;
 pub use mark_todo::MarkTodoUseCase;
+pub use rename_list::RenameListUseCase;
+pub use rename_todo::RenameTodoUseCase;
 
 /// A write result the handler can turn into a status: applied, refused as
 /// stale (with the current row), or refused at a limit.

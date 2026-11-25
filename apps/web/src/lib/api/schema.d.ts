@@ -523,10 +523,20 @@ export interface paths {
         get: operations["get_list"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete a list and its todos.
+         *     # Errors
+         *     Returns `list_not_found` for a missing or foreign list.
+         */
+        delete: operations["delete_list"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Rename a list.
+         *     # Errors
+         *     Returns `list_not_found` for a missing or foreign list, or invalid input.
+         */
+        patch: operations["rename_list"];
         trace?: never;
     };
     "/api/v1/lists/{id}/todos": {
@@ -560,15 +570,20 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
         /**
-         * Mark a todo done or not done.
+         * Delete a todo.
          *     # Errors
          *     Returns the 404 codes for a missing or foreign ID.
          */
-        patch: operations["mark_todo"];
+        delete: operations["delete_todo"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename a todo, or mark it done or not done.
+         *     # Errors
+         *     Returns the 404 codes for a missing or foreign ID, or invalid input.
+         */
+        patch: operations["patch_todo"];
         trace?: never;
     };
     "/api/v1/users/me": {
@@ -1207,6 +1222,19 @@ export interface components {
          * @enum {string}
          */
         Rating: "good" | "needs-improvement" | "poor";
+        /** @description Rename a list at the version the Member saw. */
+        RenameListRequest: {
+            /**
+             * @description 1–100 trimmed characters, one line.
+             * @example Job
+             */
+            name: string;
+            /**
+             * Format: int64
+             * @description Version the client saw; a change at another version is refused.
+             */
+            version: number;
+        };
         /** @description Request to delete account. */
         RequestDeletionRequest: {
             /**
@@ -1275,6 +1303,14 @@ export interface components {
             /** @description New role: `user`, `admin`, or `super_admin`. */
             role: components["schemas"]["RoleName"];
         };
+        /** @description A `409` for a list edit based on a version or count that has since changed. */
+        StaleListConflictResponse: {
+            /** @description Always `"stale"`. */
+            code: string;
+            /** @description The list as the server now holds it, with its current counts. */
+            current: components["schemas"]["ListResponse"];
+            message: string;
+        };
         /** @description A `409` for an edit based on a version that has since changed. */
         StaleTodoConflictResponse: {
             /** @description Always `"stale"`. */
@@ -1282,6 +1318,19 @@ export interface components {
             /** @description The todo as the server now holds it. */
             current: components["schemas"]["TodoResponse"];
             message: string;
+        };
+        /** @description Rename a todo at the version the Member saw. */
+        TitleTodoPatch: {
+            /**
+             * @description 1–500 trimmed characters, one line.
+             * @example Buy oat milk
+             */
+            title: string;
+            /**
+             * Format: int64
+             * @description Version the client saw; a change at another version is refused.
+             */
+            version: number;
         };
         /** @description One todo in the data export. */
         TodoExport: {
@@ -1296,11 +1345,8 @@ export interface components {
             /** Format: int64 */
             version: number;
         };
-        /**
-         * @description Change a todo. Exactly one of `title` and `done` will be accepted; slice 1
-         *     supports only `done`.
-         */
-        TodoPatchRequest: components["schemas"]["DoneTodoPatch"];
+        /** @description Change a todo: exactly one of `title` and `done`. */
+        TodoPatchRequest: components["schemas"]["DoneTodoPatch"] | components["schemas"]["TitleTodoPatch"];
         /** @description A todo in contract order. `done` replaces the stored position. */
         TodoResponse: {
             /** Format: date-time */
@@ -2768,6 +2814,191 @@ export interface operations {
             };
         };
     };
+    delete_list: {
+        parameters: {
+            query: {
+                /** @description Version the client saw */
+                version: number;
+                /** @description Todo count the confirmation named */
+                todo_count: number;
+            };
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
+            path: {
+                /** @description List ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The list and its todos are gone */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing version or todo count */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Email address not verified */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description List not found (`list_not_found`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The list changed or its count does */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaleListConflictResponse"];
+                };
+            };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rename_list: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
+            path: {
+                /** @description List ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameListRequest"];
+            };
+        };
+        responses: {
+            /** @description The list after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListResponse"];
+                };
+            };
+            /** @description Invalid name, missing version or malformed body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Email address not verified */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description List not found (`list_not_found`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The list changed elsewhere */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaleListConflictResponse"];
+                };
+            };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     add_todo: {
         parameters: {
             query?: never;
@@ -2861,7 +3092,99 @@ export interface operations {
             };
         };
     };
-    mark_todo: {
+    delete_todo: {
+        parameters: {
+            query: {
+                /** @description Version the client saw */
+                version: number;
+            };
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
+            path: {
+                /** @description List ID */
+                id: string;
+                /** @description Todo ID */
+                todo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The todo is gone */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Missing version */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Email address not verified */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description List or todo not found (`list_not_found` / `todo_not_found`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The todo changed elsewhere */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaleTodoConflictResponse"];
+                };
+            };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    patch_todo: {
         parameters: {
             query?: never;
             header?: {
@@ -2891,7 +3214,7 @@ export interface operations {
                     "application/json": components["schemas"]["TodoResponse"];
                 };
             };
-            /** @description Missing version or malformed body */
+            /** @description Exactly one of title and done is required, with a version */
             400: {
                 headers: {
                     [name: string]: unknown;

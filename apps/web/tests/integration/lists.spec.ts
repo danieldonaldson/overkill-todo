@@ -152,3 +152,282 @@ test('a save held while another Member signs in is refused', async ({ page }) =>
   await second.getByRole('button', { name: 'Create', exact: true }).click()
   await expect(second.getByRole('heading', { name: "B's list" })).toBeVisible()
 })
+
+// --- Rename and delete conflicts (OT-013 slice 3) ---------------------------
+
+async function newList(page: Page, name: string): Promise<string> {
+  await page.goto('/dashboard/lists')
+  await page.getByLabel('New list name').fill(name)
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(page.getByRole('heading', { name })).toBeVisible()
+  return page.url()
+}
+
+async function addTodo(page: Page, title: string) {
+  await page.getByLabel('New todo title').fill(title)
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(page.getByRole('list', { name: 'Todos' }).getByText(title)).toBeVisible()
+}
+
+function todoRow(page: Page, title: string) {
+  return page.getByRole('listitem').filter({ hasText: title }).first()
+}
+
+async function renameTodo(page: Page, from: string, to: string) {
+  await todoRow(page, from).getByRole('button', { name: 'Rename' }).click()
+  await page.getByLabel('Todo title', { exact: true }).fill(to)
+  await page.getByRole('button', { name: 'Save' }).click()
+}
+
+async function deleteTodo(page: Page, title: string) {
+  await todoRow(page, title).getByRole('button', { name: 'Delete' }).click()
+}
+
+async function renameList(page: Page, to: string) {
+  await page.getByRole('button', { name: 'Rename' }).first().click()
+  await page.getByLabel('List name', { exact: true }).fill(to)
+  await page.getByRole('button', { name: 'Save' }).click()
+}
+
+async function deleteList(page: Page) {
+  await page.getByRole('button', { name: 'Delete list' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Delete list' }).click()
+  await expect(page).toHaveURL(/\/dashboard\/lists$/)
+}
+
+test('two tabs rename the same todo; the first name wins and the text stays', async ({ page }) => {
+  await register(page)
+  const address = await newList(page, 'Shared list')
+  await addTodo(page, 'Same todo')
+  const second = await page.context().newPage()
+  try {
+    await second.goto(address)
+    const secondTodos = second.getByRole('list', { name: 'Todos' })
+    await expect(secondTodos.getByText('Same todo')).toBeVisible()
+
+    await renameTodo(page, 'Same todo', 'First name')
+    await expect(page.getByRole('list', { name: 'Todos' }).getByText('First name')).toBeVisible()
+
+    const stale = second.waitForResponse(
+      (response) =>
+        response.request().method() === 'PATCH' &&
+        response.url().includes('/todos/') &&
+        response.status() === 409
+    )
+    await renameTodo(second, 'Same todo', 'Second name')
+    await stale
+
+    await expect(secondTodos.getByText('First name')).toBeVisible()
+    await expect(second.getByText(/changed elsewhere/)).toBeVisible()
+    await expect(
+      second.getByRole('list', { name: 'Not saved' }).getByText('Second name')
+    ).toBeVisible()
+  } finally {
+    await second.close()
+  }
+
+  await page.reload()
+  await expect(page.getByRole('list', { name: 'Todos' }).getByText('First name')).toBeVisible()
+})
+
+test('a rename and a tick in two tabs keep the new title and leave the todo open', async ({
+  page,
+}) => {
+  await register(page)
+  const address = await newList(page, 'Mixed list')
+  await addTodo(page, 'Same todo')
+  const second = await page.context().newPage()
+  try {
+    await second.goto(address)
+    await expect(second.getByText('Same todo')).toBeVisible()
+
+    await renameTodo(page, 'Same todo', 'Renamed')
+    const stale = second.waitForResponse((response) => response.status() === 409)
+    await second.getByRole('checkbox', { name: 'Mark "Same todo" done' }).click()
+    await stale
+
+    await expect(second.getByRole('checkbox', { name: 'Mark "Renamed" done' })).toBeVisible()
+    await expect(second.getByText(/changed elsewhere/)).toBeVisible()
+    await expect(second.getByRole('button', { name: /Completed/ })).toHaveCount(0)
+  } finally {
+    await second.close()
+  }
+})
+
+test('deleting a todo renamed elsewhere keeps it with the new title', async ({ page }) => {
+  await register(page)
+  const address = await newList(page, 'Kept list')
+  await addTodo(page, 'Same todo')
+  const second = await page.context().newPage()
+  try {
+    await second.goto(address)
+    await expect(second.getByText('Same todo')).toBeVisible()
+
+    await renameTodo(page, 'Same todo', 'Renamed')
+    const stale = second.waitForResponse((response) => response.status() === 409)
+    await deleteTodo(second, 'Same todo')
+    await stale
+
+    const todos = second.getByRole('list', { name: 'Todos' })
+    await expect(todos.getByText('Renamed')).toBeVisible()
+    await expect(second.getByText(/changed elsewhere/)).toBeVisible()
+  } finally {
+    await second.close()
+  }
+  await page.reload()
+  await expect(page.getByRole('list', { name: 'Todos' }).getByText('Renamed')).toBeVisible()
+})
+
+test('different todos renamed in two tabs both save', async ({ page }) => {
+  await register(page)
+  const address = await newList(page, 'Two todos')
+  await addTodo(page, 'Alpha')
+  await addTodo(page, 'Beta')
+  const second = await page.context().newPage()
+  try {
+    await second.goto(address)
+    await expect(second.getByText('Alpha')).toBeVisible()
+
+    await renameTodo(page, 'Alpha', 'Alpha one')
+    await renameTodo(second, 'Beta', 'Beta one')
+
+    // Tabs aren't live: each loads the other tab's rename to check both saved.
+    await page.reload()
+    await second.reload()
+    for (const tab of [page, second]) {
+      const todos = tab.getByRole('list', { name: 'Todos' })
+      await expect(todos.getByText('Alpha one')).toBeVisible()
+      await expect(todos.getByText('Beta one')).toBeVisible()
+      await expect(tab.getByText(/changed elsewhere/)).toHaveCount(0)
+    }
+  } finally {
+    await second.close()
+  }
+})
+
+test('two tabs rename the same list; the first name wins', async ({ page }) => {
+  await register(page)
+  const address = await newList(page, 'First list')
+  const second = await page.context().newPage()
+  try {
+    await second.goto(address)
+    await expect(second.getByRole('heading', { name: 'First list' })).toBeVisible()
+
+    await renameList(page, 'Kept name')
+    await expect(page.getByRole('heading', { name: 'Kept name' })).toBeVisible()
+
+    const stale = second.waitForResponse(
+      (response) => response.request().method() === 'PATCH' && response.status() === 409
+    )
+    await renameList(second, 'Other name')
+    await stale
+
+    await expect(second.getByRole('heading', { name: 'Kept name' })).toBeVisible()
+    await expect(second.getByText(/list changed elsewhere/)).toBeVisible()
+  } finally {
+    await second.close()
+  }
+})
+
+test('a todo deleted in both tabs ends gone with no error', async ({ page }) => {
+  await register(page)
+  const address = await newList(page, 'Both delete')
+  await addTodo(page, 'Same todo')
+  const second = await page.context().newPage()
+  try {
+    await second.goto(address)
+    await expect(second.getByText('Same todo')).toBeVisible()
+
+    await deleteTodo(page, 'Same todo')
+    await expect(page.getByText('No todos yet. Add your first one.')).toBeVisible()
+
+    await deleteTodo(second, 'Same todo')
+    await expect(second.getByText('No todos yet. Add your first one.')).toBeVisible()
+    await expect(second.getByText(/deleted elsewhere|Couldn't save/)).toHaveCount(0)
+  } finally {
+    await second.close()
+  }
+})
+
+test('marking a todo deleted elsewhere removes it with a note', async ({ page }) => {
+  await register(page)
+  const address = await newList(page, 'Mark gone')
+  await addTodo(page, 'Same todo')
+  const second = await page.context().newPage()
+  try {
+    await second.goto(address)
+    await expect(second.getByText('Same todo')).toBeVisible()
+
+    await deleteTodo(page, 'Same todo')
+    await expect(page.getByText('No todos yet. Add your first one.')).toBeVisible()
+
+    const gone = second.waitForResponse(
+      (response) => response.request().method() === 'PATCH' && response.status() === 404
+    )
+    await second.getByRole('checkbox', { name: 'Mark "Same todo" done' }).click()
+    await gone
+
+    await expect(second.getByText('No todos yet. Add your first one.')).toBeVisible()
+    await expect(second.getByText(/todo was deleted elsewhere/)).toBeVisible()
+  } finally {
+    await second.close()
+  }
+})
+
+test('a list deleted elsewhere shows list not found and leaves the picker', async ({ page }) => {
+  await register(page)
+  const address = await newList(page, 'Shared list')
+  await addTodo(page, 'Same todo')
+  const second = await page.context().newPage()
+  try {
+    await second.goto(address)
+    await expect(second.getByText('Same todo')).toBeVisible()
+
+    await deleteList(page)
+    await expect(page.getByText('No lists yet.', { exact: false })).toBeVisible()
+
+    const gone = second.waitForResponse(
+      (response) => response.url().includes('/todos') && response.status() === 404
+    )
+    await second.getByLabel('New todo title').fill('After delete')
+    await second.getByRole('button', { name: 'Add', exact: true }).click()
+    await gone
+
+    await expect(second.getByText('List not found')).toBeVisible()
+    await expect(second.getByText(/list was deleted elsewhere/)).toBeVisible()
+    await expect(second.getByRole('button', { name: /Shared list/ })).toHaveCount(0)
+  } finally {
+    await second.close()
+  }
+})
+
+test('a todo added before confirming a list deletion asks again with the new count', async ({
+  page,
+}) => {
+  await register(page)
+  const address = await newList(page, 'Confirm twice')
+  await addTodo(page, 'First todo')
+  const second = await page.context().newPage()
+  try {
+    await second.goto(address)
+    await expect(second.getByText('First todo')).toBeVisible()
+
+    await page.getByRole('button', { name: 'Delete list' }).click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog.getByText(/It holds\s+1\s+todo/)).toBeVisible()
+
+    await addTodo(second, 'Second todo')
+    await dialog.getByRole('button', { name: 'Delete list' }).click()
+
+    await expect(dialog.getByText(/It holds\s+2\s+todos/)).toBeVisible()
+    await expect(dialog.getByText(/check the name and number of todos/i)).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Confirm twice', exact: true })).toBeVisible()
+
+    await dialog.getByRole('button', { name: 'Cancel' }).click()
+    await page.reload()
+    await expect(page.getByText('First todo')).toBeVisible()
+    await expect(page.getByText('Second todo')).toBeVisible()
+  } finally {
+    await second.close()
+  }
+})

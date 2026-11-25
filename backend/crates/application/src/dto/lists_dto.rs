@@ -59,6 +59,35 @@ pub struct CreateListRequest {
     pub name: String,
 }
 
+/// Rename a list at the version the Member saw.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct RenameListRequest {
+    /// Version the client saw; a change at another version is refused.
+    pub version: i64,
+    /// 1–100 trimmed characters, one line.
+    #[schema(
+        pattern = "^[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000](?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])?[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*$",
+        example = "Job"
+    )]
+    pub name: String,
+}
+
+/// Confirm a list deletion with the version and todo count the Member saw.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DeleteListQuery {
+    /// Version the client saw; a change at another version deletes nothing.
+    pub version: i64,
+    /// Every todo the confirmation named, open and done.
+    pub todo_count: i64,
+}
+
+/// Delete a todo at the version the Member saw.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct DeleteTodoQuery {
+    /// Version the client saw; a change at another version deletes nothing.
+    pub version: i64,
+}
+
 /// Add a todo to a list. `key` is the client's creation key.
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct AddTodoRequest {
@@ -72,12 +101,26 @@ pub struct AddTodoRequest {
     pub title: String,
 }
 
-/// Change a todo. Exactly one of `title` and `done` will be accepted; slice 1
-/// supports only `done`.
+/// Change a todo: exactly one of `title` and `done`.
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(untagged)]
 pub enum TodoPatchRequest {
     Done(DoneTodoPatch),
+    Title(TitleTodoPatch),
+}
+
+/// Rename a todo at the version the Member saw.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TitleTodoPatch {
+    /// Version the client saw; a change at another version is refused.
+    pub version: i64,
+    /// 1–500 trimmed characters, one line.
+    #[schema(
+        pattern = "^[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000](?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])?[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*$",
+        example = "Buy oat milk"
+    )]
+    pub title: String,
 }
 
 /// Mark a todo done or not done at the version the Member saw.
@@ -97,6 +140,16 @@ pub struct StaleTodoConflictResponse {
     pub message: String,
     /// The todo as the server now holds it.
     pub current: TodoResponse,
+}
+
+/// A `409` for a list edit based on a version or count that has since changed.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct StaleListConflictResponse {
+    /// Always `"stale"`.
+    pub code: String,
+    pub message: String,
+    /// The list as the server now holds it, with its current counts.
+    pub current: ListResponse,
 }
 
 /// A `409` for an addition beyond a limit.

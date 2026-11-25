@@ -108,6 +108,52 @@ pub trait ListRepository: Send + Sync {
         title: &TodoTitle,
     ) -> Result<ListWrite<Todo>, DomainError>;
 
+    /// Renames one of `user_id`'s lists at `version`.
+    ///
+    /// The same name already stored succeeds without changing the version;
+    /// any other name at a different version is `Stale(current)`.
+    async fn rename_list(
+        &self,
+        user_id: &UserId,
+        list_id: &ListId,
+        version: i64,
+        name: &ListName,
+    ) -> Result<ListWrite<ListSummary>, DomainError>;
+
+    /// Deletes one of `user_id`'s lists when `version` and `todo_count` match.
+    ///
+    /// A changed name or todo count is `Stale(current)`, so the Member confirms
+    /// again with the current name and count (design D5).
+    async fn delete_list(
+        &self,
+        user_id: &UserId,
+        list_id: &ListId,
+        version: i64,
+        todo_count: i64,
+    ) -> Result<ListWrite<ListSummary>, DomainError>;
+
+    /// Applies a title change at `version`.
+    ///
+    /// The same title already stored succeeds without changing the version;
+    /// any other title at a different version is `Stale(current)`.
+    async fn rename_todo(
+        &self,
+        user_id: &UserId,
+        list_id: &ListId,
+        todo_id: &TodoId,
+        version: i64,
+        title: &TodoTitle,
+    ) -> Result<ListWrite<Todo>, DomainError>;
+
+    /// Deletes one of `user_id`'s todos at `version`.
+    async fn delete_todo(
+        &self,
+        user_id: &UserId,
+        list_id: &ListId,
+        todo_id: &TodoId,
+        version: i64,
+    ) -> Result<ListWrite<Todo>, DomainError>;
+
     /// Applies a done-state change at `version`.
     ///
     /// The same state already stored succeeds without changing the version;

@@ -16,10 +16,13 @@ export const ROUTE_BUDGETS = {
   // Lists (OT-013 slice 2, 2026-11-25, worst of 5 runs of each scenario)
   'GET /api/v1/lists': { p95: 25, p99: 50 }, // worst 1.44 / 1.92
   'POST /api/v1/lists': { p95: 25, p99: 50 }, // worst 3.58 / 7.26
+  'PATCH /api/v1/lists/{id}': { p95: 25, p99: 50 }, // provisional: list writes
+  'DELETE /api/v1/lists/{id}': { p95: 25, p99: 50 }, // provisional: list writes
   'GET /api/v1/lists/{id}': { p95: 25, p99: 50 }, // worst 1.19 / 1.75
   'GET /api/v1/lists/{id} (1000 todos)': { p95: 25, p99: 50 }, // worst 4.12 / 5.11
   'POST /api/v1/lists/{id}/todos': { p95: 25, p99: 50 }, // worst 2.82 / 7.31
   'PATCH /api/v1/lists/{id}/todos/{todo_id}': { p95: 25, p99: 50 }, // worst 7.29 / 7.80 (lists-large)
+  'DELETE /api/v1/lists/{id}/todos/{todo_id}': { p95: 25, p99: 50 }, // provisional: list writes
   'POST /api/v1/auth/register': { p95: 400, p99: 800 }, // provisional
   'POST /api/v1/auth/verify-email': { p95: 400, p99: 800 }, // provisional
   'POST /api/v1/auth/complete-signup': { p95: 400, p99: 800 }, // provisional
