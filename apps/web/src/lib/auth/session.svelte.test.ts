@@ -10,16 +10,21 @@ vi.mock('../api', () => ({
   },
 }))
 
+const toastError = vi.hoisted(() => vi.fn())
+vi.mock('svelte-sonner', () => ({ toast: { error: toastError } }))
+
 vi.mock('../navigation', () => ({
   navigateReplace: vi.fn(),
+  reload: vi.fn(),
 }))
 
 import { api } from '../api'
 import { ApiErrorException } from '../api/errors'
-import { navigateReplace } from '../navigation'
+import { navigateReplace, reload } from '../navigation'
+import { accountChanged } from '../api/account-changed'
 import { lists } from '../lists/store.svelte'
 import type { User } from '../types'
-import { resetSession, session, SIGN_OUT_TIMEOUT_MS } from './session.svelte'
+import { ACCOUNT_NOTICE, resetSession, session, SIGN_OUT_TIMEOUT_MS } from './session.svelte'
 import { getSessionUser, setSessionUser } from './session'
 import { getTokenExpiry, setTokenExpiry } from './token'
 
@@ -105,12 +110,38 @@ describe('another Member signing in', () => {
     switched.mockRestore()
   })
 
+  it('forgets the account and reloads with one message, however many are refused', () => {
+    vi.mocked(reload).mockClear()
+    toastError.mockClear()
+    setSessionUser(user)
+    resetSession()
+    const reset = vi.spyOn(lists, 'reset')
+    accountChanged()
+    accountChanged()
+    accountChanged()
+    expect(reload).toHaveBeenCalledTimes(1)
+    expect(reset).toHaveBeenCalledTimes(1)
+    expect(session.user).toBeNull()
+    expect(getSessionUser()).toBeNull()
+    reset.mockRestore()
+
+    // The page that loads next says so, once, even if the account can't load.
+    resetSession()
+    me.mockRejectedValue(new TypeError('offline'))
+    session.init()
+    session.init()
+    expect(toastError).toHaveBeenCalledTimes(1)
+    expect(toastError).toHaveBeenCalledWith(ACCOUNT_NOTICE)
+    expect(session.user).toBeNull()
+  })
+
   it('checks the account before a save when another tab changed it', async () => {
     me.mockResolvedValue(user)
     await session.retry()
     expect(localStorage.getItem('overkill-todo-account')).toBe('user-1')
     const create = api.lists.create as Mock
     create.mockClear()
+    vi.mocked(reload).mockClear()
     create.mockResolvedValue({ id: 'l', name: 'x', version: 1, open_count: 0, todo_count: 0 })
 
     me.mockClear()
@@ -122,12 +153,14 @@ describe('another Member signing in', () => {
     localStorage.setItem('overkill-todo-account', 'user-2')
     me.mockResolvedValue({ ...user, id: 'user-2' })
     lists.createList("A's private plan")
-    await vi.waitFor(() => expect(session.user?.id).toBe('user-2'))
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledTimes(1))
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(create).toHaveBeenCalledTimes(1)
     expect(lists.snapshot.queueLength).toBe(0)
 
     // Signed out elsewhere and not back in: nothing is sent either.
+    setSessionUser(user)
+    resetSession()
     localStorage.removeItem('overkill-todo-account')
     me.mockRejectedValue(new TypeError('offline'))
     lists.createList('still mine')

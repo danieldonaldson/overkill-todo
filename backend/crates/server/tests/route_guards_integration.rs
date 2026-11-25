@@ -187,6 +187,58 @@ async fn every_non_public_route_refuses_a_visitor(pool: PgPool) {
     );
 }
 
+/// OT-015 (threat model P-36). As a Super Admin, so no route refuses the role first.
+#[sqlx::test(migrations = "../../migrations")]
+async fn every_change_refuses_another_account(pool: PgPool) {
+    let spec = serde_json::to_value(api::openapi::openapi()).unwrap();
+    let app = common::create_test_app(pool.clone());
+    let mut open = Vec::new();
+    let mut checked = 0;
+
+    for role in ["user", "admin", "super_admin"] {
+        let user = insert_user(&pool, role).await;
+        let real = insert_user(&pool, "user").await;
+        let token = common::mint_session_jwt(user, true, role, 15);
+        for (method, path) in operations() {
+            if is_public(&method, &path) || !is_state_changing(&method) {
+                continue;
+            }
+            checked += 1;
+            let op = &spec["paths"][&path][method.to_lowercase()];
+            if op["responses"]["412"].is_null() {
+                open.push(format!("{method} {path} doesn't describe 412"));
+            }
+            let mut bodies = Vec::new();
+            // A real other account and one that doesn't exist answer alike.
+            for named in [real.to_string(), Uuid::now_v7().to_string()] {
+                let resp = app
+                    .clone()
+                    .oneshot(
+                        with_session(request(&method, &path), user, &token)
+                            .header("x-account-id", named)
+                            .body(Body::from("{}"))
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                let status = resp.status();
+                let body = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+                let json: Value = serde_json::from_slice(&body).unwrap_or_default();
+                if status != StatusCode::PRECONDITION_FAILED || json["code"] != "account_changed" {
+                    open.push(format!("{method} {path} ({role}) -> {status}"));
+                }
+                bodies.push(body);
+            }
+            assert_eq!(bodies[0], bodies[1], "{method} {path}");
+        }
+    }
+    assert!(checked > 0);
+    assert!(
+        open.is_empty(),
+        "changes without the account check: {open:#?}"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn every_admin_route_refuses_a_member(pool: PgPool) {
     let member = insert_user(&pool, "user").await;

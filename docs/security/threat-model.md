@@ -250,6 +250,18 @@ appears in a response.
   - `backend/crates/server/tests/lists_integration.rs::unknown_and_foreign_ids_share_the_404_codes`
 - Gap: Tested at the HTTP boundary with real Postgres; the eventual sharing model must revisit it, since access will no longer be ownership-only.
 
+### P-36: A change made for one account is never applied to another account signed in meanwhile
+
+- Attackers: A2
+- Strength: tested
+- Checks:
+  - `backend/crates/server/tests/route_guards_integration.rs::every_change_refuses_another_account`
+  - `backend/crates/server/tests/account_check_integration.rs::a_change_for_another_account_saves_nothing`
+  - `backend/crates/server/tests/account_check_integration.rs::the_own_account_or_none_is_handled_as_before`
+  - `backend/crates/server/tests/account_check_integration.rs::reads_and_visitors_are_unaffected`
+  - `backend/crates/api/src/middleware/auth.rs::only_a_missing_header_or_the_own_id_matches`
+- Gap: A request naming no account isn't checked, so pages opened before OT-015 keep working.
+
 ### P-10: A verification or reset code locks after 5 failed attempts; the lock window starts at 15 minutes, doubles per earlier lockout, and is capped at 24 hours; resends wait 5 minutes
 
 - Attackers: A1

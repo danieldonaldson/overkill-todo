@@ -98,6 +98,9 @@ export class ApiErrorException extends Error implements ApiError {
  */
 export class SessionEndedError extends Error {}
 
+/** The change was made for another account than the one now signed in (OT-015). */
+export class AccountChangedError extends SessionEndedError {}
+
 /** True when `err` is an {@link ApiErrorException} for an HTTP `status` response. */
 export function isApiStatus(err: unknown, status: number): boolean {
   return err instanceof ApiErrorException && err.status === status

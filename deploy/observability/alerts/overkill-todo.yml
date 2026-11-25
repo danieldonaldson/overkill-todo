@@ -198,6 +198,18 @@ groups:
           summary: '{{ $value | humanize }} session anomalies in the last hour (alerts at 3)'
           dashboard: 'http://localhost:3000/d/auth-security/auth-security?viewPanel=panel-11'
 
+      # Changes refused because another account is signed in (OT-015). A few are
+      # people sharing a browser; many mean clients send a stale account and
+      # can't save anything.
+      - alert: AccountChangedRefusalsHigh
+        expr: |
+          sum(increase(http_server_account_changed_total[15m])) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $value | humanize }} changes refused for another account in the last 15 minutes (threshold 20)'
+          dashboard: 'http://localhost:3000/d/auth-security/auth-security'
+
   # Browser problems (OT-006 Decision 11). A separate group from the backend
   # and business rules.
   - name: frontend

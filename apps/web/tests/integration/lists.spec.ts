@@ -109,3 +109,46 @@ test('an add whose answer is lost is saved once', async ({ page }) => {
   await page.reload()
   await expect(page.getByRole('list', { name: 'Todos' }).getByText('Only once')).toHaveCount(1)
 })
+
+test('a save held while another Member signs in is refused', async ({ page }) => {
+  await register(page)
+  await page.goto('/dashboard/lists')
+  await expect(page.getByText('No lists yet.', { exact: false })).toBeVisible()
+
+  // Hold the first attempt before the server sees it.
+  const held = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  let first = true
+  await page.route('**/api/v1/lists', async (route) => {
+    if (route.request().method() !== 'POST' || !first) return route.continue()
+    first = false
+    held.resolve()
+    await release.promise
+    // As when the session ran out meanwhile: the client refreshes and resends,
+    // now with the other Member's cookies.
+    await route.fulfill({ status: 401, json: { code: 'token_expired', message: 'Expired' } })
+  })
+  await page.getByLabel('New list name').fill('Only mine')
+  await page.getByRole('button', { name: 'Create', exact: true }).click()
+  await held.promise
+
+  // Member B signs up from a second tab of the same browser.
+  const second = await page.context().newPage()
+  await second.goto('/dashboard/settings')
+  await second.getByRole('button', { name: /log out/i }).click()
+  await expect(second).toHaveURL(/\/login/)
+  await register(second)
+
+  const refused = page.waitForResponse((response) => response.status() === 412)
+  release.resolve()
+  await refused
+  await expect(page.getByText(/signed in as another account now/)).toBeVisible()
+  await expect(page.getByText('Only mine')).toHaveCount(0)
+  await second.goto('/dashboard/lists')
+  await expect(second.getByText('No lists yet.', { exact: false })).toBeVisible()
+
+  // The second tab showed A until B signed up in it: B's own change is accepted.
+  await second.getByLabel('New list name').fill("B's list")
+  await second.getByRole('button', { name: 'Create', exact: true }).click()
+  await expect(second.getByRole('heading', { name: "B's list" })).toBeVisible()
+})

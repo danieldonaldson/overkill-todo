@@ -16,10 +16,12 @@ See proposal.md for why. What shapes the approach:
 ## Goals / Non-Goals
 
 **Goals:**
+
 - No authenticated change can be added later without the check.
 - Compatible in both directions: old client with new server, new with old.
 
 **Non-Goals:**
+
 - Covering reads, or detecting a switch before anything is sent.
 
 ## Hypothesis
@@ -31,6 +33,11 @@ sent, tab 2 signs in as B, the save is released. It holds if the save is refused
 and B has no list, and if the same test fails when the ID is read on each
 attempt instead. A unit test does the same for the 401 and `csrf_invalid`
 resends.
+
+**Result (slice 1):** holds. The two-tab flow on the real backend (a held save,
+B signing up in a second tab, then a 401, refresh and resend) is refused with 412
+and B has no list. The same test fails when the ID is read on each attempt. The
+resend cases are unit tests in `client.test.ts`.
 
 ## Decisions
 
@@ -71,10 +78,11 @@ the session cookie documents 412 and answers it.
 
 ### D4. The header is described, and the fuzzer sends the right one (api, apifuzz)
 
-The guard adds it as an optional header parameter. Fuzzing would otherwise send
-random UUIDs and get only 412s, so `hooks.py` sends the fuzz account's ID on most
-requests and leaves it out on some. A custom check sends another account's ID and
-expects 412.
+The guard adds it as an optional header parameter, described as a plain string:
+what isn't the account's ID is refused with 412, not as malformed input.
+`hooks.py` replaces generated values with the session's own account on three of
+four changes and leaves it out on the fourth. A custom check repeats each change
+that succeeded with another account's ID and expects 412.
 
 ### D5. The client takes the ID once (web, `lib/api/client.ts`)
 
@@ -84,17 +92,22 @@ no header. The ID is read when the request starts; list saves waiting in the
 OT-013 queue start later, so the engine's reset on an account change (its epoch)
 still drops those.
 
-### D6. One reaction, in the session store (web)
+### D6. One reaction: forget the account and reload the page (web)
 
 `HttpClient` throws `AccountChangedError`, a `SessionEndedError`, so the lists
 engine already treats it as final: no repeat and no message of its own. The
-session store registers one handler with the client. It clears the lists at once
-(`lists.switchAccount()`), drops the cached account, runs the `/auth/me` check,
-shows the toast once per switch, and lets role-dependent pages re-evaluate. Panels
-get the error through their existing handling, and must not change the account
-record on failure, as today.
+client also calls one handler, set by the session store. It clears the lists and
+the tab's cached account, leaves a one-time note in `sessionStorage`, and reloads
+the page. The dashboard header shows the note as a toast after the reload, so
+there is one message however many changes were refused. OT-013's check before a
+list save ends the same way when it finds another account.
 
-Clearing comes before the check, so nothing of A's stays if `/auth/me` fails.
+The reload is what removes everything: the Admin table, Security activity, typed
+passwords and drafts are in panels' own state. If `/auth/me` then fails, the page
+holds nothing of the previous account and the existing notice is shown.
+
+- **Rejected: clearing each panel's state.** Planned first; every panel, and each
+  new one, would have to remember to.
 
 ### D7. OT-013's marker stays until the check is deployed (web)
 

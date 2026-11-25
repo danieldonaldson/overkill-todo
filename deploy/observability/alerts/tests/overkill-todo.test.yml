@@ -501,6 +501,33 @@ tests:
         alertname: AuthSessionAnomalies
         exp_alerts: []
 
+  # OT-015: a client sending a stale account fires; a few refusals don't.
+  - name: account-changed refusals fire above the threshold
+    interval: 5m
+    input_series:
+      - series: 'http_server_account_changed_total{http_route="/api/v1/lists"}'
+        values: '0+10x12 120x20'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: AccountChangedRefusalsHigh
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: '30 changes refused for another account in the last 15 minutes (threshold 20)'
+              dashboard: 'http://localhost:3000/d/auth-security/auth-security'
+      - eval_time: 100m
+        alertname: AccountChangedRefusalsHigh
+        exp_alerts: []
+  - name: a few account-changed refusals do not fire
+    interval: 5m
+    input_series:
+      - series: 'http_server_account_changed_total{http_route="/api/v1/lists"}'
+        values: '0+2x20'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: AccountChangedRefusalsHigh
+        exp_alerts: []
+
   # Spec scenario "Error spike after a release": 1 dashboard page load a
   # second, 5% of them throwing in release r2 for 20 minutes, then none.
   # Pending at first, firing once held for 10m, quiet again once errors stop.

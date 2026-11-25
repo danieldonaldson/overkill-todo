@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Extension,
     extract::{FromRequestParts, Request},
-    http::{HeaderMap, request::Parts},
+    http::{HeaderMap, Method, request::Parts},
     middleware::Next,
     response::Response,
 };
@@ -18,6 +18,33 @@ use crate::{
     error::AppError,
     verify_jwt,
 };
+
+/// Header naming the account a change was made for (OT-015 design D1).
+pub(crate) const ACCOUNT_ID_HEADER: &str = "x-account-id";
+
+/// Methods the account check applies to: reads are answered for the session.
+pub(crate) const fn is_state_changing(method: &Method) -> bool {
+    matches!(
+        *method,
+        Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    )
+}
+
+/// Whether the account named in the request, if any, is the session's. Only a
+/// missing header passes unchecked: an empty, repeated or malformed one must
+/// not count as "not given".
+fn account_matches(headers: &HeaderMap, user_id: &UserId) -> bool {
+    let mut named = headers.get_all(ACCOUNT_ID_HEADER).iter();
+    match (named.next(), named.next()) {
+        (None, _) => true,
+        (Some(id), None) => id
+            .to_str()
+            .ok()
+            .and_then(|id| id.parse::<uuid::Uuid>().ok())
+            .is_some_and(|id| id == *user_id.as_uuid()),
+        (Some(_), Some(_)) => false,
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct AuthUser {
@@ -141,7 +168,8 @@ pub(crate) fn ensure_authenticated(keys: &TokenKeyring, req: &mut Request) -> Op
 
 /// # Errors
 ///
-/// Returns an error if the authentication token is missing, invalid, or expired.
+/// Returns an error if the authentication token is missing, invalid, or expired,
+/// or if a state-changing request names another account ([`ACCOUNT_ID_HEADER`]).
 pub async fn auth_middleware(mut req: Request, next: Next) -> Result<Response, AppError> {
     // Reuse the principal if an earlier layer (the CSRF middleware) already
     // verified the session token, so the JWT is verified at most once per
@@ -159,6 +187,16 @@ pub async fn auth_middleware(mut req: Request, next: Next) -> Result<Response, A
         // Record user_id on the current span for trace correlation.
         tracing::Span::current().record("user_id", user.user_id.to_string());
         req.extensions_mut().insert(user);
+    }
+
+    if is_state_changing(req.method()) {
+        let user = req
+            .extensions()
+            .get::<AuthUser>()
+            .ok_or_else(AppError::token_missing)?;
+        if !account_matches(req.headers(), &user.user_id) {
+            return Err(AppError::AccountChanged);
+        }
     }
 
     Ok(next.run(req).await)
@@ -216,6 +254,31 @@ mod tests {
     use super::*;
     use axum::http::header::{AUTHORIZATION, COOKIE};
     use jiff::Timestamp;
+
+    #[test]
+    fn only_a_missing_header_or_the_own_id_matches() {
+        let user = UserId::new();
+        let own = user.as_uuid().to_string();
+        let headers = |values: &[&str]| {
+            let mut map = HeaderMap::new();
+            for value in values {
+                map.append(ACCOUNT_ID_HEADER, value.parse().unwrap());
+            }
+            map
+        };
+        assert!(account_matches(&headers(&[]), &user));
+        assert!(account_matches(&headers(&[&own]), &user));
+        let other = UserId::new().as_uuid().to_string();
+        for refused in [
+            vec![other.as_str()],
+            vec![""],
+            vec!["not-a-uuid"],
+            vec![own.as_str(), own.as_str()],
+            vec![own.as_str(), other.as_str()],
+        ] {
+            assert!(!account_matches(&headers(&refused), &user), "{refused:?}");
+        }
+    }
 
     #[test]
     fn changed_role_invalidates_session() {

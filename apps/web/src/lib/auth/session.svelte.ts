@@ -17,9 +17,11 @@
  * leaves the Member on the page with `status = 'unreachable'`.
  */
 
+import { toast } from 'svelte-sonner'
 import { api } from '../api'
+import { onAccountChanged } from '../api/account-changed'
 import { ApiErrorException, SessionEndedError } from '../api/errors'
-import { navigateReplace } from '../navigation'
+import { navigateReplace, reload } from '../navigation'
 import type { User } from '../types'
 import {
   ACCOUNT_KEY,
@@ -45,6 +47,8 @@ const state = $state<{ user: User | null; status: SessionStatus }>({
 
 /** The in-flight or settled `/auth/me` check for this document, if started. */
 let check: Promise<void> | null = null
+/** Set once another account was found: the page is being reloaded. */
+let leaving = false
 /** Set by `signOut()` so a late `/auth/me` answer can't restore the user. */
 let signedOut = false
 
@@ -61,10 +65,42 @@ function forgetOtherAccount(next: User): void {
   if (state.user && state.user.id !== next.id) lists.switchAccount()
 }
 
+const ACCOUNT_NOTICE_KEY = 'overkill-todo-account-notice'
+export const ACCOUNT_NOTICE = "You're signed in as another account now. Nothing was saved."
+
+/**
+ * A change was refused because another account is signed in (OT-015 design D6).
+ * The reload drops what every panel holds; only a note for the message survives.
+ */
+function leaveAccount(): void {
+  if (signedOut || leaving) return
+  leaving = true
+  lists.reset()
+  state.user = null
+  state.status = 'unconfirmed'
+  clearSessionUser()
+  try {
+    sessionStorage.setItem(ACCOUNT_NOTICE_KEY, '1')
+  } catch {
+    // Blocked storage: the account still changes, without the message.
+  }
+  reload()
+}
+
+function showAccountNotice(): void {
+  try {
+    if (sessionStorage.getItem(ACCOUNT_NOTICE_KEY) === null) return
+    sessionStorage.removeItem(ACCOUNT_NOTICE_KEY)
+  } catch {
+    return
+  }
+  toast.error(ACCOUNT_NOTICE)
+}
+
 async function runCheck(): Promise<void> {
   try {
     const user = await api.auth.me()
-    if (signedOut) return
+    if (signedOut || leaving) return
     forgetOtherAccount(user)
     state.user = user
     confirmSessionUser(user)
@@ -103,6 +139,7 @@ export const session = {
       navigateReplace('/login')
       return false
     }
+    showAccountNotice()
     void session.revalidate()
     return true
   },
@@ -182,16 +219,20 @@ export const session = {
 async function ensureSameAccount(): Promise<void> {
   const before = state.user?.id
   const confirmed = getConfirmedAccount()
-  if (signedOut) throw new SessionEndedError('Signed out')
+  if (signedOut || leaving) throw new SessionEndedError('Signed out')
   if (confirmed === undefined || (before && confirmed === before)) return
   check = runCheck()
   await check
-  if (signedOut) throw new SessionEndedError('Signed out')
+  if (signedOut || leaving) throw new SessionEndedError('Signed out')
   if (!state.user || state.status !== 'confirmed') throw new TypeError('Account not confirmed')
-  if (before && state.user.id !== before) throw new SessionEndedError('Another account')
+  if (before && state.user.id !== before) {
+    leaveAccount()
+    throw new SessionEndedError('Another account')
+  }
 }
 
 lists.guardSaves(ensureSameAccount)
+onAccountChanged(leaveAccount)
 
 if (typeof window !== 'undefined') {
   // Another tab confirmed a different account: drop this one's lists at once.
@@ -207,4 +248,5 @@ export function resetSession(): void {
   state.status = 'unconfirmed'
   check = null
   signedOut = false
+  leaving = false
 }

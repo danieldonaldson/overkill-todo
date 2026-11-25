@@ -73,6 +73,10 @@ pub enum AppError {
     /// A todo that doesn't exist in the named list, or belongs to another Member.
     #[error("Todo not found")]
     TodoNotFound,
+    /// The change was made for another account than the session's (OT-015).
+    /// Names neither account.
+    #[error("Account changed")]
+    AccountChanged,
     /// The request body is over the route's size limit (`413`).
     #[error("Payload too large")]
     PayloadTooLarge,
@@ -179,6 +183,7 @@ impl AppError {
             Self::NotFound(_) => "not_found",
             Self::ListNotFound => "list_not_found",
             Self::TodoNotFound => "todo_not_found",
+            Self::AccountChanged => "account_changed",
             Self::PayloadTooLarge => "payload_too_large",
             Self::Authorization { code, .. } | Self::Forbidden { code, .. } => code,
             Self::Conflict(_) => "conflict",
@@ -310,6 +315,10 @@ impl IntoResponse for AppError {
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
             Self::ListNotFound => (StatusCode::NOT_FOUND, "List not found".to_string()),
             Self::TodoNotFound => (StatusCode::NOT_FOUND, "Todo not found".to_string()),
+            Self::AccountChanged => (
+                StatusCode::PRECONDITION_FAILED,
+                "Another account is signed in; nothing was changed".to_string(),
+            ),
             Self::PayloadTooLarge => (
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "Request body too large".to_string(),

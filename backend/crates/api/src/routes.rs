@@ -41,6 +41,7 @@ use super::{
         profile_handler::{self, ProfileHandlerDeps},
         verification_handler::{self, VerificationHandlerDeps},
     },
+    middleware::auth::ACCOUNT_ID_HEADER,
     middleware::csrf::is_excluded_path,
     middleware::{
         auth_middleware, csrf_middleware,
@@ -49,8 +50,8 @@ use super::{
         trace_id_middleware,
     },
     openapi::{
-        CSRF_HEADER_SCHEME, SESSION_COOKIE_SCHEME, add_response_if_missing, for_each_operation,
-        require_scheme,
+        CSRF_HEADER_SCHEME, SESSION_COOKIE_SCHEME, add_account_header, add_response_if_missing,
+        for_each_operation, require_scheme,
     },
     state::AppState,
 };
@@ -107,6 +108,7 @@ fn build_cors(frontend_origin: &str) -> CorsLayer {
         ])
         .allow_headers([
             HeaderName::from_static("content-type"),
+            HeaderName::from_static(ACCOUNT_ID_HEADER),
             HeaderName::from_static("x-csrf-token"),
             HeaderName::from_static("x-device-fingerprint"),
             HeaderName::from_static("x-request-id"),
@@ -122,7 +124,8 @@ fn build_cors(frontend_origin: &str) -> CorsLayer {
 /// them in the same order the `route_layer`s were applied before (the last call
 /// runs first).
 trait Guarded: Sized {
-    /// `auth_middleware`: rejects a missing, invalid or expired session.
+    /// `auth_middleware`: rejects a missing, invalid or expired session, and a
+    /// change made for another account than the session's (OT-015).
     fn require_auth(self) -> Self;
     /// `require_verified_email`: rejects an account whose email isn't verified.
     fn require_verified_email(self) -> Self;
@@ -148,6 +151,10 @@ struct Guard<'a> {
     scheme: Option<&'a str>,
 }
 
+fn is_change(method: &str) -> bool {
+    matches!(method, "POST" | "PUT" | "PATCH" | "DELETE")
+}
+
 fn document<S: Clone + Send + Sync + 'static>(
     mut router: OpenApiRouter<S>,
     applies: impl Fn(&str, &str) -> bool,
@@ -166,15 +173,29 @@ fn document<S: Clone + Send + Sync + 'static>(
 
 impl<S: Clone + Send + Sync + 'static> Guarded for OpenApiRouter<S> {
     fn require_auth(self) -> Self {
-        document(
-            self.route_layer(middleware::from_fn(auth_middleware)),
-            |_, _| true,
+        let mut router = document(
+            document(
+                self.route_layer(middleware::from_fn(auth_middleware)),
+                |_, _| true,
+                &Guard {
+                    status: "401",
+                    description: "Not signed in, or the session has expired",
+                    scheme: Some(SESSION_COOKIE_SCHEME),
+                },
+            ),
+            |method, _| is_change(method),
             &Guard {
-                status: "401",
-                description: "Not signed in, or the session has expired",
-                scheme: Some(SESSION_COOKIE_SCHEME),
+                status: "412",
+                description: "Made for another account than the one signed in (`account_changed`); nothing was changed",
+                scheme: None,
             },
-        )
+        );
+        for_each_operation(router.get_openapi_mut(), |method, _, op| {
+            if is_change(method) {
+                add_account_header(op);
+            }
+        });
+        router
     }
 
     fn require_verified_email(self) -> Self {
@@ -228,9 +249,7 @@ impl<S: Clone + Send + Sync + 'static> Guarded for OpenApiRouter<S> {
     fn require_csrf(self) -> Self {
         document(
             self.route_layer(middleware::from_fn(csrf_middleware)),
-            |method, path| {
-                matches!(method, "POST" | "PUT" | "PATCH" | "DELETE") && !is_excluded_path(path)
-            },
+            |method, path| is_change(method) && !is_excluded_path(path),
             &Guard {
                 status: "403",
                 description: "Missing or invalid CSRF token (`csrf_invalid`)",

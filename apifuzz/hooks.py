@@ -15,6 +15,7 @@ Member: the old one may have a changed password or be scheduled for deletion.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import itertools
 import json
@@ -45,6 +46,8 @@ AUTH_COOKIE = "__Host-auth_token"
 REFRESH_COOKIE = "__Host-refresh_token"
 CSRF_COOKIE = "__Host-csrf_token"
 CSRF_HEADER = "X-CSRF-Token"
+ACCOUNT_HEADER = "X-Account-Id"
+CHANGING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 class FuzzSetupError(RuntimeError):
@@ -157,6 +160,12 @@ def _requires(operation: Any, scheme: str) -> bool:
     return bool(requirements) and all(scheme in r for r in requirements)
 
 
+def account_id(token: str) -> str:
+    """The account a session token is for. Read, not verified: it's our own token."""
+    payload = token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))["sub"]
+
+
 # ── Auth provider ────────────────────────────────────────────────────────────
 
 
@@ -177,6 +186,7 @@ def _identity_for(operation: Any) -> str:
 
 
 if PASS in ("signed-in", "member-on-admin"):
+    _account_headers = itertools.count()
 
     # Cached for the whole run (`None` would mean "never cache"); only a 401
     # invalidates the session, which Schemathesis then replays once.
@@ -200,6 +210,12 @@ if PASS in ("signed-in", "member-on-admin"):
             case.headers = case.headers or {}
             case.headers[CSRF_HEADER] = data.csrf
             case.headers["X-Device-Fingerprint"] = FINGERPRINT
+            # Generated values would only ever get 412 (OT-015). The session's own
+            # account on most changes, none on every fourth.
+            case.headers.pop(ACCOUNT_HEADER, None)
+            case.headers.pop(ACCOUNT_HEADER.lower(), None)
+            if case.method.upper() in CHANGING_METHODS and next(_account_headers) % 4:
+                case.headers[ACCOUNT_HEADER] = account_id(data.cookies[AUTH_COOKIE])
 
 
 # ── Checks ───────────────────────────────────────────────────────────────────
@@ -315,6 +331,26 @@ if PASS == "signed-in":
             raise AssertionError(
                 f"without {CSRF_HEADER}, {case.method} {case.formatted_path} returned "
                 f"{probe.status_code}, not 403"
+            )
+        return None
+
+
+    @schemathesis.check
+    def account_enforced(ctx: Any, response: Any, case: Any) -> bool | None:
+        """A change that succeeded is refused with 412 for another account (OT-015)."""
+        if not (
+            _own_method(case)
+            and 200 <= response.status_code < 300
+            and case.method.upper() in CHANGING_METHODS
+            and _requires(case.operation, "session_cookie")
+        ):
+            return None
+        headers = {k: v for k, v in (case.headers or {}).items() if k.lower() != ACCOUNT_HEADER.lower()}
+        headers[ACCOUNT_HEADER] = "00000000-0000-4000-8000-000000000000"
+        probe = case.derive(headers=headers, cookies=dict(case.cookies or {})).call(base_url=BASE_URL)
+        if probe.status_code != 412:
+            raise AssertionError(
+                f"for another account, {case.method} {case.formatted_path} returned {probe.status_code}, not 412"
             )
         return None
 

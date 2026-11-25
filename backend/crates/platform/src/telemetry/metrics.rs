@@ -52,6 +52,7 @@ pub fn global_meter() -> Meter {
 #[derive(Clone)]
 pub struct HttpMetrics {
     duration: Histogram<f64>,
+    account_changed: Counter<u64>,
 }
 
 impl HttpMetrics {
@@ -63,7 +64,14 @@ impl HttpMetrics {
             .with_description("Duration of HTTP server requests")
             .with_boundaries(HTTP_DURATION_BUCKETS.to_vec())
             .build();
-        Self { duration }
+        let account_changed = meter
+            .u64_counter("http.server.account_changed")
+            .with_description("Changes refused because another account is signed in")
+            .build();
+        Self {
+            duration,
+            account_changed,
+        }
     }
 
     /// Instruments on the global meter.
@@ -76,6 +84,11 @@ impl HttpMetrics {
     /// `UNMATCHED_ROUTE`), never a raw path, so the label set
     /// stays bounded.
     pub fn record(&self, route: &str, method: &str, status: u16, seconds: f64) {
+        // 412 has no other meaning in this API (OT-015 design D2).
+        if status == 412 {
+            self.account_changed
+                .add(1, &[KeyValue::new("http.route", route.to_owned())]);
+        }
         self.duration.record(
             seconds,
             &[
@@ -494,6 +507,18 @@ mod tests {
             ]
         );
         assert_eq!(points[0].1, 1);
+    }
+
+    #[test]
+    fn only_a_412_counts_as_account_changed() {
+        let (provider, exporter) = in_memory();
+        let metrics = HttpMetrics::new(&provider.meter(METER_NAME));
+        metrics.record("/lists", "POST", 412, 0.01);
+        metrics.record("/lists", "POST", 409, 0.01);
+        provider.force_flush().unwrap();
+
+        let points = u64_sum_points(&exporter, "http.server.account_changed");
+        assert_eq!(points, vec![(attrs(&[("http.route", "/lists")]), 1)]);
     }
 
     #[test]

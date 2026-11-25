@@ -19,3 +19,8 @@ export function redirect(url: string): void {
 export function goBack(): void {
   window.history.back()
 }
+
+/** Load this page again, dropping everything it holds in memory. */
+export function reload(): void {
+  window.location.reload()
+}

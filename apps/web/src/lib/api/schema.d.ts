@@ -1563,7 +1563,10 @@ export interface operations {
     set_user_role: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
             path: {
                 /** @description User id */
                 id: string;
@@ -1614,6 +1617,15 @@ export interface operations {
             };
             /** @description User not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1989,7 +2001,10 @@ export interface operations {
     oauth_unlink: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
             path: {
                 /** @description OAuth provider to unlink */
                 provider: components["schemas"]["OAuthProviderName"];
@@ -2034,6 +2049,15 @@ export interface operations {
             };
             /** @description Provider not linked */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -2598,7 +2622,10 @@ export interface operations {
     create_list: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2651,6 +2678,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LimitConflictResponse"];
+                };
+            };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
             /** @description Internal error */
@@ -2735,7 +2771,10 @@ export interface operations {
     add_todo: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
             path: {
                 /** @description List ID */
                 id: string;
@@ -2802,6 +2841,15 @@ export interface operations {
                     "application/json": components["schemas"]["LimitConflictResponse"];
                 };
             };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal error */
             500: {
                 headers: {
@@ -2816,7 +2864,10 @@ export interface operations {
     mark_todo: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
             path: {
                 /** @description List ID */
                 id: string;
@@ -2885,6 +2936,15 @@ export interface operations {
                     "application/json": components["schemas"]["StaleTodoConflictResponse"];
                 };
             };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal error */
             500: {
                 headers: {
@@ -2899,7 +2959,10 @@ export interface operations {
     request_deletion: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2954,6 +3017,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal error */
             500: {
                 headers: {
@@ -2968,7 +3040,10 @@ export interface operations {
     cancel_deletion: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3012,6 +3087,15 @@ export interface operations {
             };
             /** @description User not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3150,7 +3234,10 @@ export interface operations {
     change_password: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3203,6 +3290,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
             /** @description Internal error */
             500: {
                 headers: {
@@ -3217,7 +3313,10 @@ export interface operations {
     set_password: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -3263,6 +3362,15 @@ export interface operations {
             };
             /** @description User not found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
                 headers: {
                     [name: string]: unknown;
                 };

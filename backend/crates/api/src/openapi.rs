@@ -7,11 +7,14 @@
 //! `backend/openapi.json` (`just api-spec`).
 
 use utoipa::OpenApi;
+use utoipa::openapi::path::{Operation, Parameter, ParameterBuilder, ParameterIn};
+use utoipa::openapi::schema::{ObjectBuilder, Type};
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityRequirement, SecurityScheme};
-use utoipa::openapi::{Components, Content, Ref, RefOr, Response, path::Operation};
+use utoipa::openapi::{Components, Content, Ref, RefOr, Required, Response};
 
 use crate::cookies::{AUTH_COOKIE, CSRF_COOKIE, REFRESH_COOKIE};
 use crate::error::ErrorResponse;
+use crate::middleware::auth::ACCOUNT_ID_HEADER;
 use crate::middleware::csrf::CSRF_TOKEN_HEADER;
 use application::dto::{AuditKindFilter, OAuthMode};
 
@@ -80,6 +83,25 @@ pub(crate) fn add_response_if_missing(op: &mut Operation, status: &str, descript
         .or_insert_with(|| RefOr::T(Response::new(description)));
 }
 
+/// Describe the optional account header on a guarded state-changing operation.
+///
+/// A plain string: what isn't the session's account ID is refused with 412, not
+/// as malformed input.
+pub(crate) fn add_account_header(op: &mut Operation) {
+    let header: Parameter = ParameterBuilder::new()
+        .name(ACCOUNT_ID_HEADER)
+        .parameter_in(ParameterIn::Header)
+        .required(Required::False)
+        .description(Some(
+            "ID of the account the change was made for. If given, it must be the signed-in account's.",
+        ))
+        .schema(Some(ObjectBuilder::new().schema_type(Type::String)))
+        .build();
+    op.parameters
+        .get_or_insert_with(Vec::new)
+        .push(RefOr::T(header));
+}
+
 /// Add `scheme` to every security requirement of `op`, so all of them need it
 /// (`OpenAPI` requirement objects are AND within, OR across).
 pub(crate) fn require_scheme(op: &mut Operation, scheme: &str) {
@@ -133,8 +155,11 @@ pub fn finalize(mut spec: utoipa::openapi::OpenApi) -> utoipa::openapi::OpenApi 
     for_each_operation(&mut spec, |_, _, op| {
         // Every body, query and path extractor rejects malformed input with 400
         // (`ValidatedJson`, `ApiJson`, `ApiQuery`, `ApiPath`).
-        let takes_input =
-            op.request_body.is_some() || op.parameters.as_ref().is_some_and(|p| !p.is_empty());
+        let takes_input = op.request_body.is_some()
+            || op.parameters.as_ref().is_some_and(|p| {
+                p.iter()
+                    .any(|p| !matches!(p, RefOr::T(p) if p.name == ACCOUNT_ID_HEADER))
+            });
         if takes_input {
             add_response_if_missing(op, "400", "Malformed or invalid request");
         }

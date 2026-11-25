@@ -8,6 +8,7 @@ vi.mock('../auth/fingerprint', () => ({
 }))
 vi.mock('../auth/session', () => ({
   clearSessionUser: vi.fn(),
+  getSessionUser: vi.fn(() => null),
 }))
 vi.mock('../auth/token', () => ({
   ensureValidToken: vi.fn(() => Promise.resolve(true)),
@@ -19,9 +20,10 @@ vi.mock('../auth/token', () => ({
 
 import { getApiBaseUrl, getLastTraceId, HttpClient } from './client'
 import { setApiFailureHandlers } from '../telemetry/api-failures'
-import { ApiErrorException, isApiStatus } from './errors'
+import { AccountChangedError, ApiErrorException, isApiStatus } from './errors'
 import { clearTokenExpiry, ensureValidToken, getTokenExpiry, setTokenExpiry } from '../auth/token'
-import { clearSessionUser } from '../auth/session'
+import { clearSessionUser, getSessionUser } from '../auth/session'
+import { onAccountChanged } from './account-changed'
 import { redirect } from '../navigation'
 
 interface FakeResponseInit {
@@ -429,5 +431,77 @@ describe('HttpClient API failure reports (OT-006)', () => {
     await expect(new HttpClient().request('/items')).resolves.toEqual({ id: 'ok' })
     mockFetch.mockResolvedValueOnce(fakeResponse({ status: 500, body: { message: 'boom' } }))
     await expect(new HttpClient().request('/items')).rejects.toBeInstanceOf(ApiErrorException)
+  })
+})
+
+describe('the account a change is made for (OT-015)', () => {
+  const sent = (call: number) =>
+    (mockFetch.mock.calls[call][1].headers as Record<string, string>)['x-account-id']
+  const signIn = (id: string) => (getSessionUser as Mock).mockReturnValue({ id })
+
+  beforeEach(() => {
+    document.cookie = '__Host-csrf_token=csrf-abc; path=/; secure'
+    signIn('account-a')
+  })
+  afterEach(() => (getSessionUser as Mock).mockReturnValue(null))
+
+  it('is sent with changes and not with reads', async () => {
+    mockFetch.mockResolvedValue(fakeResponse())
+    const client = new HttpClient()
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+      await client.request('/items', { method })
+    }
+    await client.request('/items')
+    expect([0, 1, 2, 3].map(sent)).toEqual(Array(4).fill('account-a'))
+    expect(sent(4)).toBeUndefined()
+  })
+
+  it('is left out while the account is unknown', async () => {
+    ;(getSessionUser as Mock).mockReturnValue(null)
+    mockFetch.mockResolvedValue(fakeResponse())
+    await new HttpClient().request('/items', { method: 'POST' })
+    expect(sent(0)).toBeUndefined()
+  })
+
+  it('is kept when the session is refreshed before sending', async () => {
+    ;(ensureValidToken as Mock).mockImplementation(async () => {
+      signIn('account-b')
+      return true
+    })
+    mockFetch.mockResolvedValue(fakeResponse())
+    await new HttpClient().request('/items', { method: 'POST' })
+    expect(sent(0)).toBe('account-a')
+  })
+
+  it.each([
+    ['a 401', { status: 401 }],
+    ['an invalid CSRF token', { status: 403, body: { code: 'csrf_invalid', message: 'x' } }],
+  ])('is kept when sent again after %s', async (_name, refusal) => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (url.endsWith('/auth/refresh')) {
+        signIn('account-b')
+        return fakeResponse({ body: { expires_at: 1 } })
+      }
+      return fakeResponse(mockFetch.mock.calls.length === 1 ? refusal : {})
+    })
+    await new HttpClient().request('/items', { method: 'POST' })
+    const items = mockFetch.mock.calls.flatMap(([url], i) =>
+      String(url).endsWith('/items') ? [sent(i)] : []
+    )
+    expect(items).toEqual(['account-a', 'account-a'])
+  })
+
+  it('reports the refusal once and never sends again', async () => {
+    const handle = vi.fn()
+    onAccountChanged(handle)
+    mockFetch.mockResolvedValue(
+      fakeResponse({ status: 412, body: { code: 'account_changed', message: 'x' } })
+    )
+    await expect(new HttpClient().request('/items', { method: 'POST' })).rejects.toBeInstanceOf(
+      AccountChangedError
+    )
+    expect(handle).toHaveBeenCalledTimes(1)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    onAccountChanged(() => {})
   })
 })

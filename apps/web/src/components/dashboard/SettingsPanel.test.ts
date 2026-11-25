@@ -39,6 +39,7 @@ vi.mock('../../lib/telemetry/island-timing', async (importOriginal) => {
 })
 
 import { api } from '../../lib/api'
+import { AccountChangedError } from '../../lib/api/errors'
 import { resetSession, session } from '../../lib/auth/session.svelte'
 import { getSessionUser } from '../../lib/auth/session'
 import { getTokenExpiry, setTokenExpiry } from '../../lib/auth/token'
@@ -256,6 +257,67 @@ describe('SettingsPanel', () => {
     clickSpy.mockRestore()
     createUrl.mockRestore()
     revokeUrl.mockRestore()
+  })
+
+  describe('when another account is signed in (OT-015)', () => {
+    type Screen = Awaited<ReturnType<typeof render>>
+    const click = (screen: Screen, name: RegExp) => screen.getByRole('button', { name }).click()
+    const cases: [string, User, () => unknown, (screen: Screen) => Promise<void>][] = [
+      [
+        'changing the password',
+        passwordUser,
+        () => vi.mocked(api.users.changePassword),
+        async (screen) => {
+          await screen.getByLabelText(/current password/i).fill('oldpassword123')
+          await screen.getByLabelText(/^new password/i).fill('newpassword123')
+          await click(screen, /change password/i)
+        },
+      ],
+      [
+        'setting a password',
+        { ...passwordUser, has_password: false },
+        () => vi.mocked(api.users.setPassword),
+        async (screen) => {
+          await screen.getByLabelText(/^new password/i).fill('newpassword123')
+          await click(screen, /set password/i)
+        },
+      ],
+      [
+        'unlinking Google',
+        passwordUser,
+        () => vi.mocked(api.oauth.unlink),
+        (screen) => click(screen, /unlink google/i),
+      ],
+      [
+        'asking for deletion',
+        passwordUser,
+        () => vi.mocked(api.users.requestDeletion),
+        async (screen) => {
+          await screen.getByLabelText(/confirm your password/i).fill('oldpassword123')
+          await screen.getByLabelText(/type delete|delete my account|to confirm/i).fill('DELETE')
+          await click(screen, /(request|schedule|delete).*(deletion|account)/i)
+        },
+      ],
+      [
+        'cancelling deletion',
+        { ...passwordUser, deletion_scheduled_at: '2026-07-04T00:00:00Z' },
+        () => vi.mocked(api.users.cancelDeletion),
+        (screen) => click(screen, /cancel deletion/i),
+      ],
+    ]
+
+    it.each(cases)('%s leaves the record alone', async (_name, user, call, act) => {
+      setCurrentUser(user)
+      const refused = new AccountChangedError("You're signed in as another account now")
+      const mock = call() as { mockRejectedValue(error: Error): void }
+      mock.mockRejectedValue(refused)
+      const screen = await render(SettingsPanel)
+      const before = JSON.stringify(session.user)
+      await act(screen)
+      await expect.element(screen.getByText(refused.message)).toBeInTheDocument()
+      expect(JSON.stringify(session.user)).toBe(before)
+      expect(mock).toHaveBeenCalled()
+    })
   })
 
   it('saves no file when the export is cut off', async () => {

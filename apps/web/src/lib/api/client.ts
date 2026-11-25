@@ -1,6 +1,7 @@
 import type { RefreshResponse } from '../types'
 import { redirect } from '../navigation'
-import { clearSessionUser } from '../auth/session'
+import { clearSessionUser, getSessionUser } from '../auth/session'
+import { accountChanged } from './account-changed'
 import { getDeviceFingerprint } from '../auth/fingerprint'
 import {
   setTokenExpiry,
@@ -12,6 +13,7 @@ import {
 import { API_BASE } from '../config'
 import type { ApiError } from './errors'
 import {
+  AccountChangedError,
   ApiErrorException,
   SessionEndedError,
   getErrorCode,
@@ -44,6 +46,9 @@ const X_TRACE_ID_HEADER = 'x-trace-id'
 
 /** Header name for CSRF token */
 const X_CSRF_TOKEN_HEADER = 'x-csrf-token'
+
+/** Header naming the account a change was made for (OT-015). */
+const X_ACCOUNT_ID_HEADER = 'x-account-id'
 
 /**
  * Cookie name for the CSRF token. The `__Host-` prefix means only this host,
@@ -110,7 +115,18 @@ export class HttpClient {
     }
   }
 
-  async request<T>(endpoint: string, options: ApiRequestInit = {}, isRetry = false): Promise<T> {
+  async request<T>(endpoint: string, options: ApiRequestInit = {}): Promise<T> {
+    // Taken once, before anything is awaited: a refresh or a resend may use the
+    // cookies of a Member who signed in from another tab meanwhile (OT-015).
+    return this.send<T>(endpoint, options, getSessionUser()?.id, false)
+  }
+
+  private async send<T>(
+    endpoint: string,
+    options: ApiRequestInit,
+    accountId: string | undefined,
+    isRetry: boolean
+  ): Promise<T> {
     const { route: givenRoute, ...init } = options
     const route = givenRoute ?? routeTemplate(endpoint)
     // For authenticated endpoints, refresh an expiring token up front rather
@@ -155,6 +171,10 @@ export class HttpClient {
       headers[X_CSRF_TOKEN_HEADER] = csrfToken
     }
 
+    if (needsCsrf && accountId) {
+      headers[X_ACCOUNT_ID_HEADER] = accountId
+    }
+
     let response: Response
     try {
       response = await fetch(`${API_BASE}${endpoint}`, {
@@ -188,7 +208,7 @@ export class HttpClient {
       const refreshed = await coordinateRefresh(() => this.refreshToken())
       if (refreshed) {
         // Retry the original request with the new token
-        return this.request<T>(endpoint, options, true)
+        return this.send<T>(endpoint, options, accountId, true)
       }
       // Refresh failed - session is truly expired
       clearTokenExpiry()
@@ -206,7 +226,7 @@ export class HttpClient {
           const refreshed = await coordinateRefresh(() => this.refreshToken())
           if (refreshed) {
             // Retry the original request with the new CSRF token
-            return this.request<T>(endpoint, options, true)
+            return this.send<T>(endpoint, options, accountId, true)
           }
         }
       } catch {
@@ -228,6 +248,19 @@ export class HttpClient {
           throw e
         }
         // Otherwise, continue with normal error handling
+      }
+    }
+
+    if (response.status === 412) {
+      let code: string | undefined
+      try {
+        code = getErrorCode((await response.clone().json()) as ApiError)
+      } catch {
+        // Not our refusal: normal error handling.
+      }
+      if (code === 'account_changed') {
+        accountChanged()
+        throw new AccountChangedError("You're signed in as another account now")
       }
     }
 
