@@ -72,6 +72,9 @@ preflight() {
   fi
 }
 
+# `kubectl get nodes` succeeds with no nodes, and `kubectl wait --all` then fails.
+node_registered() { [[ -n $(kubectl get nodes -o name) ]]; }
+
 install_cilium() {
   helm template cilium cilium --repo https://helm.cilium.io --version "$CILIUM_VERSION" \
     --namespace kube-system --kube-version "$KUBERNETES_VERSION" --include-crds \
@@ -124,10 +127,12 @@ cmd_up() {
   wait_for 300 "the Kubernetes API's credentials" talosctl kubeconfig "$KUBECONFIG" --force
   chmod 600 "$KUBECONFIG"
   wait_for 600 "the Kubernetes API" kubectl get --raw /readyz
-  wait_for 120 "the node to register" kubectl get nodes -o name
+  wait_for 300 "the node to register" node_registered
   say "installing Cilium $CILIUM_VERSION"
   wait_for 120 "Cilium to be applied" install_cilium
   kubectl wait --for=condition=Ready node --all --timeout=600s
+  # The node is Ready before cluster DNS answers.
+  kubectl -n kube-system rollout status deployment/coredns --timeout=300s
   say "ready. For kubectl and talosctl: eval \"\$(./scripts/k8s.sh env)\""
 }
 
