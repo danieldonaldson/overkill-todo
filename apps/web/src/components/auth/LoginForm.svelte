@@ -142,8 +142,8 @@
   <OAuthButtons mode="login" />
 
   <p class="text-center text-sm text-muted-foreground">
-    <a href="/forgot-password" class="font-medium text-primary hover:underline"
-      >Forgot your password?</a
-    >
+    <a href="/forgot-password" class="font-medium text-primary hover:underline">
+      Forgot your password?
+    </a>
   </p>
 </form>
