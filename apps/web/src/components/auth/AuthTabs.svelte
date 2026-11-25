@@ -87,8 +87,10 @@
         <button
           type="button"
           class="font-medium text-primary hover:underline"
-          onclick={() => (mode = 'register')}>Create account</button
+          onclick={() => (mode = 'register')}
         >
+          Create account
+        </button>
       </p>
     {/if}
   </TabsContent>
@@ -101,8 +103,10 @@
         <button
           type="button"
           class="font-medium text-primary hover:underline"
-          onclick={() => (mode = 'login')}>Sign in</button
+          onclick={() => (mode = 'login')}
         >
+          Sign in
+        </button>
       </p>
     {/if}
   </TabsContent>

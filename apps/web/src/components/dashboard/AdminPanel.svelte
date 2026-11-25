@@ -191,8 +191,10 @@
                         <a
                           href={`/dashboard/audit?account=${user.id}`}
                           class="ml-2 text-xs text-muted-foreground"
-                          aria-label={`Audit log for ${user.email}`}>Audit log</a
+                          aria-label={`Audit log for ${user.email}`}
                         >
+                          Audit log
+                        </a>
                       {/if}
                     </td>
                     <td class="py-2 pr-4">
