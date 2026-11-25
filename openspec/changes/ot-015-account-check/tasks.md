@@ -16,7 +16,7 @@ Delivers these scenarios:
 - [x] 1.5 Client: take the ID once and keep it through resends; `AccountChangedError` (D5). Verify with Vitest: 401 resend, `csrf_invalid` resend, refresh before the first send, no cached account, reads without the header.
 - [x] 1.6 Session store: clear first, check, one toast, Admin pages re-evaluated (D6). Vitest: one message for three queued list changes, `/auth/me` unavailable, each Settings change, an Admin change, and a change right after signing in in the same tab.
 - [x] 1.7 Flows: Playwright with the API mocked for the refusal on a list and on Settings; integration flow from the Hypothesis on the real backend, also confirmed to fail when the ID is read per attempt. Verify with `just e2e` and `just e2e-integration`.
-- [ ] 1.8 Telemetry: count `account_changed` by route template, and alert on a sustained rate. Verify by forcing one locally; no ID in metric labels.
+- [x] 1.8 Telemetry: count `account_changed` by route template, and alert on a sustained rate. Verify by forcing one locally; no ID in metric labels.
 - [x] 1.9 Record the Hypothesis result in design.md. Get `just ci` green. Note for the first deploy: server before web, `just smoke <url>`, then the two-tab flow by hand.
 
 ## 2. Feature done
