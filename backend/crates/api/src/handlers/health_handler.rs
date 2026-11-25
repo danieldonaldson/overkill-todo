@@ -1,0 +1,54 @@
+use axum::Json;
+use axum::extract::State;
+use axum::http::StatusCode;
+use serde_json::{Value, json};
+use std::sync::Arc;
+
+use super::super::state::ReadinessCheck;
+
+/// Liveness probe — always returns 200 if the process is running.
+#[utoipa::path(
+    get,
+    path = "/health",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Service is running", body = Value)
+    )
+)]
+#[tracing::instrument(name = "health_check", skip_all)]
+pub async fn health_check() -> Json<Value> {
+    // Intentionally omits the build version: this endpoint is unauthenticated, so
+    // disclosing the exact version only helps an attacker fingerprint the build
+    // for CVE matching. The container self-healthcheck only asserts the 200.
+    Json(json!({
+        "status": "ok",
+        "service": "overkill-todo"
+    }))
+}
+
+/// Readiness probe — checks DB connectivity before returning 200.
+#[utoipa::path(
+    get,
+    path = "/health/ready",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Service is ready", body = Value),
+        (status = 503, description = "Service is not ready", body = Value)
+    )
+)]
+#[tracing::instrument(name = "health_ready", skip_all)]
+pub async fn health_ready(State(db): State<Arc<dyn ReadinessCheck>>) -> (StatusCode, Json<Value>) {
+    match db.ping().await {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({ "status": "ready", "db": "ok" })),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "Readiness check: DB ping failed");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(json!({ "status": "not ready", "db": "error" })),
+            )
+        }
+    }
+}

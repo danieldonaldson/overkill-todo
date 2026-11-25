@@ -1,73 +1,139 @@
 # Architecture
 
+## Where does X go?
+
+| Adding…                                   | Goes in                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Business rule, entity, value object       | `crates/domain/`                                                                                  |
+| Use case                                  | `crates/application/src/use_cases/` + incoming port (see [Adding a use case](#adding-a-use-case)) |
+| Request/response shape                    | `crates/application/src/dto/`, then `just api-types`                                              |
+| Endpoint, middleware, extractor, cookie   | `crates/api/src/` (`handlers/`, `middleware/`, `extractors/`), mounted in `routes.rs`             |
+| SQL query or repository                   | outgoing port in `application` + `crates/persistence-postgres/src/`, then `just db-prepare`       |
+| Migration                                 | `backend/migrations/` (forward-only, expand/contract)                                             |
+| External service (email, captcha, OAuth…) | outgoing port in `application` + real and no-op adapters in `crates/services/src/`                |
+| Setting / env var                         | `crates/platform/src/config/settings.rs`                                                          |
+| Token kind or token claim rule            | `crates/platform/src/crypto/token.rs` (never build a `Validation` in an adapter)                  |
+| Key material, hashing primitive           | `crates/platform/src/crypto/`                                                                     |
+| Metric, span or log plumbing              | `crates/platform/src/telemetry/`                                                                  |
+| Background or leader-only job             | `crates/server/src/infrastructure/tasks/`, started in `main.rs`                                   |
+| Wiring (which adapter is used)            | `crates/server/src/main.rs`                                                                       |
+| DB setup in a server test or bench        | a fixture in `crates/persistence-postgres/src/testing.rs`, never raw SQL                          |
+| Full-stack HTTP test                      | `crates/server/tests/`                                                                            |
+
+If the code needs a crate the target doesn't depend on, it's in the wrong
+place. Move it, don't add the edge: `crates/server/tests/crate_graph.rs` will
+refuse the edge anyway.
+
+### Workspace gotchas
+
+- **`RUST_LOG` uses crate names.** Each crate logs under its own name
+  (`api`, `services`, `persistence_postgres`…), and `main.rs` under
+  `overkill_todo`. `RUST_LOG=overkill_todo=debug` now covers only startup and
+  shutdown; use e.g. `api=debug,application=debug`. The default filter is
+  built from `server::APP_TARGETS`, and a new crate must be added there (the
+  gate checks).
+- **Test helpers sit behind `test-support`.** `UserBuilder` (`domain`),
+  `LogCapture` (`application`), the keyring/crypto and metrics test helpers
+  (`platform`) and the DB fixtures (`persistence-postgres`) are compiled only
+  under `#[cfg(any(test, feature = "test-support"))]`. If a helper is "not
+  found" in another crate's tests, add
+  `<crate> = { path = "../<crate>", features = ["test-support"] }` to that
+  crate's `[dev-dependencies]`.
+- **New third-party dependency in `domain` or `application`** fails the gate
+  until it's added to that crate's allowlist in `crate_graph.rs`. That's
+  deliberate. Ask whether it belongs in an adapter first.
+- **sqlx config is split.** `sqlx.toml` lives in `crates/persistence-postgres/`,
+  but the offline cache is `backend/.sqlx/` at the workspace root
+  (`just db-prepare` writes it).
+- **Unused fixtures fail the gate.** Every `pub fn` in
+  `persistence-postgres/src/testing.rs` must be called from another crate's
+  tests or benches.
+- **The release build disables default features** (`-p server
+--no-default-features`, which drops Swagger UI). CI runs clippy that way too,
+  so code under `#[cfg(not(feature = "swagger-ui"))]` is linted.
+
 ## Hexagonal layout
 
 ```
-src/
-├── domain/           # Entities, value objects, domain errors — no dependencies
-├── application/      # Use cases and port traits — depends only on domain
+crates/
+├── domain/src/               # Entities, value objects, domain errors — no I/O dependencies
+├── application/src/          # Use cases, DTOs and port traits — depends only on domain + shared
+│   ├── dto/                  # Request/response DTOs (serde, utoipa, validator)
 │   ├── ports/
-│   │   ├── incoming/ # Traits implemented by use cases (called from handlers)
-│   │   └── outgoing/ # Traits implemented by adapters (repos, services)
-│   └── use_cases/    # Business logic — depends on port traits, not adapters
-├── infrastructure/   # All I/O adapters — depends on application + domain
-│   ├── api/          # Axum handlers, routes, middleware (HTTP adapter)
-│   ├── config/       # Settings loaded from env vars
-│   ├── crypto.rs     # `Crypto` handle: Argon2 params, JWT keys, CSRF secret, cipher
-│   ├── oauth/        # Google OAuth client
-│   ├── persistence/  # Driver-neutral DB traits; postgres/ = sqlx adapter (only sqlx user)
-│   ├── services/     # Concrete service impls (argon2, JWT, token gen, …)
-│   ├── tasks/        # Background jobs and leader election
-│   └── telemetry/    # Tracing, logs, metrics
-└── shared/           # Dependency-free utilities (error fingerprinting, redaction rules)
+│   │   ├── incoming/         # Traits implemented by use cases (called from handlers)
+│   │   └── outgoing/         # Traits implemented by adapters (repos, services)
+│   └── use_cases/            # Business logic — depends on port traits, not adapters
+├── shared/src/               # Dependency-free leaf (error fingerprinting, redaction rules)
+├── platform/                 # Pure infrastructure (config, crypto/token rules, TLS, telemetry, persistence plumbing traits) — depends only on shared
+├── persistence-postgres/     # sqlx Postgres adapter (only sqlx normal-dependency user)
+├── services/                 # External service, Google OAuth & browser-report sink adapters
+├── api/                      # HTTP adapter (handlers, middleware, extractors, router, OpenAPI)
+│   └── examples/             # export_openapi
+└── server/                   # Composition root, background tasks, binary, tests, benches
+    ├── src/
+    │   ├── main.rs
+    │   └── infrastructure/
+    │       └── tasks/        # Background jobs and leader election
+    ├── tests/                # Full-stack integration tests + crate_graph gate
+    └── benches/              # Criterion benchmarks
 ```
 
-Dependencies only point inward: `infrastructure → application → domain`.
+Dependencies only point inward: `server → {persistence-postgres, services, api} → {application, platform}`,
+with `application → {domain, shared}` and `platform → {shared}` (`domain` has no workspace dependencies).
+Adapters never depend on each other, and `platform` is pure infrastructure below the adapters rather than depending on `application`. The crate-graph
+gate (`crates/server/tests/crate_graph.rs`) enforces this at the workspace level
+and locks `domain` and `application` third-party dependencies to an allowlist.
 The domain imports no `sqlx` or `serde`: Postgres enum mappings live in
-`persistence/postgres/models.rs` (`DbUserRole`, `DbOAuthProvider`) and convert with
+`crates/persistence-postgres/src/models.rs` (`DbUserRole`, `DbOAuthProvider`) and convert with
 `From` at the repository boundary.
 
-**`sqlx` is confined to `infrastructure/persistence/postgres/`**, and only
-`main.rs` wiring and tests name that module. The `persistence` root is
-driver-neutral. The driver is chosen at compile time, so dispatch is static:
-`persistence::Database` aliases the selected adapter's handle, and other
-infrastructure modules use it only through the root's traits, either as generic
-bounds or as trait methods on that alias. The traits are `LeaderLocks` /
+**`sqlx` is confined to `crates/persistence-postgres/`**, and only
+`main.rs` wiring, tests, and benches name that crate (`tests/` and `benches/`
+also allow `#[sqlx::test]` and `PgPool`/`PgPoolOptions`). **Architectural decision — driver-neutral plumbing vs. repository ports:**
+plumbing interfaces with no business meaning live in `platform::persistence`, whereas
+all business repository ports remain in `application::ports::outgoing`. The driver is chosen at compile
+time, so dispatch is static: `server::Database` aliases `persistence_postgres::Database`,
+and other modules use `platform::persistence` traits, either as
+generic bounds or as trait methods on that alias. The traits are `LeaderLocks` /
 `LeaderLock` (leader election in `tasks/leader.rs`), `DatabaseMaintenance`
 (`tasks/database_maintenance.rs`) and `DatabaseHealth` (`/health/ready` and the
-pool gauges); the root also exports `STATEMENT_LOG_DIRECTIVE` (trace export
+pool gauges); `persistence-postgres` also exports `STATEMENT_LOG_DIRECTIVE` (trace export
 filter). Repositories stay `Arc<dyn Port>`, because that is what use cases take and
-mock. Each adapter returns a `Persistence` bundle of both. Plumbing failures
+mock. `persistence-postgres` returns a `Persistence` bundle of both. Plumbing failures
 surface as the opaque, driver-agnostic `DatabaseError`; repository failures go
 through `persist_err` to `DomainError`. There is no `From<sqlx::Error> for
 AppError`, so a handler can't `?` a raw driver error. A second driver is a sibling
-of `postgres/` implementing the outgoing ports and these traits; selecting it
-means pointing the `Database` alias and the `open` call in `main.rs` at it.
+crate of `persistence-postgres` implementing the outgoing ports and these traits; selecting it
+means pointing the `server::Database` alias and the `open` call in `main.rs` at it.
 
 `shared/` is a true leaf: it imports nothing from any layer and holds only
 `fingerprint` and `redact` (the field-name and URL-query rules, shared by the
-telemetry exits and the browser-report use case). `Crypto` lives in `infrastructure/crypto.rs` because it is built from
-`CryptoSettings` and holds key material. The HTTP-facing `AppError` (with its
+telemetry exits and the browser-report use case). `Crypto` and shared JWT envelope
+validation (`platform::crypto::token`) live in `crates/platform/src/crypto/` because `Crypto` is built from
+`CryptoSettings`, holds key material, and guarantees identical `typ`/`iss`/`aud`/`iat`/`exp`
+rules across all four token kinds (`Session`, `Signup`, `Reset`, `OAuthState`). The HTTP-facing `AppError` (with its
 `IntoResponse`/`From` mappings) and the helpers that produce it — `csrf`, `jwt`,
-`oauth_state` — live in `infrastructure/api` (they import `axum`/`jsonwebtoken`).
+`oauth_state` — live in `crates/api` (they import `axum`/`jsonwebtoken`, delegating token signing and verification to `platform::crypto::token`).
 
 Handlers stay thin: they parse the request, run edge admission (Turnstile, device
 fingerprint), call one use case, and turn its result into cookies and a response.
 Credential checks, password hashing, and minting single-purpose tokens (signup,
 reset) happen in use cases. The session access JWT and CSRF token are an HTTP
-concern, so `build_session` mints them in `infrastructure/api`, next to the
+concern, so `build_session` mints them in `crates/api`, next to the
 middleware that verifies them.
 
-DTOs (`application/dto/`) are likewise not a purely inward layer: every DTO derives
-`serde` (`Serialize`/`Deserialize`) and `utoipa::ToSchema`, and request DTOs add
-`validator::Validate` with `#[validate(...)]` attributes. **Input validation lives
-at the DTO boundary** (enforced by the `ValidatedJson` extractor), so the DTO layer
-intentionally carries serialization/OpenAPI/validation concerns.
+**Architectural decision — OpenAPI and validation metadata on `application` DTOs:**
+DTOs (`crates/application/src/dto/`) derive `serde` (`Serialize`/`Deserialize`) and
+`utoipa::ToSchema` on purpose, and request DTOs add `validator::Validate` with
+`#[validate(...)]` attributes. Keeping one shared contract between the use cases,
+the OpenAPI description (`crates/api`), and the `ValidatedJson` extractor avoids
+duplicating every request/response struct across `application` and `api`; `crate_graph.rs`
+explicitly allowlists these schema/validation dependencies in `application`.
 
 ## Routes and the API description
 
 The router and the OpenAPI description are built from the same declarations, so
-they can't drift. In `infrastructure/api/routes.rs`, `api_routes()` mounts every
+they can't drift. In `crates/api/src/routes.rs`, `api_routes()` mounts every
 documented route with `utoipa_axum::routes!(handler)`, which takes the method and
 path from the handler's `#[utoipa::path]`. The annotation's `path` is relative to
 the group it's nested in (`path = "/login"` under `/auth` under `/api/v1`). Use one
@@ -125,7 +191,7 @@ the group it's nested in (`path = "/login"` under `/auth` under `/api/v1`). Use 
   automatically and must keep the run clean. A wrong method gets the JSON 405
   from `error::method_not_allowed`.
 - **Committed outputs:** `just api-types` writes `backend/openapi.json` (from
-  `examples/export_openapi.rs`) and the web types
+  `crates/api/examples/export_openapi.rs`) and the web types
   `apps/web/src/lib/api/schema.d.ts`. Commit both; CI fails if either is stale.
 
 ### Dev-mode differences a client can see
@@ -146,18 +212,18 @@ behaviour belongs on this list, because the fuzzer can't see past it.
 
 ## Adding a use case
 
-1. Define the input/output types in `application/dto/` if needed.
-2. Add an incoming port trait in `application/ports/incoming/` (one method per operation).
-3. Implement the trait in `application/use_cases/`.
-4. Wire it in `src/main.rs` (construction) and `infrastructure/api/routes.rs`
+1. Define the input/output types in `crates/application/src/dto/` if needed.
+2. Add an incoming port trait in `crates/application/src/ports/incoming/` (one method per operation).
+3. Implement the trait in `crates/application/src/use_cases/`.
+4. Wire it in `crates/server/src/main.rs` (construction) and `crates/api/src/routes.rs`
    (`.routes(routes!(handler))` in `api_routes()`), then run `just api-types`.
-5. Write mock-based unit tests in the use case file and HTTP-level integration tests under `tests/`.
+5. Write mock-based unit tests in the use case file and HTTP-level integration tests under `crates/server/tests/`.
 
 ## Adding a repository method
 
-1. Add the method signature to the outgoing port trait in `application/ports/outgoing/`.
-2. Implement it in `infrastructure/persistence/postgres/` using `sqlx::query!` macros.
-3. Map any `sqlx::Error` with the shared `persist_err` helper (`postgres/error.rs`) —
+1. Add the method signature to the outgoing port trait in `crates/application/src/ports/outgoing/`.
+2. Implement it in `crates/persistence-postgres/src/` using `sqlx::query!` macros.
+3. Map any `sqlx::Error` with the shared `persist_err` helper (`persistence-postgres/src/error.rs`) —
    `.map_err(persist_err)?` — so a unique violation (`23505`) becomes a
    `DomainError::Conflict` and a missing row a `DomainError::NotFound` instead of an
    opaque `Persistence` string. Only hand-write a `match` when a query needs a
@@ -202,7 +268,7 @@ Never read crypto env vars directly in library code — always go through an inj
 
 ## Telemetry
 
-`infrastructure/telemetry/` holds everything OpenTelemetry-specific. The
+`crates/platform/src/telemetry/` holds everything OpenTelemetry-specific (`services/src/client_reports.rs` adapts browser reports onto it). The
 application and domain layers only use `tracing` macros.
 
 - **Adapters.** `telemetry::init` picks real or no-op: with
@@ -252,7 +318,7 @@ application and domain layers only use `tracing` macros.
   `use_cases/telemetry/scrub.rs` (the browser's copy shares
   `tests/fixtures/client_scrub_cases.json`), fingerprints errors, and keeps a
   per-replica budget (`CLIENT_TELEMETRY_MAX_EVENTS_PER_SEC`). The
-  `ClientReportSink` adapter in `telemetry/client_reports.rs` logs
+  `ClientReportSink` adapter in `crates/services/src/client_reports.rs` logs
   `client_error` events and counts errors from the site's own scripts
   (`browser.error`), page loads (`browser.page_load`, `authenticated` from the
   session) and dropped events, and records Web Vitals, navigations and island
@@ -285,7 +351,7 @@ exported, and all sessions signed out after a reused session token.
 - **Adding a kind.** Add the `AuditKind` variant, widen
   `audit_events_kind_check` in a new migration (`NOT VALID`, then validate),
   and name the `#[sqlx::test]`s proving its atomicity in `atomicity_tests` in
-  `tests/audit_log_integration.rs`. There's no wildcard arm, so a kind without
+  `persistence-postgres/tests/audit_log_integration.rs`. There's no wildcard arm, so a kind without
   tests doesn't compile.
 - **Minimal personal data.** Events identify people by account ID only. Kind,
   actor and details are closed types (old and new role, OAuth provider), so
@@ -456,8 +522,8 @@ in `models/auth_protocols.spthy`, and proven against an active network attacker.
   still attacked.
 
 - Argon2id for all passwords; tunable cost params from config.
-- Our tokens (session, signup, reset, OAuth state) are HS512 under a named key (`kid`), quantum-safe; only HS512 is accepted on decode, and only from a configured key, never by trying others. Keys rotate via `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS` (OT-009).
-- Outgoing TLS (Google, Turnstile, SMTP) offers post-quantum X25519MLKEM768 first, via the process-wide provider installed at the top of `main` (`infrastructure/tls.rs`); `tests/tls_key_exchange.rs` fails if it's lost (OT-009).
+- Our tokens (session, signup, reset, OAuth state) are HS512 under a named key (`kid`), quantum-safe; only HS512 is accepted on decode, and only from a configured key, never by trying others. Keys rotate via `JWT_SIGNING_KEY` / `JWT_TRUSTED_KEYS` (OT-009), and `crates/platform/src/crypto/token.rs` enforces uniform `typ`, `iss`, `aud`, `iat`, and `exp` rules (plus `sub` on user-bound tokens) across all four token kinds. Note for first production rollout: any signup, reset, or OAuth-state tokens minted before centralized `iss`/`aud`/`typ` enforcement won't verify after deploy.
+- Outgoing TLS (Google, Turnstile, SMTP) offers post-quantum X25519MLKEM768 first, via the process-wide provider installed at the top of `main` (`crates/platform/src/tls.rs`); `tests/tls_key_exchange.rs` fails if it's lost (OT-009).
 - Refresh tokens stored as SHA-256 hashes; raw token never persisted.
 - Refresh rotation is atomic (single DB transaction).
 - Revoked refresh-token reuse triggers full-family revocation. The reuse/revoked

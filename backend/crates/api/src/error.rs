@@ -1,0 +1,633 @@
+//! Application-level error types.
+
+use domain::errors::DomainError;
+
+use axum::{
+    Json,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use platform::config::is_dev_mode;
+use serde::Serialize;
+use shared::fingerprint::generate_error_fingerprint;
+use utoipa::ToSchema;
+
+use application::dto::VerificationErrorResponse;
+
+/// Structured error response returned to clients.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ErrorResponse {
+    /// Machine-readable error code (e.g. `validation_error`, `bot_check_failed`,
+    /// `csrf_invalid`).
+    pub code: String,
+    /// Human-readable message. Internal details are never included outside
+    /// local development.
+    pub message: String,
+}
+
+/// The JSON `405` for a described path requested with a method it doesn't serve.
+///
+/// Without it axum answers with an empty body, and every error the API returns
+/// must carry the standard [`ErrorResponse`] (found by the API fuzzer, OT-011).
+pub async fn method_not_allowed() -> (StatusCode, Json<ErrorResponse>) {
+    (
+        StatusCode::METHOD_NOT_ALLOWED,
+        Json(ErrorResponse {
+            code: "method_not_allowed".to_string(),
+            message: "Method not allowed".to_string(),
+        }),
+    )
+}
+
+/// A `400` from a verification route: either the structured verification error
+/// (wrong, expired or locked code) or, for a malformed request, the standard
+/// [`ErrorResponse`].
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum VerificationOrStandardError {
+    Verification(VerificationErrorResponse),
+    Standard(ErrorResponse),
+}
+
+/// Application-level errors that map to HTTP responses.
+///
+/// `Display` is derived (`thiserror`); the HTTP-semantic matches —
+/// [`AppError::error_code`], [`AppError::fingerprint`], and the
+/// [`IntoResponse`] status/redaction mapping — stay explicit because they encode
+/// status codes, dev-mode message redaction, and fingerprint logging that a
+/// `Display` derive cannot express.
+#[derive(Debug, thiserror::Error)]
+pub enum AppError {
+    #[error("Validation error: {0}")]
+    Validation(String),
+    /// The bot check (Turnstile) was missing or failed: a `400` like
+    /// [`AppError::Validation`], but with its own code (`bot_check_failed`) so
+    /// clients and metrics can tell it apart from bad input.
+    #[error("Bot check failed: {0}")]
+    BotCheckFailed(String),
+    #[error("Not found: {0}")]
+    NotFound(String),
+    /// The request body is over the route's size limit (`413`).
+    #[error("Payload too large")]
+    PayloadTooLarge,
+    #[error("Authorization error: {message}")]
+    Authorization { code: &'static str, message: String },
+    #[error("Forbidden: {message}")]
+    Forbidden { code: &'static str, message: String },
+    #[error("Conflict: {0}")]
+    Conflict(String),
+    #[error("Internal error: {0}")]
+    Internal(String),
+    #[error("Database error: {0}")]
+    Database(String),
+    #[error("External service error: {0}")]
+    ExternalService(String),
+}
+
+/// Common error codes for 401 Unauthorized responses.
+pub mod auth_codes {
+    pub const TOKEN_MISSING: &str = "token_missing";
+    pub const TOKEN_EXPIRED: &str = "token_expired";
+    pub const TOKEN_INVALID: &str = "token_invalid";
+    pub const INVALID_CREDENTIALS: &str = "invalid_credentials";
+}
+
+/// Common error codes for 403 Forbidden responses.
+pub mod forbidden_codes {
+    pub const EMAIL_NOT_VERIFIED: &str = "email_not_verified";
+    pub const ACCESS_DENIED: &str = "access_denied";
+    pub const CSRF_INVALID: &str = "csrf_invalid";
+}
+
+impl AppError {
+    #[must_use]
+    pub fn token_missing() -> Self {
+        Self::Authorization {
+            code: auth_codes::TOKEN_MISSING,
+            message: "Missing authentication token".into(),
+        }
+    }
+
+    #[must_use]
+    pub fn token_expired() -> Self {
+        Self::Authorization {
+            code: auth_codes::TOKEN_EXPIRED,
+            message: "Token has expired".into(),
+        }
+    }
+
+    #[must_use]
+    pub fn token_invalid(details: &str) -> Self {
+        Self::Authorization {
+            code: auth_codes::TOKEN_INVALID,
+            message: format!("Invalid token: {details}"),
+        }
+    }
+
+    /// The rejection for any invalid token: one fixed message whatever check
+    /// failed (OT-009). Expired session tokens use [`AppError::token_expired`].
+    #[must_use]
+    pub fn token_rejected() -> Self {
+        Self::Authorization {
+            code: auth_codes::TOKEN_INVALID,
+            message: platform::crypto::TOKEN_REJECTED_MESSAGE.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn invalid_credentials() -> Self {
+        Self::Authorization {
+            code: auth_codes::INVALID_CREDENTIALS,
+            message: "Invalid email or password".into(),
+        }
+    }
+
+    #[must_use]
+    pub fn email_not_verified() -> Self {
+        Self::Forbidden {
+            code: forbidden_codes::EMAIL_NOT_VERIFIED,
+            message: "Please verify your email to access this resource".into(),
+        }
+    }
+
+    #[must_use]
+    pub fn access_denied() -> Self {
+        Self::Forbidden {
+            code: forbidden_codes::ACCESS_DENIED,
+            message: "You do not have permission to access this resource".into(),
+        }
+    }
+
+    #[must_use]
+    pub fn csrf_invalid() -> Self {
+        Self::Forbidden {
+            code: forbidden_codes::CSRF_INVALID,
+            message: "Invalid or missing CSRF token".into(),
+        }
+    }
+
+    const fn error_code(&self) -> &'static str {
+        match self {
+            Self::Validation(_) => "validation_error",
+            Self::BotCheckFailed(_) => "bot_check_failed",
+            Self::NotFound(_) => "not_found",
+            Self::PayloadTooLarge => "payload_too_large",
+            Self::Authorization { code, .. } | Self::Forbidden { code, .. } => code,
+            Self::Conflict(_) => "conflict",
+            Self::Internal(_) => "internal_error",
+            Self::Database(_) => "database_error",
+            Self::ExternalService(_) => "external_service_error",
+        }
+    }
+
+    fn fingerprint(&self) -> Option<String> {
+        match self {
+            Self::Internal(msg) => Some(generate_error_fingerprint("Internal", msg)),
+            Self::Database(msg) => Some(generate_error_fingerprint("Database", msg)),
+            Self::ExternalService(msg) => Some(generate_error_fingerprint("ExternalService", msg)),
+            _ => None,
+        }
+    }
+}
+
+impl From<DomainError> for AppError {
+    fn from(error: DomainError) -> Self {
+        match error {
+            DomainError::Validation(msg) | DomainError::BusinessRule(msg) => Self::Validation(msg),
+            DomainError::Authorization(msg) => Self::Authorization {
+                code: auth_codes::TOKEN_INVALID,
+                message: msg,
+            },
+            DomainError::Forbidden(msg) => Self::Forbidden {
+                code: forbidden_codes::ACCESS_DENIED,
+                message: msg,
+            },
+            DomainError::NotFound(msg) => Self::NotFound(msg),
+            DomainError::Conflict(msg) => Self::Conflict(msg),
+            DomainError::Persistence(msg) => Self::Database(msg),
+            DomainError::ExternalService(msg) => Self::ExternalService(msg),
+        }
+    }
+}
+
+impl From<application::use_cases::LoginError> for AppError {
+    fn from(error: application::use_cases::LoginError) -> Self {
+        use application::use_cases::LoginError;
+        match error {
+            LoginError::InvalidCredentials => Self::invalid_credentials(),
+            LoginError::Domain(e) => e.into(),
+        }
+    }
+}
+
+impl From<application::use_cases::VerifyEmailError> for AppError {
+    fn from(error: application::use_cases::VerifyEmailError) -> Self {
+        use application::use_cases::VerifyEmailError;
+        match error {
+            VerifyEmailError::NotFound(msg) => Self::NotFound(msg),
+            VerifyEmailError::CodeExpired => {
+                Self::Validation("Verification code has expired".into())
+            }
+            VerifyEmailError::CodeLocked => {
+                Self::Validation("Too many failed attempts. Please request a new code.".into())
+            }
+            VerifyEmailError::CodeInvalid { attempts_remaining } => Self::Validation(format!(
+                "Invalid code. {attempts_remaining} attempts remaining."
+            )),
+            VerifyEmailError::AlreadyVerified(_) => Self::Conflict("Email already verified".into()),
+            VerifyEmailError::Internal(msg) => Self::Internal(msg),
+        }
+    }
+}
+
+impl From<application::use_cases::ResendVerificationError> for AppError {
+    fn from(error: application::use_cases::ResendVerificationError) -> Self {
+        use application::use_cases::ResendVerificationError;
+        match error {
+            ResendVerificationError::NotFound(msg) => Self::NotFound(msg),
+            ResendVerificationError::AlreadyVerified => {
+                Self::Conflict("Email already verified".into())
+            }
+            ResendVerificationError::CooldownActive { seconds_remaining } => Self::Validation(
+                format!("Please wait {seconds_remaining} seconds before requesting another code"),
+            ),
+            ResendVerificationError::Locked {
+                seconds_until_unlock,
+            } => Self::Validation(format!(
+                "Too many incorrect attempts. This code is locked for {seconds_until_unlock} seconds; please try again later"
+            )),
+            ResendVerificationError::Internal(msg) => Self::Internal(msg),
+        }
+    }
+}
+
+impl From<argon2::password_hash::Error> for AppError {
+    fn from(error: argon2::password_hash::Error) -> Self {
+        Self::Internal(format!("Password hashing error: {error}"))
+    }
+}
+
+impl From<argon2::Error> for AppError {
+    fn from(error: argon2::Error) -> Self {
+        Self::Internal(format!("Password hashing error: {error}"))
+    }
+}
+
+// Intentionally no `From<jsonwebtoken::errors::Error>` for `AppError`:
+// `AppError::Authorization` messages are echoed to clients, so JWT verification
+// call sites must map failures explicitly (logging details at debug and
+// returning `AppError::token_rejected()` / `AppError::token_expired()`).
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let dev_mode = is_dev_mode();
+
+        let code = self.error_code().to_string();
+
+        let (status, message) = match &self {
+            Self::Validation(msg) | Self::BotCheckFailed(msg) => {
+                (StatusCode::BAD_REQUEST, msg.clone())
+            }
+            Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            Self::PayloadTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "Request body too large".to_string(),
+            ),
+            Self::Authorization { message, .. } => (StatusCode::UNAUTHORIZED, message.clone()),
+            Self::Forbidden { message, .. } => (StatusCode::FORBIDDEN, message.clone()),
+            Self::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
+            Self::Internal(msg) => {
+                let fingerprint = self.fingerprint().unwrap_or_default();
+                tracing::error!(
+                    error_fingerprint = %fingerprint,
+                    error_type = "Internal",
+                    "Internal error: {}", msg
+                );
+                let response_msg = if dev_mode {
+                    format!("Internal error: {msg}")
+                } else {
+                    "Internal server error".to_string()
+                };
+                (StatusCode::INTERNAL_SERVER_ERROR, response_msg)
+            }
+            Self::Database(msg) => {
+                let fingerprint = self.fingerprint().unwrap_or_default();
+                tracing::error!(
+                    error_fingerprint = %fingerprint,
+                    error_type = "Database",
+                    "Database error: {}", msg
+                );
+                let response_msg = if dev_mode {
+                    format!("Database error: {msg}")
+                } else {
+                    "Database error".to_string()
+                };
+                (StatusCode::INTERNAL_SERVER_ERROR, response_msg)
+            }
+            Self::ExternalService(msg) => {
+                let fingerprint = self.fingerprint().unwrap_or_default();
+                tracing::error!(
+                    error_fingerprint = %fingerprint,
+                    error_type = "ExternalService",
+                    "External service error: {}", msg
+                );
+                let response_msg = if dev_mode {
+                    format!("External service error: {msg}")
+                } else {
+                    "External service unavailable".to_string()
+                };
+                (StatusCode::BAD_GATEWAY, response_msg)
+            }
+        };
+
+        let body = Json(ErrorResponse { code, message });
+        (status, body).into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use axum::http::StatusCode;
+
+    #[test]
+    fn test_display_validation_error() {
+        let error = AppError::Validation("invalid email".into());
+        assert_eq!(format!("{error}"), "Validation error: invalid email");
+    }
+
+    #[test]
+    fn test_display_not_found_error() {
+        let error = AppError::NotFound("user not found".into());
+        assert_eq!(format!("{error}"), "Not found: user not found");
+    }
+
+    #[test]
+    fn test_display_authorization_error() {
+        let error = AppError::token_invalid("invalid token");
+        assert_eq!(
+            format!("{error}"),
+            "Authorization error: Invalid token: invalid token"
+        );
+    }
+
+    #[test]
+    fn test_display_conflict_error() {
+        let error = AppError::Conflict("email already exists".into());
+        assert_eq!(format!("{error}"), "Conflict: email already exists");
+    }
+
+    #[test]
+    fn test_display_internal_error() {
+        let error = AppError::Internal("something went wrong".into());
+        assert_eq!(format!("{error}"), "Internal error: something went wrong");
+    }
+
+    #[test]
+    fn test_display_database_error() {
+        let error = AppError::Database("connection failed".into());
+        assert_eq!(format!("{error}"), "Database error: connection failed");
+    }
+
+    #[tokio::test]
+    async fn bot_check_failure_is_a_400_with_its_own_code() {
+        let error = AppError::BotCheckFailed("Bot verification failed. Please try again.".into());
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "bot_check_failed");
+        assert_eq!(
+            json["message"],
+            "Bot verification failed. Please try again."
+        );
+    }
+
+    #[tokio::test]
+    async fn test_into_response_validation() {
+        let error = AppError::Validation("invalid input".into());
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "validation_error");
+        assert_eq!(json["message"], "invalid input");
+    }
+
+    #[tokio::test]
+    async fn test_into_response_not_found() {
+        let error = AppError::NotFound("resource not found".into());
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "not_found");
+        assert_eq!(json["message"], "resource not found");
+    }
+
+    #[tokio::test]
+    async fn test_into_response_authorization() {
+        let error = AppError::token_missing();
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], auth_codes::TOKEN_MISSING);
+        assert_eq!(json["message"], "Missing authentication token");
+    }
+
+    #[tokio::test]
+    async fn test_into_response_conflict() {
+        let error = AppError::Conflict("already exists".into());
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "conflict");
+        assert_eq!(json["message"], "already exists");
+    }
+
+    #[test]
+    fn test_fingerprint_internal_error() {
+        let error = AppError::Internal("something went wrong".into());
+        let fp = error.fingerprint();
+        assert!(fp.is_some());
+        assert_eq!(fp.unwrap().len(), 8);
+    }
+
+    #[test]
+    fn test_fingerprint_client_errors_none() {
+        assert!(AppError::Validation("x".into()).fingerprint().is_none());
+        assert!(AppError::NotFound("x".into()).fingerprint().is_none());
+        assert!(AppError::token_invalid("x").fingerprint().is_none());
+        assert!(AppError::access_denied().fingerprint().is_none());
+        assert!(AppError::Conflict("x".into()).fingerprint().is_none());
+    }
+
+    #[test]
+    fn test_display_forbidden_and_external() {
+        assert_eq!(
+            format!("{}", AppError::access_denied()),
+            "Forbidden: You do not have permission to access this resource"
+        );
+        assert_eq!(
+            format!("{}", AppError::ExternalService("upstream down".into())),
+            "External service error: upstream down"
+        );
+    }
+
+    #[test]
+    fn test_error_code_for_each_variant() {
+        assert_eq!(
+            AppError::Validation("x".into()).error_code(),
+            "validation_error"
+        );
+        assert_eq!(AppError::NotFound("x".into()).error_code(), "not_found");
+        assert_eq!(
+            AppError::token_invalid("x").error_code(),
+            auth_codes::TOKEN_INVALID
+        );
+        assert_eq!(
+            AppError::access_denied().error_code(),
+            forbidden_codes::ACCESS_DENIED
+        );
+        assert_eq!(AppError::Conflict("x".into()).error_code(), "conflict");
+        assert_eq!(
+            AppError::Internal("x".into()).error_code(),
+            "internal_error"
+        );
+        assert_eq!(
+            AppError::Database("x".into()).error_code(),
+            "database_error"
+        );
+        assert_eq!(
+            AppError::ExternalService("x".into()).error_code(),
+            "external_service_error"
+        );
+    }
+
+    #[test]
+    fn test_fingerprint_server_errors_some() {
+        assert!(AppError::Database("x".into()).fingerprint().is_some());
+        assert!(
+            AppError::ExternalService("x".into())
+                .fingerprint()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_into_response_forbidden() {
+        let response = AppError::email_not_verified().into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], forbidden_codes::EMAIL_NOT_VERIFIED);
+        assert_eq!(
+            json["message"],
+            "Please verify your email to access this resource"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_into_response_csrf_invalid() {
+        let response = AppError::csrf_invalid().into_response();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], forbidden_codes::CSRF_INVALID);
+    }
+
+    // In unit tests DEV_MODE is unset, so `is_dev_mode()` is false: server-side
+    // errors must be redacted to a generic message and never leak `msg`.
+    #[tokio::test]
+    async fn test_into_response_internal_redacted_in_prod() {
+        let response = AppError::Internal("db password leaked".into()).into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "internal_error");
+        assert_eq!(json["message"], "Internal server error");
+        assert!(
+            !json["message"].as_str().unwrap().contains("leaked"),
+            "internal detail must not leak in prod mode"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_into_response_database_redacted_in_prod() {
+        let response = AppError::Database("constraint xyz".into()).into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "database_error");
+        assert_eq!(json["message"], "Database error");
+    }
+
+    #[tokio::test]
+    async fn test_into_response_external_service_is_bad_gateway() {
+        let response = AppError::ExternalService("smtp timeout".into()).into_response();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "external_service_error");
+        assert_eq!(json["message"], "External service unavailable");
+    }
+
+    #[test]
+    fn test_from_domain_error_variants() {
+        use domain::errors::DomainError;
+        assert!(matches!(
+            AppError::from(DomainError::Validation("v".into())),
+            AppError::Validation(_)
+        ));
+        assert!(matches!(
+            AppError::from(DomainError::BusinessRule("b".into())),
+            AppError::Validation(_)
+        ));
+        assert!(matches!(
+            AppError::from(DomainError::Authorization("a".into())),
+            AppError::Authorization { code, .. } if code == auth_codes::TOKEN_INVALID
+        ));
+        assert!(matches!(
+            AppError::from(DomainError::Forbidden("f".into())),
+            AppError::Forbidden { code, .. } if code == forbidden_codes::ACCESS_DENIED
+        ));
+        assert!(matches!(
+            AppError::from(DomainError::NotFound("n".into())),
+            AppError::NotFound(_)
+        ));
+        assert!(matches!(
+            AppError::from(DomainError::Conflict("c".into())),
+            AppError::Conflict(_)
+        ));
+        assert!(matches!(
+            AppError::from(DomainError::Persistence("p".into())),
+            AppError::Database(_)
+        ));
+        assert!(matches!(
+            AppError::from(DomainError::ExternalService("e".into())),
+            AppError::ExternalService(_)
+        ));
+    }
+
+    #[test]
+    fn test_from_argon2_errors_map_to_internal() {
+        let err: AppError = argon2::Error::AlgorithmInvalid.into();
+        assert!(matches!(err, AppError::Internal(msg) if msg.contains("Password hashing")));
+
+        let ph_err: AppError = argon2::password_hash::Error::PasswordInvalid.into();
+        assert!(matches!(ph_err, AppError::Internal(msg) if msg.contains("Password hashing")));
+    }
+}

@@ -35,7 +35,7 @@
 // with NOW() that is `x < NOW()` in SQL is `x <= now` here.
 //
 // Traces of this model are replayed against the real repositories by
-// backend/tests/model_conformance.rs (`just models`).
+// backend/crates/persistence-postgres/tests/model_conformance.rs (`just models`).
 module attempt_claim {
   // ── Variants ────────────────────────────────────────────────────────────
 

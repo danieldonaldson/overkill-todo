@@ -1,0 +1,146 @@
+//! Admin panel handlers (`/api/v1/admin`).
+//!
+//! Every route is guarded by the [`AdminUser`] extractor (admin or super-admin),
+//! except role management and the audit log, which require [`SuperAdminUser`].
+
+use axum::{Json, extract::State};
+use std::sync::Arc;
+use uuid::Uuid;
+
+use application::{
+    dto::{
+        AdminUserListResponse, AdminUserResponse, AuditEventListResponse, AuditEventResponse,
+        AuditKindFilter, ListAuditEventsQuery, ListUsersQuery, SetUserRoleRequest,
+    },
+    ports::outgoing::AuditFilter,
+    use_cases::{ListAuditEventsUseCase, ListUsersUseCase, SetUserRoleUseCase},
+};
+use domain::value_objects::UserId;
+
+use crate::{
+    error::AppError,
+    extractors::{AdminUser, ApiPath, ApiQuery, SuperAdminUser, ValidatedJson},
+};
+
+/// Dependencies for admin handlers.
+pub struct AdminHandlerDeps {
+    pub list_users_use_case: Arc<ListUsersUseCase>,
+    pub set_user_role_use_case: Arc<SetUserRoleUseCase>,
+    pub list_audit_events_use_case: Arc<ListAuditEventsUseCase>,
+}
+
+/// List users (paginated).
+#[utoipa::path(
+    get,
+    path = "/users",
+    tag = "Admin",
+    params(
+        ("limit" = Option<i64>, Query, description = "Max users (default 50, max 200)"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset")
+    ),
+    responses(
+        (status = 200, description = "A page of users", body = AdminUserListResponse),
+        (status = 403, description = "Not an admin")
+    )
+)]
+/// # Errors
+/// Returns an error if the user store is unreachable.
+#[tracing::instrument(name = "handler.admin.list_users", skip_all)]
+pub async fn list_users(
+    State(deps): State<Arc<AdminHandlerDeps>>,
+    _admin: AdminUser,
+    ApiQuery(query): ApiQuery<ListUsersQuery>,
+) -> Result<Json<AdminUserListResponse>, AppError> {
+    let (limit, offset) = query.paginated();
+
+    let page = deps.list_users_use_case.execute(limit, offset).await?;
+    Ok(Json(AdminUserListResponse {
+        users: page.users.iter().map(AdminUserResponse::from).collect(),
+        total: page.total,
+        limit,
+        offset,
+    }))
+}
+
+/// Change a user's role (super-admin only).
+#[utoipa::path(
+    put,
+    path = "/users/{id}/role",
+    tag = "Admin",
+    request_body = SetUserRoleRequest,
+    params(("id" = Uuid, Path, description = "User id")),
+    responses(
+        (status = 200, description = "Updated user", body = AdminUserResponse),
+        (status = 400, description = "Invalid role"),
+        (status = 403, description = "Not a super-admin / insufficient authority"),
+        (status = 404, description = "User not found")
+    )
+)]
+/// # Errors
+/// Returns an error on an invalid role, insufficient authority, or a missing user.
+#[tracing::instrument(name = "handler.admin.set_user_role", skip_all)]
+pub async fn set_user_role(
+    State(deps): State<Arc<AdminHandlerDeps>>,
+    super_admin: SuperAdminUser,
+    ApiPath(id): ApiPath<Uuid>,
+    ValidatedJson(request): ValidatedJson<SetUserRoleRequest>,
+) -> Result<Json<AdminUserResponse>, AppError> {
+    // The SuperAdminUser extractor guarantees the actor is a super-admin; pass
+    // their id so the use case can block self-demotion.
+    let user = deps
+        .set_user_role_use_case
+        .execute(
+            domain::value_objects::UserRole::SuperAdmin,
+            &super_admin.user_id,
+            &UserId::from_uuid(id),
+            &request.role,
+        )
+        .await?;
+    Ok(Json(AdminUserResponse::from(&user)))
+}
+
+/// List audit events, newest first (super-admin only).
+#[utoipa::path(
+    get,
+    path = "/audit-events",
+    tag = "Admin",
+    params(
+        ("limit" = Option<i64>, Query, description = "Max events (default 50, max 100)"),
+        ("offset" = Option<i64>, Query, description = "Pagination offset"),
+        ("account_id" = Option<Uuid>, Query, description = "Only events where this account was affected or acted"),
+        ("kind" = Option<AuditKindFilter>, Query, description = "Only events of this kind")
+    ),
+    responses(
+        (status = 200, description = "A page of audit events", body = AuditEventListResponse),
+        (status = 403, description = "Not a super-admin")
+    )
+)]
+/// # Errors
+/// Returns an error if the audit log is unreachable.
+#[tracing::instrument(name = "handler.admin.list_audit_events", skip_all)]
+pub async fn list_audit_events(
+    State(deps): State<Arc<AdminHandlerDeps>>,
+    _super_admin: SuperAdminUser,
+    ApiQuery(query): ApiQuery<ListAuditEventsQuery>,
+) -> Result<Json<AuditEventListResponse>, AppError> {
+    let (limit, offset) = query.paginated();
+    let filter = AuditFilter {
+        account: query.account_id.map(UserId::from_uuid),
+        kind: query.kind.map(Into::into),
+    };
+
+    let page = deps
+        .list_audit_events_use_case
+        .execute(filter, limit, offset)
+        .await?;
+    Ok(Json(AuditEventListResponse {
+        events: page
+            .events
+            .into_iter()
+            .map(AuditEventResponse::from)
+            .collect(),
+        total: page.total,
+        limit,
+        offset,
+    }))
+}

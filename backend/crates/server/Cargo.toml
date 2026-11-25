@@ -1,0 +1,80 @@
+[package]
+name = "server"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lib]
+name = "server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "overkill-todo"
+path = "src/main.rs"
+
+[features]
+default = ["swagger-ui"]
+# Serves /docs in DEV_MODE. Off in the release image (backend/Dockerfile).
+swagger-ui = ["api/swagger-ui"]
+
+[dependencies]
+shared = { path = "../shared" }
+domain = { path = "../domain" }
+application = { path = "../application" }
+platform = { path = "../platform" }
+persistence-postgres = { path = "../persistence-postgres" }
+services = { path = "../services" }
+api = { path = "../api", default-features = false }
+
+anyhow.workspace = true
+axum.workspace = true
+mimalloc.workspace = true
+opentelemetry.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+
+[dev-dependencies]
+application = { path = "../application", features = ["test-support"] }
+platform = { path = "../platform", features = ["test-support"] }
+persistence-postgres = { path = "../persistence-postgres", features = ["test-support"] }
+sqlx.workspace = true
+# In-memory span and metric exporters for asserting on exported telemetry in tests.
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
+async-trait.workspace = true
+base64.workspace = true
+criterion.workspace = true
+hex.workspace = true
+jiff = { workspace = true, features = ["serde"] }
+jsonwebtoken.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tower.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter", "json"] }
+utoipa-axum.workspace = true
+uuid = { workspace = true, features = ["v4", "v7", "serde"] }
+validator.workspace = true
+wiremock.workspace = true
+
+# Criterion benches (`just bench`). `harness = false` hands `main` to criterion.
+# They share `tests/common` with the integration tests for app wiring and keys.
+[[bench]]
+name = "crypto"
+harness = false
+
+[[bench]]
+name = "domain"
+harness = false
+
+[[bench]]
+name = "middleware"
+harness = false
+
+# Full router against Postgres; skips itself when DATABASE_URL is unset.
+[[bench]]
+name = "http"
+harness = false
+
+[lints]
+workspace = true

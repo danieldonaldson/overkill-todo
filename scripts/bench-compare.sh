@@ -9,7 +9,8 @@
 # Report-only: exits 0 even on regressions unless BENCH_FAIL_ON_REGRESSION=1.
 # Sides alternate for BENCH_ROUNDS rounds (default 2: base, PR, base, PR) and
 # the report keeps each side's fastest run, since noise only ever adds time.
-# Tunables: BENCH_ROUNDS, BENCH_THRESHOLD (percent, default 10), CRITERION_ARGS.
+# Tunables: BENCH_ROUNDS, BENCH_THRESHOLD (percent, default 10), CRITERION_ARGS,
+#   BENCH_ALLOW_BROKEN_BASE (set to 1 to warn instead of failing when the base produces no results).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$PWD
@@ -50,12 +51,48 @@ if [ $backend = 1 ]; then
   export CRITERION_HOME="$out/criterion"
 
   run_side() { # <checkout> <baseline-name>
-    local args=()
-    for b in "${benches[@]}"; do [ -f "$1/backend/benches/$b.rs" ] && args+=(--bench "$b"); done
-    if [ ${#args[@]} = 0 ]; then echo "no backend benches in $2; skipping"; return; fi
+    local args=() bench_dir found=0
+    if [ -d "$1/backend/crates/server/benches" ]; then
+      bench_dir="$1/backend/crates/server/benches"
+      args+=(-p server)
+    else
+      bench_dir="$1/backend/benches"
+    fi
+    for b in "${benches[@]}"; do
+      if [ -f "$bench_dir/$b.rs" ]; then
+        args+=(--bench "$b")
+        found=1
+      fi
+    done
+    if [ "$found" = 0 ]; then echo "no backend benches in $2; skipping"; return; fi
+    case $2 in
+      bench-base-*) args+=(--no-fail-fast) ;;
+    esac
     echo "── backend benches: $2"
     # shellcheck disable=SC2086 # criterion_args is a flag list.
-    (cd "$1/backend" && cargo bench --locked "${args[@]}" -- --save-baseline "$2" $criterion_args)
+    if ! (cd "$1/backend" && cargo bench --locked "${args[@]}" -- --save-baseline "$2" $criterion_args); then
+      # `--no-fail-fast` lets other benches run past runtime failures (not
+      # compile errors). If the base produced at least some results, warn and
+      # compare what finished. If it produced no results at all (e.g. a compile
+      # error on base), fail by default so every PR bench isn't silently marked
+      # "new" — set BENCH_ALLOW_BROKEN_BASE=1 when intentionally landing a PR
+      # that repairs an uncompilable base. The PR side must still pass.
+      case $2 in
+        bench-base-*)
+          if [ ! -d "$CRITERION_HOME" ] || [ -z "$(find "$CRITERION_HOME" -type f -path "*/$2/estimates.json" -print -quit)" ]; then
+            if [ "${BENCH_ALLOW_BROKEN_BASE:-0}" = 1 ]; then
+              echo "::warning::backend benches failed on the base side ($2) with no results (allowed via BENCH_ALLOW_BROKEN_BASE=1)"
+            else
+              echo "::error::backend benches failed on the base side ($2) and produced no results (set BENCH_ALLOW_BROKEN_BASE=1 to override)" >&2
+              return 1
+            fi
+          else
+            echo "::warning::backend benches failed on the base side ($2); comparing the benches that finished"
+          fi
+          ;;
+        *) return 1 ;;
+      esac
+    fi
   }
   for r in $(seq "$rounds"); do
     run_side "$worktree" "bench-base-$r"

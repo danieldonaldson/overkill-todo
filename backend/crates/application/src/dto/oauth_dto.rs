@@ -1,0 +1,85 @@
+//! OAuth-related DTOs for requests and responses.
+
+use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
+
+/// OAuth flow mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum OAuthMode {
+    /// Login or register via OAuth.
+    Login,
+    /// Link OAuth to existing account.
+    Link,
+}
+
+/// Query params for OAuth start endpoint.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct OAuthStartQuery {
+    pub mode: OAuthMode,
+}
+
+/// Request body for storing the OAuth device binding cookie before redirecting.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct OAuthDeviceFingerprintRequest {
+    /// Opaque device ID, stored as a cookie value: 1–128 letters, digits, `-`
+    /// or `_` (the web app sends 64 hex digits).
+    #[schema(pattern = "^[A-Za-z0-9_-]{1,128}$", min_length = 1, max_length = 128)]
+    pub device_fingerprint: String,
+}
+
+/// Query params for OAuth callback (from provider).
+///
+/// Every field is optional: a provider reports a failed or cancelled consent
+/// as `?error=access_denied&state=…` with no `code` (RFC 6749 §4.1.2.1). The
+/// handler turns any missing piece into a redirect back to the login page
+/// rather than letting the extractor answer with a bare 400.
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct OAuthCallbackQuery {
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Claims stored in the OAuth state JWT (CSRF/session binding for the redirect
+/// dance). Produced and verified by `api::oauth_state`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OAuthStateClaims {
+    pub nonce: String,
+    pub mode: OAuthMode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    pub provider: String,
+    pub exp: i64,
+}
+
+/// Test bypass query params (only works with `TEST_OAUTH_BYPASS=true`).
+#[cfg(debug_assertions)]
+#[derive(Debug, Deserialize)]
+pub struct OAuthTestBypassQuery {
+    pub code: Option<String>,
+    pub error: Option<String>,
+    pub sub: Option<String>,
+    pub email: Option<String>,
+    pub email_verified: Option<bool>,
+    pub state: Option<String>,
+}
+
+#[cfg(debug_assertions)]
+impl OAuthTestBypassQuery {
+    #[must_use]
+    pub fn is_test_bypass(&self) -> bool {
+        self.code.as_deref() == Some("test")
+    }
+}
+
+/// Provider user info extracted from ID token.
+#[derive(Debug, Clone)]
+pub struct OAuthUserInfo {
+    pub sub: String,
+    pub email: Option<String>,
+    pub email_verified: bool,
+    pub name: Option<String>,
+    pub given_name: Option<String>,
+    pub family_name: Option<String>,
+}

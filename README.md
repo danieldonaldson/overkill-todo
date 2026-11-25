@@ -23,8 +23,8 @@ cd ~/Work/myproject && rm -rf node_modules backend/target && git init
 ```
 
 Then rename: `app` / `@overkill-todo/*` / `App` are placeholders (package names, Compose
-project, DB name, JWT issuer and audience in `backend/src/infrastructure/api/jwt.rs`,
-`APP_NAME`, page titles, the leader-lock key in `main.rs`).
+project, DB name, JWT issuer and audience in `backend/crates/platform/src/crypto/token.rs`,
+`APP_NAME`, page titles, the leader-lock key in `backend/crates/server/src/main.rs`).
 
 ```bash
 grep -rIl --exclude-dir={node_modules,target,.sqlx,dist} -e '\bapp\b' -e '@overkill-todo/' -e 'App\b' .
@@ -55,6 +55,13 @@ and the backend refuses to start with them: replace both with
 `JWT_SIGNING_KEY=$(just jwt-keygen dev)`, or regenerate the file with
 `FORCE=1 ./scripts/gen-dev-env.sh`. Committed secrets use post-quantum age keys
 only (`deploy/secrets/README.md`).
+
+**First-deploy / OT-012 token cutover:** all four application JWT kinds
+(session, signup, password-reset and OAuth state) now require `iss`, `aud` and
+`iat` (plus `typ` on OAuth state). Pre-OT-012 signup, reset and OAuth-state
+tokens lack those claims and are rejected after upgrade, and pre-OT-012
+binaries reject post-OT-012 tokens carrying `aud`, so do a clean cutover rather
+than a rolling deploy or rollback across OT-012.
 
 | Recipe                                 | What it runs                                                       |
 | -------------------------------------- | ------------------------------------------------------------------ |
@@ -161,12 +168,12 @@ just bench-web --outputJson .bench/main.json                # frontend, on main
 just bench-web --compare .bench/main.json                   # frontend, on your branch
 ```
 
-- `backend/benches/crypto.rs`: JWT, CSRF, OAuth state, secret cipher, tokens,
+- `backend/crates/server/benches/crypto.rs`: JWT, CSRF, OAuth state, secret cipher, tokens,
   and Argon2 at production cost.
-- `backend/benches/domain.rs`: value objects, request DTOs, error fingerprints
+- `backend/crates/server/benches/domain.rs`: value objects, request DTOs, error fingerprints
   and responses, email templates.
-- `backend/benches/middleware.rs`: the real router's middleware stack, no DB.
-- `backend/benches/http.rs` (`just bench-db`): `/me`, export, admin list,
+- `backend/crates/server/benches/middleware.rs`: the real router's middleware stack, no DB.
+- `backend/crates/server/benches/http.rs` (`just bench-db`): `/me`, export, admin list,
   login, and refresh rotation against a throwaway `overkill_todo_bench` database.
 - `apps/web/**/*.bench.ts`: Vitest benches in Chromium. Bench mode skips
   `beforeAll`, so set up in the `describe` body; pass `{ throws: true }` to async
@@ -255,6 +262,9 @@ just obs-wipe            # delete stored traces, logs and metrics (keeps Grafana
 - **Ports** are bound to 127.0.0.1 only (`GRAFANA_PORT`, `ALERTMANAGER_PORT`).
   `just obs-check` (part of `just ci`) validates the collector config,
   Alertmanager configs and alert-rule tests.
+- **Log filtering (`RUST_LOG`).** `RUST_LOG` targets workspace crate names
+  (e.g. `api=debug,application=debug,persistence_postgres=debug`) instead of
+  `overkill_todo`, which now covers only `main.rs` startup and shutdown.
 
 ### Browser errors
 

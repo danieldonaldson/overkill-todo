@@ -1,0 +1,288 @@
+//! Integration tests for DB-backed background-task machinery:
+//!
+//! - `leader::run_as_leader` — Postgres advisory-lock leader election
+//!   (acquire, contention between two replicas, shutdown + lock release, and
+//!   the `leader.is_leader` gauge each replica reports).
+//! - `PurgeScheduledAccountsUseCase::run_once` driven against the real Postgres
+//!   repositories (the run-loops themselves are infinite `tokio` loops, so we exercise the single-iteration use cases they
+//!   call, which is where all the DB logic lives).
+
+mod common;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+use persistence_postgres::testing;
+use persistence_postgres::{Database, PostgresUserRepository};
+use platform::persistence::{LeaderLock as _, LeaderLocks as _};
+use sqlx::PgPool;
+use tokio::sync::{Notify, watch};
+
+use application::use_cases::PurgeScheduledAccountsUseCase;
+use opentelemetry::metrics::MeterProvider as _;
+use opentelemetry_sdk::metrics::{
+    InMemoryMetricExporter, PeriodicReader, SdkMeterProvider,
+    data::{AggregatedMetrics, MetricData, ScopeMetrics},
+};
+use server::infrastructure::tasks::leader::{LeaderMetrics, run_as_leader};
+
+async fn try_lock(db: &Database, key: i64) -> bool {
+    let Some(lock) = db.try_lock(key).await.unwrap() else {
+        return false;
+    };
+    lock.release().await;
+    true
+}
+
+// ===========================================================================
+// leader::run_as_leader — advisory-lock leader election
+// ===========================================================================
+
+/// A single replica acquires the lock, runs its worker, and steps down cleanly
+/// when shutdown is signalled, releasing the advisory lock.
+#[sqlx::test(migrations = "../../migrations")]
+async fn leader_acquires_runs_and_releases_on_shutdown(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool.clone()));
+    let lock_key: i64 = 9_000_001;
+
+    let ran = Arc::new(Notify::new());
+    let ran_signal = ran.clone();
+    let (tx, rx) = watch::channel(false);
+
+    let db_for_leader = db.clone();
+    let handle = tokio::spawn(async move {
+        run_as_leader(
+            db_for_leader,
+            lock_key,
+            "test-leader",
+            rx,
+            LeaderMetrics::from_global(),
+            move || {
+                let ran_signal = ran_signal.clone();
+                async move {
+                    // Mark that we became leader, then idle until cancelled.
+                    ran_signal.notify_one();
+                    std::future::pending::<()>().await;
+                }
+            },
+        )
+        .await;
+    });
+
+    // Wait until the worker ran (leadership acquired).
+    tokio::time::timeout(Duration::from_secs(5), ran.notified())
+        .await
+        .expect("worker should have started as leader");
+
+    // While held, the lock is not grantable to another session.
+    assert!(
+        !try_lock(&db, lock_key).await,
+        "lock should be held by the leader, not grantable elsewhere"
+    );
+
+    // Signal shutdown; the leader cancels its worker, releases the lock, returns.
+    tx.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), handle)
+        .await
+        .expect("leader loop should stop on shutdown")
+        .unwrap();
+
+    // A fresh session can now acquire it (proving the leader's own lock was
+    // released on step-down).
+    assert!(
+        try_lock(&db, lock_key).await,
+        "lock should be free after the leader stepped down"
+    );
+}
+
+/// With the lock already held by another session, the would-be leader stands by
+/// (its worker never runs) until shutdown.
+#[sqlx::test(migrations = "../../migrations")]
+async fn leader_stands_by_when_lock_held_elsewhere(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool.clone()));
+    let lock_key: i64 = 9_000_002;
+
+    // Hold the lock on a dedicated connection so the leader can't acquire it.
+    let held = db
+        .try_lock(lock_key)
+        .await
+        .unwrap()
+        .expect("test must hold the lock first");
+
+    let ran = Arc::new(AtomicBool::new(false));
+    let ran_flag = ran.clone();
+    let (tx, rx) = watch::channel(false);
+
+    let handle = tokio::spawn(async move {
+        run_as_leader(
+            db,
+            lock_key,
+            "standby-leader",
+            rx,
+            LeaderMetrics::from_global(),
+            move || {
+                let ran_flag = ran_flag.clone();
+                async move {
+                    ran_flag.store(true, Ordering::SeqCst);
+                    std::future::pending::<()>().await;
+                }
+            },
+        )
+        .await;
+    });
+
+    // Give the loop a couple of poll cycles; it should be standing by, not leading.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        !ran.load(Ordering::SeqCst),
+        "worker must not run while the lock is held elsewhere"
+    );
+
+    // Shutdown the standby; it should exit promptly without ever leading.
+    tx.send(true).unwrap();
+    tokio::time::timeout(Duration::from_secs(5), handle)
+        .await
+        .expect("standby loop should stop on shutdown")
+        .unwrap();
+
+    held.release().await;
+}
+
+/// Latest `leader.is_leader` value exported by `exporter`.
+fn is_leader_value(exporter: &InMemoryMetricExporter) -> u64 {
+    let batches = exporter.get_finished_metrics().unwrap();
+    let metric = batches
+        .iter()
+        .rev()
+        .flat_map(|rm| rm.scope_metrics().flat_map(ScopeMetrics::metrics))
+        .find(|m| m.name() == "leader.is_leader")
+        .expect("leader.is_leader not exported");
+    let AggregatedMetrics::U64(MetricData::Gauge(gauge)) = metric.data() else {
+        panic!("leader.is_leader is not a u64 gauge");
+    };
+    let points: Vec<u64> = gauge
+        .data_points()
+        .map(opentelemetry_sdk::metrics::data::GaugeDataPoint::value)
+        .collect();
+    assert_eq!(points.len(), 1, "one series per replica: {points:?}");
+    points[0]
+}
+
+/// Two replicas contend for one lock. Each reports `leader.is_leader` through
+/// its own meter provider (in production, its own process and
+/// `service.instance.id`). Exactly one of them reports 1.
+#[sqlx::test(migrations = "../../migrations")]
+async fn exactly_one_of_two_replicas_reports_leader(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool));
+    let lock_key: i64 = 9_000_003;
+    let became_leader = Arc::new(Notify::new());
+    let (tx, rx) = watch::channel(false);
+
+    let mut replicas = Vec::new();
+    for name in ["replica-a", "replica-b"] {
+        let exporter = InMemoryMetricExporter::default();
+        let provider = SdkMeterProvider::builder()
+            .with_reader(PeriodicReader::builder(exporter.clone()).build())
+            .build();
+        let metrics = LeaderMetrics::new(&provider.meter("t"));
+        let (db, rx, became_leader) = (db.clone(), rx.clone(), became_leader.clone());
+        let handle = tokio::spawn(async move {
+            run_as_leader(db, lock_key, name, rx, metrics, move || {
+                let became_leader = became_leader.clone();
+                async move {
+                    became_leader.notify_one();
+                    std::future::pending::<()>().await;
+                }
+            })
+            .await;
+        });
+        replicas.push((provider, exporter, handle));
+    }
+
+    tokio::time::timeout(Duration::from_secs(5), became_leader.notified())
+        .await
+        .expect("one replica should become leader");
+    // Let the other replica try the lock and stand by.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let values: Vec<u64> = replicas
+        .iter()
+        .map(|(provider, exporter, _)| {
+            provider.force_flush().unwrap();
+            is_leader_value(exporter)
+        })
+        .collect();
+    let mut sorted = values.clone();
+    sorted.sort_unstable();
+    assert_eq!(sorted, vec![0, 1], "is_leader per replica: {values:?}");
+
+    tx.send(true).unwrap();
+    for (provider, exporter, handle) in replicas {
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("leader loop should stop on shutdown")
+            .unwrap();
+        // A replica that stops leading reports 0.
+        provider.force_flush().unwrap();
+        assert_eq!(is_leader_value(&exporter), 0);
+    }
+}
+
+// ===========================================================================
+// account purger — PurgeScheduledAccountsUseCase::run_once over real repos
+// ===========================================================================
+
+/// A user still within the grace window is not touched.
+#[sqlx::test(migrations = "../../migrations")]
+async fn purge_skips_accounts_within_grace_period(pool: PgPool) {
+    let email = "e2e-purge-skip@example.com";
+    let id = testing::insert_scheduled_deletion_user(&pool, email, 7).await;
+
+    let uc = purge_uc(&pool);
+    assert_eq!(uc.run_once().await.unwrap(), 0);
+
+    let snapshot = testing::user_snapshot(&pool, id).await;
+    assert_eq!(snapshot.email, email, "user must be untouched within grace");
+}
+
+/// No accounts scheduled for deletion is a clean no-op.
+#[sqlx::test(migrations = "../../migrations")]
+async fn purge_no_scheduled_accounts_is_noop(pool: PgPool) {
+    let uc = purge_uc(&pool);
+    assert_eq!(uc.run_once().await.unwrap(), 0);
+}
+
+fn purge_uc(pool: &PgPool) -> PurgeScheduledAccountsUseCase {
+    let db = Arc::new(Database::from_pool(pool.clone()));
+    PurgeScheduledAccountsUseCase::new(Arc::new(PostgresUserRepository::new(db)))
+}
+
+/// A user whose deletion grace period has elapsed is
+/// anonymized: PII scrubbed, `deleted_at` set, `deletion_scheduled_at` cleared.
+#[sqlx::test(migrations = "../../migrations")]
+async fn purge_finalizes_account_past_grace_period(pool: PgPool) {
+    let email = "e2e-purge-me@example.com";
+    let id = testing::insert_scheduled_deletion_user(&pool, email, -1).await;
+
+    let uc = purge_uc(&pool);
+    assert_eq!(uc.run_once().await.unwrap(), 1);
+
+    let snapshot = testing::user_snapshot(&pool, id).await;
+
+    assert!(snapshot.deleted_at.is_some(), "deleted_at should be set");
+    assert!(
+        snapshot.deletion_scheduled_at.is_none(),
+        "deletion_scheduled_at should be cleared"
+    );
+    assert!(
+        snapshot.password_hash.is_none(),
+        "password should be scrubbed"
+    );
+    assert!(
+        snapshot.email.starts_with("deleted-"),
+        "email should be anonymized, got {}",
+        snapshot.email
+    );
+    assert_ne!(snapshot.first_name, "Real", "name should be scrubbed");
+}

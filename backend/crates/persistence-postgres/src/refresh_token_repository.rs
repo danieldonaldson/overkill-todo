@@ -1,0 +1,249 @@
+//! `PostgreSQL` implementation of the refresh token repository.
+
+use async_trait::async_trait;
+use std::sync::Arc;
+
+use super::audit_log::insert_audit_event;
+use super::time::{ToDb, ToDomain};
+use crate::connection::Database;
+use crate::error::persist_err;
+use crate::models::RefreshTokenRow;
+use application::ports::RefreshTokenRepository;
+use domain::entities::{AuditEvent, RefreshToken, RevocationReason};
+use domain::errors::DomainError;
+use domain::value_objects::{RefreshTokenId, UserId};
+
+pub struct PostgresRefreshTokenRepository {
+    db: Arc<Database>,
+}
+
+impl PostgresRefreshTokenRepository {
+    #[must_use]
+    pub const fn new(db: Arc<Database>) -> Self {
+        Self { db }
+    }
+
+    fn row_to_entity(row: RefreshTokenRow) -> RefreshToken {
+        let revoked_at = row.revoked_at.to_domain();
+        let revoked_reason = revoked_at
+            .is_some()
+            .then(|| RevocationReason::from_db_str(row.revoked_reason.as_deref()));
+        RefreshToken::from_persistence(
+            RefreshTokenId::from_uuid(row.id),
+            UserId::from_uuid(row.user_id),
+            row.token_hash,
+            row.device_fingerprint,
+            row.expires_at.to_domain(),
+            revoked_at,
+            revoked_reason,
+            row.created_at.to_domain(),
+        )
+    }
+}
+
+#[async_trait]
+impl RefreshTokenRepository for PostgresRefreshTokenRepository {
+    #[tracing::instrument(name = "repo.refresh_token.save", skip_all, fields(db.system = "postgresql", user_id = %token.user_id()))]
+    async fn save(&self, token: &RefreshToken) -> Result<(), DomainError> {
+        let revoked_reason = token.revoked_reason().and_then(RevocationReason::as_db_str);
+        sqlx::query!(
+            r#"
+            INSERT INTO refresh_tokens (id, user_id, token_hash, device_fingerprint, expires_at, revoked_at, revoked_reason, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            "#,
+            token.id().as_uuid(),
+            token.user_id().as_uuid(),
+            token.token_hash(),
+            token.device_fingerprint(),
+            token.expires_at().to_db(),
+            token.revoked_at().to_db(),
+            revoked_reason,
+            token.created_at().to_db(),
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "repo.refresh_token.find_by_hash", skip_all, fields(db.system = "postgresql"))]
+    async fn find_by_hash(&self, token_hash: &str) -> Result<Option<RefreshToken>, DomainError> {
+        let row = sqlx::query_as!(
+            RefreshTokenRow,
+            r#"
+            SELECT id, user_id, token_hash, device_fingerprint, expires_at, revoked_at, revoked_reason, created_at
+            FROM refresh_tokens
+            WHERE token_hash = $1
+            "#,
+            token_hash
+        )
+        .fetch_optional(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        Ok(row.map(Self::row_to_entity))
+    }
+
+    #[tracing::instrument(name = "repo.refresh_token.revoke", skip_all, fields(db.system = "postgresql", token_id = %id))]
+    async fn revoke(
+        &self,
+        id: &RefreshTokenId,
+        reason: RevocationReason,
+    ) -> Result<(), DomainError> {
+        sqlx::query!(
+            r#"
+            UPDATE refresh_tokens
+            SET revoked_at = NOW(), revoked_reason = $2
+            WHERE id = $1 AND revoked_at IS NULL
+            "#,
+            id.as_uuid(),
+            reason.as_db_str(),
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "repo.refresh_token.revoke_all_for_user", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
+    async fn revoke_all_for_user(
+        &self,
+        user_id: &UserId,
+        reason: RevocationReason,
+    ) -> Result<u64, DomainError> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE refresh_tokens
+            SET revoked_at = NOW(), revoked_reason = $2
+            WHERE user_id = $1 AND revoked_at IS NULL
+            "#,
+            user_id.as_uuid(),
+            reason.as_db_str(),
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        Ok(result.rows_affected())
+    }
+
+    #[tracing::instrument(name = "repo.refresh_token.revoke_all_for_user_audited", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
+    async fn revoke_all_for_user_audited(
+        &self,
+        user_id: &UserId,
+        reason: RevocationReason,
+        event: &AuditEvent,
+    ) -> Result<u64, DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+        let result = sqlx::query!(
+            r#"
+            UPDATE refresh_tokens
+            SET revoked_at = NOW(), revoked_reason = $2
+            WHERE user_id = $1 AND revoked_at IS NULL
+            "#,
+            user_id.as_uuid(),
+            reason.as_db_str(),
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+
+        let revoked = result.rows_affected();
+        if revoked > 0 {
+            insert_audit_event(&mut tx, event).await?;
+        }
+        tx.commit().await.map_err(persist_err)?;
+        Ok(revoked)
+    }
+
+    #[tracing::instrument(name = "repo.refresh_token.revoke_all_for_user_except", skip_all, fields(db.system = "postgresql", user_id = %user_id))]
+    async fn revoke_all_for_user_except(
+        &self,
+        user_id: &UserId,
+        keep_token_hash: &str,
+        reason: RevocationReason,
+    ) -> Result<u64, DomainError> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE refresh_tokens
+            SET revoked_at = NOW(), revoked_reason = $3
+            WHERE user_id = $1 AND revoked_at IS NULL AND token_hash <> $2
+            "#,
+            user_id.as_uuid(),
+            keep_token_hash,
+            reason.as_db_str(),
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        Ok(result.rows_affected())
+    }
+
+    #[tracing::instrument(name = "repo.refresh_token.rotate", skip_all, fields(db.system = "postgresql"))]
+    async fn rotate(
+        &self,
+        old_id: &RefreshTokenId,
+        new_token: &RefreshToken,
+    ) -> Result<(), DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+
+        let revoked = sqlx::query!(
+            r#"
+            UPDATE refresh_tokens
+            SET revoked_at = NOW(), revoked_reason = $2
+            WHERE id = $1 AND revoked_at IS NULL
+            "#,
+            old_id.as_uuid(),
+            RevocationReason::Rotated.as_db_str(),
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+
+        // Under concurrency the row is locked by the first transaction; the loser
+        // re-evaluates the predicate after commit and matches zero rows. Aborting
+        // here ensures a token is rotated exactly once and never mints two successors.
+        if revoked.rows_affected() == 0 {
+            return Err(DomainError::Conflict(
+                "Refresh token has already been rotated".into(),
+            ));
+        }
+
+        sqlx::query!(
+            r#"
+            INSERT INTO refresh_tokens (id, user_id, token_hash, device_fingerprint, expires_at)
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+            new_token.id().as_uuid(),
+            new_token.user_id().as_uuid(),
+            new_token.token_hash(),
+            new_token.device_fingerprint(),
+            new_token.expires_at().to_db(),
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+
+        tx.commit().await.map_err(persist_err)?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "repo.refresh_token.delete_expired", skip_all, fields(db.system = "postgresql"))]
+    async fn delete_expired(&self) -> Result<u64, DomainError> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM refresh_tokens
+            WHERE expires_at < NOW()
+            "#,
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+
+        Ok(result.rows_affected())
+    }
+}
