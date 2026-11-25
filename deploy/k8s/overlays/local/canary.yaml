@@ -41,7 +41,7 @@ spec:
               'printf %s "$VERSION" >/www/index.html; trap "sleep 5; exit 0" TERM; httpd -f -p 8080 -h /www & wait',
             ]
           envFrom:
-            - secretRef: { name: canary-v2 }
+            - secretRef: { name: canary-v9 }
           ports: [{ name: http, containerPort: 8080 }]
           readinessProbe:
             httpGet: { path: /, port: http }
