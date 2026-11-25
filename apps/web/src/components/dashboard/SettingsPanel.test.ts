@@ -258,6 +258,23 @@ describe('SettingsPanel', () => {
     revokeUrl.mockRestore()
   })
 
+  it('saves no file when the export is cut off', async () => {
+    setCurrentUser(passwordUser)
+    // What fetch's json() gives for a body the server aborted part-way.
+    vi.mocked(api.users.exportData).mockRejectedValue(new TypeError('network error'))
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const createUrl = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:fake')
+
+    const screen = await render(SettingsPanel)
+    await screen.getByRole('button', { name: /export my data/i }).click()
+
+    await expect.element(screen.getByRole('alert')).toHaveTextContent('network error')
+    expect(createUrl).not.toHaveBeenCalled()
+    expect(clickSpy).not.toHaveBeenCalled()
+    clickSpy.mockRestore()
+    createUrl.mockRestore()
+  })
+
   it('cancels a pending deletion', async () => {
     setCurrentUser({
       ...passwordUser,

@@ -8,9 +8,9 @@ use axum::{
     response::Response,
 };
 use jiff::Timestamp;
-use serde::Serialize;
 use std::sync::Arc;
 use tokio_stream::wrappers::ReceiverStream;
+use tracing::Instrument;
 
 use application::{
     dto::{
@@ -109,26 +109,10 @@ pub async fn set_password(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The export's profile half. Lists follow in the stream, so the response is
-/// never assembled in memory (design D10).
-#[derive(Serialize)]
-struct ExportHeader {
-    id: uuid::Uuid,
-    email: String,
-    first_name: String,
-    last_name: String,
-    email_verified: bool,
-    has_password: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    deletion_scheduled_at: Option<Timestamp>,
-    role: String,
-    created_at: Timestamp,
-    updated_at: Timestamp,
-    linked_oauth_accounts: Vec<LinkedOAuthAccountExport>,
-    exported_at: Timestamp,
-}
-
-fn build_export_header(user: User, oauth: &[domain::entities::OAuthAccount]) -> ExportHeader {
+fn build_export_header(
+    user: User,
+    oauth: &[domain::entities::OAuthAccount],
+) -> AccountExportResponse {
     let linked_oauth_accounts = oauth
         .iter()
         .map(|a| LinkedOAuthAccountExport {
@@ -140,7 +124,7 @@ fn build_export_header(user: User, oauth: &[domain::entities::OAuthAccount]) -> 
 
     let has_password = user.has_password();
     let parts = user.into_parts();
-    ExportHeader {
+    AccountExportResponse {
         id: *parts.id.as_uuid(),
         email: parts.email.into_string(),
         first_name: parts.first_name,
@@ -153,6 +137,7 @@ fn build_export_header(user: User, oauth: &[domain::entities::OAuthAccount]) -> 
         updated_at: parts.updated_at,
         linked_oauth_accounts,
         exported_at: Timestamp::now(),
+        lists: Vec::new(),
     }
 }
 
@@ -184,15 +169,19 @@ pub async fn export_data(
 
     let mut preamble = serde_json::to_vec(&build_export_header(user, &oauth))
         .map_err(|e| AppError::Internal(format!("export serialization failed: {e}")))?;
-    preamble.pop(); // the header object's closing brace
-    preamble.extend_from_slice(b",\"lists\":[");
-    // `AccountExportResponse` keeps `lists` as its last field, which this
-    // prefix and the closing bracket below reproduce.
+    // `lists` is the DTO's last field. Leave its array open for the stream below.
+    if !preamble.ends_with(b"\"lists\":[]}") {
+        return Err(AppError::Internal(
+            "export layout changed: lists must be the last field".into(),
+        ));
+    }
+    preamble.truncate(preamble.len() - 2);
 
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(1);
     let use_case = deps.export_user_data_use_case.clone();
     let user_id = auth_user.user_id;
-    tokio::spawn(async move {
+    // The stream outlives the handler: keep its logs under the request's trace.
+    let stream = async move {
         if tx.send(Ok(Bytes::from(preamble))).await.is_err() {
             return;
         }
@@ -239,7 +228,8 @@ pub async fn export_data(
             }
         }
         let _ = tx.send(Ok(Bytes::from_static(b"]}"))).await;
-    });
+    };
+    tokio::spawn(stream.instrument(tracing::Span::current()));
 
     let mut response = Response::new(Body::from_stream(ReceiverStream::new(rx)));
     response

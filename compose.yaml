@@ -30,7 +30,8 @@ services:
     logging: *logging
     image: postgres:18
     # pg_stat_statements is created by the initial migration; it must be preloaded.
-    # `log_error_verbosity=terse` keeps statement text out of Postgres logs.
+    # `log_error_verbosity=terse` drops the DETAIL line, which can hold row values
+    # such as titles (OT-013 D9). Failing statements are still logged.
     command:
       - postgres
       - -c

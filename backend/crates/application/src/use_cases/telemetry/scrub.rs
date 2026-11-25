@@ -10,9 +10,10 @@
 //!    starts with `/`) loses everything from its first `?` or `#`, except a
 //!    trailing `:line` or `:line:column`, so stack frames keep their position.
 //!    Words end at whitespace and at `" ' < > ( ) [ ] { }` and backticks.
-//! 2. **Emails** become `[EMAIL]`.
-//! 3. **List ids:** any segment after `/dashboard/lists/`, and any UUID after
-//!    `/lists/` or `/todos/` in an API path, becomes `[ID]` (OT-013 D9).
+//! 2. **List ids:** the rest of the path after `/dashboard/lists/`, except a
+//!    trailing `:line` or `:line:column`, and any UUID after `/lists/` or
+//!    `/todos/` in an API path, become `[ID]` (OT-013 D9).
+//! 3. **Emails** become `[EMAIL]`.
 //! 4. **`key=value` pairs** left in the text have the value of a sensitive key
 //!    replaced (OT-001's [`redact_query`]).
 //! 5. **Length:** cut to `max_chars` characters.
@@ -60,7 +61,7 @@ fn strip_address_queries(input: &str) -> String {
     out
 }
 
-/// Rule 3: list addresses and API ids carry no identity in a report.
+/// Rule 2: list addresses and API ids carry no identity in a report.
 fn replace_path_ids(input: &str) -> String {
     let text = replace_dashboard_list_ids(input);
     let text = replace_uuid_after(&text, "/lists/");
@@ -74,18 +75,21 @@ fn replace_dashboard_list_ids(input: &str) -> String {
     while let Some(relative) = input[from..].find(MARKER) {
         let at = from + relative;
         out.push_str(&input[from..at + MARKER.len()]);
-        let rest = &input[at + MARKER.len()..];
-        if rest.starts_with(PATH_ID_PLACEHOLDER) {
-            out.push_str(PATH_ID_PLACEHOLDER);
-            from = at + MARKER.len() + PATH_ID_PLACEHOLDER.len();
-            continue;
-        }
+        let start = at + MARKER.len();
+        // A second pass starts at the first one's placeholder, whose brackets
+        // would otherwise end the path.
+        let skip = if input[start..].starts_with(PATH_ID_PLACEHOLDER) {
+            PATH_ID_PLACEHOLDER.len()
+        } else {
+            0
+        };
+        let rest = &input[start + skip..];
         let end = rest
-            .char_indices()
-            .find_map(|(index, c)| ends_segment(c).then_some(index))
+            .find(|c: char| c == '?' || c == '#' || ends_word(c))
             .unwrap_or(rest.len());
         out.push_str(PATH_ID_PLACEHOLDER);
-        from = at + MARKER.len() + end;
+        out.push_str(position_suffix(&rest[..end]));
+        from = start + skip + end;
     }
     out.push_str(&input[from..]);
     out
@@ -98,35 +102,32 @@ fn replace_uuid_after(input: &str, marker: &str) -> String {
         let at = from + relative;
         let start = at + marker.len();
         let rest = &input[start..];
-        let end = rest
-            .char_indices()
-            .find_map(|(index, c)| ends_segment(c).then_some(index))
-            .unwrap_or(rest.len());
         out.push_str(&input[from..start]);
-        if is_uuid(&rest[..end]) {
+        from = start;
+        // Text such as `UUID: 500` or `UUID:10:5` goes on after the id.
+        if let Some((id, after)) = rest.split_at_checked(UUID_LEN)
+            && is_uuid(id)
+            && !after.starts_with(|c: char| c == '-' || c.is_ascii_hexdigit())
+        {
             out.push_str(PATH_ID_PLACEHOLDER);
-            from = start + end;
-        } else {
-            from = start;
+            from = start + UUID_LEN;
         }
     }
     out.push_str(&input[from..]);
     out
 }
 
+const UUID_LEN: usize = 36;
+
 fn is_uuid(value: &str) -> bool {
     let bytes = value.as_bytes();
-    if bytes.len() != 36 {
+    if bytes.len() != UUID_LEN {
         return false;
     }
     bytes.iter().enumerate().all(|(i, b)| match i {
         8 | 13 | 18 | 23 => *b == b'-',
         _ => b.is_ascii_hexdigit(),
     })
-}
-
-const fn ends_segment(c: char) -> bool {
-    c == '/' || c == '?' || c == '#' || ends_word(c)
 }
 
 fn strip_word_query(word: &str) -> String {
@@ -167,7 +168,7 @@ const fn is_domain_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '.' | '-')
 }
 
-/// Rule 2, the same matches as `/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g`.
+/// Rule 3, the same matches as `/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g`.
 fn replace_emails(input: &str) -> String {
     let chars: Vec<char> = input.chars().collect();
     let mut out = String::with_capacity(input.len());
@@ -215,7 +216,7 @@ fn domain_end(run: &[char]) -> Option<usize> {
     })
 }
 
-/// Rule 3, applied to each whitespace-separated word that contains `=`.
+/// Rule 4, applied to each whitespace-separated word that contains `=`.
 fn redact_key_values(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut word = String::new();
@@ -240,7 +241,7 @@ fn push_redacted(out: &mut String, word: &str) {
     }
 }
 
-/// Rule 4.
+/// Rule 5.
 fn truncate_chars(input: &str, max_chars: usize) -> String {
     match input.char_indices().nth(max_chars) {
         Some((byte, _)) => input[..byte].to_string(),

@@ -50,9 +50,7 @@ pub struct CreateListRequest {
     pub key: Uuid,
     /// 1–100 trimmed characters, one line.
     #[schema(
-        min_length = 1,
-        max_length = 100,
-        pattern = "^\\S(?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*\\S)?$",
+        pattern = "^\\s*\\S(?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*\\S)?\\s*$",
         example = "Work"
     )]
     pub name: String,
@@ -65,9 +63,7 @@ pub struct AddTodoRequest {
     pub key: Uuid,
     /// 1–500 trimmed characters, one line.
     #[schema(
-        min_length = 1,
-        max_length = 500,
-        pattern = "^\\S(?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*\\S)?$",
+        pattern = "^\\s*\\S(?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*\\S)?\\s*$",
         example = "Buy milk"
     )]
     pub title: String,

@@ -18,6 +18,9 @@ spec:
       owner: overkill_todo
   postgresql:
     shared_preload_libraries: [pg_stat_statements]
+    parameters:
+      # Drops DETAIL lines, which can hold row values (OT-013 D9).
+      log_error_verbosity: terse
   storage:
     size: 5Gi
   resources:

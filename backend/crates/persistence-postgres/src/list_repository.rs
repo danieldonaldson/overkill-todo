@@ -33,24 +33,29 @@ impl PostgresListRepository {
         Self { db }
     }
 
-    fn row_to_list(row: &ListRow) -> List {
-        List::from_persistence(ListParts {
-            id: ListId::from_uuid(row.id),
-            user_id: UserId::from_uuid(row.user_id),
-            name: ListName::new(&row.name).expect("stored list name is valid"),
-            version: i64::from(row.version),
-            created_at: row.created_at.to_domain(),
-        })
+    fn stored_name(name: &str) -> Result<ListName, DomainError> {
+        ListName::new(name)
+            .map_err(|_| DomainError::Persistence("stored list name is invalid".into()))
     }
 
-    fn summary_to_list(row: &ListSummaryRow) -> List {
-        List::from_persistence(ListParts {
+    fn row_to_list(row: &ListRow) -> Result<List, DomainError> {
+        Ok(List::from_persistence(ListParts {
             id: ListId::from_uuid(row.id),
             user_id: UserId::from_uuid(row.user_id),
-            name: ListName::new(&row.name).expect("stored list name is valid"),
+            name: Self::stored_name(&row.name)?,
             version: i64::from(row.version),
             created_at: row.created_at.to_domain(),
-        })
+        }))
+    }
+
+    fn summary_to_list(row: &ListSummaryRow) -> Result<List, DomainError> {
+        Ok(List::from_persistence(ListParts {
+            id: ListId::from_uuid(row.id),
+            user_id: UserId::from_uuid(row.user_id),
+            name: Self::stored_name(&row.name)?,
+            version: i64::from(row.version),
+            created_at: row.created_at.to_domain(),
+        }))
     }
 
     fn row_to_todo(row: &TodoRow) -> Result<Todo, DomainError> {
@@ -111,7 +116,7 @@ impl PostgresListRepository {
         .await
         .map_err(persist_err)?;
         Ok(ListSummary {
-            list: Self::summary_to_list(&row),
+            list: Self::summary_to_list(&row)?,
             open_count: row.open_count,
             todo_count: row.todo_count,
         })
@@ -196,14 +201,15 @@ impl ListRepository for PostgresListRepository {
         .await
         .map_err(persist_err)?;
 
-        Ok(rows
-            .iter()
-            .map(|row| ListSummary {
-                list: Self::summary_to_list(row),
-                open_count: row.open_count,
-                todo_count: row.todo_count,
+        rows.iter()
+            .map(|row| {
+                Ok(ListSummary {
+                    list: Self::summary_to_list(row)?,
+                    open_count: row.open_count,
+                    todo_count: row.todo_count,
+                })
             })
-            .collect())
+            .collect()
     }
 
     #[tracing::instrument(name = "repo.list.find_list", skip_all, fields(db.system = "postgresql", user_id = %user_id, list_id = %list_id))]
@@ -253,7 +259,7 @@ impl ListRepository for PostgresListRepository {
             .collect::<Result<Vec<_>, _>>()?;
         let open_count = todos.iter().filter(|todo| !todo.is_done()).count();
         Ok(Some(ListWithTodos {
-            list: Self::row_to_list(&list_row),
+            list: Self::row_to_list(&list_row)?,
             open_count: i64::try_from(open_count).unwrap_or(i64::MAX),
             todo_count: i64::try_from(todos.len()).unwrap_or(i64::MAX),
             todos,
@@ -339,7 +345,7 @@ impl ListRepository for PostgresListRepository {
         tx.commit().await.map_err(persist_err)?;
 
         Ok(ListWrite::Applied(ListSummary {
-            list: Self::row_to_list(&row),
+            list: Self::row_to_list(&row)?,
             open_count: 0,
             todo_count: 0,
         }))

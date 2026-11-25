@@ -73,12 +73,26 @@ async fn response(app: &axum::Router, request: Request<Body>) -> (StatusCode, Va
 struct Fixture {
     app: axum::Router,
     member: Session,
+    other: Session,
     other_list: String,
     other_todo: String,
     own_list: uuid::Uuid,
     own_todo: uuid::Uuid,
     unknown_list: String,
     unknown_todo: String,
+}
+
+/// The other Member still sees exactly their one untouched todo.
+async fn assert_other_untouched(f: &Fixture) {
+    let uri = format!("/api/v1/lists/{}", f.other_list);
+    let (status, body) = response(&f.app, request("GET", &uri, Some(&f.other), None, false)).await;
+    assert_eq!(status, StatusCode::OK);
+    let todos = body["todos"].as_array().unwrap();
+    assert_eq!(todos.len(), 1);
+    assert_eq!(todos[0]["id"], f.other_todo);
+    assert_eq!(todos[0]["title"], "Other's todo");
+    assert_eq!(todos[0]["version"], 1);
+    assert_eq!(todos[0]["done"], false);
 }
 
 async fn fixture(pool: PgPool) -> Fixture {
@@ -93,6 +107,7 @@ async fn fixture(pool: PgPool) -> Fixture {
     Fixture {
         app,
         member: Session::for_user(member_id, true, "user"),
+        other: Session::for_user(other_id, true, "user"),
         other_list: other_list_id.to_string(),
         other_todo: other_todo_id.to_string(),
         own_list: own_list_id,
@@ -188,6 +203,8 @@ async fn another_members_ids_answer_exactly_like_unknown_ids(pool: PgPool) {
     assert_eq!(foreign_todo.0, StatusCode::NOT_FOUND);
     assert_eq!(foreign_todo.1["code"], "todo_not_found");
 
+    assert_other_untouched(&f).await;
+
     // The caller's own todo still works, and the list picker never names the
     // other Member's list.
     let ok = response(
@@ -246,6 +263,35 @@ async fn staff_get_the_same_404_and_never_see_another_accounts_lists(pool: PgPoo
         assert_eq!(foreign, unknown, "{role}");
         assert_eq!(foreign.0, StatusCode::NOT_FOUND);
         assert_eq!(foreign.1["code"], "list_not_found");
+
+        for (method, path, body) in [
+            (
+                "POST",
+                "/todos".to_string(),
+                json!({ "key": uuid::Uuid::now_v7(), "title": "x" }),
+            ),
+            (
+                "PATCH",
+                format!("/todos/{}", f.other_todo),
+                json!({ "version": 1, "done": true }),
+            ),
+        ] {
+            let mut answers = Vec::new();
+            for list in [&f.other_list, &f.unknown_list] {
+                let uri = format!("/api/v1/lists/{list}{path}");
+                answers.push(
+                    response(
+                        &f.app,
+                        request(method, &uri, Some(&session), Some(&body), true),
+                    )
+                    .await,
+                );
+            }
+            assert_eq!(answers[0], answers[1], "{role} {method}");
+            assert_eq!(answers[0].0, StatusCode::NOT_FOUND, "{role} {method}");
+            assert_eq!(answers[0].1["code"], "list_not_found", "{role} {method}");
+        }
+        assert_other_untouched(&f).await;
 
         let lists = response(
             &f.app,

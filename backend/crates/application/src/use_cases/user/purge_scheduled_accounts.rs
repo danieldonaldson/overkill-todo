@@ -34,21 +34,27 @@ impl PurgeScheduledAccountsUseCase {
     /// and left for the next pass rather than aborting the whole scan.
     ///
     /// # Errors
-    /// Persistence errors from listing the ready-for-deletion set.
+    /// Persistence errors from listing the ready-for-deletion set, or from the sweep
+    /// once every due account has been handled.
     #[tracing::instrument(name = "usecase.purge_scheduled_accounts", skip_all)]
     pub async fn run_once(&self) -> Result<usize, DomainError> {
         // Before the early return: a purge by an older release (or a rollback)
         // may have anonymized accounts while leaving their lists behind.
-        let swept = self.lifecycle.delete_lists_of_deleted_accounts().await?;
-        if swept > 0 {
-            tracing::info!(rows = swept, "Swept lists of already-deleted accounts");
+        // A failed sweep is reported at the end: it must not hold up accounts
+        // that are due.
+        let sweep = self.lifecycle.delete_lists_of_deleted_accounts().await;
+        match &sweep {
+            Ok(0) => {}
+            Ok(rows) => tracing::info!(rows, "Swept lists of already-deleted accounts"),
+            Err(e) => {
+                tracing::error!(error = %e, "Sweep of deleted accounts' lists failed; will retry next pass");
+            }
         }
 
         let ready = self.lifecycle.find_ready_for_deletion().await?;
-        if ready.is_empty() {
-            return Ok(0);
+        if !ready.is_empty() {
+            tracing::info!(count = ready.len(), "Purging scheduled accounts");
         }
-        tracing::info!(count = ready.len(), "Purging scheduled accounts");
 
         let mut purged = 0;
         for user in ready {
@@ -63,7 +69,7 @@ impl PurgeScheduledAccountsUseCase {
                 }
             }
         }
-        Ok(purged)
+        sweep.map(|_| purged)
     }
 
     /// Tears down external resources, then anonymizes the user. Ordering matters —
@@ -194,11 +200,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_sweep_failure_aborts_the_pass() {
+    async fn a_sweep_failure_is_reported_after_due_accounts_are_purged() {
         let mut lifecycle = MockAccountLifecycleRepository::new();
         lifecycle
             .expect_delete_lists_of_deleted_accounts()
             .returning(|| Err(DomainError::Persistence("db down".into())));
+        lifecycle
+            .expect_find_ready_for_deletion()
+            .returning(|| Ok(vec![UserBuilder::new().build()]));
+        lifecycle
+            .expect_anonymize_account()
+            .times(1)
+            .returning(|_, _| Ok(true));
 
         let err = PurgeScheduledAccountsUseCase::new(Arc::new(lifecycle))
             .run_once()

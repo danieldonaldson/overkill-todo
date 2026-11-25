@@ -738,7 +738,10 @@ export interface components {
             last_name: string;
             /** @description All OAuth providers linked to this account. */
             linked_oauth_accounts: components["schemas"]["LinkedOAuthAccountExport"][];
-            /** @description All lists and todos, in contract order. */
+            /**
+             * @description All lists and todos, in contract order. Last: the handler serializes the
+             *     rest, then streams these one at a time.
+             */
             lists: components["schemas"]["ListExport"][];
             role: components["schemas"]["RoleName"];
             /** Format: date-time */

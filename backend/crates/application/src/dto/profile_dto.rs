@@ -105,10 +105,11 @@ pub struct AccountExportResponse {
     pub updated_at: Timestamp,
     /// All OAuth providers linked to this account.
     pub linked_oauth_accounts: Vec<LinkedOAuthAccountExport>,
-    /// All lists and todos, in contract order.
-    pub lists: Vec<super::ListExport>,
     /// When this export was generated.
     pub exported_at: Timestamp,
+    /// All lists and todos, in contract order. Last: the handler serializes the
+    /// rest, then streams these one at a time.
+    pub lists: Vec<super::ListExport>,
 }
 
 /// Response to an account-deletion request or its cancellation.

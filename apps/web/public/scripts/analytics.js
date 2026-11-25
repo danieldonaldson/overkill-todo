@@ -27,6 +27,7 @@
 
   // Every list address is one page (OT-013 design D9): the tracker's payload
   // is rewritten before it is sent, and a list page's title is pinned. The
+  // Anything that can't be rewritten is not sent. The
   // tracker resolves `data-before-send` on `window` before the first send.
   window.__otAnalyticsBeforeSend = function (type, payload) {
     try {
@@ -44,7 +45,7 @@
             return absolute ? url.href : url.pathname
           }
         } catch {
-          return value
+          return ''
         }
         return value
       }
@@ -55,7 +56,7 @@
       }
       return out
     } catch {
-      return payload
+      return null
     }
   }
 

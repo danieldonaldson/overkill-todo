@@ -81,12 +81,48 @@
     "name": "list id with a trailing slash and query",
     "input": "at https://overkill.example/dashboard/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e/?x=1",
     "max_chars": 500,
-    "expected": "at https://overkill.example/dashboard/lists/[ID]/"
+    "expected": "at https://overkill.example/dashboard/lists/[ID]"
   },
   {
     "name": "API list and todo ids",
     "input": "fetch /api/v1/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e/todos/8a1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e failed",
     "max_chars": 500,
     "expected": "fetch /api/v1/lists/[ID]/todos/[ID] failed"
+  },
+  {
+    "name": "API ids followed by punctuation",
+    "input": "GET /api/v1/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e: 500, then /api/v1/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e/todos/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e.",
+    "max_chars": 500,
+    "expected": "GET /api/v1/lists/[ID]: 500, then /api/v1/lists/[ID]/todos/[ID]."
+  },
+  {
+    "name": "API id followed by a position",
+    "input": "at https://overkill.example/api/v1/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e:10:5",
+    "max_chars": 500,
+    "expected": "at https://overkill.example/api/v1/lists/[ID]:10:5"
+  },
+  {
+    "name": "not quite a UUID after lists",
+    "input": "/api/v1/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6ea",
+    "max_chars": 500,
+    "expected": "/api/v1/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6ea"
+  },
+  {
+    "name": "list address keeps its position",
+    "input": "at f (https://overkill.example/dashboard/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e:10:5)",
+    "max_chars": 500,
+    "expected": "at f (https://overkill.example/dashboard/lists/[ID]:10:5)"
+  },
+  {
+    "name": "nested malformed list address",
+    "input": "Error at /dashboard/lists/x/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e?y=1 while loading",
+    "max_chars": 500,
+    "expected": "Error at /dashboard/lists/[ID] while loading"
+  },
+  {
+    "name": "email in a list address",
+    "input": "Error at /dashboard/lists/a@b.io now",
+    "max_chars": 500,
+    "expected": "Error at /dashboard/lists/[ID] now"
   }
 ]
