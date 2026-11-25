@@ -5,7 +5,8 @@ pub mod outgoing;
 
 pub use outgoing::{
     AccountLifecycleRepository, AuditLogRepository, CodeGenerator, EmailService,
-    EmailVerificationRepository, MxValidator, OAuthAccountRepository, OAuthProviderClient,
-    PasswordResetRepository, RefreshTokenRepository, TurnstileService, UserRepository,
+    EmailVerificationRepository, ListRepository, MxValidator, OAuthAccountRepository,
+    OAuthProviderClient, PasswordResetRepository, RefreshTokenRepository, TurnstileService,
+    UserRepository,
 };
 pub use outgoing::{JwtService, PasswordHasher, TokenService};

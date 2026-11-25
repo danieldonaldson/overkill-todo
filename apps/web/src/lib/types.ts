@@ -71,6 +71,17 @@ export type LinkedOAuthAccountExport = Schemas['LinkedOAuthAccountExport']
 export type AccountExportResponse = Schemas['AccountExportResponse']
 export type AccountDeletionResponse = Schemas['AccountDeletionResponse']
 
+// --- Lists and todos (OT-013) ---
+
+export type List = Schemas['ListResponse']
+export type Todo = Schemas['TodoResponse']
+export type ListDetail = Schemas['ListDetailResponse']
+export type CreateListRequest = Schemas['CreateListRequest']
+export type AddTodoRequest = Schemas['AddTodoRequest']
+export type DoneTodoPatch = Schemas['DoneTodoPatch']
+export type StaleTodoConflict = Schemas['StaleTodoConflictResponse']
+export type LimitConflict = Schemas['LimitConflictResponse']
+
 // --- Admin ---
 
 /** A user row in the admin user-management table. */

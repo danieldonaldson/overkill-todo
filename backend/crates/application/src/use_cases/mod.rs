@@ -4,6 +4,7 @@ pub mod admin;
 
 pub mod auth;
 
+pub mod lists;
 pub mod telemetry;
 
 pub mod user;
@@ -18,6 +19,11 @@ pub use auth::{
     ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase,
     ValidateResetCodeUseCase, VerifyEmailError, VerifyEmailUseCase, VerifyMagicLinkError,
     VerifyMagicLinkUseCase,
+};
+
+pub use lists::{
+    AddTodoUseCase, CreateListUseCase, GetListUseCase, ListError, ListListsUseCase,
+    MarkTodoUseCase, MutationOutcome,
 };
 
 pub use telemetry::RecordClientTelemetryUseCase;

@@ -40,6 +40,7 @@ pub const REFRESH_COOKIE_SCHEME: &str = "refresh_cookie";
         (name = "Verification", description = "Email verification"),
         (name = "OAuth", description = "OAuth providers"),
         (name = "Profile", description = "Profile management"),
+        (name = "Lists", description = "Lists and todos"),
         (name = "Admin", description = "Admin panel"),
         (name = "Health", description = "Liveness and readiness probes"),
         (name = "Telemetry", description = "Browser error and performance reports"),

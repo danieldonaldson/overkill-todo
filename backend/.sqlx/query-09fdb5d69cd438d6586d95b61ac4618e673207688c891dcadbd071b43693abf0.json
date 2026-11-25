@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE todos SET title = 'bad' || chr(10) || 'title' WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "09fdb5d69cd438d6586d95b61ac4618e673207688c891dcadbd071b43693abf0"
+}

@@ -238,6 +238,18 @@ appears in a response.
 
 ### Brute force on one-time codes
 
+### P-35: Lists and todos are private to their Member, and staff reach them exactly like a Member
+
+- Attackers: A1, A3, A5, A6
+- Strength: tested
+- Checks:
+  - `backend/crates/server/tests/lists_security_integration.rs::another_members_ids_answer_exactly_like_unknown_ids`
+  - `backend/crates/server/tests/lists_security_integration.rs::staff_get_the_same_404_and_never_see_another_accounts_lists`
+  - `backend/crates/server/tests/lists_security_integration.rs::visitors_and_unverified_members_are_refused`
+  - `backend/crates/server/tests/lists_security_integration.rs::a_missing_csrf_token_refuses_every_change`
+  - `backend/crates/server/tests/lists_integration.rs::unknown_and_foreign_ids_share_the_404_codes`
+- Gap: Tested at the HTTP boundary with real Postgres; the eventual sharing model must revisit it, since access will no longer be ownership-only.
+
 ### P-10: A verification or reset code locks after 5 failed attempts; the lock window starts at 15 minutes, doubles per earlier lockout, and is capped at 24 hours; resends wait 5 minutes
 
 - Attackers: A1

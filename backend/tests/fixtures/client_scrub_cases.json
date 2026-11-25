@@ -70,5 +70,23 @@
     "input": "a@b.io and more",
     "max_chars": 7,
     "expected": "[EMAIL]"
+  },
+  {
+    "name": "malformed list id in a page address",
+    "input": "Error at /dashboard/lists/not-a-uuid while loading",
+    "max_chars": 500,
+    "expected": "Error at /dashboard/lists/[ID] while loading"
+  },
+  {
+    "name": "list id with a trailing slash and query",
+    "input": "at https://overkill.example/dashboard/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e/?x=1",
+    "max_chars": 500,
+    "expected": "at https://overkill.example/dashboard/lists/[ID]/"
+  },
+  {
+    "name": "API list and todo ids",
+    "input": "fetch /api/v1/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e/todos/8a1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e failed",
+    "max_chars": 500,
+    "expected": "fetch /api/v1/lists/[ID]/todos/[ID] failed"
   }
 ]

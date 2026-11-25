@@ -25,6 +25,40 @@
     return
   }
 
+  // Every list address is one page (OT-013 design D9): the tracker's payload
+  // is rewritten before it is sent, and a list page's title is pinned. The
+  // tracker resolves `data-before-send` on `window` before the first send.
+  window.__otAnalyticsBeforeSend = function (type, payload) {
+    try {
+      if (!payload || typeof payload !== 'object') return payload
+      var out = Object.assign({}, payload)
+      var rewrite = function (value) {
+        if (typeof value !== 'string' || value === '') return value
+        try {
+          var absolute = /^[a-z]+:\/\//i.test(value)
+          var url = new URL(value, window.location.origin)
+          if (/^\/dashboard\/lists\/.+/.test(url.pathname)) {
+            url.pathname = '/dashboard/lists/[id]'
+            url.search = ''
+            url.hash = ''
+            return absolute ? url.href : url.pathname
+          }
+        } catch {
+          return value
+        }
+        return value
+      }
+      out.url = rewrite(out.url)
+      if (out.referrer) out.referrer = rewrite(out.referrer)
+      if (typeof out.url === 'string' && /\/dashboard\/lists\/\[id\]$/.test(out.url)) {
+        out.title = 'Lists'
+      }
+      return out
+    } catch {
+      return payload
+    }
+  }
+
   var s = document.createElement('script')
   s.defer = true
   s.src = '/stats/script.js'
@@ -33,5 +67,6 @@
   s.setAttribute('data-exclude-search', 'true')
   s.setAttribute('data-exclude-hash', 'true')
   s.setAttribute('data-do-not-track', 'true')
+  s.setAttribute('data-before-send', '__otAnalyticsBeforeSend')
   document.head.appendChild(s)
 })()

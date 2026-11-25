@@ -55,6 +55,12 @@ edit, because that would turn someone else's change into a silent overwrite.
 It holds if the random test passes for 10,000 seeds, and fails when (b) is
 deliberately broken by letting a refetch advance a queued edit.
 
+**Result (slice 1):** passes for 10,000 seeds (`VITE_HYPOTHESIS_SEEDS=10000`);
+the broken variant (`refetchAdvancedQueuedVersion(true)`, which lets a refetch
+advance a queued version) fails. The real two-tab flow reaches a stale 409 when
+the second tab ticks a todo after the first tab changed it twice, and both tabs
+then show the server's current state.
+
 ## Decisions
 
 ### D1. One version per todo and per list (domain)
@@ -271,8 +277,9 @@ UUID shows "list not found" without a request.
   same shell and the same page name.
 - **Rejected: `/dashboard/lists?id=…`.** No rewrite needed, but the address is
   worth being a path, and query strings are stripped from telemetry by design.
-- **Slice 1 checks early** that the plugin works in `astro preview`. If not,
-  Playwright runs against the web server configuration instead.
+- **Slice 1 check:** `astro preview` does not run the plugin (Astro replaces
+  the user plugin list), so `pnpm preview` runs the Caddyfile instead. The
+  production and test rewrites are then the same file.
 
 ### D9. Keeping content and list IDs out of telemetry (web, application)
 
@@ -358,6 +365,11 @@ The existing route-guard walk covers the Visitor case for future routes.
 Members' lists reappear when the release returns. Accounts purged meanwhile are
 cleaned up by D10's sweep. Until then the rolled-back release also leaves lists
 out of exports, so a long rollback needs a manual answer to export requests.
+
+**First deploy (slice 1):** boot applies the migration, then `just smoke <url>`,
+then create a list by address (`/dashboard/lists`), add and tick a todo, and
+check the export. Confirm Cloudflare Web Analytics is off: it would inject a
+second page-view beacon that D9's rewrite does not cover.
 
 ## Open Questions
 

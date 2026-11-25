@@ -1444,6 +1444,466 @@
         }
       }
     },
+    "/api/v1/lists": {
+      "get": {
+        "tags": [
+          "Lists"
+        ],
+        "summary": "The caller's lists, oldest first.\n# Errors\nReturns an error if the repository fails.",
+        "operationId": "list_lists",
+        "responses": {
+          "200": {
+            "description": "The caller's lists, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ListResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "Lists"
+        ],
+        "summary": "Create a list.\n# Errors\nReturns an error for invalid input, a repository failure, or a purged account.",
+        "operationId": "create_list",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The list, created or already present for this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name or missing field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated, or the account was purged",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The list limit was reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitConflictResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf_header": [],
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/lists/{id}": {
+      "get": {
+        "tags": [
+          "Lists"
+        ],
+        "summary": "One list and all its todos.\n# Errors\nReturns `list_not_found` for a missing or foreign list.",
+        "operationId": "get_list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "List ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The list and its todos in contract order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListDetailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed or invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "List not found (`list_not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/lists/{id}/todos": {
+      "post": {
+        "tags": [
+          "Lists"
+        ],
+        "summary": "Add a todo at the bottom of the list.\n# Errors\nReturns `list_not_found` or invalid-input errors.",
+        "operationId": "add_todo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "List ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddTodoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The todo, created or already present for this key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodoResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid title or missing field",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "List not found (`list_not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The todo limit was reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitConflictResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf_header": [],
+            "session_cookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/lists/{id}/todos/{todo_id}": {
+      "patch": {
+        "tags": [
+          "Lists"
+        ],
+        "summary": "Mark a todo done or not done.\n# Errors\nReturns the 404 codes for a missing or foreign ID.",
+        "operationId": "mark_todo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "List ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "todo_id",
+            "in": "path",
+            "description": "Todo ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TodoPatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The todo after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TodoResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing version or malformed body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "List or todo not found (`list_not_found` / `todo_not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The todo changed elsewhere",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaleTodoConflictResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf_header": [],
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/users/me": {
       "delete": {
         "tags": [
@@ -1956,6 +2416,7 @@
           "created_at",
           "updated_at",
           "linked_oauth_accounts",
+          "lists",
           "exported_at"
         ],
         "properties": {
@@ -1999,6 +2460,13 @@
             },
             "description": "All OAuth providers linked to this account."
           },
+          "lists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ListExport"
+            },
+            "description": "All lists and todos, in contract order."
+          },
           "role": {
             "$ref": "#/components/schemas/RoleName"
           },
@@ -2016,6 +2484,29 @@
           "system",
           "administrator"
         ]
+      },
+      "AddTodoRequest": {
+        "type": "object",
+        "description": "Add a todo to a list. `key` is the client's creation key.",
+        "required": [
+          "key",
+          "title"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Random per action; a retry reuses it."
+          },
+          "title": {
+            "type": "string",
+            "description": "1–500 trimmed characters, one line.",
+            "example": "Buy milk",
+            "maxLength": 500,
+            "minLength": 1,
+            "pattern": "^\\S(?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*\\S)?$"
+          }
+        }
       },
       "AdminUserListResponse": {
         "type": "object",
@@ -2686,6 +3177,48 @@
           }
         }
       },
+      "CreateListRequest": {
+        "type": "object",
+        "description": "Create a list. `key` is the client's creation key: repeating the request\nwith the same key returns the first list instead of creating another.",
+        "required": [
+          "key",
+          "name"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Random per action; a retry reuses it."
+          },
+          "name": {
+            "type": "string",
+            "description": "1–100 trimmed characters, one line.",
+            "example": "Work",
+            "maxLength": 100,
+            "minLength": 1,
+            "pattern": "^\\S(?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*\\S)?$"
+          }
+        }
+      },
+      "DoneTodoPatch": {
+        "type": "object",
+        "description": "Mark a todo done or not done at the version the Member saw.",
+        "required": [
+          "version",
+          "done"
+        ],
+        "properties": {
+          "done": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Version the client saw; a change at another version is refused."
+          }
+        },
+        "additionalProperties": false
+      },
       "ErrorResponse": {
         "type": "object",
         "description": "Structured error response returned to clients.",
@@ -2784,6 +3317,24 @@
           "ready"
         ]
       },
+      "LimitConflictResponse": {
+        "type": "object",
+        "description": "A `409` for an addition beyond a limit.",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Always `\"limit_reached\"`."
+          },
+          "message": {
+            "type": "string",
+            "description": "Names the limit, e.g. \"A list can hold at most 1,000 todos\"."
+          }
+        }
+      },
       "LinkedOAuthAccountExport": {
         "type": "object",
         "description": "A linked OAuth provider account, included in the data export.",
@@ -2804,6 +3355,94 @@
           "provider_email": {
             "type": "string",
             "description": "Email the provider reported at link time, if any."
+          }
+        }
+      },
+      "ListDetailResponse": {
+        "type": "object",
+        "description": "One list and all its todos.",
+        "required": [
+          "list",
+          "todos"
+        ],
+        "properties": {
+          "list": {
+            "$ref": "#/components/schemas/ListResponse"
+          },
+          "todos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TodoResponse"
+            }
+          }
+        }
+      },
+      "ListExport": {
+        "type": "object",
+        "description": "One list in the data export, with its todos in contract order.",
+        "required": [
+          "id",
+          "name",
+          "version",
+          "created_at",
+          "todos"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "todos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TodoExport"
+            }
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "ListResponse": {
+        "type": "object",
+        "description": "A list as every answer carries it.",
+        "required": [
+          "id",
+          "name",
+          "version",
+          "open_count",
+          "todo_count"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "open_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Todos that are not done."
+          },
+          "todo_count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Every todo, open and done."
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Optimistic-concurrency version the list was loaded at."
           }
         }
       },
@@ -3071,6 +3710,107 @@
           }
         }
       },
+      "StaleTodoConflictResponse": {
+        "type": "object",
+        "description": "A `409` for an edit based on a version that has since changed.",
+        "required": [
+          "code",
+          "message",
+          "current"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Always `\"stale\"`."
+          },
+          "current": {
+            "$ref": "#/components/schemas/TodoResponse",
+            "description": "The todo as the server now holds it."
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "TodoExport": {
+        "type": "object",
+        "description": "One todo in the data export.",
+        "required": [
+          "id",
+          "title",
+          "version",
+          "done",
+          "created_at"
+        ],
+        "properties": {
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "TodoPatchRequest": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/DoneTodoPatch"
+          }
+        ],
+        "description": "Change a todo. Exactly one of `title` and `done` will be accepted; slice 1\nsupports only `done`."
+      },
+      "TodoResponse": {
+        "type": "object",
+        "description": "A todo in contract order. `done` replaces the stored position.",
+        "required": [
+          "id",
+          "title",
+          "version",
+          "done",
+          "created_at"
+        ],
+        "properties": {
+          "completed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "done": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "title": {
+            "type": "string"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Optimistic-concurrency version the todo was loaded at."
+          }
+        }
+      },
       "UserResponse": {
         "type": "object",
         "description": "User information in API responses.",
@@ -3329,6 +4069,10 @@
     {
       "name": "Profile",
       "description": "Profile management"
+    },
+    {
+      "name": "Lists",
+      "description": "Lists and todos"
     },
     {
       "name": "Admin",

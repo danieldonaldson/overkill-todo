@@ -30,7 +30,13 @@ services:
     logging: *logging
     image: postgres:18
     # pg_stat_statements is created by the initial migration; it must be preloaded.
-    command: ['postgres', '-c', 'shared_preload_libraries=pg_stat_statements']
+    # `log_error_verbosity=terse` keeps statement text out of Postgres logs.
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - log_error_verbosity=terse
     environment:
       POSTGRES_USER: overkill_todo
       POSTGRES_PASSWORD: overkill_todo

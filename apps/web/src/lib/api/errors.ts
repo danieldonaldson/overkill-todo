@@ -13,7 +13,8 @@ import type { components } from './schema'
 type Schemas = components['schemas']
 
 export type ApiError = Partial<Schemas['ErrorResponse']> &
-  Partial<Schemas['VerificationErrorResponse']>
+  Partial<Schemas['VerificationErrorResponse']> &
+  Partial<Pick<Schemas['StaleTodoConflictResponse'], 'current'>>
 
 /**
  * Narrow an unknown thrown value to an {@link ApiError}-shaped object.
@@ -69,6 +70,8 @@ export class ApiErrorException extends Error implements ApiError {
   attempts_remaining?: ApiError['attempts_remaining']
   cooldown_seconds?: ApiError['cooldown_seconds']
   email?: ApiError['email']
+  /** The current row in a `stale` conflict (OT-013). */
+  current?: ApiError['current']
 
   /**
    * @param body Parsed response body, or null when it had none (or wasn't JSON).

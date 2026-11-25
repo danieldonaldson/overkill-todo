@@ -49,6 +49,8 @@ pub const PAGE_TEMPLATES: &[&str] = &[
     "/dashboard/settings",
     "/dashboard/admin",
     "/dashboard/audit",
+    "/dashboard/lists",
+    "/dashboard/lists/[id]",
 ];
 
 /// The site's islands (Decision 6b): the `name` of every `TelemetryBoundary`.
@@ -62,6 +64,7 @@ pub const ISLAND_TEMPLATES: &[&str] = &[
     "DashboardHeader",
     "ForgotPasswordForm",
     "HomePanel",
+    "ListsPanel",
     "ModeWatcher",
     "ResetPasswordForm",
     "SetPasswordForm",
@@ -84,6 +87,11 @@ pub fn page_template(path: &str) -> &'static str {
     } else {
         path
     };
+    // Every list address is one page template, malformed ids included
+    // (OT-013 design D9).
+    if path.starts_with("/dashboard/lists/") {
+        return "/dashboard/lists/[id]";
+    }
     PAGE_TEMPLATES
         .iter()
         .find(|template| **template == path)
@@ -542,6 +550,15 @@ mod tests {
     fn known_pages_keep_their_template_and_others_become_other() {
         assert_eq!(page_template("/login"), "/login");
         assert_eq!(page_template("/dashboard/settings/"), "/dashboard/settings");
+        assert_eq!(page_template("/dashboard/lists"), "/dashboard/lists");
+        assert_eq!(
+            page_template("/dashboard/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e"),
+            "/dashboard/lists/[id]"
+        );
+        assert_eq!(
+            page_template("/dashboard/lists/not-a-uuid/"),
+            "/dashboard/lists/[id]"
+        );
         assert_eq!(page_template("/dashboard"), "/dashboard");
         assert_eq!(page_template("/"), OTHER_PAGE);
         assert_eq!(page_template("/wp-admin"), OTHER_PAGE);

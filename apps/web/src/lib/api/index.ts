@@ -6,6 +6,7 @@ import { createAuthApi } from './auth'
 import { createOAuthApi } from './oauth'
 import { createUsersApi } from './users'
 import { createAdminApi } from './admin'
+import { createListsApi } from './lists'
 
 export { getLastTraceId } from './client'
 
@@ -16,6 +17,7 @@ class ApiClient {
   oauth: ReturnType<typeof createOAuthApi>
   users: ReturnType<typeof createUsersApi>
   admin: ReturnType<typeof createAdminApi>
+  lists: ReturnType<typeof createListsApi>
 
   constructor() {
     this.client = new HttpClient()
@@ -23,6 +25,7 @@ class ApiClient {
     this.oauth = createOAuthApi(this.client)
     this.users = createUsersApi(this.client)
     this.admin = createAdminApi(this.client)
+    this.lists = createListsApi(this.client)
   }
 }
 

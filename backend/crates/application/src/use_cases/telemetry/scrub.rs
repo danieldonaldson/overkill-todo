@@ -11,19 +11,25 @@
 //!    trailing `:line` or `:line:column`, so stack frames keep their position.
 //!    Words end at whitespace and at `" ' < > ( ) [ ] { }` and backticks.
 //! 2. **Emails** become `[EMAIL]`.
-//! 3. **`key=value` pairs** left in the text have the value of a sensitive key
+//! 3. **List ids:** any segment after `/dashboard/lists/`, and any UUID after
+//!    `/lists/` or `/todos/` in an API path, becomes `[ID]` (OT-013 D9).
+//! 4. **`key=value` pairs** left in the text have the value of a sensitive key
 //!    replaced (OT-001's [`redact_query`]).
-//! 4. **Length:** cut to `max_chars` characters.
+//! 5. **Length:** cut to `max_chars` characters.
 
 use shared::redact::redact_query;
 
 /// Replacement for an email address.
 pub const EMAIL_PLACEHOLDER: &str = "[EMAIL]";
 
+/// Replacement for a list or todo id in an address or API path.
+pub const PATH_ID_PLACEHOLDER: &str = "[ID]";
+
 /// Apply every rule above to `input`.
 #[must_use]
 pub fn scrub(input: &str, max_chars: usize) -> String {
     let text = strip_address_queries(input);
+    let text = replace_path_ids(&text);
     let text = replace_emails(&text);
     let text = redact_key_values(&text);
     truncate_chars(&text, max_chars)
@@ -52,6 +58,75 @@ fn strip_address_queries(input: &str) -> String {
     }
     out.push_str(&strip_word_query(&word));
     out
+}
+
+/// Rule 3: list addresses and API ids carry no identity in a report.
+fn replace_path_ids(input: &str) -> String {
+    let text = replace_dashboard_list_ids(input);
+    let text = replace_uuid_after(&text, "/lists/");
+    replace_uuid_after(&text, "/todos/")
+}
+
+fn replace_dashboard_list_ids(input: &str) -> String {
+    const MARKER: &str = "/dashboard/lists/";
+    let mut out = String::with_capacity(input.len());
+    let mut from = 0;
+    while let Some(relative) = input[from..].find(MARKER) {
+        let at = from + relative;
+        out.push_str(&input[from..at + MARKER.len()]);
+        let rest = &input[at + MARKER.len()..];
+        if rest.starts_with(PATH_ID_PLACEHOLDER) {
+            out.push_str(PATH_ID_PLACEHOLDER);
+            from = at + MARKER.len() + PATH_ID_PLACEHOLDER.len();
+            continue;
+        }
+        let end = rest
+            .char_indices()
+            .find_map(|(index, c)| ends_segment(c).then_some(index))
+            .unwrap_or(rest.len());
+        out.push_str(PATH_ID_PLACEHOLDER);
+        from = at + MARKER.len() + end;
+    }
+    out.push_str(&input[from..]);
+    out
+}
+
+fn replace_uuid_after(input: &str, marker: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut from = 0;
+    while let Some(relative) = input[from..].find(marker) {
+        let at = from + relative;
+        let start = at + marker.len();
+        let rest = &input[start..];
+        let end = rest
+            .char_indices()
+            .find_map(|(index, c)| ends_segment(c).then_some(index))
+            .unwrap_or(rest.len());
+        out.push_str(&input[from..start]);
+        if is_uuid(&rest[..end]) {
+            out.push_str(PATH_ID_PLACEHOLDER);
+            from = start + end;
+        } else {
+            from = start;
+        }
+    }
+    out.push_str(&input[from..]);
+    out
+}
+
+fn is_uuid(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 36 {
+        return false;
+    }
+    bytes.iter().enumerate().all(|(i, b)| match i {
+        8 | 13 | 18 | 23 => *b == b'-',
+        _ => b.is_ascii_hexdigit(),
+    })
+}
+
+const fn ends_segment(c: char) -> bool {
+    c == '/' || c == '?' || c == '#' || ends_word(c)
 }
 
 fn strip_word_query(word: &str) -> String {

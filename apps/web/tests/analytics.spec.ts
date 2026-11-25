@@ -228,6 +228,50 @@ test.describe('web analytics', () => {
     ])
   })
 
+  test('opening list addresses sends one template page view, without the id', async ({ page }) => {
+    await seedSession(page)
+    const { pageViews } = await setup(page)
+    const list = {
+      id: '3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e',
+      name: 'Weekend',
+      open_count: 1,
+      todo_count: 1,
+    }
+    const todo = {
+      id: '8a1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e',
+      title: 'Buy milk',
+      done: false,
+      version: 1,
+      created_at: '2026-11-25T10:00:00Z',
+      completed_at: null,
+    }
+    await page.route('**/api/v1/lists', (route) => route.fulfill({ json: [list] }))
+    await page.route('**/api/v1/lists/*', (route) =>
+      route.fulfill({ json: { list, todos: [todo] } })
+    )
+
+    await page.goto(`/dashboard/lists/${list.id}`)
+    await expect(page.getByRole('heading', { name: 'Weekend' })).toBeVisible()
+    await settle(page)
+
+    expect(pageViews()).toHaveLength(1)
+    const view = pageViews()[0].payload as Sent['payload'] & { title?: string }
+    expect(new URL(view.url).pathname).toBe('/dashboard/lists/[id]')
+    expect(view.title).toBe('Lists')
+    expect(JSON.stringify(pageViews())).not.toContain(list.id)
+
+    // Moving from a list to Settings carries the template as the referrer too.
+    await page.getByRole('link', { name: 'Settings' }).click()
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+    await settle(page)
+    const settings = pageViews().find(
+      (v) => new URL(v.payload.url).pathname === '/dashboard/settings'
+    )
+    expect(settings).toBeDefined()
+    expect(new URL(settings!.payload.referrer!, page.url()).pathname).toBe('/dashboard/lists/[id]')
+    expect(JSON.stringify(pageViews())).not.toContain(list.id)
+  })
+
   test('registration carries no email address into analytics', async ({ page }) => {
     const { sent } = await setup(page)
 

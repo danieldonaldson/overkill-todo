@@ -2,17 +2,21 @@
 
 use axum::{
     Json,
+    body::{Body, Bytes},
     extract::State,
-    http::{StatusCode, header::HeaderMap},
+    http::{HeaderValue, StatusCode, header::CONTENT_TYPE, header::HeaderMap},
+    response::Response,
 };
 use jiff::Timestamp;
+use serde::Serialize;
 use std::sync::Arc;
+use tokio_stream::wrappers::ReceiverStream;
 
 use application::{
     dto::{
         AccountDeletionResponse, AccountExportResponse, ChangePasswordRequest,
-        LinkedOAuthAccountExport, RequestDeletionRequest, SecurityActivityQuery,
-        SecurityActivityResponse, SetPasswordRequest,
+        LinkedOAuthAccountExport, ListExport, RequestDeletionRequest, SecurityActivityQuery,
+        SecurityActivityResponse, SetPasswordRequest, TodoExport,
     },
     use_cases::{
         CancelAccountDeletionUseCase, ChangePasswordUseCase, ExportUserDataUseCase,
@@ -105,8 +109,26 @@ pub async fn set_password(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Maps a user + their linked OAuth accounts to the export response DTO.
-fn build_export(user: User, oauth: &[domain::entities::OAuthAccount]) -> AccountExportResponse {
+/// The export's profile half. Lists follow in the stream, so the response is
+/// never assembled in memory (design D10).
+#[derive(Serialize)]
+struct ExportHeader {
+    id: uuid::Uuid,
+    email: String,
+    first_name: String,
+    last_name: String,
+    email_verified: bool,
+    has_password: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    deletion_scheduled_at: Option<Timestamp>,
+    role: String,
+    created_at: Timestamp,
+    updated_at: Timestamp,
+    linked_oauth_accounts: Vec<LinkedOAuthAccountExport>,
+    exported_at: Timestamp,
+}
+
+fn build_export_header(user: User, oauth: &[domain::entities::OAuthAccount]) -> ExportHeader {
     let linked_oauth_accounts = oauth
         .iter()
         .map(|a| LinkedOAuthAccountExport {
@@ -118,7 +140,7 @@ fn build_export(user: User, oauth: &[domain::entities::OAuthAccount]) -> Account
 
     let has_password = user.has_password();
     let parts = user.into_parts();
-    AccountExportResponse {
+    ExportHeader {
         id: *parts.id.as_uuid(),
         email: parts.email.into_string(),
         first_name: parts.first_name,
@@ -152,12 +174,78 @@ fn build_export(user: User, oauth: &[domain::entities::OAuthAccount]) -> Account
 pub async fn export_data(
     State(deps): State<Arc<ProfileHandlerDeps>>,
     auth_user: AuthUser,
-) -> Result<Json<AccountExportResponse>, AppError> {
-    let (user, oauth) = deps
+) -> Result<Response, AppError> {
+    // The audit event is recorded before any byte is written; a failure here
+    // refuses the export rather than handing data over unrecorded.
+    let (user, oauth, lists) = deps
         .export_user_data_use_case
         .execute(&auth_user.user_id)
         .await?;
-    Ok(Json(build_export(user, &oauth)))
+
+    let mut preamble = serde_json::to_vec(&build_export_header(user, &oauth))
+        .map_err(|e| AppError::Internal(format!("export serialization failed: {e}")))?;
+    preamble.pop(); // the header object's closing brace
+    preamble.extend_from_slice(b",\"lists\":[");
+    // `AccountExportResponse` keeps `lists` as its last field, which this
+    // prefix and the closing bracket below reproduce.
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+    let use_case = deps.export_user_data_use_case.clone();
+    let user_id = auth_user.user_id;
+    tokio::spawn(async move {
+        if tx.send(Ok(Bytes::from(preamble))).await.is_err() {
+            return;
+        }
+        for (index, summary) in lists.into_iter().enumerate() {
+            let list_id = *summary.list.id();
+            let todos = match use_case.list_todos(&user_id, &list_id).await {
+                Ok(todos) => todos,
+                Err(error) => {
+                    // Abort the response: the browser sees a failed download,
+                    // never a silently partial file. No content is logged.
+                    tracing::error!(user_id = %user_id, list_id = %list_id, error = %error, "export failed mid-stream");
+                    let _ = tx.send(Err(std::io::Error::other("export failed"))).await;
+                    return;
+                }
+            };
+            let export = ListExport {
+                id: list_id.as_uuid().to_owned(),
+                name: summary.list.name().as_str().to_string(),
+                version: summary.list.version(),
+                created_at: summary.list.created_at(),
+                todos: todos
+                    .iter()
+                    .map(|todo| TodoExport {
+                        id: *todo.id().as_uuid(),
+                        title: todo.title().as_str().to_string(),
+                        version: todo.version(),
+                        done: todo.is_done(),
+                        created_at: todo.created_at(),
+                        completed_at: todo.completed_at(),
+                    })
+                    .collect(),
+            };
+            let mut chunk = Vec::new();
+            if index > 0 {
+                chunk.push(b',');
+            }
+            if let Err(error) = serde_json::to_writer(&mut chunk, &export) {
+                tracing::error!(user_id = %user_id, error = %error, "export serialization failed mid-stream");
+                let _ = tx.send(Err(std::io::Error::other("export failed"))).await;
+                return;
+            }
+            if tx.send(Ok(Bytes::from(chunk))).await.is_err() {
+                return;
+            }
+        }
+        let _ = tx.send(Ok(Bytes::from_static(b"]}"))).await;
+    });
+
+    let mut response = Response::new(Body::from_stream(ReceiverStream::new(rx)));
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+    Ok(response)
 }
 
 /// The signed-in Member's own Security activity, newest first (OT-008).

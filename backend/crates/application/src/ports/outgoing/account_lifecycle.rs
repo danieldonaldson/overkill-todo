@@ -29,6 +29,13 @@ use domain::value_objects::UserId;
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
 pub trait AccountLifecycleRepository: Send + Sync {
+    /// Deletes lists left behind by accounts already purged.
+    ///
+    /// Runs at the start of every purge pass, before the "nothing due" early
+    /// return, so a purge by a previous release (or a rollback) leaves no
+    /// Member content behind (OT-013 design D10). Returns the rows deleted.
+    async fn delete_lists_of_deleted_accounts(&self) -> Result<u64, DomainError>;
+
     /// Finds all users whose deletion grace period has expired.
     ///
     /// Returns users where `deletion_scheduled_at` is in the past and `deleted_at`

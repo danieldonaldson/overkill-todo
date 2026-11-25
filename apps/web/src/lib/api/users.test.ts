@@ -53,6 +53,7 @@ describe('users api', () => {
       created_at: '2026-01-01T00:00:00Z',
       updated_at: '2026-01-02T00:00:00Z',
       linked_oauth_accounts: [],
+      lists: [],
       exported_at: '2026-06-20T00:00:00Z',
     }
     const { client, request } = fakeClient(exportPayload)

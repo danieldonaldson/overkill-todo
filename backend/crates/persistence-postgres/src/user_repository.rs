@@ -348,6 +348,20 @@ impl UserRepository for PostgresUserRepository {
 
 #[async_trait]
 impl AccountLifecycleRepository for PostgresUserRepository {
+    #[tracing::instrument(name = "repo.user.delete_lists_of_deleted_accounts", skip_all, fields(db.system = "postgresql"))]
+    async fn delete_lists_of_deleted_accounts(&self) -> Result<u64, DomainError> {
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM lists
+            WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL)
+            "#,
+        )
+        .execute(self.db.pool())
+        .await
+        .map_err(persist_err)?;
+        Ok(result.rows_affected())
+    }
+
     #[tracing::instrument(name = "repo.user.find_ready_for_deletion", skip_all, fields(db.system = "postgresql"))]
     async fn find_ready_for_deletion(&self) -> Result<Vec<User>, DomainError> {
         let rows = sqlx::query_as!(
@@ -445,13 +459,20 @@ impl AccountLifecycleRepository for PostgresUserRepository {
             return Ok(false);
         }
 
-        // 2. Delete refresh tokens
+        // 2. Delete lists and their todos (ON DELETE CASCADE). An account about
+        //    to be anonymized must leave no Member content behind.
+        sqlx::query!(r#"DELETE FROM lists WHERE user_id = $1"#, user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(persist_err)?;
+
+        // 3. Delete refresh tokens
         sqlx::query!(r#"DELETE FROM refresh_tokens WHERE user_id = $1"#, user_id)
             .execute(&mut *tx)
             .await
             .map_err(persist_err)?;
 
-        // 3. Delete OAuth accounts
+        // 4. Delete OAuth accounts
         sqlx::query!(
             r#"DELETE FROM user_oauth_accounts WHERE user_id = $1"#,
             user_id
@@ -460,7 +481,7 @@ impl AccountLifecycleRepository for PostgresUserRepository {
         .await
         .map_err(persist_err)?;
 
-        // 4. Delete email verification codes
+        // 5. Delete email verification codes
         sqlx::query!(
             r#"DELETE FROM email_verification_codes WHERE user_id = $1"#,
             user_id
@@ -469,7 +490,7 @@ impl AccountLifecycleRepository for PostgresUserRepository {
         .await
         .map_err(persist_err)?;
 
-        // 5. Delete password reset codes
+        // 6. Delete password reset codes
         sqlx::query!(
             r#"DELETE FROM password_reset_codes WHERE user_id = $1"#,
             user_id

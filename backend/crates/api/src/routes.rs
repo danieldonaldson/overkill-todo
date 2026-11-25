@@ -36,6 +36,7 @@ use super::{
         auth_handler::{self, AuthHandlerDeps},
         client_telemetry_handler::{self, ClientTelemetryHandlerDeps},
         health_handler,
+        list_handler::{self, ListHandlerDeps},
         oauth_handler::{self, OAuthHandlerDeps},
         profile_handler::{self, ProfileHandlerDeps},
         verification_handler::{self, VerificationHandlerDeps},
@@ -67,6 +68,7 @@ pub struct RouterDeps {
     pub profile: Arc<ProfileHandlerDeps>,
     pub admin: Arc<AdminHandlerDeps>,
     pub client_telemetry: Arc<ClientTelemetryHandlerDeps>,
+    pub lists: Arc<ListHandlerDeps>,
     /// Database readiness check for the `/health/ready` probe.
     pub db: Arc<dyn ReadinessCheck>,
     /// User repository handle for the admin-group [`require_fresh_session`]
@@ -99,6 +101,7 @@ fn build_cors(frontend_origin: &str) -> CorsLayer {
             Method::GET,
             Method::POST,
             Method::PUT,
+            Method::PATCH,
             Method::DELETE,
             Method::OPTIONS,
         ])
@@ -339,6 +342,17 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         .require_verified_email()
         .require_auth();
 
+    // Lists and todos (OT-013). A Member reaches only their own; every handler
+    // passes the caller's ID, so a foreign ID is answered exactly like an
+    // unknown one. Ordinary routes trust the access token until it expires.
+    let lists = OpenApiRouter::new()
+        .routes(routes!(list_handler::list_lists, list_handler::create_list))
+        .routes(routes!(list_handler::get_list))
+        .routes(routes!(list_handler::add_todo))
+        .routes(routes!(list_handler::mark_todo))
+        .require_verified_email()
+        .require_auth();
+
     // Admin routes (see `admin_guards`). The first admin is bootstrapped
     // out-of-band with `just grant-admin <email>`.
     let admin = admin_guards(OpenApiRouter::new().routes(routes!(admin_handler::list_users)));
@@ -373,6 +387,7 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         .nest("/auth", oauth)
         .nest("/auth", oauth_protected)
         .nest("/users", profile)
+        .merge(lists)
         .nest("/admin", admin)
         .nest("/admin", super_admin)
         // Mount new authenticated groups above this line so they get CSRF.
@@ -420,6 +435,7 @@ pub fn create_router(deps: RouterDeps, frontend_origin: &str) -> Router {
         profile: deps.profile,
         admin: deps.admin,
         client_telemetry: deps.client_telemetry,
+        lists: deps.lists,
         db: deps.db,
     };
 

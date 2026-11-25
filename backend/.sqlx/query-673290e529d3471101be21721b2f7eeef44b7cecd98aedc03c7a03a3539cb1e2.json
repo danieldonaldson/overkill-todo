@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO todos (id, list_id, creation_key, title, position)\n         VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'Secret todo', 1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "673290e529d3471101be21721b2f7eeef44b7cecd98aedc03c7a03a3539cb1e2"
+}

@@ -11,12 +11,15 @@
 //    `:line` or `:line:column`, so stack frames keep their position. Words end
 //    at whitespace and at " ' < > ( ) [ ] { } and backticks.
 // 2. Emails become `[EMAIL]`.
-// 3. `key=value` pairs left in the text have the value of a sensitive key
+// 3. List IDs in a page address, and UUIDs after `/lists/` or `/todos/` in an
+//    API path, become `[ID]` (OT-013 design D9).
+// 4. `key=value` pairs left in the text have the value of a sensitive key
 //    replaced (the backend's `redact_query`).
-// 4. Length: cut to `maxChars` characters (code points, as in Rust).
+// 5. Length: cut to `maxChars` characters (code points, as in Rust).
 
 export const EMAIL_PLACEHOLDER = '[EMAIL]'
 export const REDACTED = '[REDACTED]'
+export const PATH_ID_PLACEHOLDER = '[ID]'
 
 export const MAX_MESSAGE_CHARS = 500
 export const MAX_STACK_CHARS = 4000
@@ -24,7 +27,62 @@ export const MAX_SOURCE_CHARS = 500
 
 /** Apply every rule above to `input`. */
 export function scrub(input: string, maxChars: number): string {
-  return truncateChars(redactKeyValues(replaceEmails(stripAddressQueries(input))), maxChars)
+  return truncateChars(
+    redactKeyValues(replaceEmails(replacePathIds(stripAddressQueries(input)))),
+    maxChars
+  )
+}
+
+/** Rule 3: list addresses and API ids carry no identity in a report. */
+function replacePathIds(input: string): string {
+  return replaceUuidAfter(replaceUuidAfter(replaceDashboardListIds(input), '/lists/'), '/todos/')
+}
+
+function replaceDashboardListIds(input: string): string {
+  const marker = '/dashboard/lists/'
+  let out = ''
+  let from = 0
+  for (;;) {
+    const at = input.indexOf(marker, from)
+    if (at === -1) return out + input.slice(from)
+    out += input.slice(from, at + marker.length)
+    const start = at + marker.length
+    if (input.startsWith(PATH_ID_PLACEHOLDER, start)) {
+      out += PATH_ID_PLACEHOLDER
+      from = start + PATH_ID_PLACEHOLDER.length
+      continue
+    }
+    let end = start
+    while (end < input.length && !endsSegment(input[end])) end++
+    out += PATH_ID_PLACEHOLDER
+    from = end
+  }
+}
+
+function replaceUuidAfter(input: string, marker: string): string {
+  let out = ''
+  let from = 0
+  for (;;) {
+    const at = input.indexOf(marker, from)
+    if (at === -1) return out + input.slice(from)
+    const start = at + marker.length
+    let end = start
+    while (end < input.length && !endsSegment(input[end])) end++
+    if (isUuid(input.slice(start, end))) {
+      out += input.slice(from, start) + PATH_ID_PLACEHOLDER
+      from = end
+    } else {
+      out += input.slice(from, start)
+      from = start
+    }
+  }
+}
+
+const isUuid = (value: string) =>
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+
+function endsSegment(c: string): boolean {
+  return c === '/' || c === '?' || c === '#' || isWhitespace(c) || WORD_ENDS.has(c)
 }
 
 // Rust's `char::is_whitespace` (Unicode White_Space), which differs from

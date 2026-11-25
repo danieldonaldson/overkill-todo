@@ -105,6 +105,8 @@ pub struct AccountExportResponse {
     pub updated_at: Timestamp,
     /// All OAuth providers linked to this account.
     pub linked_oauth_accounts: Vec<LinkedOAuthAccountExport>,
+    /// All lists and todos, in contract order.
+    pub lists: Vec<super::ListExport>,
     /// When this export was generated.
     pub exported_at: Timestamp,
 }

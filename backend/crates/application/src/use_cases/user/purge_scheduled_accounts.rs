@@ -37,6 +37,13 @@ impl PurgeScheduledAccountsUseCase {
     /// Persistence errors from listing the ready-for-deletion set.
     #[tracing::instrument(name = "usecase.purge_scheduled_accounts", skip_all)]
     pub async fn run_once(&self) -> Result<usize, DomainError> {
+        // Before the early return: a purge by an older release (or a rollback)
+        // may have anonymized accounts while leaving their lists behind.
+        let swept = self.lifecycle.delete_lists_of_deleted_accounts().await?;
+        if swept > 0 {
+            tracing::info!(rows = swept, "Swept lists of already-deleted accounts");
+        }
+
         let ready = self.lifecycle.find_ready_for_deletion().await?;
         if ready.is_empty() {
             return Ok(0);
@@ -95,6 +102,9 @@ mod tests {
     async fn purges_every_ready_account() {
         let mut lifecycle = MockAccountLifecycleRepository::new();
         lifecycle
+            .expect_delete_lists_of_deleted_accounts()
+            .returning(|| Ok(0));
+        lifecycle
             .expect_find_ready_for_deletion()
             .returning(|| Ok(vec![UserBuilder::new().build(), UserBuilder::new().build()]));
         lifecycle
@@ -116,6 +126,9 @@ mod tests {
     #[tokio::test]
     async fn one_failure_does_not_abort_the_scan() {
         let mut lifecycle = MockAccountLifecycleRepository::new();
+        lifecycle
+            .expect_delete_lists_of_deleted_accounts()
+            .returning(|| Ok(0));
         lifecycle
             .expect_find_ready_for_deletion()
             .returning(|| Ok(vec![UserBuilder::new().build(), UserBuilder::new().build()]));
@@ -143,6 +156,9 @@ mod tests {
     async fn account_cancelled_after_the_scan_is_not_counted() {
         let mut lifecycle = MockAccountLifecycleRepository::new();
         lifecycle
+            .expect_delete_lists_of_deleted_accounts()
+            .returning(|| Ok(0));
+        lifecycle
             .expect_find_ready_for_deletion()
             .returning(|| Ok(vec![UserBuilder::new().build()]));
         lifecycle
@@ -155,5 +171,39 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(purged, 0);
+    }
+
+    #[tokio::test]
+    async fn sweeps_lists_even_when_no_account_is_due() {
+        let mut lifecycle = MockAccountLifecycleRepository::new();
+        lifecycle
+            .expect_delete_lists_of_deleted_accounts()
+            .times(1)
+            .returning(|| Ok(3));
+        lifecycle
+            .expect_find_ready_for_deletion()
+            .times(1)
+            .returning(|| Ok(Vec::new()));
+        lifecycle.expect_anonymize_account().times(0);
+
+        let purged = PurgeScheduledAccountsUseCase::new(Arc::new(lifecycle))
+            .run_once()
+            .await
+            .unwrap();
+        assert_eq!(purged, 0);
+    }
+
+    #[tokio::test]
+    async fn a_sweep_failure_aborts_the_pass() {
+        let mut lifecycle = MockAccountLifecycleRepository::new();
+        lifecycle
+            .expect_delete_lists_of_deleted_accounts()
+            .returning(|| Err(DomainError::Persistence("db down".into())));
+
+        let err = PurgeScheduledAccountsUseCase::new(Arc::new(lifecycle))
+            .run_once()
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DomainError::Persistence(_)));
     }
 }

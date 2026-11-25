@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use application::ports::outgoing::{
-    AccountLifecycleRepository, AuditLogRepository, EmailVerificationRepository,
+    AccountLifecycleRepository, AuditLogRepository, EmailVerificationRepository, ListRepository,
     OAuthAccountRepository, PasswordResetRepository, RefreshTokenRepository, UserRepository,
 };
 use platform::persistence::DatabaseError;
@@ -18,6 +18,7 @@ pub mod audit_log;
 pub mod connection;
 pub mod email_verification_repository;
 pub mod error;
+pub mod list_repository;
 mod maintenance;
 
 pub mod models;
@@ -33,6 +34,7 @@ pub mod user_repository;
 pub use audit_log::PostgresAuditLogRepository;
 pub use connection::{Database, STATEMENT_LOG_DIRECTIVE};
 pub use email_verification_repository::PostgresEmailVerificationRepository;
+pub use list_repository::PostgresListRepository;
 
 pub use oauth_account_repository::PostgresOAuthAccountRepository;
 pub use password_reset_repository::PostgresPasswordResetRepository;
@@ -50,6 +52,7 @@ pub struct Persistence {
     pub refresh_tokens: Arc<dyn RefreshTokenRepository>,
     pub email_verifications: Arc<dyn EmailVerificationRepository>,
     pub password_resets: Arc<dyn PasswordResetRepository>,
+    pub lists: Arc<dyn ListRepository>,
     pub db: Arc<Database>,
 }
 
@@ -77,6 +80,7 @@ pub fn wire(db: Arc<Database>) -> Persistence {
         refresh_tokens: Arc::new(PostgresRefreshTokenRepository::new(db.clone())),
         email_verifications: Arc::new(PostgresEmailVerificationRepository::new(db.clone())),
         password_resets: Arc::new(PostgresPasswordResetRepository::new(db.clone())),
+        lists: Arc::new(PostgresListRepository::new(db.clone())),
         db,
     }
 }

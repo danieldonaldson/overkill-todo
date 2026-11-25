@@ -482,6 +482,95 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/lists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The caller's lists, oldest first.
+         *     # Errors
+         *     Returns an error if the repository fails.
+         */
+        get: operations["list_lists"];
+        put?: never;
+        /**
+         * Create a list.
+         *     # Errors
+         *     Returns an error for invalid input, a repository failure, or a purged account.
+         */
+        post: operations["create_list"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lists/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One list and all its todos.
+         *     # Errors
+         *     Returns `list_not_found` for a missing or foreign list.
+         */
+        get: operations["get_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lists/{id}/todos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a todo at the bottom of the list.
+         *     # Errors
+         *     Returns `list_not_found` or invalid-input errors.
+         */
+        post: operations["add_todo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lists/{id}/todos/{todo_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Mark a todo done or not done.
+         *     # Errors
+         *     Returns the 404 codes for a missing or foreign ID.
+         */
+        patch: operations["mark_todo"];
+        trace?: never;
+    };
     "/api/v1/users/me": {
         parameters: {
             query?: never;
@@ -649,6 +738,8 @@ export interface components {
             last_name: string;
             /** @description All OAuth providers linked to this account. */
             linked_oauth_accounts: components["schemas"]["LinkedOAuthAccountExport"][];
+            /** @description All lists and todos, in contract order. */
+            lists: components["schemas"]["ListExport"][];
             role: components["schemas"]["RoleName"];
             /** Format: date-time */
             updated_at: string;
@@ -658,6 +749,19 @@ export interface components {
          * @enum {string}
          */
         ActivityActorName: "you" | "system" | "administrator";
+        /** @description Add a todo to a list. `key` is the client's creation key. */
+        AddTodoRequest: {
+            /**
+             * Format: uuid
+             * @description Random per action; a retry reuses it.
+             */
+            key: string;
+            /**
+             * @description 1–500 trimmed characters, one line.
+             * @example Buy milk
+             */
+            title: string;
+        };
         /** @description A page of users for the admin listing. */
         AdminUserListResponse: {
             /** Format: int64 */
@@ -923,6 +1027,31 @@ export interface components {
             /** @description The signup completion token from verify-email endpoint (30 min expiry). */
             signup_token: string;
         };
+        /**
+         * @description Create a list. `key` is the client's creation key: repeating the request
+         *     with the same key returns the first list instead of creating another.
+         */
+        CreateListRequest: {
+            /**
+             * Format: uuid
+             * @description Random per action; a retry reuses it.
+             */
+            key: string;
+            /**
+             * @description 1–100 trimmed characters, one line.
+             * @example Work
+             */
+            name: string;
+        };
+        /** @description Mark a todo done or not done at the version the Member saw. */
+        DoneTodoPatch: {
+            done: boolean;
+            /**
+             * Format: int64
+             * @description Version the client saw; a change at another version is refused.
+             */
+            version: number;
+        };
         /** @description Structured error response returned to clients. */
         ErrorResponse: {
             /**
@@ -974,6 +1103,13 @@ export interface components {
          * @enum {string}
          */
         IslandStage: "interactive" | "ready";
+        /** @description A `409` for an addition beyond a limit. */
+        LimitConflictResponse: {
+            /** @description Always `"limit_reached"`. */
+            code: string;
+            /** @description Names the limit, e.g. "A list can hold at most 1,000 todos". */
+            message: string;
+        };
         /** @description A linked OAuth provider account, included in the data export. */
         LinkedOAuthAccountExport: {
             /**
@@ -985,6 +1121,43 @@ export interface components {
             provider: components["schemas"]["OAuthProviderName"];
             /** @description Email the provider reported at link time, if any. */
             provider_email?: string;
+        };
+        /** @description One list and all its todos. */
+        ListDetailResponse: {
+            list: components["schemas"]["ListResponse"];
+            todos: components["schemas"]["TodoResponse"][];
+        };
+        /** @description One list in the data export, with its todos in contract order. */
+        ListExport: {
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            id: string;
+            name: string;
+            todos: components["schemas"]["TodoExport"][];
+            /** Format: int64 */
+            version: number;
+        };
+        /** @description A list as every answer carries it. */
+        ListResponse: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            /**
+             * Format: int64
+             * @description Todos that are not done.
+             */
+            open_count: number;
+            /**
+             * Format: int64
+             * @description Every todo, open and done.
+             */
+            todo_count: number;
+            /**
+             * Format: int64
+             * @description Optimistic-concurrency version the list was loaded at.
+             */
+            version: number;
         };
         /** @description Request body for user login. */
         LoginRequest: {
@@ -1098,6 +1271,48 @@ export interface components {
         SetUserRoleRequest: {
             /** @description New role: `user`, `admin`, or `super_admin`. */
             role: components["schemas"]["RoleName"];
+        };
+        /** @description A `409` for an edit based on a version that has since changed. */
+        StaleTodoConflictResponse: {
+            /** @description Always `"stale"`. */
+            code: string;
+            /** @description The todo as the server now holds it. */
+            current: components["schemas"]["TodoResponse"];
+            message: string;
+        };
+        /** @description One todo in the data export. */
+        TodoExport: {
+            /** Format: date-time */
+            completed_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            done: boolean;
+            /** Format: uuid */
+            id: string;
+            title: string;
+            /** Format: int64 */
+            version: number;
+        };
+        /**
+         * @description Change a todo. Exactly one of `title` and `done` will be accepted; slice 1
+         *     supports only `done`.
+         */
+        TodoPatchRequest: components["schemas"]["DoneTodoPatch"];
+        /** @description A todo in contract order. `done` replaces the stored position. */
+        TodoResponse: {
+            /** Format: date-time */
+            completed_at?: string;
+            /** Format: date-time */
+            created_at: string;
+            done: boolean;
+            /** Format: uuid */
+            id: string;
+            title: string;
+            /**
+             * Format: int64
+             * @description Optimistic-concurrency version the todo was loaded at.
+             */
+            version: number;
         };
         /** @description User information in API responses. */
         UserResponse: {
@@ -2326,6 +2541,354 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_lists: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's lists, oldest first */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListResponse"][];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Email address not verified */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateListRequest"];
+            };
+        };
+        responses: {
+            /** @description The list, created or already present for this key */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListResponse"];
+                };
+            };
+            /** @description Invalid name or missing field */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not authenticated, or the account was purged */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Email address not verified */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The list limit was reached */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitConflictResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description List ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The list and its todos in contract order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ListDetailResponse"];
+                };
+            };
+            /** @description Malformed or invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Email address not verified */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description List not found (`list_not_found`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    add_todo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description List ID */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddTodoRequest"];
+            };
+        };
+        responses: {
+            /** @description The todo, created or already present for this key */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TodoResponse"];
+                };
+            };
+            /** @description Invalid title or missing field */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Email address not verified */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description List not found (`list_not_found`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The todo limit was reached */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitConflictResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    mark_todo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description List ID */
+                id: string;
+                /** @description Todo ID */
+                todo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TodoPatchRequest"];
+            };
+        };
+        responses: {
+            /** @description The todo after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TodoResponse"];
+                };
+            };
+            /** @description Missing version or malformed body */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Email address not verified */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description List or todo not found (`list_not_found` / `todo_not_found`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The todo changed elsewhere */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaleTodoConflictResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };

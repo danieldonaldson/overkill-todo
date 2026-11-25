@@ -29,6 +29,7 @@ import {
   setSessionUser,
 } from './session'
 import { clearTokenExpiry, getTokenExpiry } from './token'
+import { lists } from '../lists/store.svelte'
 
 export type SessionStatus = 'unconfirmed' | 'confirmed' | 'unreachable'
 
@@ -118,6 +119,9 @@ export const session = {
 
   /** Replace the account, e.g. with a server response after an action. */
   set(user: User): void {
+    // A different Member signing in must not inherit the first one's lists or
+    // queued saves (OT-013 design D7).
+    if (state.user && state.user.id !== user.id) lists.reset()
     state.user = user
     setSessionUser(user)
   },
@@ -135,6 +139,7 @@ export const session = {
    */
   async signOut(): Promise<void> {
     signedOut = true
+    lists.reset()
     state.user = null
     clearSessionUser()
     clearTokenExpiry()

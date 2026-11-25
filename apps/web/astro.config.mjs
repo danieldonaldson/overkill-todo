@@ -18,6 +18,31 @@ const apiTarget = process.env.API_PROXY_TARGET ?? `http://localhost:${process.en
 // back on the proxy port (HMR_CLIENT_PORT=443), not Vite's own port.
 const hmrClientPort = process.env.HMR_CLIENT_PORT ? Number(process.env.HMR_CLIENT_PORT) : undefined
 
+// One static shell answers every list address. Astro can't build a page per
+// list: the [id] page is built once with a placeholder id, and the web server
+// rewrites /dashboard/lists/<anything> to it (design D8). This plugin provides
+// the rewrite for `astro dev`; `pnpm preview` runs the production Caddyfile.
+function listAddressShell() {
+  const isListAddress = (url) => {
+    const path = url.split('?')[0]
+    return /^\/dashboard\/lists\/.+/.test(path)
+  }
+  const rewrite = (url) => {
+    if (!isListAddress(url)) return url
+    const query = url.includes('?') ? url.slice(url.indexOf('?')) : ''
+    return `/dashboard/lists/placeholder${query}`
+  }
+  return {
+    name: 'list-address-shell',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        if (req.url) req.url = rewrite(req.url)
+        next()
+      })
+    },
+  }
+}
+
 // Vite rejects requests whose Host header isn't localhost unless allow-listed. Behind a
 // proxy with its own hostname the dev server 403s ("Blocked request") without this.
 // Comma-separated, env-driven (DEV_ALLOWED_HOSTS) so no dev hostname is baked into config.
@@ -38,7 +63,7 @@ export default defineConfig({
   // request 504s). It's a dev-only overlay we don't use, so disable it.
   devToolbar: { enabled: false },
   vite: {
-    plugins: [tailwindcss()],
+    plugins: [tailwindcss(), listAddressShell()],
     // Source maps for decoding browser error stacks (OT-006), with no
     // `sourceMappingURL` comment. The web image moves them out of the served
     // tree; local builds keep them in dist/ for `just decode-stack dev`.

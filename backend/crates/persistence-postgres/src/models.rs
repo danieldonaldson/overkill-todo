@@ -123,3 +123,34 @@ pub struct OAuthAccountRow {
     pub provider_email: Option<String>,
     pub linked_at: Timestamp,
 }
+
+#[derive(Debug, Clone, FromRow)]
+pub struct ListRow {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub name: String,
+    pub version: i32,
+    pub created_at: Timestamp,
+}
+
+#[derive(Debug, FromRow)]
+pub struct ListSummaryRow {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub name: String,
+    pub version: i32,
+    pub created_at: Timestamp,
+    pub open_count: i64,
+    pub todo_count: i64,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct TodoRow {
+    pub id: Uuid,
+    pub list_id: Uuid,
+    pub title: String,
+    pub version: i32,
+    pub position: Option<i64>,
+    pub completed_at: Option<Timestamp>,
+    pub created_at: Timestamp,
+}

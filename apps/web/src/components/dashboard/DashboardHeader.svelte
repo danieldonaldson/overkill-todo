@@ -5,6 +5,7 @@
   import { Button } from '$lib/components/ui/button'
   import { session } from '../../lib/auth/session.svelte'
   import DashboardNav from './DashboardNav.svelte'
+  import { Toaster } from '$lib/components/ui/sonner'
 
   // Persisted across dashboard moves (`transition:persist` in
   // DashboardLayout.astro), so this mounts once per document and must hold no
@@ -42,6 +43,9 @@
       <DashboardNav />
     </div>
   </header>
+  <!-- Mounted here, in the persisted header, so a failed save is seen and
+      announced on any dashboard page (OT-013 design D7). -->
+  <Toaster />
 
   {#if session.status === 'unreachable'}
     <!-- Non-blocking (D4): the page stays usable with what the tab remembers. -->

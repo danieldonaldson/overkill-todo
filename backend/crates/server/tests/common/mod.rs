@@ -6,8 +6,9 @@ use api::{
     RouterDeps, create_router,
     handlers::{
         admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
-        client_telemetry_handler::ClientTelemetryHandlerDeps, oauth_handler::OAuthHandlerDeps,
-        profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
+        client_telemetry_handler::ClientTelemetryHandlerDeps, list_handler::ListHandlerDeps,
+        oauth_handler::OAuthHandlerDeps, profile_handler::ProfileHandlerDeps,
+        verification_handler::VerificationHandlerDeps,
     },
 };
 use application::{
@@ -16,13 +17,14 @@ use application::{
         outgoing::ClientReportSink,
     },
     use_cases::{
-        CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
-        ExportUserDataUseCase, GetCurrentUserUseCase, ListAuditEventsUseCase,
-        ListSecurityActivityUseCase, ListUsersUseCase, LoginUserUseCase, OAuthCallbackUseCase,
-        OAuthUnlinkUseCase, RefreshTokenUseCase, RegisterUserUseCase,
-        RequestAccountDeletionUseCase, RequestPasswordResetUseCase, ResendVerificationUseCase,
-        ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase, SetPasswordUseCase,
-        SetUserRoleUseCase, ValidateResetCodeUseCase, VerifyEmailUseCase, VerifyMagicLinkUseCase,
+        AddTodoUseCase, CancelAccountDeletionUseCase, ChangePasswordUseCase, CompleteSignupUseCase,
+        CreateListUseCase, ExportUserDataUseCase, GetCurrentUserUseCase, GetListUseCase,
+        ListAuditEventsUseCase, ListListsUseCase, ListSecurityActivityUseCase, ListUsersUseCase,
+        LoginUserUseCase, MarkTodoUseCase, OAuthCallbackUseCase, OAuthUnlinkUseCase,
+        RefreshTokenUseCase, RegisterUserUseCase, RequestAccountDeletionUseCase,
+        RequestPasswordResetUseCase, ResendVerificationUseCase, ResetPasswordUseCase,
+        RevokeTokenUseCase, SendVerificationCodeUseCase, SetPasswordUseCase, SetUserRoleUseCase,
+        ValidateResetCodeUseCase, VerifyEmailUseCase, VerifyMagicLinkUseCase,
         telemetry::RecordClientTelemetryUseCase,
     },
 };
@@ -448,6 +450,7 @@ fn create_test_app_inner(
         refresh_tokens: refresh_token_repo,
         email_verifications: email_verification_repo,
         password_resets: password_reset_repo,
+        lists: list_repo,
         db,
     } = persistence_postgres::wire(Arc::new(Database::from_pool(pool)));
 
@@ -539,6 +542,7 @@ fn create_test_app_inner(
     let export_user_data_uc = Arc::new(ExportUserDataUseCase::new(
         user_repo.clone(),
         oauth_account_repo.clone(),
+        list_repo.clone(),
         audit_log_repo.clone(),
     ));
     let request_account_deletion_uc = Arc::new(RequestAccountDeletionUseCase::new(
@@ -583,6 +587,14 @@ fn create_test_app_inner(
         crypto: crypto.clone(),
     });
 
+    let list_deps = Arc::new(ListHandlerDeps {
+        list_lists: Arc::new(ListListsUseCase::new(list_repo.clone())),
+        create_list: Arc::new(CreateListUseCase::new(list_repo.clone())),
+        get_list: Arc::new(GetListUseCase::new(list_repo.clone())),
+        add_todo: Arc::new(AddTodoUseCase::new(list_repo.clone())),
+        mark_todo: Arc::new(MarkTodoUseCase::new(list_repo.clone())),
+    });
+
     let profile_deps = Arc::new(ProfileHandlerDeps {
         change_password_use_case: change_password_uc,
         set_password_use_case: set_password_uc,
@@ -608,6 +620,7 @@ fn create_test_app_inner(
             profile: profile_deps,
             admin: admin_deps,
             client_telemetry,
+            lists: list_deps,
             db,
             crypto,
             users: user_repo,

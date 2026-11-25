@@ -134,12 +134,15 @@ export function randomPageLoadId(): string {
 
 const RELEASE_PATTERN = /^[0-9A-Za-z._-]{1,64}$/
 
-/** `location.pathname` as the server expects it: no trailing slash, capped. */
+/**
+ * `location.pathname` as the server expects it: no trailing slash, list pages
+ * collapsed to one template, capped (OT-013 design D9). A malformed list id is
+ * the same page as a real one.
+ */
 export function pageOf(pathname: string): string {
   const trimmed = pathname.length > 1 ? pathname.replace(/\/+$/, '') : pathname
-  return Array.from(trimmed || '/')
-    .slice(0, MAX_PAGE_CHARS)
-    .join('')
+  const page = /^\/dashboard\/lists\/.+/.test(trimmed) ? '/dashboard/lists/[id]' : trimmed || '/'
+  return Array.from(page).slice(0, MAX_PAGE_CHARS).join('')
 }
 
 /** The first stack line naming a frame (`at …` or `fn@url`), or ''. */

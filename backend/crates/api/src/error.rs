@@ -67,6 +67,12 @@ pub enum AppError {
     BotCheckFailed(String),
     #[error("Not found: {0}")]
     NotFound(String),
+    /// A list that doesn't exist, or belongs to another Member.
+    #[error("List not found")]
+    ListNotFound,
+    /// A todo that doesn't exist in the named list, or belongs to another Member.
+    #[error("Todo not found")]
+    TodoNotFound,
     /// The request body is over the route's size limit (`413`).
     #[error("Payload too large")]
     PayloadTooLarge,
@@ -171,6 +177,8 @@ impl AppError {
             Self::Validation(_) => "validation_error",
             Self::BotCheckFailed(_) => "bot_check_failed",
             Self::NotFound(_) => "not_found",
+            Self::ListNotFound => "list_not_found",
+            Self::TodoNotFound => "todo_not_found",
             Self::PayloadTooLarge => "payload_too_large",
             Self::Authorization { code, .. } | Self::Forbidden { code, .. } => code,
             Self::Conflict(_) => "conflict",
@@ -206,6 +214,17 @@ impl From<DomainError> for AppError {
             DomainError::Conflict(msg) => Self::Conflict(msg),
             DomainError::Persistence(msg) => Self::Database(msg),
             DomainError::ExternalService(msg) => Self::ExternalService(msg),
+        }
+    }
+}
+
+impl From<application::use_cases::ListError> for AppError {
+    fn from(error: application::use_cases::ListError) -> Self {
+        use application::use_cases::ListError;
+        match error {
+            ListError::ListNotFound => Self::ListNotFound,
+            ListError::TodoNotFound => Self::TodoNotFound,
+            ListError::Domain(error) => error.into(),
         }
     }
 }
@@ -289,6 +308,8 @@ impl IntoResponse for AppError {
                 (StatusCode::BAD_REQUEST, msg.clone())
             }
             Self::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            Self::ListNotFound => (StatusCode::NOT_FOUND, "List not found".to_string()),
+            Self::TodoNotFound => (StatusCode::NOT_FOUND, "Todo not found".to_string()),
             Self::PayloadTooLarge => (
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "Request body too large".to_string(),

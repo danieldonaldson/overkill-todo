@@ -11,8 +11,8 @@
 	persist_config off
 }
 
-:8080 {
-	root * /srv
+:{$WEB_PORT:8080} {
+	root * {$WEB_ROOT:/srv}
 
 	encode zstd gzip
 
@@ -88,9 +88,15 @@
 		# is read-only, so it can't live under /srv). Regenerated per pod: never cache.
 		handle /config.js {
 			header Cache-Control "no-store"
-			root * /tmp
+			root * {$CONFIG_ROOT:/tmp}
 			file_server
 		}
+
+		# One shell for every list address (design D8). The rewrite precedes
+		# try_files so the file lookup sees the real page; a malformed id gets
+		# the same shell, and the panel shows "list not found".
+		@list_shell path_regexp ^/dashboard/lists/.+$
+		rewrite @list_shell /dashboard/lists/placeholder/
 
 		# Static dashboard routes, with an SPA fallback.
 		try_files {path} {path}/index.html /index.html

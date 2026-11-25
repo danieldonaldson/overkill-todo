@@ -610,3 +610,169 @@ async fn auth_flows_leave_no_secrets_in_telemetry(pool: PgPool) {
         );
     }
 }
+
+/// Lists and todos: names and titles never reach traces or logs, on success,
+/// refusal (invalid or stale) or a failed save (OT-013 design D9).
+#[sqlx::test(migrations = "../../migrations")]
+#[allow(
+    clippy::too_many_lines,
+    reason = "one flow over every new route; splitting hides which step leaked"
+)]
+async fn list_and_todo_content_never_reaches_telemetry(pool: PgPool) {
+    let telemetry = Captured::install();
+    let app = common::create_test_app(production_pool(&pool).await);
+    let email = "test-telemetry-lists@example.com";
+    let marker = uuid::Uuid::now_v7();
+    let list_name = format!("LIST-NAME-{marker}");
+    let todo_title = format!("TODO-TITLE-{marker}");
+    let second_title = format!("SECOND-TITLE-{marker}");
+
+    let (resp, _) = send(
+        &app,
+        post_json("/api/v1/auth/register", &json!({ "email": email })),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let (resp, body) = send(
+        &app,
+        post_json(
+            "/api/v1/auth/verify-email",
+            &json!({ "email": email, "code": "123456" }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let signup_token = body["signup_token"].as_str().unwrap().to_string();
+    let (resp, body) = send(
+        &app,
+        post_json(
+            "/api/v1/auth/complete-signup",
+            &json!({ "signup_token": signup_token, "email": email, "password": "hunter2hunter2" }),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let auth_token = common::cookie_value(&resp, "__Host-auth_token").expect("auth cookie");
+    let csrf = body["csrf_token"].as_str().unwrap().to_string();
+    let cookies = format!("__Host-auth_token={auth_token}; __Host-csrf_token={csrf}");
+
+    let authed = |method: &str, uri: &str, body: Option<Value>| {
+        let mut builder = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::COOKIE, &cookies)
+            .header("x-csrf-token", &csrf);
+        if body.is_some() {
+            builder = builder.header(header::CONTENT_TYPE, "application/json");
+        }
+        builder
+            .body(body.map_or_else(Body::empty, |value| Body::from(value.to_string())))
+            .unwrap()
+    };
+
+    let (resp, list) = send(
+        &app,
+        authed(
+            "POST",
+            "/api/v1/lists",
+            Some(json!({ "key": uuid::Uuid::now_v7(), "name": list_name })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let list_id = list["id"].as_str().unwrap().to_string();
+
+    let (resp, todo) = send(
+        &app,
+        authed(
+            "POST",
+            &format!("/api/v1/lists/{list_id}/todos"),
+            Some(json!({ "key": uuid::Uuid::now_v7(), "title": todo_title })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let todo_id = todo["id"].as_str().unwrap().to_string();
+
+    let (resp, _) = send(
+        &app,
+        authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}/todos/{todo_id}"),
+            Some(json!({ "version": 1, "done": true })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    // Refused: too long, a control character, and a stale version with content.
+    let (resp, _) = send(
+        &app,
+        authed(
+            "POST",
+            &format!("/api/v1/lists/{list_id}/todos"),
+            Some(json!({ "key": uuid::Uuid::now_v7(), "title": second_title })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let (resp, _) = send(
+        &app,
+        authed(
+            "POST",
+            &format!("/api/v1/lists/{list_id}/todos"),
+            Some(json!({ "key": uuid::Uuid::now_v7(), "title": "bad\nLIST-CONTENT-REFUSED" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let (resp, _) = send(
+        &app,
+        authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}/todos/{todo_id}"),
+            Some(json!({ "version": 1, "done": false })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let (resp, _) = send(
+        &app,
+        authed("GET", &format!("/api/v1/lists/{list_id}"), None),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let (resp, export) = send(&app, authed("GET", "/api/v1/users/me/export", None)).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert!(export["lists"][0]["todos"].as_array().unwrap().len() >= 2);
+
+    // A failed save: the table is gone, so the repository errors with content
+    // in the request body only.
+    testing::drop_todos_table(&pool).await;
+    let (resp, _) = send(
+        &app,
+        authed(
+            "POST",
+            &format!("/api/v1/lists/{list_id}/todos"),
+            Some(json!({ "key": uuid::Uuid::now_v7(), "title": "FAILED-SAVE-TITLE" })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+    let everything = telemetry.everything();
+    assert_ne!(everything.len(), 0, "nothing was captured");
+    for marker in [
+        list_name.as_str(),
+        todo_title.as_str(),
+        second_title.as_str(),
+        "LIST-CONTENT-REFUSED",
+        "FAILED-SAVE-TITLE",
+    ] {
+        assert!(
+            !everything.contains(marker),
+            "telemetry contains content: {marker}"
+        );
+    }
+}

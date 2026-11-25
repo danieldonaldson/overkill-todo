@@ -35,6 +35,15 @@ pub struct UserSnapshot {
     pub first_name: String,
 }
 
+/// Removes the todos table, so the next write fails like a broken database.
+/// DDL cannot be prepared, hence runtime SQL.
+pub async fn drop_todos_table(pool: &PgPool) {
+    sqlx::query("DROP TABLE todos CASCADE")
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 /// Inserts a verified user with `email` and `role`, returning its `id`.
 pub async fn insert_verified_user(pool: &PgPool, email: &str, role: UserRole) -> Uuid {
     let id = Uuid::now_v7();
@@ -529,4 +538,113 @@ pub async fn first_bench_user_id(pool: &PgPool) -> String {
         .await
         .unwrap()
         .unwrap_or_default()
+}
+
+/// Inserts a list owned by `user_id`, returning its ID.
+pub async fn insert_list(pool: &PgPool, user_id: Uuid, name: &str) -> Uuid {
+    let id = Uuid::now_v7();
+    sqlx::query!(
+        "INSERT INTO lists (id, user_id, creation_key, name) VALUES ($1, $2, $3, $4)",
+        id,
+        user_id,
+        Uuid::new_v4(),
+        name,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+/// Inserts a todo into `list_id`; `completed_at` set makes it done and
+/// `position` must be `None`, and vice versa.
+pub async fn insert_todo(
+    pool: &PgPool,
+    list_id: Uuid,
+    title: &str,
+    position: Option<i64>,
+    completed_at: Option<Timestamp>,
+) -> Uuid {
+    let id = Uuid::now_v7();
+    sqlx::query!(
+        "INSERT INTO todos (id, list_id, creation_key, title, position, completed_at)
+         VALUES ($1, $2, $3, $4, $5, $6)",
+        id,
+        list_id,
+        Uuid::new_v4(),
+        title,
+        position,
+        completed_at.to_db(),
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    id
+}
+
+/// Inserts `count` lists for the account with `email`, oldest first.
+pub async fn insert_lists_for_email(pool: &PgPool, email: &str, count: i32) {
+    let user_id: Uuid = sqlx::query_scalar!("SELECT id FROM users WHERE email = $1", email)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    for i in 0..count {
+        sqlx::query!(
+            "INSERT INTO lists (id, user_id, creation_key, name) VALUES (gen_random_uuid(), $1, gen_random_uuid(), $2)",
+            user_id,
+            format!("List {i}"),
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+}
+
+/// Inserts `count` open todos at the bottom of `list_id`.
+pub async fn insert_todos_for_list(pool: &PgPool, list_id: Uuid, count: i32) {
+    sqlx::query!(
+        "INSERT INTO todos (id, list_id, creation_key, title, position)
+         SELECT gen_random_uuid(), $1, gen_random_uuid(), 't' || n, n::bigint * 1048576
+         FROM generate_series(1, $2) AS n",
+        list_id,
+        count,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Marks the account with `email` deleted now, as the purger would.
+pub async fn mark_user_deleted_by_email(pool: &PgPool, email: &str) {
+    sqlx::query!(
+        "UPDATE users SET deleted_at = NOW() WHERE email = $1",
+        email
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Writes a title the domain would never accept, so reading the todo fails.
+pub async fn corrupt_todo_title(pool: &PgPool, todo_id: Uuid) {
+    sqlx::query!(
+        "UPDATE todos SET title = 'bad' || chr(10) || 'title' WHERE id = $1",
+        todo_id,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Number of audit events of `kind` for the account with `email`.
+pub async fn count_audit_events_for_email(pool: &PgPool, email: &str, kind: &str) -> i64 {
+    sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM audit_events WHERE kind = $1 AND subject_id = (SELECT id FROM users WHERE email = $2)",
+        kind,
+        email,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+    .unwrap_or(0)
 }

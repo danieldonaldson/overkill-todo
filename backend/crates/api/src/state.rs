@@ -19,8 +19,9 @@ use platform::persistence::{DatabaseError, DatabaseHealth};
 
 use super::handlers::{
     admin_handler::AdminHandlerDeps, auth_handler::AuthHandlerDeps,
-    client_telemetry_handler::ClientTelemetryHandlerDeps, oauth_handler::OAuthHandlerDeps,
-    profile_handler::ProfileHandlerDeps, verification_handler::VerificationHandlerDeps,
+    client_telemetry_handler::ClientTelemetryHandlerDeps, list_handler::ListHandlerDeps,
+    oauth_handler::OAuthHandlerDeps, profile_handler::ProfileHandlerDeps,
+    verification_handler::VerificationHandlerDeps,
 };
 
 /// Object-safe database readiness probe used by `/health/ready`, keeping the
@@ -45,6 +46,7 @@ pub struct AppState {
     pub profile: Arc<ProfileHandlerDeps>,
     pub admin: Arc<AdminHandlerDeps>,
     pub client_telemetry: Arc<ClientTelemetryHandlerDeps>,
+    pub lists: Arc<ListHandlerDeps>,
     pub db: Arc<dyn ReadinessCheck>,
 }
 
@@ -67,5 +69,6 @@ from_ref! {
     profile: Arc<ProfileHandlerDeps>,
     admin: Arc<AdminHandlerDeps>,
     client_telemetry: Arc<ClientTelemetryHandlerDeps>,
+    lists: Arc<ListHandlerDeps>,
     db: Arc<dyn ReadinessCheck>,
 }

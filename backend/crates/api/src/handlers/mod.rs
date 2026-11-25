@@ -7,6 +7,7 @@ pub mod auth_handler;
 pub mod client_telemetry_handler;
 
 pub mod health_handler;
+pub mod list_handler;
 pub mod oauth_handler;
 pub mod profile_handler;
 pub mod session;

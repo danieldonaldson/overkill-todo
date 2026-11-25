@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO lists (id, user_id, creation_key, name)\n             VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'A list')",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fe43878cd0c26e0165b23764f742c76056c56e85066a172548b5dc692866167a"
+}

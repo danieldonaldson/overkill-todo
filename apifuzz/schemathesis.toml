@@ -96,3 +96,25 @@ include-method = "POST"
 checks.negative_data_rejection.expected-statuses = [
   "400", "401", "403", "404", "405", "406", "409", "413", "415", "422", "428", "429", "5xx",
 ]
+
+# positive_data_acceptance off (OT-013 design D5): the name/title rule trims and
+# counts Unicode code points, which a schema can't express. The description
+# states a one-line pattern and the limit; a body the pattern accepts can still
+# be refused as blank after trimming (or too long in code points).
+[[operations]]
+include-path = "/api/v1/lists"
+include-method = "POST"
+checks.positive_data_acceptance.enabled = false
+
+[[operations]]
+include-path = "/api/v1/lists/{id}/todos"
+include-method = "POST"
+checks.positive_data_acceptance.enabled = false
+
+# positive_data_acceptance off (OT-013): Schemathesis writes an integral int64
+# as a JSON float (`version: 1.0`), which JSON Schema counts as an integer but
+# serde refuses for `i64`. The status/schema checks still run.
+[[operations]]
+include-path = "/api/v1/lists/{id}/todos/{todo_id}"
+include-method = "PATCH"
+checks.positive_data_acceptance.enabled = false

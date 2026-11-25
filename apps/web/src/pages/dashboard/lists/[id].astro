@@ -1,0 +1,15 @@
+---
+import DashboardLayout from '../../../layouts/DashboardLayout.astro'
+import ListsPanel from '../../../components/dashboard/ListsPanel.svelte'
+
+// One placeholder page for every list address: the web server rewrites each
+// real address here, and the panel reads the ID from `location.pathname`
+// (design D8). This file name also gives the telemetry page template its name.
+export function getStaticPaths() {
+  return [{ params: { id: 'placeholder' } }]
+}
+---
+
+<DashboardLayout title="Lists | Overkill Todo">
+  <ListsPanel client:load />
+</DashboardLayout>

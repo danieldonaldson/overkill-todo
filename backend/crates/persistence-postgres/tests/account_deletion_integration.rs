@@ -14,6 +14,7 @@ use uuid::Uuid;
 use application::ports::{
     AccountLifecycleRepository, EmailVerificationRepository, RefreshTokenRepository, UserRepository,
 };
+use application::use_cases::PurgeScheduledAccountsUseCase;
 use domain::entities::{EmailVerificationCode, RefreshToken, User};
 use domain::value_objects::Email;
 use persistence_postgres::time::ToDb;
@@ -131,6 +132,23 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
     .await
     .expect("seed reset code");
 
+    let list_id = sqlx::query_scalar!(
+        "INSERT INTO lists (id, user_id, creation_key, name)
+         VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'Private') RETURNING id",
+        user_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("seed list");
+    sqlx::query!(
+        "INSERT INTO todos (id, list_id, creation_key, title, position)
+         VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'Secret todo', 1)",
+        list_id,
+    )
+    .execute(&pool)
+    .await
+    .expect("seed todo");
+
     // Sanity: one row in each of the four child tables before deletion.
     assert_eq!(
         child_row_count(&pool, user_id).await,
@@ -180,6 +198,17 @@ async fn anonymize_scrubs_pii_and_purges_child_rows(pool: PgPool) {
         0,
         "all child rows must be purged",
     );
+    let lists = sqlx::query_scalar!("SELECT COUNT(*) FROM lists WHERE user_id = $1", user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .unwrap_or(0);
+    let todos = sqlx::query_scalar!("SELECT COUNT(*) FROM todos WHERE list_id = $1", list_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .unwrap_or(0);
+    assert_eq!((lists, todos), (0, 0), "lists and todos are erased");
 }
 
 /// The schema enforces what `AccountStatus` encodes: a deleted account cannot
@@ -284,4 +313,262 @@ async fn anonymize_skips_account_cancelled_after_the_scan(pool: PgPool) {
         1,
         "refresh token kept"
     );
+}
+
+/// A list belongs to one Member and a purge never reaches another's.
+#[sqlx::test(migrations = "../../migrations")]
+async fn purging_one_account_leaves_another_members_lists_untouched(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool.clone()));
+    let user_repo = PostgresUserRepository::new(db);
+
+    let mut doomed = User::new(
+        Email::new("doomed@example.com").unwrap(),
+        None,
+        "Doomed".to_string(),
+        "Member".to_string(),
+    );
+    doomed.mark_email_verified();
+    user_repo.save(&doomed).await.unwrap();
+    let doomed_id = *doomed.id().as_uuid();
+    schedule_deletion_in_past(&pool, doomed_id).await;
+
+    let mut survivor = User::new(
+        Email::new("survivor@example.com").unwrap(),
+        None,
+        "Surviving".to_string(),
+        "Member".to_string(),
+    );
+    survivor.mark_email_verified();
+    user_repo.save(&survivor).await.unwrap();
+    let survivor_id = *survivor.id().as_uuid();
+
+    for user_id in [doomed_id, survivor_id] {
+        sqlx::query!(
+            "INSERT INTO lists (id, user_id, creation_key, name)
+             VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'A list')",
+            user_id,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let purged = PurgeScheduledAccountsUseCase::new(Arc::new(user_repo))
+        .run_once()
+        .await
+        .unwrap();
+    assert_eq!(purged, 1);
+    for (user_id, expected) in [(doomed_id, 0), (survivor_id, 1)] {
+        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM lists WHERE user_id = $1", user_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .unwrap_or(0);
+        assert_eq!(count, expected);
+    }
+}
+
+/// A cancelled deletion keeps the Member's lists and todos.
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_cancelled_deletion_keeps_lists_and_todos(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool.clone()));
+    let user_repo = PostgresUserRepository::new(db);
+
+    let mut user = User::new(
+        Email::new("cancelled@example.com").unwrap(),
+        None,
+        "Cancel".to_string(),
+        "Member".to_string(),
+    );
+    user.mark_email_verified();
+    user_repo.save(&user).await.unwrap();
+    let user_id = *user.id().as_uuid();
+    schedule_deletion_in_past(&pool, user_id).await;
+    let list_id = sqlx::query_scalar!(
+        "INSERT INTO lists (id, user_id, creation_key, name)
+         VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'Kept') RETURNING id",
+        user_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query!(
+        "INSERT INTO todos (id, list_id, creation_key, title, position)
+         VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'Kept todo', 1)",
+        list_id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The Member cancels before the next pass.
+    sqlx::query!(
+        "UPDATE users SET deletion_scheduled_at = NULL WHERE id = $1",
+        user_id
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let purged = PurgeScheduledAccountsUseCase::new(Arc::new(user_repo))
+        .run_once()
+        .await
+        .unwrap();
+    assert_eq!(purged, 0);
+    let lists = sqlx::query_scalar!("SELECT COUNT(*) FROM lists WHERE user_id = $1", user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .unwrap_or(0);
+    let todos = sqlx::query_scalar!("SELECT COUNT(*) FROM todos WHERE list_id = $1", list_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .unwrap_or(0);
+    assert_eq!((lists, todos), (1, 1));
+}
+
+/// A failure while erasing leaves the whole purge due for the next run.
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_failed_erase_leaves_the_account_due_and_retries(pool: PgPool) {
+    let db = Arc::new(Database::from_pool(pool.clone()));
+    let user_repo = PostgresUserRepository::new(db);
+
+    let mut user = User::new(
+        Email::new("retry@example.com").unwrap(),
+        None,
+        "Retry".to_string(),
+        "Member".to_string(),
+    );
+    user.mark_email_verified();
+    user_repo.save(&user).await.unwrap();
+    let user_id = *user.id().as_uuid();
+    schedule_deletion_in_past(&pool, user_id).await;
+    let list_id = sqlx::query_scalar!(
+        "INSERT INTO lists (id, user_id, creation_key, name)
+         VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'Still here') RETURNING id",
+        user_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Injected failure: deleting this Member's list raises.
+    sqlx::query(
+        "CREATE FUNCTION fail_lists_delete() RETURNS trigger AS $$
+         BEGIN RAISE EXCEPTION 'injected erase failure'; END;
+         $$ LANGUAGE plpgsql",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER fail_lists BEFORE DELETE ON lists
+         FOR EACH ROW EXECUTE FUNCTION fail_lists_delete()",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let mut anonymized = user.clone();
+    anonymized
+        .anonymize(
+            Email::new(&format!("deleted-{user_id}@anonymized.local")).unwrap(),
+            Timestamp::now(),
+        )
+        .unwrap();
+    let failed = user_repo
+        .anonymize_account(
+            &anonymized,
+            &domain::entities::AuditEvent::account_deleted(
+                domain::value_objects::UserId::from_uuid(user_id),
+            ),
+        )
+        .await;
+    assert!(
+        failed.is_err(),
+        "the injected failure must abort the transaction"
+    );
+
+    let row = sqlx::query!(
+        "SELECT deleted_at, deletion_scheduled_at FROM users WHERE id = $1",
+        user_id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(row.deleted_at.is_none(), "the account is still due");
+    assert!(row.deletion_scheduled_at.is_some());
+    let remaining = sqlx::query_scalar!("SELECT COUNT(*) FROM lists WHERE id = $1", list_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .unwrap_or(0);
+    assert_eq!(remaining, 1, "the failed transaction changed nothing");
+
+    sqlx::query("DROP TRIGGER fail_lists ON lists")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let retried = PurgeScheduledAccountsUseCase::new(Arc::new(user_repo))
+        .run_once()
+        .await
+        .unwrap();
+    assert_eq!(retried, 1, "the next run completes both steps");
+    let gone = sqlx::query_scalar!("SELECT COUNT(*) FROM lists WHERE id = $1", list_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .unwrap_or(0);
+    assert_eq!(gone, 0);
+}
+
+/// Each purge pass sweeps lists left by a purge from an older release, even
+/// when no account is due.
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_sweep_runs_before_the_no_due_early_return(pool: PgPool) {
+    let user_id = sqlx::query_scalar!(
+        "INSERT INTO users (id, email, deleted_at, email_verified)
+         VALUES (gen_random_uuid(), 'old-purge@example.com', NOW(), true) RETURNING id"
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let list_id = sqlx::query_scalar!(
+        "INSERT INTO lists (id, user_id, creation_key, name)
+         VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'Left behind') RETURNING id",
+        user_id,
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sqlx::query!(
+        "INSERT INTO todos (id, list_id, creation_key, title, position)
+         VALUES (gen_random_uuid(), $1, gen_random_uuid(), 'Left behind', 1)",
+        list_id,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let db = Arc::new(Database::from_pool(pool.clone()));
+    let user_repo = Arc::new(PostgresUserRepository::new(db));
+    let purged = PurgeScheduledAccountsUseCase::new(user_repo.clone())
+        .run_once()
+        .await
+        .unwrap();
+    assert_eq!(purged, 0, "no account is due");
+    let lists = sqlx::query_scalar!("SELECT COUNT(*) FROM lists WHERE user_id = $1", user_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .unwrap_or(0);
+    let todos = sqlx::query_scalar!("SELECT COUNT(*) FROM todos WHERE list_id = $1", list_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+        .unwrap_or(0);
+    assert_eq!((lists, todos), (0, 0), "the sweep cleared the leftovers");
+    let swept = user_repo.delete_lists_of_deleted_accounts().await.unwrap();
+    assert_eq!(swept, 0, "a second sweep has nothing left");
 }

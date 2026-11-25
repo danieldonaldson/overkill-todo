@@ -90,6 +90,60 @@ test.describe('browser error reports', () => {
     })
   }
 
+  test('on a list address, an error holding the address sends no id', async ({ page }) => {
+    const { rawBodies, reports } = await setup(page, { signedIn: true })
+    const id = '3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e'
+    const list = { id, name: 'Weekend', open_count: 0, todo_count: 0 }
+    await page.route('**/api/v1/lists', (route) => route.fulfill({ json: [list] }))
+    await page.route('**/api/v1/lists/*', (route) => route.fulfill({ json: { list, todos: [] } }))
+
+    await page.goto(`/dashboard/lists/${id}`)
+    await expect(page.getByRole('heading', { name: 'Weekend' })).toBeVisible()
+    await ready(page)
+    await page.evaluate(() => {
+      const href = location.href
+      const error = new Error(`failed adding a todo at ${href}`)
+      error.stack = `Error: failed at ${href}\n    at f (${href}:1:2)`
+      setTimeout(() => {
+        throw error
+      })
+    })
+    await page.evaluate(() => new Promise((r) => setTimeout(r, 50)))
+    await hide(page)
+
+    await expect.poll(() => reports.length).toBeGreaterThan(0)
+    expect(reports[0].page).toBe('/dashboard/lists/[id]')
+    expect(rawBodies.join('\n')).not.toContain(id)
+  })
+
+  test('a failed add reports the route and status but never the title', async ({ page }) => {
+    const { rawBodies, reports } = await setup(page, { signedIn: true })
+    const id = '3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e'
+    const title = 'SECRET-TODO-TITLE'
+    const list = { id, name: 'Weekend', open_count: 0, todo_count: 0, version: 1 }
+    await page.route('**/api/v1/lists', (route) => route.fulfill({ json: [list] }))
+    await page.route('**/api/v1/lists/*', (route) => route.fulfill({ json: { list, todos: [] } }))
+    await page.route('**/api/v1/lists/*/todos', (route) =>
+      route.fulfill({
+        status: 500,
+        json: { code: 'internal_error', message: 'Something went wrong' },
+      })
+    )
+
+    await page.goto(`/dashboard/lists/${id}`)
+    await page.getByLabel('New todo title').fill(title)
+    await page.getByRole('button', { name: 'Add', exact: true }).click()
+    await expect(page.getByText(/Couldn't save your change/)).toBeVisible()
+    await hide(page)
+
+    await expect.poll(() => reports.length).toBeGreaterThan(0)
+    const failure = reports
+      .flatMap((report) => report.events)
+      .find((event) => event.api_route === '/lists/{id}/todos')
+    expect(failure).toMatchObject({ status: 500 })
+    expect(rawBodies.join('\n')).not.toContain(title)
+  })
+
   test('the same error 50 times is one event with count 50', async ({ page }) => {
     const { events } = await setup(page)
     await page.goto('/login')

@@ -6,6 +6,7 @@ pub mod audit_dto;
 pub mod auth_dto;
 
 pub mod client_telemetry_dto;
+pub mod lists_dto;
 
 pub mod oauth_dto;
 pub mod profile_dto;
@@ -22,6 +23,7 @@ pub use client_telemetry_dto::{
     ClientVitalEvent,
 };
 
+pub use lists_dto::*;
 pub use oauth_dto::*;
 pub use profile_dto::*;
 pub use schema_enums::{

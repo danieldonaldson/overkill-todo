@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO todos (id, list_id, creation_key, title, position)\n         SELECT gen_random_uuid(), $1, gen_random_uuid(), 't' || n, n::bigint * 1048576\n         FROM generate_series(1, $2) AS n",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "2f057c9e3199d8479562396ac742acf833f2fac69519d5311caefce9e28f47f1"
+}
