@@ -218,7 +218,7 @@ Traefik, cert-manager and ArgoCD resources are checked, not skipped. A
 
 **D14. Pins.** CLIs in `.mise.toml`; everything else in `deploy/k8s/versions.env`
 or its Application. Starting points, the latest releases on 2026-11-25: Talos
-1.14.7, Cilium 1.20.5, ArgoCD 3.6.3, sops-secrets-operator 0.22.5, Reloader chart 2.2.21, cert-manager 1.21.3, Traefik chart 43.0.0,
+1.14.7, Cilium 1.20.5, ArgoCD 3.6.3 (chart 10.20.0), sops-secrets-operator 0.22.5, Reloader chart 2.2.21, cert-manager 1.21.3, Traefik chart 43.0.0,
 CNPG 1.30.2, barman-cloud plugin 0.16.0. Kubernetes
 is 1.36.6: Talos 1.14 supports up to 1.37, but Cilium 1.20, cert-manager 1.21 and
 CNPG 1.30 list 1.36 as their newest tested. Garage is pinned in slice 3.

@@ -26,3 +26,6 @@ pnpm-lock.yaml
 
 # Written by sops, which has its own formatting.
 deploy/secrets/**/*.sops.yaml
+
+# Vendored unchanged.
+deploy/k8s/cluster/storage/upstream.yaml

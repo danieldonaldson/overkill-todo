@@ -82,6 +82,23 @@ install_cilium() {
     kubectl apply --server-side --field-manager=argocd-controller --force-conflicts -f - >/dev/null
 }
 
+# The last thing done by hand: from here ArgoCD manages the cluster, itself included.
+bootstrap_argocd() {
+  local apply=(kubectl apply --server-side --field-manager=argocd-controller --force-conflicts)
+  "${apply[@]}" -f deploy/k8s/cluster/apps/namespaces.yaml >/dev/null
+  # The cluster's only hand-placed secret; it decrypts the rest.
+  kubectl -n sops-operator create secret generic age-key --from-file=key.txt="$age_key" \
+    --dry-run=client -o yaml | kubectl apply --server-side -f - >/dev/null
+  say "installing ArgoCD $ARGOCD_VERSION"
+  helm template argocd argo-cd --repo https://argoproj.github.io/argo-helm --version "$ARGOCD_CHART_VERSION" \
+    --namespace argocd --kube-version "$KUBERNETES_VERSION" --include-crds \
+    --values deploy/k8s/cluster/argocd/values.yaml | "${apply[@]}" -n argocd -f - >/dev/null
+  kubectl wait --for=condition=Established crd/applications.argoproj.io --timeout=60s >/dev/null
+  kubectl -n argocd rollout status deployment/argocd-repo-server --timeout=300s
+  kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
+  "${apply[@]}" -f deploy/k8s/cluster/root.yaml >/dev/null
+}
+
 cmd_up() {
   preflight
   # Plaintext machine secrets live in memory only, and go when this exits.
@@ -133,6 +150,7 @@ cmd_up() {
   kubectl wait --for=condition=Ready node --all --timeout=600s
   # The node is Ready before cluster DNS answers.
   kubectl -n kube-system rollout status deployment/coredns --timeout=300s
+  bootstrap_argocd
   say "ready. For kubectl and talosctl: eval \"\$(./scripts/k8s.sh env)\""
 }
 

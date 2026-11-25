@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: workloads
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '0'
+spec:
+  project: default
+  # Two sources in one Application, so sync waves order SopsSecrets before the
+  # workloads that use their Secrets (OT-014 D3).
+  sources:
+    - repoURL: https://github.com/danieldonaldson/overkill-todo.git
+      targetRevision: ot-014-kubernetes
+      path: deploy/secrets/local
+      directory:
+        include: '*.sops.yaml'
+    - repoURL: https://github.com/danieldonaldson/overkill-todo.git
+      targetRevision: ot-014-kubernetes
+      path: deploy/k8s/overlays/local
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - ServerSideApply=true

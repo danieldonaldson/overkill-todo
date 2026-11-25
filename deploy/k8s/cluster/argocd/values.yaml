@@ -1,0 +1,52 @@
+# ArgoCD (OT-014 D3, D10, D11). Used by scripts/k8s.sh for the bootstrap and by the
+# ArgoCD Application that then manages itself, so both render the same.
+global:
+  # Redis and the repo-server accept only ArgoCD's own pods.
+  networkPolicy:
+    create: true
+dex:
+  enabled: false
+notifications:
+  enabled: false
+applicationSet:
+  replicas: 0
+configs:
+  cm:
+    # Polling only: nothing outside can reach the cluster to call a webhook.
+    timeout.reconciliation: 60s
+    timeout.reconciliation.jitter: 0s
+    # Removed from ArgoCD's defaults; without it the root's sync waves don't wait.
+    resource.customizations.health.argoproj.io_Application: |
+      hs = { status = "Progressing", message = "" }
+      if obj.status ~= nil and obj.status.health ~= nil then
+        hs.status = obj.status.health.status
+        if obj.status.health.message ~= nil then
+          hs.message = obj.status.health.message
+        end
+      end
+      return hs
+    # Healthy only when the operator says it decrypted it.
+    resource.customizations.health.isindir.github.com_SopsSecret: |
+      if obj.status == nil or obj.status.message == nil or obj.status.message == "" then
+        return { status = "Progressing", message = "waiting for the SOPS operator" }
+      end
+      if obj.status.message == "Healthy" then
+        return { status = "Healthy", message = "" }
+      end
+      return { status = "Degraded", message = obj.status.message }
+controller:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 1Gi }
+repoServer:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 1Gi }
+server:
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { memory: 256Mi }
+redis:
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { memory: 128Mi }

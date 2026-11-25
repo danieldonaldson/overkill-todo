@@ -1,0 +1,21 @@
+# Decrypts SopsSecrets. The only workload that mounts the cluster's age key (D3, D4).
+secretsAsFiles:
+  - name: age-key
+    mountPath: /etc/age
+    secretName: age-key
+extraEnv:
+  - name: SOPS_AGE_KEY_FILE
+    value: /etc/age/key.txt
+securityContext:
+  enabled: true
+  container:
+    enabled: true
+    customContainerSecurityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      capabilities:
+        drop: [ALL]
+resources:
+  requests: { cpu: 25m, memory: 64Mi }
+  limits: { memory: 256Mi }
