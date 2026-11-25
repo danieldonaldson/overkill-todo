@@ -1,10 +1,7 @@
 # The local cluster. Synced by the workloads Application, with the SopsSecrets in
-# deploy/secrets/local. The app arrives in slice 2; the canary goes after slice 1.
+# deploy/secrets/local. The app arrives in slice 2. Never leave this empty: Kustomize
+# won't render it, and ArgoCD won't prune an Application to nothing.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - canary.yaml
-images:
-  - name: canary
-    newName: docker.io/library/busybox
-    digest: sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+  - namespace.yaml

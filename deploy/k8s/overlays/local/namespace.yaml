@@ -1,0 +1,10 @@
+# The app's namespace. Slice 2 moves it into the base (OT-014 D12).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: overkill-todo
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+  annotations:
+    argocd.argoproj.io/sync-wave: '-2'
+    argocd.argoproj.io/sync-options: Prune=false

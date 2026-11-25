@@ -4,8 +4,8 @@ A local single-node cluster that ArgoCD fills from Git (OT-014). It sits beside
 `../compose/`, which stays the way to run the app locally and has its own
 production override. Which one production uses is not decided.
 
-> **Status:** slice 1. The cluster, ArgoCD and secrets work, with a throwaway
-> `canary` workload. The app itself arrives in slice 2.
+> **Status:** slice 1 done. The cluster, ArgoCD and secrets work; nothing runs in
+> it yet but the app's empty namespace. The app itself arrives in slice 2.
 
 ```
 cluster/apps/      ArgoCD Applications; root.yaml owns them all, itself included
