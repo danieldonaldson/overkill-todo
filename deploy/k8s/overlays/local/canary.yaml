@@ -66,4 +66,4 @@ metadata:
   namespace: canary
 spec:
   selector: { app.kubernetes.io/name: canary }
-  ports: [{ name: http, port: 8080, targetPort: http }]
+  ports: [{ name: http, port: 99999, targetPort: http }]
