@@ -7,4 +7,4 @@ resources:
 images:
   - name: canary
     newName: docker.io/library/busybox
-    digest: sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000001
