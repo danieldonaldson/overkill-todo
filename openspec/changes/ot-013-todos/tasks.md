@@ -96,13 +96,14 @@ Delivers these scenarios:
 - **dashboard:** Move fails.
 - **security:** Positioning next to another Member's todo.
 
-- [ ] 4.1 Domain: the midpoint and renumbering rules as pure functions (D6). Property tests: a move lands strictly between its neighbours or asks for renumbering, and renumbering keeps the order.
+- [ ] 4.1 Domain: the midpoint and renumbering rules as pure functions (D6), written as integer-only kernels (D13): all `i64` neighbours, no overflow, also above the first, and renumbering asked for at either end of `i64`. Property tests: a move lands strictly between its neighbours or asks for renumbering, and renumbering keeps the order, up to 1,000 positions. Kani proofs of the same rules (renumbering at 5 positions), each stating its bounds and assumptions, with one proof per rule stating the spec independently of the code. Break each rule on a scratch edit and see `just verify` fail; record the runtime.
 - [ ] 4.2 Application and persistence: the move use case and repository method, with `above` and `below` resolved under the list lock. Mock tests per outcome. `#[sqlx::test]` cases: top, middle and bottom; 1,000 moves between the same two todos; concurrent moves, adds and completions leave every todo once; neighbours deleted, done or foreign; a done or deleted todo; the version unchanged. Run `just db-prepare` and commit `backend/.sqlx/`. The todo's own ID in `above` or `below` is ignored.
 - [ ] 4.3 API: `POST /lists/{id}/todos/{todo_id}/move`, with at most 20 IDs each way. Integration tests for each status, and a foreign neighbour answered exactly as an unknown one (P-35). Run `just api-types`; verify with `just fuzz-api` (several seeds at 500 examples) and `just threat-model-check`. Add it to `lists-large` with a budget: renumbering is the slowest list write.
-- [ ] 4.4 Client store: move operations that apply the returned order beneath pending operations (D7). Extend the two-tab random test with moves: no todo lost or duplicated, and one order once both queues drain. Extend `regressions.test.ts` with moves too: order without a refetch is where slice 1's bugs hid. Verify 10,000 seeds pass. An answer whose IDs differ from the known open todos triggers a refetch, and a move of a todo still being added is sent after its creation; test both.
-- [ ] 4.5 Web UI: a drag handle for mouse and touch with `touch-action: none` on the handle alone, cancel with Escape, and keyboard moves that keep focus and announce the position. Vitest browser tests for each, and that done todos have no handle.
-- [ ] 4.6 Flows: Playwright with the API mocked for drag, keyboard, cancelled drag and failed move; a two-tab flow in `tests/integration/` for concurrent moves.
-- [ ] 4.7 Get `just ci` green. Note for the first deploy: `just smoke <url>`, then reorder a list and reload it.
+- [ ] 4.4 Before adding moves to the queue, prototype `models/list_queue.qnt` without them, in at most one day (D13): two clients, queue, versions, rename drafts, single retry, and stale, 404 and lost answers, with separate send, apply and answer steps. Check the version, dropped-text and no-silent-overwrite invariants of 8.2, and that `refetch_advances_queue` and `refetch_advances_draft` break one. Record state-space size and Apalache's runtime in design.md. Fix any engine bug it finds, with a regression test, before 4.5. If it is too slow within the day, record that, revise 8.1 and carry on. It is not in `scripts/models.sh` until 8.2.
+- [ ] 4.5 Client store: move operations that apply the returned order beneath pending operations (D7). Extend the two-tab random test with moves: no todo lost or duplicated, and one order once both queues drain. Extend `regressions.test.ts` with moves too: order without a refetch is where slice 1's bugs hid. Verify 10,000 seeds pass. An answer whose IDs differ from the known open todos triggers a refetch, and a move of a todo still being added is sent after its creation; test both.
+- [ ] 4.6 Web UI: a drag handle for mouse and touch with `touch-action: none` on the handle alone, cancel with Escape, and keyboard moves that keep focus and announce the position. Vitest browser tests for each, and that done todos have no handle.
+- [ ] 4.7 Flows: Playwright with the API mocked for drag, keyboard, cancelled drag and failed move; a two-tab flow in `tests/integration/` for concurrent moves.
+- [ ] 4.8 Get `just ci` green. Note for the first deploy: `just smoke <url>`, then reorder a list and reload it.
 
 ## 5. Slice 5: phones and full lists
 
@@ -118,44 +119,52 @@ Delivers these scenarios:
 
 ## 6. Slice 6: proofs and the formal coverage gate
 
-Delivers these scenarios (security): breaking a list guarantee fails the gate;
-a model that drifts from the code fails replay; bounds and assumptions are
-visible; a guarantee with no check fails.
+Starts after slice 4, which proves its own midpoint and renumbering functions (4.1).
+Delivers these scenarios (security): bounds and assumptions are visible; breaking
+a list guarantee fails the gate (for the proofs); a guarantee without a check
+(with pending entries until 9.1).
 
-- [ ] 6.1 Add a `docs/formal-coverage.yaml` manifest for the machine-checked list requirement in the security delta, mapping every OT-013 requirement and P-35 to a proof, a model, a conformance test, or its test plus the reason no proof or model applies. Add `just formal-coverage`, which fails when an entry is missing or names a check that no longer exists, and run it red before any proof. Put it in `just ci`.
-- [ ] 6.2 Kani proofs for the pure rules (D13): `append_position` is monotonic and exact unless saturated; the midpoint and renumbering functions from 4.1 land strictly between their neighbours or ask for renumbering, and renumbering keeps the order; list names and todo titles trim, count code points and refuse control characters within the stated bounds; a todo is open or done and its transitions bump the version by one. Each harness states its bounds. Break each rule on a scratch edit and see `just verify` fail.
-- [ ] 6.3 `just verify` green and CI runs it; record runtime. Update README and `backend/ARCHITECTURE.md` with the new proofs, their bounds and assumptions.
+- [ ] 6.1 Add `docs/formal-coverage.yaml` and `scripts/formal-coverage.sh` (`just formal-coverage`), keyed by capability, requirement and scenario plus P-35, reading the spec deltas while the change is active and `openspec/specs/` after it is archived (D13). Every named check must exist and run. `pending: <task>` is allowed only while that task is unticked; `--final` refuses all pending entries. Fixture tests for the script: a missing scenario, a renamed check, an ignored or skipped test, a harness without `#[kani::proof]`, an invariant `models.sh` doesn't run, a pending entry for a ticked task, and the archived layout. Run it red on an empty manifest, then put it in `just ci` and an always-run CI job.
+- [ ] 6.2 Remove the unused `List::rename`, `Todo::mark_done`, `Todo::mark_not_done` and `Todo::rename` and their unit tests; versions are bumped in SQL and checked in 7.4. Verify with `just test` and `just lint`.
+- [ ] 6.3 Kani proofs for the remaining pure rules (D13; the ordering rules are proved in 4.1): `append_position` is strictly increasing unless saturated, with saturation handled or its bound justified; the validation kernel trims, counts code points and refuses control characters and U+2028/U+2029 (6 symbolic `char`s, `max <= 4`), tied to `normalize_single_line` at 100 and 500 by a proptest; a todo is open or done. Each harness states its bounds and assumptions, and one proof per rule states the spec independently of the code. Break each rule on a scratch edit and see `just verify` fail.
+- [ ] 6.4 `just verify` and `just formal-coverage` green and run by CI; record runtime. Update README and `backend/ARCHITECTURE.md` with the new proofs, their bounds and assumptions.
 
 ## 7. Slice 7: server concurrency model
 
-Delivers these scenarios (lists): edits made elsewhere are never silently
-overwritten; a repeated save takes effect once; concurrent moves settle on one
-order; lists and todos have limits; lists and todos are private to their
+Delivers these scenarios (security): breaking a list guarantee fails the gate; a
+removed guard is noticed; a model that drifts from the code fails replay (for
+server writes). Checks these requirements (lists): edits made elsewhere are never
+silently overwritten; a repeated save takes effect once; concurrent moves settle
+on one order; lists and todos have limits; lists follow the account through export
+and deletion (purge only). Checks (security): lists and todos are private to their
 Member.
 
-- [ ] 7.1 `models/list_writes.qnt`: two Members, two lists and three todos. Each action is the SQL the repository runs, one model step per statement or transaction, under the list lock: create, rename and delete a list; add, rename, mark and delete a todo; move a todo. A list delete compares both `version` and `todo_count`. State the 8-step Apalache bound.
-- [ ] 7.2 Invariants: a write at a stale version changes nothing; a repeated save changes nothing more; an accepted write moves the version by one unless the state already matched; the 100-list and 1,000-todo limits hold; one Member's writes never touch another's rows; list deletion leaves no todos; open positions stay unique and strictly ordered; concurrent moves leave every todo exactly once and one order. Check every invariant with `quint verify`, then run 10,000 random traces at 30 steps.
-- [ ] 7.3 Broken modules for every guard (`no_version_check`, `no_count_check`, `no_lock`, `no_limit`, `no_owner_check`); each must produce a counterexample, so no invariant is vacuous.
-- [ ] 7.4 Export ITF traces and replay every list step through the real repository in `tests/model_conformance.rs` or a sibling, checking results and stored rows after each step. A model step without a passing replay fails.
-- [ ] 7.5 `just models` and its replay green; record runtime and bounds in `backend/ARCHITECTURE.md` and `just ci`.
+- [ ] 7.1 `models/list_writes.qnt` as in D13: two Members, two writers, `MAX_LISTS = 2` with 4 list IDs, `MAX_TODOS = 3` with 5 todo IDs, populated initial states and the real `POSITION_GAP`. Model `begin` and `commit` for create, rename and delete a list; add, rename, mark, delete and move a todo; plus purge, the D10 sweep and the two-read `find_list`. Only `create_list` checks `deleted_at`. Prototype first: record Apalache's runtime at 8 steps and fix the bounds from it. A witness must show that each limit, two overlapping moves and a renumbering are reached within the bound.
+- [ ] 7.2 Invariants, scoped as in D13: a rename, mark or delete at a stale version changes nothing unless the state is already stored; an applied rename or mark moves the version by one, and a move leaves it; a repeated create or add stores one row while the row exists; both limits hold; no list is created for a purged account, and none remains after the purge and the sweep; one Member's writes never touch or reveal another's rows; list deletion leaves no todos and refuses a changed count; open positions are unique; every move leaves each todo exactly once in one order; `find_list` never mixes Members. Check each with `quint verify`, then 10,000 random traces at 30 steps.
+- [ ] 7.3 A broken module per guard: `no_version_check`, `no_count_check`, `no_lock`, `no_user_lock`, `no_limit`, `no_owner_check`, `no_key_check`, `no_deleted_check`, `no_todo_list_check` and `no_neighbour_scope`. Each must produce a counterexample in `scripts/models.sh`.
+- [ ] 7.4 Export random and witness ITF traces (stale, limit, repeated key, renumbering, not found, purge) and replay them through the real repositories in `tests/model_conformance.rs`, one connection per writer, calling each method at `commit`. Seed the initial rows directly, with filler up to the real limits; filler todos are done, so positions are unaffected, and counts are offset. Compare results and stored rows, versions included, after each step. Assert every outcome occurs: `Applied`, `Repeated`, `Stale`, both limits, `ListNotFound`, `TodoNotFound`, renumbered.
+- [ ] 7.5 `#[sqlx::test]` cases with overlapping transactions for each lock-dependent rule replay can't see: both limits, one key twice at once, two renames or marks at one version, list delete against add, concurrent moves, moves against completion and deletion, and purge against list creation. Reuse the existing tests in `lists_integration.rs`. Show each fails with its lock removed on a scratch edit, and name them in the manifest.
+- [ ] 7.6 Fix `MemoryListsServer.createList`: repeating a deleted list's key throws, where Postgres creates a new list. Add a regression test. Then replay the 7.4 traces through the memory server in Node-mode Vitest, for the operations it implements (one Member; no purge or sweep), using small configurable limits. Any divergence fails with the trace and step.
+- [ ] 7.7 `just models`, both replays and `just formal-coverage` green, run by CI with `pnpm` in the `models` job. Trigger it also on `apps/web/src/lib/lists/**` and the replay's config. Record runtime and bounds in `backend/ARCHITECTURE.md`.
 
-## 8. Slice 8: client queue model
+## 8. Slice 8: client queue models
 
-Delivers these scenarios (dashboard): list changes appear at once and save in
-the background; a crashing panel is contained; rapid edits in one tab; edit a
-todo that is still being added; save fails; unknown outcome. Delivers these
-scenarios (lists): edits made elsewhere are never silently overwritten; changes
-to something deleted elsewhere are handled; concurrent moves settle on one
-order.
+Delivers these scenarios (security): breaking a list guarantee fails the gate; a
+removed guard is noticed; a model that drifts from the code fails replay (for the
+client queue). Checks these requirements (dashboard): list changes appear at once
+and save in the background; another account signs in (the scenario). Checks
+(lists): edits made elsewhere are never silently overwritten; changes to something
+deleted elsewhere are handled; concurrent moves settle on one order.
 
-- [ ] 8.1 Freeze D7 after review, then `models/list_client.qnt`: two clients with confirmed state, queue, versions and unsaved text; sends, answers (success, stale, 404, lost) and refetches. State the Apalache bound.
-- [ ] 8.2 Invariants: a queued edit sends the version the Member saw; a refetch never advances a queued version; another tab's change is never silently overwritten; a dependent edit is dropped with one message; a 404 removes the item; both queues drain to one order; no todo is lost or duplicated.
-- [ ] 8.3 Broken clients (send a stale version, apply a success without the expected version, ignore a 404); each must fail an invariant.
-- [ ] 8.4 Replay the ITF traces through the real `ListsEngine` and memory server in a web test. Decode only the ITF this model emits; map each action to the public engine API; compare state after every step. Keep the trace fixtures out of the normal web test run.
-- [ ] 8.5 `just models`, `just test-web` and `just ci` green; record runtime and bounds.
+- [ ] 8.1 Review and freeze D7, then extend the `models/list_queue.qnt` prototype from 4.4 with moves and the rest below, prototype `models/list_loads.qnt` (D13), and fix each one's bounds from the recorded runtime. Requests have separate send, apply and answer steps, with late applies. `list_queue`: two clients, queue, versions, rename drafts, single retry, stale, 404, limit and 400 answers, moves, restored text, reset, session end and account switch. `list_loads`: load and save counters, dropped loads, reloads and recovery.
+- [ ] 8.2 `list_queue` invariants: an edit or submitted draft sends the version the Member saw, advanced only by this tab's `n → n + 1` saves; a refetch advances neither; another tab's change is never silently overwritten, late applies included; a dropped edit takes its dependents with one message and keeps their text; a 404 removes the item, and on deleting a todo or list counts as success (a todo's 404 for its list reports the list deleted); a lost answer retries at most once, with the same key or version; after a reset no request starts for the old account and none of its data is shown. `list_loads` invariants: a load overlapping a save of its list is dropped, and reloaded once no save to it is queued; overlapping loads don't repeat each other; an answer affects only the list it names. Convergence, as in D13: drained, recovered and reloaded with nothing in flight, each tab equals the server, allowing only the accepted exceptions.
+- [ ] 8.3 Broken variants: `refetch_advances_queue`, `refetch_advances_draft`, `send_stale_version`, `apply_unmatched_version`, `no_rebase`, `retry_new_key`, `retry_after_reset`, `keep_dependents`, `drop_text`, `ignore_404`, `ignore_move_mismatch`, `apply_stale_load` and `shared_load_save_counter`. Each must fail an invariant in `scripts/models.sh`; a variant about endless reloads must break a stated bound on reloads, not a liveness claim.
+- [ ] 8.4 Export random and witness ITF traces (conflict, 404, retry, late apply, move mismatch, stale load, reset) and replay them in Node-mode Vitest through `ListsEngine` and `MemoryListsServer`, with a transport that applies and answers in separate steps. Use a fake clock for timeouts. Compare `engine.snapshot()`, draft versions (from the returned `RenameDraft`s), sent requests and notices after every step; assert every outcome occurs. The account check lives in the store: test it there and name that test in the manifest. Not part of `just test-web`.
+- [ ] 8.5 Termination: the seeded tests drain both queues under fair answers for 10,000 seeds; name them in the manifest as the check for draining.
+- [ ] 8.6 `just models`, `just test-web`, `just formal-coverage` and `just ci` green; record runtime and bounds.
 
 ## 9. Feature done
 
-- [ ] 9.1 Every scenario in the spec deltas is delivered by a slice above and has a test; list any exception with its reason. Verify by walking the specs against the tests and the formal coverage manifest.
+- [ ] 9.1 Every scenario in the spec deltas is delivered by a slice above and has a test; list any exception with its reason. `just formal-coverage --final` is green and becomes the default in `just ci` and CI. Verify by walking the specs against the tests and the manifest.
 - [ ] 9.2 README, `backend/ARCHITECTURE.md` and the threat model match what was built, and the first-deploy checks are recorded. There is no flag to remove (D11). Verify with `just ci`.
-- [ ] 9.3 Archive the change with `/opsx:archive`, and verify with `openspec validate --specs --strict`.
+- [ ] 9.3 Archive the change with `/opsx:archive`, and verify with `openspec validate --specs --strict` and `just formal-coverage`, which now reads `openspec/specs/`.

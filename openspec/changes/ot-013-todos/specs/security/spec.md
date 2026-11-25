@@ -55,7 +55,9 @@ over every input or interleaving within stated bounds:
   validation and version rules;
 - a model checked over every interleaving within stated bounds for the server
   writes and for the client queue;
-- a conformance test that replays the model's traces through the real code.
+- a conformance test that replays the model's traces through the real code;
+- a test with overlapping transactions against the real database for each guarantee
+  that depends on a lock.
 
 Each guarantee that cannot be checked formally SHALL name its test and state why
 no proof or model applies. These checks SHALL run in the full local gate and in

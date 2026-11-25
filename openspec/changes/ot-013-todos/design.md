@@ -377,36 +377,101 @@ The existing route-guard walk covers the Visitor case for future routes.
 ### D13. Formal coverage of lists (domain, persistence-postgres, web)
 
 - **Scope:** every OT-013 guarantee is classified as a proof, a model with
-  conformance replay, or a test with a written reason no proof applies.
+  conformance replay, or a test with a written reason no proof or model applies.
   "Everything" means every guarantee, not every line of UI, SQL text or
   third-party code.
-- **Domain proofs (Kani):** pure ordering and validation rules over integer
-  inputs, following the auth proofs' bounds. The midpoint and renumbering
-  functions arrive in slice 4. Kani can't get through `jiff`, so time is an
-  argument or a generic integer, never a `Timestamp`.
-- **Server model (Quint):** `list_writes.qnt` models two Members, two lists and
-  three todos; one step per repository statement or transaction under the list
-  lock. Apalache checks 8 steps; 10k random traces check deeper runs. Broken
-  modules remove each guard and must break an invariant.
-- **Client model (Quint):** `list_client.qnt` models D7's confirmed state,
-  queue and versions for two clients. Traces replay through the real
-  `ListsEngine` and memory server, so a model that drifts from the engine fails.
-- **Coverage gate:** `docs/formal-coverage.yaml` names the check for every
-  requirement and P-35. `just formal-coverage` fails on a missing or renamed
-  check, and runs in `just ci`.
+- **Proofs cover code that runs.** SQL bumps versions (`version = version + 1`),
+  and nothing in production calls `List::rename`, `Todo::mark_done`,
+  `Todo::mark_not_done` or `Todo::rename`. They are removed, and the version rule
+  is checked by the server model and its replay, not by Kani.
+- **Domain proofs (Kani):** ordering and validation over integer inputs.
+  - Kani can't get through `jiff` or OS randomness, so harnesses use integer
+    kernels and no `Timestamp` or `Uuid::new_v4`. The open-or-done rule is
+    extracted as a kernel over the two columns' presence, used by
+    `from_persistence`.
+  - The midpoint and renumbering kernels are written and proved in slice 4, before
+    the repository uses them; the other proofs come in slice 6.
+  - The midpoint kernel covers all `i64` neighbours, with no overflow in the
+    midpoint or in moves above the first. At either end of `i64` it asks for
+    renumbering. `append_position` is strictly increasing unless it saturates;
+    at saturation the caller must renumber, or the bound is stated with why
+    it can't be reached.
+  - CBMC can't unwind hundreds of symbolic characters or `String` allocations, so
+    `normalize_single_line` uses an allocation-free kernel, proved over up to 6
+    symbolic `char`s with `max <= 4`. A proptest ties it to the real function
+    at 100 and 500 characters.
+  - Renumbering is proved for up to 5 positions; a proptest covers 1,000.
+- **Server model (Quint):** `list_writes.qnt`, two Members, two writers in flight.
+  - `MAX_LISTS = 2` and `MAX_TODOS = 3`, with 4 list IDs and 5 todo IDs: one
+    Member can exceed either limit while another Member's row exists.
+    An ID universe no larger than a limit would make that invariant vacuous.
+  - `init` chooses among populated states that meet the table constraints: at and
+    just below each limit, lists of three open todos, done todos, and adjacent
+    positions. Starting empty, 8 steps reach neither a full list nor two
+    concurrent moves. Positions use the real `POSITION_GAP`, and renumbering is
+    reached from adjacent seeds, not by exhausting a 2^20 gap.
+  - Each write is `begin` (take the lock, then read) and `commit`. `create_list`
+    locks the user and is the only write that checks `deleted_at`; every other
+    write locks its list. Purge takes the user, then its lists. The D10 sweep
+    deletes lists of purged accounts. `find_list` is two reads, since under READ
+    COMMITTED the todos may be newer than the list row.
+  - Apalache checks 8 steps; 10,000 random traces check 30.
+- **Invariants are scoped to what the design promises:**
+  - Version rules cover renames, marks and deletes. A state already stored
+    succeeds at any version and changes nothing. Creations start at 1, and moves
+    neither check nor change a version.
+  - A repeated create or add stores one row while that row still exists. Accepted
+    exceptions (Risks): a repeat after another tab deleted the item recreates it,
+    and a repeated move may undo a later one, leaving one order.
+- **Locks need concurrent tests.** Replay calls each repository method once, at
+  `commit`, so it can't notice a missing `FOR UPDATE`. Every lock-dependent rule
+  also names an `#[sqlx::test]` with overlapping transactions, shown to fail with
+  the lock removed. Interleaved `find_list` reads are modelled but not replayed.
+- **Client model (Quint):** two smaller models instead of one:
+  `list_queue.qnt` (queue, versions, drafts, retry, 404 and stale answers, moves,
+  reset and account switch) and `list_loads.qnt` (load and save counters, dropped
+  loads, reloads, recovery).
+  - A request has separate `send`, `apply` (at the server) and `answer` steps, and
+    `apply` may come after a timeout, a retry or a refetch. The replay transport
+    has the same three steps.
+  - A reset drops the queue, and no request starts for the old epoch. A request
+    already on its way isn't recalled (D7).
+  - Convergence is a safety property: if drained, recovered and reloaded, with
+    no request in flight, each tab equals the server. That queues do drain is a
+    liveness claim, covered by the seeded tests under fair answers.
+- **Memory server:** client replay trusts `MemoryListsServer`, so the server
+  model's traces are replayed through it as well as Postgres, for the operations
+  it implements. Ownership, purge and sweep steps are Postgres-only.
+- **Bounds are measured first.** Each model starts with a prototype recording
+  state-space size and runtime. Its bounds are fixed from that and written
+  next to it, never raised or lowered silently. `list_queue.qnt` is first
+  prototyped without moves in slice 4, before the client queue gains them, for at
+  most a day: most slice 3 review findings were in that queue.
+- **Coverage gate:** `docs/formal-coverage.yaml` is keyed by capability,
+  requirement and scenario, plus P-35. `just formal-coverage` reads the spec
+  deltas while the change is active and `openspec/specs/` once it is archived.
+  The manifest lists the requirements in scope, so other features in merged specs
+  are not demanded.
+  - A check must exist and run: Rust tests aren't `#[ignore]`d (except the
+    conformance suite `just models` runs), web tests aren't skipped or todo, Kani
+    functions carry `#[kani::proof]`, and Quint invariants and broken variants are
+    invoked by `scripts/models.sh`.
+  - An entry may be `pending: <task>` while that task is unticked. A pending entry
+    for a ticked task, or any once the feature is done (`--final`, then the default
+    from task 9.1), fails.
 - **Not formalized:** rendering, layout, CSS, SQL text, HTTP wiring, telemetry
   content filtering and third-party behaviour. Their requirements state their
   tests and why a proof or model does not apply.
 
 ## Risks / Trade-offs
 
-- [A formal check drifts from the code it describes] → Every model step is
-  replayed through the real repository or engine, and `just formal-coverage`
+- [A formal check drifts from the code it describes] → Model steps are
+  replayed through the real repository or engine (D13 names the exceptions), and `just formal-coverage`
   fails when a named check disappears. Update the model and replay in the same
   commit as the code.
-- [Kani or Quint runtime grows past the gate] → Proofs stay on integer-time
-  cores, models keep stated bounds, and each runs as its own CI job. Record
-  runtimes.
+- [Kani or Quint runtime grows past the gate] → Proofs stay on integer cores,
+  each model is prototyped before its bounds are fixed, and the client is two
+  models. Each runs as its own job. Record runtimes.
 - [The client model freezes the wrong behaviour] → Freeze D7 after the review,
   model only the public engine API, and prove each invariant can fail before
   trusting it.
@@ -459,6 +524,7 @@ second page-view beacon that D9's rewrite does not cover.
 
 ## Open Questions
 
-- Whether the client replay reads ITF directly or generated JSON fixtures.
-  Either keeps the model as the source; decide in slice 8 by what the web test
-  runner can load reliably.
+- _Resolved (client trace replay):_ `scripts/models.sh` exports the client
+  models' ITF traces into `MODEL_TRACES_DIR` (`backend/target/model-traces`) and
+  runs a Node-mode Vitest replay through `ListsEngine` and `MemoryListsServer`.
+  No trace files are committed and `just test-web` is untouched.
