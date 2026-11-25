@@ -5,7 +5,7 @@
   import { navigate } from '$lib/navigation'
   import { tick, untrack } from 'svelte'
   import { lists, type UnsavedText } from '../../lib/lists/store.svelte'
-  import type { TodoView } from '../../lib/lists/engine'
+  import type { RenameDraft, TodoView } from '../../lib/lists/engine'
 
   // One page for every list address: the shell is built once with a
   // placeholder id and the web server rewrites real addresses to it (design
@@ -42,6 +42,9 @@
   let todoRenameError = $state('')
   let deleteOpen = $state(false)
   let deleteError = $state('')
+  /** What is being renamed, at the version seen when the form opened (D7). */
+  let listDraft: RenameDraft | undefined
+  let todoDraft: RenameDraft | undefined
   /** The list this panel submitted, to open it once it is saved (D3). */
   let submittedListKey: string | null = null
 
@@ -124,8 +127,8 @@
         creatingName = ''
         addTitle = ''
         submittedListKey = null
-        renamingList = false
-        renamingTodo = null
+        cancelListRename()
+        cancelTodoRename()
         deleteOpen = false
         deleteError = ''
       }
@@ -137,12 +140,10 @@
   $effect(() => {
     void selectedId
     untrack(() => {
-      renamingList = false
-      renamingTodo = null
+      cancelListRename()
+      cancelTodoRename()
       deleteOpen = false
       deleteError = ''
-      listRenameError = ''
-      todoRenameError = ''
     })
   })
 
@@ -185,13 +186,17 @@
   }
 
   function beginListRename() {
-    if (!currentList) return
+    if (!currentList?.id) return
+    cancelListRename()
+    listDraft = lists.startListRename(currentList.id)
     listName = currentList.name
     listRenameError = ''
     renamingList = true
   }
 
   function cancelListRename() {
+    if (listDraft) lists.cancelRename(listDraft)
+    listDraft = undefined
     renamingList = false
     listRenameError = ''
   }
@@ -209,22 +214,27 @@
       listRenameError = 'A list name can be at most 100 characters'
       return
     }
-    lists.renameList(selectedId, name)
-    renamingList = false
+    if (listDraft) lists.submitRename(listDraft, name)
+    cancelListRename()
   }
 
   function beginTodoRename(todo: TodoView) {
+    if (!selectedId) return
+    cancelTodoRename()
+    todoDraft = lists.startTodoRename(selectedId, todo)
     renamingTodo = todo.key ?? todo.id
     todoTitle = todo.title
     todoRenameError = ''
   }
 
   function cancelTodoRename() {
+    if (todoDraft) lists.cancelRename(todoDraft)
+    todoDraft = undefined
     renamingTodo = null
     todoRenameError = ''
   }
 
-  function submitTodoRename(event: SubmitEvent, todo: TodoView) {
+  function submitTodoRename(event: SubmitEvent) {
     event.preventDefault()
     if (!selectedId) return
     const title = todoTitle.trim()
@@ -237,8 +247,8 @@
       todoRenameError = 'A todo can be at most 500 characters'
       return
     }
-    lists.renameTodo(selectedId, todo, title)
-    renamingTodo = null
+    if (todoDraft) lists.submitRename(todoDraft, title)
+    cancelTodoRename()
   }
 
   /** Delete one todo and keep a keyboard user's place (as after a tick). */
@@ -267,10 +277,19 @@
     deleteOpen = true
   }
 
-  function cancelDelete() {
-    if (deleting) return
+  function closeDelete() {
     deleteOpen = false
     deleteError = ''
+  }
+
+  function cancelDelete() {
+    if (!deleting) closeDelete()
+  }
+
+  function modal(node: HTMLDialogElement) {
+    node.showModal()
+    // Closing first returns focus to where it was.
+    return { destroy: () => node.close() }
   }
 
   async function confirmDelete(event: SubmitEvent) {
@@ -279,13 +298,17 @@
     // first so the count the Member confirmed is the one the server sees.
     if (!selectedId || !currentList || deleting || snapshot.queueLength > 0) return
     deleteError = ''
-    const deleted = await lists.deleteList(selectedId, currentList.version, currentList.todo_count)
-    if (deleted) {
+    const id = selectedId
+    const result = await lists.deleteList(id, currentList.version, currentList.todo_count)
+    if (result === 'deleted') {
       deleteOpen = false
-      navigate('/dashboard/lists')
-    } else {
+      // The Member may have moved on while the server answered.
+      if (idFromPath() === id) navigate('/dashboard/lists')
+    } else if (result === 'changed') {
       deleteError =
         'This list changed elsewhere. Check the name and number of todos, then confirm again.'
+    } else {
+      deleteError = "The list couldn't be deleted. Try again."
     }
   }
 
@@ -415,7 +438,7 @@
         {#if renamingTodo === (todo.key ?? todo.id)}
           <form
             class="flex min-w-0 flex-1 flex-wrap items-center gap-2"
-            onsubmit={(event) => submitTodoRename(event, todo)}
+            onsubmit={(event) => submitTodoRename(event)}
             novalidate
           >
             <label class="sr-only" for={`rename-todo-${todo.key ?? todo.id}`}>Todo title</label>
@@ -423,6 +446,7 @@
               id={`rename-todo-${todo.key ?? todo.id}`}
               class="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1 text-sm"
               bind:value={todoTitle}
+              use:pasteNormalizer={(value) => (todoTitle = value)}
               onkeydown={(event) => {
                 if (event.key === 'Escape') {
                   event.preventDefault()
@@ -582,6 +606,7 @@
                   id="rename-list-name"
                   class="min-w-0 flex-1 rounded-md border border-input bg-background px-2 py-1.5 text-xl font-semibold"
                   bind:value={listName}
+                  use:pasteNormalizer={(value) => (listName = value)}
                   onkeydown={(event) => {
                     if (event.key === 'Escape') {
                       event.preventDefault()
@@ -692,59 +717,55 @@
   </div>
 
   {#if deleteOpen && currentList}
-    <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="delete-list-title"
-        aria-describedby="delete-list-detail"
-        tabindex="-1"
-        class="w-full max-w-md rounded-lg border border-border bg-background p-4 text-sm shadow-lg"
-        onkeydown={(event) => {
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            cancelDelete()
-          }
-        }}
-      >
-        <form class="space-y-3" onsubmit={confirmDelete}>
-          <h2 id="delete-list-title" class="text-lg font-semibold wrap-anywhere">
-            Delete "{currentList.name}"?
-          </h2>
-          <p id="delete-list-detail" class="text-muted-foreground">
-            It holds {currentList.todo_count}
-            {currentList.todo_count === 1 ? 'todo' : 'todos'}, open and done. Deleting a list is
-            permanent.
-          </p>
-          {#if snapshot.queueLength > 0}
-            <p class="text-muted-foreground">Waiting for your changes to save...</p>
-          {/if}
-          {#if deleteError}
-            <p role="alert" class="text-destructive">{deleteError}</p>
-          {/if}
-          <div class="flex justify-end gap-2">
-            <Button
-              id="cancel-delete-list"
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={deleting}
-              onclick={cancelDelete}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              size="sm"
-              variant="destructive"
-              loading={deleting}
-              disabled={snapshot.queueLength > 0}
-            >
-              Delete list
-            </Button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <!-- Modal, so nothing behind it can be changed while the list is deleted. -->
+    <dialog
+      use:modal
+      aria-labelledby="delete-list-title"
+      aria-describedby="delete-list-detail"
+      class="m-auto w-[calc(100%-2rem)] max-w-md rounded-lg border border-border bg-background p-4 text-sm text-foreground shadow-lg backdrop:bg-black/40"
+      oncancel={(event) => {
+        event.preventDefault()
+        cancelDelete()
+      }}
+      onclose={closeDelete}
+    >
+      <form class="space-y-3" onsubmit={confirmDelete}>
+        <h2 id="delete-list-title" class="text-lg font-semibold wrap-anywhere">
+          Delete "{currentList.name}"?
+        </h2>
+        <p id="delete-list-detail" class="text-muted-foreground">
+          It holds {currentList.todo_count}
+          {currentList.todo_count === 1 ? 'todo' : 'todos'}, open and done. Deleting a list is
+          permanent.
+        </p>
+        {#if snapshot.queueLength > 0}
+          <p class="text-muted-foreground">Waiting for your changes to save...</p>
+        {/if}
+        {#if deleteError}
+          <p role="alert" class="text-destructive">{deleteError}</p>
+        {/if}
+        <div class="flex justify-end gap-2">
+          <Button
+            id="cancel-delete-list"
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={deleting}
+            onclick={cancelDelete}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            size="sm"
+            variant="destructive"
+            loading={deleting}
+            disabled={snapshot.queueLength > 0}
+          >
+            Delete list
+          </Button>
+        </div>
+      </form>
+    </dialog>
   {/if}
 </TelemetryBoundary>

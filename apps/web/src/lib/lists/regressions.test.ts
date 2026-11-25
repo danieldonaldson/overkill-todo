@@ -105,6 +105,7 @@ describe('lists engine: order without a refetch', () => {
       await engine.loadLists()
       await engine.loadList(id)
       const intent = new Map<string, boolean>()
+      let lastName = 'Work'
       for (let step = 0; step < 30; step++) {
         const todos = engine.snapshot().details[id].todos
         const roll = rng()
@@ -126,7 +127,9 @@ describe('lists engine: order without a refetch', () => {
           engine.deleteTodo(id, todo)
           intent.delete(todo.title)
         } else if (roll < 0.9) {
-          engine.renameList(id, `L-${step}`)
+          // Also back to a name already used: it must not be lost on the way.
+          lastName = step % 2 ? 'Work' : `L-${step}`
+          engine.renameList(id, lastName)
         } else {
           void engine.loadList(id)
           void engine.loadLists()
@@ -141,6 +144,7 @@ describe('lists engine: order without a refetch', () => {
         engine.snapshot().lists.find((list) => list.id === id)?.name,
         `seed ${seed}: list name`
       ).toBe(server.getList(id).list.name)
+      expect(server.getList(id).list.name, `seed ${seed}: last name`).toBe(lastName)
       for (const [title, done] of intent) {
         expect(stored.find((t) => t.title === title)?.done, `seed ${seed}: ${title}`).toBe(done)
       }

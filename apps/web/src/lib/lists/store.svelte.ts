@@ -6,9 +6,11 @@ import { toast } from 'svelte-sonner'
 import { api } from '../api'
 import {
   ListsEngine,
+  type DeleteListResult,
   type ListsApi,
   type Notice,
   type NoticeRestore,
+  type RenameDraft,
   type Snapshot,
 } from './engine'
 
@@ -115,7 +117,7 @@ export const lists = {
   },
   createList: (name: string): string => engine.createList(name),
   renameList: (listId: string, name: string): void => engine.renameList(listId, name),
-  deleteList: (listId: string, version: number, todoCount: number): Promise<boolean> =>
+  deleteList: (listId: string, version: number, todoCount: number): Promise<DeleteListResult> =>
     engine.deleteList(listId, version, todoCount),
   addTodo: (listId: string, title: string): string => engine.addTodo(listId, title),
   markTodo: (listId: string, todo: Parameters<ListsEngine['markTodo']>[1], done: boolean): void =>
@@ -125,6 +127,14 @@ export const lists = {
     todo: Parameters<ListsEngine['renameTodo']>[1],
     title: string
   ): void => engine.renameTodo(listId, todo, title),
+  /** Renames keep the version seen when they start (design D7). */
+  startListRename: (listId: string): RenameDraft | undefined => engine.startListRename(listId),
+  startTodoRename: (
+    listId: string,
+    todo: Parameters<ListsEngine['startTodoRename']>[1]
+  ): RenameDraft => engine.startTodoRename(listId, todo),
+  submitRename: (draft: RenameDraft, text: string): void => engine.submitRename(draft, text),
+  cancelRename: (draft: RenameDraft): void => engine.cancelRename(draft),
   deleteTodo: (listId: string, todo: Parameters<ListsEngine['deleteTodo']>[1]): void =>
     engine.deleteTodo(listId, todo),
   loadLists: (): Promise<void> => engine.loadLists(),

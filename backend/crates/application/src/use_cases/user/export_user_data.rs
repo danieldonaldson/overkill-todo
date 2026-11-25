@@ -78,8 +78,8 @@ impl ExportUserDataUseCase {
     /// The todos of one of the caller's lists, for the streamed export.
     ///
     /// # Errors
-    /// `NotFound` if the list disappeared, or a repository failure. A failure
-    /// here aborts the streamed response (design D10).
+    /// `NotFound` if the list was deleted since, which the export skips, or a
+    /// repository failure, which aborts the streamed response (design D10).
     #[tracing::instrument(name = "usecase.export_list_todos", skip_all, fields(user_id = %user_id, list_id = %list_id))]
     pub async fn list_todos(
         &self,

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-svelte'
-import { page } from 'vitest/browser'
+import { page, userEvent } from 'vitest/browser'
 import ListsPanel from './ListsPanel.svelte'
 
 const toastError = vi.hoisted(() => vi.fn())
@@ -623,6 +623,82 @@ describe('ListsPanel', () => {
     await expect.element(dialog.getByText(/Check the name and number of todos/)).toBeInTheDocument()
     await expect.element(dialog.getByText(/It holds\s+3\s+todos/)).toBeInTheDocument()
     expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('turns line breaks pasted into the rename fields into spaces', async () => {
+    mockLoaded([todo({ id: 'a', title: 'one' })])
+    const screen = await render(ListsPanel)
+    const pasteInto = (label: string) => {
+      const input = screen.getByLabelText(label).element() as HTMLInputElement
+      const data = new DataTransfer()
+      data.setData('text/plain', 'Buy milk\nand eggs')
+      const paste = new ClipboardEvent('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(paste, 'clipboardData', { value: data })
+      input.value = ''
+      input.dispatchEvent(paste)
+      return input.value
+    }
+    await screen.getByRole('button', { name: 'Rename' }).nth(1).click()
+    expect(pasteInto('Todo title')).toBe('Buy milk and eggs')
+    await screen.getByRole('button', { name: 'Rename' }).first().click()
+    expect(pasteInto('List name')).toBe('Buy milk and eggs')
+  })
+
+  it('saves a rename at the version shown when the form opened', async () => {
+    mockLoaded([todo({ id: 'a', title: 'one' })])
+    vi.mocked(api.lists.renameTodo).mockReturnValue(new Promise(() => {}))
+    const screen = await render(ListsPanel)
+    await screen.getByRole('button', { name: 'Rename' }).nth(1).click()
+    mockLoaded([todo({ id: 'a', title: 'theirs', version: 2 })])
+    await lists.loadList(LIST_ID)
+    typeInto(screen.getByLabelText('Todo title'), 'mine')
+    await screen.getByRole('button', { name: 'Save' }).click()
+    await vi.waitFor(() =>
+      expect(api.lists.renameTodo).toHaveBeenCalledWith(LIST_ID, 'a', { version: 1, title: 'mine' })
+    )
+  })
+
+  it('says a deletion failed, not that the list changed, when the server is down', async () => {
+    mockLoaded([])
+    vi.mocked(api.lists.deleteList).mockRejectedValue(
+      new ApiErrorException(null, { status: 503, message: 'down' })
+    )
+    const screen = await render(ListsPanel)
+    await screen.getByRole('button', { name: 'Delete list' }).click()
+    const dialog = screen.getByRole('dialog')
+    await dialog.getByRole('button', { name: 'Delete list' }).click()
+    await expect.element(dialog.getByText(/couldn't be deleted/)).toBeInTheDocument()
+    await expect.element(dialog.getByText(/changed elsewhere/)).not.toBeInTheDocument()
+  })
+
+  it('stays where the Member went while a deletion was saving', async () => {
+    mockLoaded([])
+    const { promise, resolve } = Promise.withResolvers<undefined>()
+    vi.mocked(api.lists.deleteList).mockReturnValue(promise)
+    const screen = await render(ListsPanel)
+    await screen.getByRole('button', { name: 'Delete list' }).click()
+    await screen.getByRole('dialog').getByRole('button', { name: 'Delete list' }).click()
+    await vi.waitFor(() => expect(api.lists.deleteList).toHaveBeenCalled())
+    setPath('/dashboard/settings')
+    resolve(undefined)
+    await vi.waitFor(() => expect(lists.snapshot.lists).toEqual([]))
+    await new Promise((done) => setTimeout(done, 20))
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('makes the page behind the deletion dialog inert, and Escape cancels', async () => {
+    mockLoaded([])
+    const screen = await render(ListsPanel)
+    await screen.getByRole('button', { name: 'Delete list' }).click()
+    const dialog = screen.getByRole('dialog')
+    await expect.element(dialog).toBeInTheDocument()
+    expect(dialog.element().matches(':modal')).toBe(true)
+    const field = document.getElementById('new-todo-title')!
+    field.focus()
+    expect(document.activeElement).not.toBe(field)
+    await userEvent.keyboard('{Escape}')
+    await expect.element(dialog).not.toBeInTheDocument()
+    expect(api.lists.deleteList).not.toHaveBeenCalled()
   })
 
   it('fits 500-character titles at 360 px in every new state', async () => {

@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 import { ApiErrorException } from '../api/errors'
-import { ListsEngine, type ListsApi, type TodoView } from './engine'
+import { ListsEngine, type ListsApi, type RenameDraft, type TodoView } from './engine'
 import { MemoryListsServer } from './memory-server'
 
 const SEEDS = Number(import.meta.env.VITE_HYPOTHESIS_SEEDS ?? 200)
@@ -101,7 +101,7 @@ function watchVersions(
 ): ListsApi {
   const alias = new Map<string, string>()
   const check = (listId: string, todoId: string, version: number, label: string) => {
-    const todo = server.getList(listId).todos.find((candidate) => candidate.id === todoId)
+    const todo = server.state().todos[listId]?.find((candidate) => candidate.id === todoId)
     if (!todo) return undefined
     const versions = seen.get(todo.id) ?? new Set<number>()
     // A version noted while the todo had no ID belongs to it now (D7).
@@ -137,6 +137,13 @@ function watchVersions(
       check(listId, todoId, version, 'delete')
       return api.deleteTodo(listId, todoId, version)
     },
+    renameList: async (id, version, name) => {
+      const versions = seen.get(id)
+      if (!versions?.has(version)) violations.push(`rename list ${id} at ${version}`)
+      const answer = await api.renameList(id, version, name)
+      if (answer.version === version + 1) versions?.add(answer.version)
+      return answer
+    },
   }
 }
 
@@ -170,6 +177,13 @@ async function runSeed(seed: number, refetchAdvancesQueue = false): Promise<void
   await tabB.loadList(listId)
   faults.reads = true
 
+  // Renames being typed: submitted some steps, and perhaps loads, later.
+  const drafts: { tab: ListsEngine; draft: RenameDraft }[] = []
+  const rememberList = (tab: ListsEngine) => {
+    const seen = tab === tabA ? seenA : seenB
+    const list = tab.snapshot().lists.find((candidate) => candidate.id === listId)!
+    seen.set(listId, (seen.get(listId) ?? new Set()).add(list.version))
+  }
   const remember = (tab: ListsEngine, todo: TodoView) => {
     const seen = tab === tabA ? seenA : seenB
     const pending = tab === tabA ? pendingA : pendingB
@@ -215,10 +229,36 @@ async function runSeed(seed: number, refetchAdvancesQueue = false): Promise<void
         rename(tab, todo, `r-${seed}-${step}-${Math.floor(rng() * 1e6)}`)
         // A rename queued on a pending todo is sent after its add (D7).
       } else {
-        tab.renameList(listId, `l-${seed}-${step}`)
+        rememberList(tab)
+        // Sometimes a name used before, so renames go back and forth.
+        tab.renameList(listId, rng() < 0.5 ? 'Work' : `l-${seed}-${step}`)
       }
     }
+    if (rng() < 0.2) {
+      if (todos.length > 0 && rng() < 0.7) {
+        const todo = todos[Math.floor(rng() * todos.length)]
+        remember(tab, todo)
+        drafts.push({ tab, draft: tab.startTodoRename(listId, todo) })
+      } else {
+        rememberList(tab)
+        drafts.push({ tab, draft: tab.startListRename(listId)! })
+      }
+    }
+    if (drafts.length > 0 && rng() < 0.25) {
+      const [started] = drafts.splice(Math.floor(rng() * drafts.length), 1)
+      started.tab.submitRename(started.draft, `d-${seed}-${step}`)
+    }
     if (rng() < 0.3) tab.addTodo(otherId, `o-${seed}-${step}`)
+    // Delete the other list, with what is queued on it, in some seeds.
+    if (rng() < 0.03) {
+      const seen = tab.snapshot().lists.find((candidate) => candidate.id === otherId)
+      if (seen) {
+        void tab.deleteList(otherId, seen.version, seen.todo_count).then((result) => {
+          if (result === 'deleted' && server.state().todos[otherId])
+            violations.push('a list shown as deleted still exists')
+        })
+      }
+    }
     await yieldTicks(rng)
     if (rng() < 0.25) void tab.loadList(listId)
     if (rng() < 0.1) void other.loadList(listId)
@@ -230,11 +270,14 @@ async function runSeed(seed: number, refetchAdvancesQueue = false): Promise<void
   // Tabs aren't live: compare only after one final load each.
   await tabA.loadList(listId)
   await tabB.loadList(listId)
+  await tabA.loadLists()
+  await tabB.loadLists()
 
   expect(violations, `seed ${seed}: no unseen version`).toEqual([])
   const serverTodos = server.getList(listId).todos
   for (const id of [listId, otherId]) {
-    const titles = server.getList(id).todos.map((todo) => todo.title)
+    // The other list may have been deleted.
+    const titles = (server.state().todos[id] ?? []).map((todo) => todo.title)
     expect(new Set(titles).size, `seed ${seed}: no duplicated todo`).toBe(titles.length)
   }
 
@@ -246,6 +289,15 @@ async function runSeed(seed: number, refetchAdvancesQueue = false): Promise<void
   expect(shape(tabB.snapshot().details[listId].todos), `seed ${seed}: tab B`).toEqual(
     shape(serverTodos)
   )
+  const ids = server.list().map((list) => list.id)
+  expect(
+    tabA.snapshot().lists.map((list) => list.id),
+    `seed ${seed}: lists A`
+  ).toEqual(ids)
+  expect(
+    tabB.snapshot().lists.map((list) => list.id),
+    `seed ${seed}: lists B`
+  ).toEqual(ids)
   const serverName = server.getList(listId).list.name
   expect(tabA.snapshot().lists.find((list) => list.id === listId)?.name, `seed ${seed}`).toBe(
     serverName

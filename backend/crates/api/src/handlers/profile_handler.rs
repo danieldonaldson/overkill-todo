@@ -185,10 +185,13 @@ pub async fn export_data(
         if tx.send(Ok(Bytes::from(preamble))).await.is_err() {
             return;
         }
-        for (index, summary) in lists.into_iter().enumerate() {
+        let mut first = true;
+        for summary in lists {
             let list_id = *summary.list.id();
             let todos = match use_case.list_todos(&user_id, &list_id).await {
                 Ok(todos) => todos,
+                // Deleted since the export started: no longer the Member's data.
+                Err(DomainError::NotFound(_)) => continue,
                 Err(error) => {
                     // Abort the response: the browser sees a failed download,
                     // never a silently partial file. No content is logged.
@@ -215,9 +218,10 @@ pub async fn export_data(
                     .collect(),
             };
             let mut chunk = Vec::new();
-            if index > 0 {
+            if !first {
                 chunk.push(b',');
             }
+            first = false;
             if let Err(error) = serde_json::to_writer(&mut chunk, &export) {
                 tracing::error!(user_id = %user_id, error = %error, "export serialization failed mid-stream");
                 let _ = tx.send(Err(std::io::Error::other("export failed"))).await;

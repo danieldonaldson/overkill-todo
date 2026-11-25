@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { ApiErrorException, SessionEndedError } from '../api/errors'
-import { ListsEngine, type ListsApi, type TodoView } from './engine'
+import { ListsEngine, type ListsApi, type Notice, type TodoView } from './engine'
 import type { ListDetail } from '../types'
 import { MemoryListsServer, serverApi } from './memory-server'
 
@@ -480,7 +480,7 @@ describe('lists engine', () => {
     expect(engine.snapshot().deleting).toEqual([listId])
     expect(engine.snapshot().lists).toHaveLength(1)
     await settle(engine)
-    expect(await result).toBe(true)
+    expect(await result).toBe('deleted')
     expect(engine.snapshot().lists).toEqual([])
     expect(engine.snapshot().details[listId]).toBeUndefined()
     expect(notices).toEqual([])
@@ -496,7 +496,7 @@ describe('lists engine', () => {
     server.addTodo(listId, 'other-tab', 'two')
     const result = engine.deleteList(listId, 1, 1)
     await settle(engine)
-    expect(await result).toBe(false)
+    expect(await result).toBe('changed')
     expect(engine.snapshot().lists[0].todo_count).toBe(2)
     expect(notices[0]).toContain('list changed elsewhere')
     expect(server.getList(listId).todos).toHaveLength(2)
@@ -549,7 +549,198 @@ describe('lists engine', () => {
 
     const result = engine.deleteList(listId, 1, 0)
     await settle(engine)
-    expect(await result).toBe(false)
+    expect(await result).toBe('failed')
     expect(engine.snapshot().lists).toHaveLength(1)
+  })
+})
+
+describe('lists engine: renames and deletions (slice 3 review)', () => {
+  async function tab(
+    server: MemoryListsServer,
+    ids: string[],
+    api: Partial<ListsApi> = {}
+  ): Promise<{ engine: ListsEngine; notices: Notice[] }> {
+    const notices: Notice[] = []
+    const engine = new ListsEngine({
+      api: { ...serverApi(server), ...api },
+      newKey: keys(),
+      timeoutMs: Number.POSITIVE_INFINITY,
+      onNotice: (notice) => notices.push(notice),
+    })
+    await engine.loadLists()
+    for (const id of ids) await engine.loadList(id)
+    return { engine, notices }
+  }
+  const texts = (notice: Notice) => notice.restore?.map((item) => item.text)
+  const todoOf = (engine: ListsEngine, id: string, index = 0) =>
+    engine.snapshot().details[id].todos[index]
+  const unavailable = async () => {
+    throw new ApiErrorException(null, { status: 503, message: 'down' })
+  }
+
+  it('never overwrites a todo renamed elsewhere while the form was open', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['A'])
+    const { engine, notices } = await tab(server, [id])
+    const draft = engine.startTodoRename(id, todoOf(engine, id))
+    server.renameTodo(id, todoOf(engine, id).id!, 1, 'Theirs')
+    await engine.loadList(id)
+    engine.submitRename(draft, 'Mine')
+    await settle(engine)
+
+    expect(server.getList(id).todos[0].title).toBe('Theirs')
+    expect(notices).toHaveLength(1)
+    expect(texts(notices[0])).toEqual(['Mine'])
+  })
+
+  it('never overwrites a list renamed elsewhere while the form was open', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('A', [])
+    const { engine, notices } = await tab(server, [id])
+    const draft = engine.startListRename(id)!
+    server.renameList(id, 1, 'Theirs')
+    await engine.loadLists()
+    engine.submitRename(draft, 'Mine')
+    await settle(engine)
+
+    expect(server.getList(id).list.name).toBe('Theirs')
+    expect(texts(notices[0])).toEqual(['Mine'])
+  })
+
+  it("does not conflict with this tab's own save made while the form was open", async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['A'])
+    const { engine, notices } = await tab(server, [id])
+    const draft = engine.startTodoRename(id, todoOf(engine, id))
+    engine.markTodo(id, todoOf(engine, id), true)
+    await settle(engine)
+    engine.submitRename(draft, 'Mine')
+    await settle(engine)
+
+    expect(server.getList(id).todos[0]).toMatchObject({ title: 'Mine', done: true, version: 3 })
+    expect(notices).toEqual([])
+  })
+
+  it('saves a rename started while the todo was being added, and no cancelled one', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', [])
+    const { engine, notices } = await tab(server, [id])
+    engine.addTodo(id, 'new')
+    const draft = engine.startTodoRename(id, todoOf(engine, id))
+    await settle(engine)
+    engine.submitRename(draft, 'renamed')
+    await settle(engine)
+    expect(server.getList(id).todos[0].title).toBe('renamed')
+
+    const cancelled = engine.startTodoRename(id, todoOf(engine, id))
+    engine.cancelRename(cancelled)
+    engine.submitRename(cancelled, 'no')
+    expect(engine.snapshot().queueLength).toBe(0)
+    expect(notices).toEqual([])
+  })
+
+  it('renames a list back before the first rename is answered', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', [])
+    const { engine, notices } = await tab(server, [id])
+    engine.renameList(id, 'Job')
+    engine.renameList(id, 'Work')
+    await settle(engine)
+    expect(server.getList(id).list.name).toBe('Work')
+    expect(notices).toEqual([])
+  })
+
+  it('keeps the text of a rename whose todo or list was deleted elsewhere', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['A'])
+    const { engine, notices } = await tab(server, [id])
+    server.removeTodo(id, todoOf(engine, id).id!)
+    engine.renameTodo(id, todoOf(engine, id), 'typed')
+    await settle(engine)
+    expect(texts(notices[0])).toEqual(['typed'])
+
+    server.removeList(id)
+    engine.renameList(id, 'typed name')
+    engine.addTodo(id, 'typed todo')
+    await settle(engine)
+    expect(notices).toHaveLength(2)
+    expect(texts(notices[1])).toEqual(['typed name', 'typed todo'])
+    expect(engine.snapshot().details[id].status).toBe('not_found')
+  })
+
+  it('keeps every text queued on an addition whose list was deleted elsewhere', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', [])
+    const { engine, notices } = await tab(server, [id])
+    server.removeList(id)
+    engine.addTodo(id, 'new')
+    engine.renameTodo(id, todoOf(engine, id), 'renamed')
+    await settle(engine)
+    expect(notices).toHaveLength(1)
+    expect(texts(notices[0])).toEqual(['new', 'renamed'])
+  })
+
+  it('names the todo of a failed rename queued while it was being added', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', [])
+    const { engine, notices } = await tab(server, [id], { renameTodo: unavailable })
+    engine.addTodo(id, 'new')
+    engine.renameTodo(id, todoOf(engine, id), 'renamed')
+    await settle(engine)
+    expect(notices[0].restore?.[0].todoId).toBe(server.getList(id).todos[0].id)
+  })
+
+  it('shows list not found when a todo is deleted in a list deleted elsewhere', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['A', 'B'])
+    const { engine, notices } = await tab(server, [id])
+    server.removeList(id)
+    engine.deleteTodo(id, todoOf(engine, id))
+    await settle(engine)
+    expect(engine.snapshot().details[id].status).toBe('not_found')
+    expect(engine.snapshot().lists).toEqual([])
+    expect(notices.map((notice) => notice.text)).toEqual(['This list was deleted elsewhere.'])
+  })
+
+  it('drops what is queued behind its own list deletion, and keeps the text', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['A'])
+    const { engine, notices } = await tab(server, [id])
+    const result = engine.deleteList(id, 1, 1)
+    engine.addTodo(id, 'late')
+    engine.markTodo(id, todoOf(engine, id), true)
+    await settle(engine)
+    expect(await result).toBe('deleted')
+    expect(notices).toHaveLength(1)
+    expect(notices[0].text).not.toContain('elsewhere')
+    expect(texts(notices[0])).toEqual(['late'])
+    expect(engine.snapshot().details[id]).toBeUndefined()
+  })
+
+  it('keeps the counts of other lists when one list conflicts', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('A', [])
+    const other = server.seededList('B', ['x'])
+    const { engine } = await tab(server, [id, other])
+    engine.addTodo(other, 'y')
+    await settle(engine)
+    server.renameList(id, 1, 'Theirs')
+    engine.renameList(id, 'Mine')
+    await settle(engine)
+    expect(engine.snapshot().lists.find((list) => list.id === other)).toMatchObject({
+      open_count: 2,
+      todo_count: 2,
+    })
+  })
+
+  it('says whether a deletion was refused or failed', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('A', ['x'])
+    const down = await tab(server, [id], { deleteList: unavailable })
+    expect(await down.engine.deleteList(id, 1, 1)).toBe('failed')
+    const { engine } = await tab(server, [id])
+    expect(await engine.deleteList(id, 1, 0)).toBe('changed')
+    server.removeList(id)
+    expect(await engine.deleteList(id, 1, 1)).toBe('deleted')
   })
 })
