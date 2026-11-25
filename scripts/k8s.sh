@@ -209,7 +209,7 @@ cmd_status() {
       | (.status.availableReplicas // .status.numberAvailable // 0) as $up
       | (.status.replicas // $want) as $all
       | select($new < $want or $up < $want or $all > $want)
-      | "\(.kind | ascii_downcase) \(.metadata.namespace)/\(.metadata.name): \($new)/\($want) updated, \($up) available"
+      | "\(.kind | ascii_downcase) \(.metadata.namespace)/\(.metadata.name): \($new) of \($want) updated, \($up) available, \($all) in total"
         + ([.status.conditions[]? | select(.type == "Progressing" and .status == "False") | ": \(.message)"] | join(""))'
     kubectl get pods -A -o json | jq -r '.items[]
       | select(.status.phase != "Succeeded")
