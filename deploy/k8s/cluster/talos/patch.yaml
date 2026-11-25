@@ -1,0 +1,22 @@
+# Machine config patch for the local single-node cluster (OT-014 D1, D2, D8).
+# No CNI or kube-proxy: Cilium does both, installed by k8s-up, then by ArgoCD.
+apiVersion: v1alpha1
+kind: KubeFlannelCNIConfig
+$patch: delete
+---
+apiVersion: v1alpha1
+kind: KubeProxyConfig
+$patch: delete
+---
+# One node: it runs workloads too.
+apiVersion: v1alpha1
+kind: KubeNodeConfig
+taints:
+  $patch: delete
+---
+# local-path storage: a directory on the EPHEMERAL partition, mounted into the
+# kubelet at /var/mnt/local-path. Survives reboots and upgrades, not a wipe.
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: local-path
+volumeType: directory

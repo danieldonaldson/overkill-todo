@@ -1,0 +1,41 @@
+# Cilium on Talos (OT-014 D2). Used by scripts/k8s.sh for the bootstrap and by
+# the ArgoCD Application that then manages it, so both render the same.
+ipam:
+  mode: kubernetes
+# Talos has no kube-proxy; Cilium reaches the API server through KubePrism.
+kubeProxyReplacement: true
+k8sServiceHost: localhost
+k8sServicePort: 7445
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+securityContext:
+  capabilities:
+    ciliumAgent:
+      [
+        CHOWN,
+        KILL,
+        NET_ADMIN,
+        NET_RAW,
+        IPC_LOCK,
+        SYS_ADMIN,
+        SYS_RESOURCE,
+        DAC_OVERRIDE,
+        FOWNER,
+        SETGID,
+        SETUID,
+      ]
+    cleanCiliumState: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+resources:
+  requests:
+    memory: 320Mi
+operator:
+  # The default 2 share a host port, so on one node the second stays Pending.
+  replicas: 1
+hubble:
+  enabled: true
+  tls:
+    auto:
+      # `helm`, the default, makes a new CA on every render ArgoCD does.
+      method: cronJob

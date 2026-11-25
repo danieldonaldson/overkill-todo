@@ -407,6 +407,19 @@ models: db-up db-migrate
 protocols:
     ./scripts/protocols.sh
 
+# ── Kubernetes ───────────────────────────────────────────────────────────────────
+# A local Talos VM that ArgoCD fills from Git. See deploy/k8s/README.md.
+
+# Create the local cluster (asks for sudo: the VM, its network, one firewall opening).
+[group('kubernetes')]
+k8s-up:
+    ./scripts/k8s.sh up
+
+# Destroy the local cluster, including a half-created one.
+[group('kubernetes')]
+k8s-down:
+    ./scripts/k8s.sh down
+
 # ── Secrets & security ───────────────────────────────────────────────────────────
 # SOPS + age. Policy: deploy/secrets/access.yaml. See deploy/secrets/README.md.
 

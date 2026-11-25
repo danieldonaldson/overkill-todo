@@ -23,3 +23,6 @@ pnpm-lock.yaml
 
 # Tool caches that ignore themselves with a nested .gitignore Prettier doesn't read.
 **/.pytest_cache/
+
+# Written by sops, which has its own formatting.
+deploy/secrets/**/*.sops.yaml
