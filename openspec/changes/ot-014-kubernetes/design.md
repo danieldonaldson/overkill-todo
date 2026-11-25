@@ -170,10 +170,18 @@ through the sandbox account. Compose's local stack still sends no email.
 Umami gets its own CNPG cluster with no plugin and no ScheduledBackup, plus a
 retention CronJob.
 
-**D10. Tracking and timing.** ArgoCD tracks `main`; while this change is on its
-branch, `targetRevision` is `ot-014-kubernetes`, switched before merge. ArgoCD
-reads GitHub, so a commit has to be pushed to deploy. App images come from
-`main`. Polling is every 60 s with no jitter (`timeout.reconciliation`; the
+**D10. Branch, tracking and timing.** Work stays on `ot-014-kubernetes`; other
+work continues on `main`. Nothing goes back to `main` until the operator asks.
+Meanwhile `main` is merged into the branch at least at each slice boundary
+(merged, not rebased, once the branch is pushed, so ArgoCD's tracked branch is
+never force-pushed). `targetRevision` is the branch, switched to `main` when the
+work is merged. Secrets policy changes are made on the branch only, since
+`.sops.yaml` is generated. CI doesn't run on branch pushes, so it is started
+with `workflow_dispatch`; the `images` job runs only on `main`, so its new
+dependency is checked after the merge. ArgoCD reads GitHub, so a commit has to
+be pushed to deploy. App images come from `main`, and a newer digest brings its
+migrations with it: merge `main` first so manifests and image match.
+Polling is every 60 s with no jitter (`timeout.reconciliation`; the
 default is 2 minutes plus up to 1). Automated sync with `prune`, `selfHeal`,
 and `ServerSideApply`, and a `retry` with backoff and no limit, so a
 failure that clears doesn't need a hand. `selfHeal` reverts manual changes.

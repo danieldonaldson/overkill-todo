@@ -1,6 +1,7 @@
 # Tasks
 
 "Deployed" here means running on the local cluster; there is no production.
+Work stays on the branch until the operator asks for the merge (D10).
 Slices 2–7 are outlined in design.md and get tasks after slice 1 ships. They go
 before "Feature done", which is renumbered to stay last.
 
@@ -27,6 +28,6 @@ back and Broken image, which slice 2 completes for the app.
 
 ## 2. Feature done
 
-- [ ] 2.1 After slices 1–7, check every scenario on a cluster rebuilt from nothing, with ArgoCD tracking `main`. Verify: results recorded in design.md.
+- [ ] 2.1 When the operator asks, merge the branch to `main` and switch ArgoCD to it (D10). Then check every scenario on a cluster rebuilt from nothing, with ArgoCD tracking `main`. Verify: results recorded in design.md.
 - [ ] 2.2 Update README, `deploy/k8s/README.md`, `deploy/compose/README.md` and the threat model's edge assumptions. Verify: docs match the final state and `just ci` is green.
 - [ ] 2.3 Archive the change. Verify: `openspec/specs/deployment/spec.md` exists and strict validation passes.
