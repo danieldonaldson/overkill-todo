@@ -179,8 +179,23 @@ sops_secret_problems() {
   [[ $(yq '.spec.secretTemplates | length' "$f") -gt 0 ]] || echo "spec.secretTemplates is empty"
   yq '.spec | keys | .[] | select(. != "secretTemplates" and . != "enforceOwnership" and . != "suspend") | "unexpected field spec." + .' "$f"
   yq '.spec.secretTemplates[] | keys | .[] | select(. != "name" and . != "type" and . != "labels" and . != "annotations" and . != "data" and . != "stringData") | "unexpected field in a secret template: " + .' "$f"
+  # A versioned name, shared with its one Secret: OT-014 D3.
+  [[ $(yq '.metadata.name // ""' "$f") =~ -v[0-9]+$ ]] || echo "metadata.name must end in a version, like backend-v1"
+  [[ $(yq '[.spec.secretTemplates[].name] | join(",")' "$f") == "$(yq '.metadata.name // ""' "$f")" ]] ||
+    echo "must have one secret template, named like the SopsSecret"
   # Names only: never print a value, it may be plaintext.
   yq '.spec.secretTemplates[] | (.data // {}, .stringData // {}) | to_entries | .[] | select((.value | tag) != "!!str" or (.value | test("^ENC\[AES256_GCM,") | not)) | "value is not encrypted: " + .key' "$f"
+}
+
+# Changed values need a new name, or a status left over from the old values can
+# let a workload start before the new ones are decrypted (OT-014 D3). Compares
+# ciphertext with HEAD; sops keeps it for values it doesn't change.
+encrypted_values() { yq -o=json -I=0 '[.spec.secretTemplates[] | [.data // {}, .stringData // {}]]' - 2>/dev/null; }
+name_not_bumped() {
+  local old
+  old=$(git show "HEAD:./$1" 2>/dev/null) || return 1
+  [[ $(yq '.metadata.name' <<<"$old") == "$(yq '.metadata.name' "$1")" ]] || return 1
+  [[ $(encrypted_values <<<"$old") != "$(encrypted_values <"$1")" ]]
 }
 
 secret_files() { find "$dir" -mindepth 1 -path "$dir/README.md" -prune -o -path "$access" -prune -o -print | sort; }
@@ -213,6 +228,9 @@ cmd_check() {
       problems=$(sops_secret_problems "$f")
       if [[ -n $problems ]]; then
         while read -r line; do echo "secrets: $f: $line" >&2; done <<<"$problems"
+        errors=1
+      elif name_not_bumped "$f"; then
+        echo "secrets: $f: values changed since HEAD but the name didn't: give metadata.name and the template's name the next version, and update what refers to it" >&2
         errors=1
       fi
     fi

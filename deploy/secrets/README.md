@@ -49,6 +49,11 @@ sops decrypt deploy/secrets/local/backend.sops.env       # read one
 A cluster secret is one `SopsSecret`, with its namespace, per file. `check` fails
 on any value left unencrypted, on another kind, and on a missing namespace.
 
+Its name ends in a version (`backend-v1`), shared by the `SopsSecret` and its one
+Secret. **Changing a value means the next version**, in both names (`sops edit`)
+and in the workloads that use it; `check` fails if values differ from `HEAD`
+under the same name. This runs in the pre-commit hook; CI sees only the commit.
+
 `secrets-new` encrypts straight from stdin, so the plaintext never touches the
 disk. Create secrets with it rather than writing a plain file and running
 `sops -e -i`.
