@@ -274,8 +274,9 @@ UUID shows "list not found" without a request.
 
 ### D11. No feature flag
 
-There is no production deploy, and slice 1 is usable on its own. The Lists
-navigation entry is added as slice 1's last step.
+There is no production deploy, and slice 1 is usable on its own, though
+reachable only by address. Slice 2 adds the Lists navigation entry, which is
+what makes the feature visible.
 
 ### D12. Threat model
 
@@ -295,7 +296,7 @@ The existing route-guard walk covers the Visitor case for future routes.
 - [One queue per tab means a slow save delays the rest] → Requests are small,
   and the timeout and single repeat bound it at about 30 seconds.
 - [A list write lock serialises a shared list's editors later] → Transactions
-  are a few short statements. Measured in slice 1 with a load scenario.
+  are a few short statements. Measured in slice 2 with a load scenario.
 - [1,000 rows make drag or keyboard moves slow] → `content-visibility: auto`,
   and an Interaction to Next Paint check on a full list in the ordering slice.
 - [Touch scrolling starts a drag] → Only a drag handle starts one, with
