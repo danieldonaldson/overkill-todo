@@ -11,6 +11,9 @@ notifications:
 applicationSet:
   replicas: 0
 configs:
+  params:
+    # Default 180: for that long a commit that doesn't render looks fine.
+    controller.repo.error.grace.period.seconds: 30
   cm:
     # Polling only: nothing outside can reach the cluster to call a webhook.
     timeout.reconciliation: 60s
