@@ -98,6 +98,22 @@ With the canary workload on the local cluster and a request loop running: about
 
 Not yet tested: a machine restart (slice 2).
 
+Rebuild (1.10, 2026-11-25): `k8s-down`, then `k8s-up` by the operator; seven
+Applications Synced and Healthy, the secret decrypted and `k8s-status` clean within
+5 minutes of the node registering. CoreDNS and the ArgoCD pods waited for the
+network and the Redis password, as expected, and nothing needed a hand.
+
+### What slice 1 changed for later slices
+
+- An overlay can't be emptied: Kustomize refuses to render one, and ArgoCD refuses
+  to prune an Application to nothing. The canary's removal left the app's namespace.
+- Secrets get versioned names (D3), and ArgoCD needs `retry.refresh` (D10).
+- Wait for `.status.sync.revisions` to name the commit before judging a result.
+- Traefik reads a client's trace context before any middleware, so D6's test comes
+  first in slice 2, and the edge isn't chosen until it has run.
+- The VM takes 12 GiB, and the host had about 15 GiB available with it up.
+  Measure before slice 5.
+
 ## Decisions
 
 **D1. One Talos VM under QEMU.** One control-plane node that also runs
