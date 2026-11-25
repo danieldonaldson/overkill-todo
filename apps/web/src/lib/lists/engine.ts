@@ -299,7 +299,7 @@ export class ListsEngine {
         todos: detail.todos.map((todo) => toTodoView(todo)),
       })
       if (this.refetchAdvancesQueue) this.advanceQueuedVersions(id, detail.todos)
-    } catch {
+    } catch (error) {
       if (epoch !== this.epoch) return
       if (generation !== this.generation(id) || this.inFlight(id) > 0) {
         this.listReloads.add(id)
