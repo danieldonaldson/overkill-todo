@@ -9,6 +9,8 @@ deploy/secrets/
   local/  staging/  prod/  one directory per environment
     <name>.sops.env      a dotenv file, each value encrypted (keys stay readable in diffs)
     <name>.sops          one opaque value (a password, a key file)
+    <name>.sops.yaml     a SopsSecret for the cluster (values under data and
+                         stringData encrypted, names readable)
 .sops.yaml               GENERATED from access.yaml; never edit by hand
 ```
 
@@ -21,6 +23,9 @@ deploy/secrets/
   `only:` narrow a secret to named people of that level (for example, the prod
   backend env for the person who runs deploys), or `also:` grant one secret to
   someone cleared lower (for example, a staging person who needs prod Grafana).
+- **`machines: false` keeps machines out of one secret.** The environment's
+  machines otherwise read everything in it. The cluster's Talos secrets use it:
+  the cluster must not read the keys to its own control plane.
 - **Hosts read their own environment only.** A machine's age key is generated
   on the machine and decrypts its environment, nothing above or below it.
 - **The unit of access is the file.** SOPS uses one data key per file, so two
@@ -40,6 +45,9 @@ just secrets-new deploy/secrets/prod/db_password.sops    # new secret, value on 
 openssl rand -base64 32 | tr -d '\n' | just secrets-new deploy/secrets/staging/db_password.sops
 sops decrypt deploy/secrets/local/backend.sops.env       # read one
 ```
+
+A cluster secret is one `SopsSecret`, with its namespace, per file. `check` fails
+on any value left unencrypted, on another kind, and on a missing namespace.
 
 `secrets-new` encrypts straight from stdin, so the plaintext never touches the
 disk. Create secrets with it rather than writing a plain file and running
@@ -95,6 +103,8 @@ without `just`; the host only needs `sops`) writes the environment's secrets to
 
 - `<name>.sops.env` becomes `<name>.env`, used as an `env_file`.
 - `<name>.sops` becomes `<name>`, used as a Compose `secret`.
+
+`<name>.sops.yaml` files and those with `machines: false` are skipped.
 
 The directory is mode 0700 and the files are 0644, so containers that don't
 run as root (Grafana is uid 472) can read their bind-mounted secret. See

@@ -9,7 +9,9 @@
 #   secrets.sh decrypt <env>  decrypt <env>'s secrets into deploy/compose/.secrets/ (hosts)
 #
 # Secrets live at deploy/secrets/<env>/<name>.sops.env (dotenv, encrypted per
-# value) or <name>.sops (one opaque value). `sops edit <file>` edits one in place.
+# value) or <name>.sops (one opaque value), or <name>.sops.yaml (a SopsSecret the
+# cluster's operator decrypts; only data/stringData values are encrypted).
+# `sops edit <file>` edits one in place.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -17,6 +19,11 @@ dir=deploy/secrets
 access=$dir/access.yaml
 config=.sops.yaml
 out=deploy/compose/.secrets
+
+# <level>/<name>.sops, .sops.env or .sops.yaml
+is_secret_path() { [[ $1 =~ ^[^/]+/[^/]+\.sops(\.env|\.yaml)?$ ]]; }
+# The values SOPS encrypts in a SopsSecret. Names stay readable for review.
+yaml_regex='^(data|stringData)$'
 
 die() { echo "secrets: $*" >&2; exit 1; }
 # yq prints an empty line for an empty result; drop blank lines from every query.
@@ -63,7 +70,11 @@ validate() {
     level_index "$env" >/dev/null || die "machines.$name.env '$env' is not one of: ${levels[*]}"
   done < <(machines_tsv)
   while read -r path; do
-    [[ $path =~ ^[^/]+/[^/]+\.sops(\.env)?$ ]] || die "secrets.$path: must be <level>/<name>.sops or <level>/<name>.sops.env"
+    is_secret_path "$path" || die "secrets.$path: must be <level>/<name>.sops, .sops.env or .sops.yaml"
+    case $(P=$path q '.secrets[strenv(P)] | select(has("machines")) | .machines') in
+      '' | false) ;;
+      *) die "secrets.$path.machines: only 'false' is allowed (leave it out to include the environment's machines)" ;;
+    esac
     env=${path%%/*}
     e=$(level_index "$env") || die "secrets.$path: '$env' is not one of: ${levels[*]}"
     for list in only also; do
@@ -77,6 +88,10 @@ validate() {
     done
   done < <(q '.secrets // {} | keys | .[]')
 }
+
+# `machines: false`: people only, for a secret its own environment's machines
+# must not read (the cluster's Talos secrets, OT-014 D4).
+no_machines() { [[ $(P=$1 q '.secrets[strenv(P)].machines') == false ]]; }
 
 # Recipient keys for a secret path ("<env>/<name>", or "<env>/" for the level default).
 recipients() {
@@ -94,9 +109,11 @@ recipients() {
       echo "$key"
     done < <(people_tsv)
     for name in "${also[@]}"; do N=$name q '.people[strenv(N)].key'; done
-    while IFS=$'\t' read -r name key level; do
-      if [[ $level == "$env" ]]; then echo "$key"; fi
-    done < <(machines_tsv)
+    if ! no_machines "$path"; then
+      while IFS=$'\t' read -r name key level; do
+        if [[ $level == "$env" ]]; then echo "$key"; fi
+      done < <(machines_tsv)
+    fi
   } | sort -u
 }
 
@@ -104,11 +121,12 @@ who() { # key -> name, for messages
   K=$1 q '[(.people // {}), (.machines // {})] | .[] | to_entries[] | select(.value.key == strenv(K)) | .key' | head -1 | grep . || echo "$1"
 }
 
-rule() { # regex, policy path
+rule() { # regex, policy path, [encrypted_regex]
   local keys
   keys=$(recipients "$2" | paste -sd, -)
   [[ -n $keys ]] || die "nobody can read $2: add a person or machine to $access"
   printf "  - path_regex: '%s'\n    age: %s\n" "$1" "$keys"
+  [[ -z ${3:-} ]] || printf "    encrypted_regex: '%s'\n" "$3"
 }
 
 render() {
@@ -117,19 +135,52 @@ render() {
   echo "# change the policy and run \`just secrets-sync\`."
   echo "creation_rules:"
   while read -r path; do
-    rule "^$dir/${path//./\\.}\$" "$path"
+    if [[ $path == *.sops.yaml ]]; then
+      rule "^$dir/${path//./\\.}\$" "$path" "$yaml_regex"
+    else
+      rule "^$dir/${path//./\\.}\$" "$path"
+    fi
   done < <(q '.secrets // {} | keys | .[]')
-  for env in "${levels[@]}"; do rule "^$dir/$env/" "$env/"; done
+  # First match wins, so each level's SopsSecret rule precedes its general one.
+  for env in "${levels[@]}"; do
+    rule "^$dir/$env/[^/]+\\.sops\\.yaml\$" "$env/" "$yaml_regex"
+    rule "^$dir/$env/" "$env/"
+  done
 }
 
-store() { [[ $1 == *.sops.env ]] && echo dotenv || echo binary; }
+store() {
+  case $1 in
+    *.sops.env) echo dotenv ;;
+    *.sops.yaml) echo yaml ;;
+    *) echo binary ;;
+  esac
+}
 
 file_recipients() {
   if [[ $(store "$1") == dotenv ]]; then
     sed -n 's/^sops_age__list_[0-9]*__map_recipient=//p' "$1"
+  elif [[ $(store "$1") == yaml ]]; then
+    yq -r '.sops.age // [] | .[].recipient' "$1" 2>/dev/null || true
   else
     yq -p json -r '.sops.age // [] | .[].recipient' "$1" 2>/dev/null || true
   fi | sort -u
+}
+
+# A .sops.yaml must be one SopsSecret with a namespace and nothing in its
+# templates but encrypted data/stringData and the fields that hold no values.
+# Prints what's wrong, if anything. Needs no keys.
+sops_secret_problems() {
+  local f=$1
+  [[ $(yq -N 'document_index' "$f" 2>/dev/null | wc -l) == 1 ]] || { echo "must be a single YAML document"; return; }
+  [[ $(yq '.apiVersion + "/" + .kind' "$f") == isindir.github.com/v1alpha3/SopsSecret ]] ||
+    { echo "must be a SopsSecret (isindir.github.com/v1alpha3)"; return; }
+  [[ -n $(yq '.metadata.namespace // ""' "$f") ]] || echo "metadata.namespace is missing"
+  [[ $(yq '.sops.encrypted_regex // ""' "$f") == "$yaml_regex" ]] || echo "sops.encrypted_regex must be $yaml_regex"
+  [[ $(yq '.spec.secretTemplates | length' "$f") -gt 0 ]] || echo "spec.secretTemplates is empty"
+  yq '.spec | keys | .[] | select(. != "secretTemplates" and . != "enforceOwnership" and . != "suspend") | "unexpected field spec." + .' "$f"
+  yq '.spec.secretTemplates[] | keys | .[] | select(. != "name" and . != "type" and . != "labels" and . != "annotations" and . != "data" and . != "stringData") | "unexpected field in a secret template: " + .' "$f"
+  # Names only: never print a value, it may be plaintext.
+  yq '.spec.secretTemplates[] | (.data // {}, .stringData // {}) | to_entries | .[] | select((.value | tag) != "!!str" or (.value | test("^ENC\[AES256_GCM,") | not)) | "value is not encrypted: " + .key' "$f"
 }
 
 secret_files() { find "$dir" -mindepth 1 -path "$dir/README.md" -prune -o -path "$access" -prune -o -print | sort; }
@@ -139,7 +190,7 @@ policy_path() { echo "${1#"$dir"/}"; }
 cmd_check() {
   load
   validate
-  local errors=0 f p have want classical
+  local errors=0 f p have want classical problems line
   if ! diff -u "$config" <(render) >&2; then
     echo "secrets: $config is out of date with $access: run \`just secrets-sync\`" >&2
     errors=1
@@ -150,13 +201,20 @@ cmd_check() {
       [[ $p != */* ]] && level_index "$p" >/dev/null && continue
       echo "secrets: $f: unexpected directory (levels: ${levels[*]})" >&2; errors=1; continue
     fi
-    if ! [[ $p =~ ^[^/]+/[^/]+\.sops(\.env)?$ ]] || ! level_index "${p%%/*}" >/dev/null; then
-      echo "secrets: $f: not a secret path (<level>/<name>.sops[.env]); plaintext must never live here" >&2
+    if ! is_secret_path "$p" || ! level_index "${p%%/*}" >/dev/null; then
+      echo "secrets: $f: not a secret path (<level>/<name>.sops[.env|.yaml]); plaintext must never live here" >&2
       errors=1; continue
     fi
     have=$(file_recipients "$f")
     if [[ -z $have ]]; then
       echo "secrets: $f: not SOPS-encrypted" >&2; errors=1; continue
+    fi
+    if [[ $(store "$f") == yaml ]]; then
+      problems=$(sops_secret_problems "$f")
+      if [[ -n $problems ]]; then
+        while read -r line; do echo "secrets: $f: $line" >&2; done <<<"$problems"
+        errors=1
+      fi
     fi
     classical=$(grep -v '^age1pq1' <<<"$have" || true)
     if [[ -n $classical ]]; then
@@ -209,12 +267,12 @@ cmd_sync() {
 }
 
 cmd_new() {
-  local f=${1:?usage: secrets.sh new deploy/secrets/<level>/<name>.sops[.env] < plaintext}
+  local f=${1:?usage: secrets.sh new deploy/secrets/<level>/<name>.sops[.env|.yaml] < plaintext}
   load
   validate
-  local p type
+  local p type problems
   p=$(policy_path "$f")
-  [[ $f == "$dir"/* && $p =~ ^[^/]+/[^/]+\.sops(\.env)?$ ]] || die "$f: must be $dir/<level>/<name>.sops or .sops.env"
+  [[ $f == "$dir"/* && $(is_secret_path "$p" && echo y) ]] || die "$f: must be $dir/<level>/<name>.sops, .sops.env or .sops.yaml"
   level_index "${p%%/*}" >/dev/null || die "$f: '${p%%/*}' is not one of: ${levels[*]}"
   [[ ! -e $f ]] || die "$f exists: edit it with \`sops edit $f\`"
   diff -q "$config" <(render) >/dev/null || die "$config is out of date: run \`just secrets-sync\` first"
@@ -224,6 +282,10 @@ cmd_new() {
   tmp=$(mktemp)
   trap 'rm -f "$tmp"' EXIT
   sops encrypt --filename-override "$f" --input-type "$type" --output-type "$type" /dev/stdin >"$tmp"
+  if [[ $type == yaml ]]; then
+    problems=$(sops_secret_problems "$tmp")
+    [[ -z $problems ]] || die "$f: $problems"
+  fi
   mv "$tmp" "$f"
   trap - EXIT
   echo "secrets: wrote $f for: $(while read -r k; do who "$k"; done < <(file_recipients "$f") | paste -sd, -)"
@@ -236,8 +298,11 @@ cmd_decrypt() {
   # that run as non-root (Grafana is uid 472) can read their bind-mounted secret.
   mkdir -p "$out"
   chmod 700 "$out"
+  # SopsSecrets (.sops.yaml) are for the cluster's operator, and files no machine
+  # may read aren't for hosts: neither is written here.
   for f in "$dir/$env"/*.sops "$dir/$env"/*.sops.env; do
     [[ -f $f ]] || continue
+    no_machines "$(policy_path "$f")" && continue
     name=$(basename "$f")
     case $name in
       *.sops.env) target=$out/${name%.sops.env}.env ;;
