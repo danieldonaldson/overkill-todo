@@ -280,6 +280,18 @@ jobs:
       - uses: actions/checkout@v7
       - run: ./scripts/secrets.sh check
 
+  # Every Kubernetes manifest renders and matches its schema (`just k8s-check`, OT-014).
+  # helm, kubectl and kubeconform come from .mise.toml. No cluster, no keys.
+  k8s:
+    name: Kubernetes manifests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+        with:
+          install_args: helm kubectl kubeconform yq
+      - run: ./scripts/k8s-check.sh
+
   # Kani proofs of the auth domain policy (`just verify`, OT-010). The official action
   # installs a prebuilt Kani with its own nightly (no compiling Kani from source); the
   # version comes from .mise.toml so local and CI prove with the same one.
@@ -467,6 +479,7 @@ jobs:
       - web-e2e
       - observability
       - secrets
+      - k8s
       - threat-model
     runs-on: ubuntu-24.04
     permissions:

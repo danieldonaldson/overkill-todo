@@ -420,6 +420,16 @@ k8s-up:
 k8s-down:
     ./scripts/k8s.sh down
 
+# What is out of sync, failing or stuck in the local cluster.
+[group('kubernetes')]
+k8s-status:
+    ./scripts/k8s.sh status
+
+# Render every Kubernetes manifest and check it against its schema. Network, no keys.
+[group('kubernetes')]
+k8s-check:
+    ./scripts/k8s-check.sh
+
 # ── Secrets & security ───────────────────────────────────────────────────────────
 # SOPS + age. Policy: deploy/secrets/access.yaml. See deploy/secrets/README.md.
 
@@ -583,4 +593,4 @@ ci: ci-checks verify models protocols
 
 # The rest of `ci`, in order: static checks first, then tests.
 [group('ci')]
-ci-checks: toolchain-check fmt-check fmt-check-js lint lint-release deny machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web e2e
+ci-checks: toolchain-check fmt-check fmt-check-js lint lint-release deny machete lint-js obs-check secrets-check k8s-check threat-model-check test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web e2e

@@ -3,6 +3,7 @@
 #
 #   k8s.sh up      create the cluster and hand it to ArgoCD
 #   k8s.sh down    destroy it, whatever state it is in
+#   k8s.sh status  what is out of sync, failing or stuck; exits 1 if anything is
 #   k8s.sh env     print the exports for kubectl and talosctl
 #
 # Runs as you; only the VM, its network and one firewall rule need sudo, and each
@@ -183,7 +184,47 @@ cmd_env() {
   printf 'export KUBECONFIG=%q\nexport TALOSCONFIG=%q\n' "$KUBECONFIG" "$TALOSCONFIG"
 }
 
+# A failed sync, a secret that won't decrypt and a rollout that never finishes each
+# show up in a different place; this looks in all of them. Names only, no values.
+cmd_status() {
+  [[ -f $KUBECONFIG ]] || die "no cluster: run \`just k8s-up\` first"
+  local problems
+  problems=$(
+    kubectl -n argocd get applications -o json | jq -r '.items[]
+      | .metadata.name as $n
+      | (select(.status.sync.status != "Synced" or .status.health.status != "Healthy")
+          | "application \($n): \(.status.sync.status // "Unknown"), \(.status.health.status // "Unknown")"),
+        (.status.conditions[]? | "application \($n): \(.type): \(.message)"),
+        (select(.status.operationState.phase as $p | ["Running", "Failed", "Error"] | index($p))
+          | .status.operationState
+          | "application \($n): sync \(.phase): \(.message)",
+            (.syncResult.resources[]? | select((.status // "") == "SyncFailed" or (.hookPhase // "") == "Failed")
+              | "application \($n): \(.kind) \(.namespace)/\(.name): \(.message)"))'
+    kubectl get sopssecrets -A -o json 2>/dev/null | jq -r '.items[]
+      | select(.status.message != "Healthy")
+      | "secret \(.metadata.namespace)/\(.metadata.name): \(.status.message // "not decrypted yet")"'
+    kubectl get deployments,statefulsets,daemonsets -A -o json | jq -r '.items[]
+      | (.spec.replicas // .status.desiredNumberScheduled // 0) as $want
+      | (.status.updatedReplicas // .status.updatedNumberScheduled // 0) as $new
+      | (.status.availableReplicas // .status.numberAvailable // 0) as $up
+      | (.status.replicas // $want) as $all
+      | select($new < $want or $up < $want or $all > $want)
+      | "\(.kind | ascii_downcase) \(.metadata.namespace)/\(.metadata.name): \($new)/\($want) updated, \($up) available"
+        + ([.status.conditions[]? | select(.type == "Progressing" and .status == "False") | ": \(.message)"] | join(""))'
+    kubectl get pods -A -o json | jq -r '.items[]
+      | select(.status.phase != "Succeeded")
+      | . as $p | (.status.containerStatuses // [])[], (.status.initContainerStatuses // [])[]
+      | select(.state.waiting.reason // "" | . != "" and . != "ContainerCreating" and . != "PodInitializing")
+      | "pod \($p.metadata.namespace)/\($p.metadata.name): \(.state.waiting.reason): \(.state.waiting.message // "")"'
+  )
+  if [[ -n $problems ]]; then
+    echo "$problems"
+    exit 1
+  fi
+  echo "every Application is synced and healthy, every secret decrypted, every rollout finished"
+}
+
 case ${1:-} in
-  up | down | env) "cmd_$1" ;;
-  *) sed -n '2,9s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+  up | down | status | env) "cmd_$1" ;;
+  *) sed -n '2,10s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
 esac
