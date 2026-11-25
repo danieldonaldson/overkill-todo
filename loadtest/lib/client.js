@@ -20,6 +20,8 @@ const STATE_CHANGING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 export class Client {
   constructor() {
     this.csrfToken = null
+    /** Account the changes are made for, once known (OT-015). */
+    this.accountId = null
     /** @type {Record<string, string>} cookie name → value */
     this.cookies = {}
   }
@@ -40,6 +42,7 @@ export class Client {
     if (opts.body !== undefined) headers['Content-Type'] = 'application/json'
     if (opts.fingerprint) headers['X-Device-Fingerprint'] = fingerprint
     if (STATE_CHANGING.has(method) && this.csrfToken) headers['X-CSRF-Token'] = this.csrfToken
+    if (STATE_CHANGING.has(method) && this.accountId) headers['X-Account-Id'] = this.accountId
 
     const name = `${method} /api/v1${route}`
     const cookies = {}
@@ -81,6 +84,7 @@ export class Client {
   /** Forget the session, as the web client does after signing out. */
   reset() {
     this.csrfToken = null
+    this.accountId = null
     this.cookies = {}
     http.cookieJar().clear(API)
   }

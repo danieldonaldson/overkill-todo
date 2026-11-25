@@ -23,7 +23,7 @@ import { setApiFailureHandlers } from '../telemetry/api-failures'
 import { AccountChangedError, ApiErrorException, isApiStatus } from './errors'
 import { clearTokenExpiry, ensureValidToken, getTokenExpiry, setTokenExpiry } from '../auth/token'
 import { clearSessionUser, getSessionUser } from '../auth/session'
-import { onAccountChanged } from './account-changed'
+import { onAccountChanged, onSessionEnded } from './account-changed'
 import { redirect } from '../navigation'
 
 interface FakeResponseInit {
@@ -503,5 +503,23 @@ describe('the account a change is made for (OT-015)', () => {
     expect(handle).toHaveBeenCalledTimes(1)
     expect(mockFetch).toHaveBeenCalledTimes(1)
     onAccountChanged(() => {})
+  })
+})
+
+describe('the session ending', () => {
+  it('is told before the page is left', async () => {
+    const order: string[] = []
+    onSessionEnded(() => order.push('ended'))
+    ;(redirect as Mock).mockImplementation(() => order.push('redirect'))
+    ;(ensureValidToken as Mock).mockResolvedValue(false)
+    await expect(new HttpClient().request('/lists')).rejects.toThrow('Session expired')
+    ;(ensureValidToken as Mock).mockResolvedValue(true)
+    mockFetch.mockResolvedValue(
+      fakeResponse({ status: 403, body: { code: 'email_not_verified', message: 'x' } })
+    )
+    await expect(new HttpClient().request('/lists')).rejects.toThrow('Email not verified')
+    expect(order).toEqual(['ended', 'redirect', 'ended', 'redirect'])
+    ;(redirect as Mock).mockReset()
+    onSessionEnded(() => {})
   })
 })

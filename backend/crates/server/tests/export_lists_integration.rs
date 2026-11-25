@@ -231,6 +231,48 @@ async fn a_failure_part_way_aborts_the_response_after_the_audit_event(pool: PgPo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
+async fn a_list_deleted_during_the_export_is_left_out(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    let session = signup_and_session(&app, "e2e-export-deleted@example.com").await;
+    let mut lists = Vec::new();
+    for n in 0..6 {
+        lists.push(create_list(&app, &session, &format!("List {n}")).await);
+    }
+
+    // Nothing reads the body yet, so the stream waits after the first lists.
+    let resp = export(&app, &session).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    for gone in [&lists[3], &lists[5]] {
+        let deleted = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("DELETE")
+                    .uri(format!(
+                        "/api/v1/lists/{}?version=1&todo_count=0",
+                        gone["id"].as_str().unwrap()
+                    ))
+                    .header(header::COOKIE, cookie(&session))
+                    .header("x-csrf-token", &session.csrf)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    }
+
+    let body = body_json(resp.into_body()).await;
+    let names: Vec<_> = body["lists"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|list| list["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["List 0", "List 1", "List 2", "List 4"]);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
 async fn the_request_timeout_does_not_cut_off_a_slow_body(pool: PgPool) {
     let app = common::create_test_app(pool);
     let session = signup_and_session(&app, "e2e-export-slow@example.com").await;

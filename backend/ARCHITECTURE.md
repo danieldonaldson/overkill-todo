@@ -370,6 +370,27 @@ exported, and all sessions signed out after a reused session token.
   only, with the actor reduced on the server to `you`, `system` or
   `administrator`.
 
+## Lists and todos
+
+Decisions and their reasons: `openspec/changes/ot-013-todos/design.md`.
+
+- **Ownership is in the lookup.** Every list query takes the caller's ID, so
+  another Member's list answers exactly like one that doesn't exist (P-35).
+- **One lock per write.** A write locks its list first, or the `users` row when
+  creating a list, so limits, positions and versions are decided in order.
+- **Versions.** A change names the version the Member saw; a stale one answers
+  409 with the current row. The same state already stored succeeds unchanged.
+- **Deletion is versioned too.** Deleting a list also names its todo count, so
+  a todo added after the confirmation asks again with the current name and
+  count. Deleting a todo or list that is already gone is success to the client.
+- **Creation keys** make a repeated add or create return the first row.
+- **Erasure.** Purging an account deletes its lists in the same transaction, and
+  each purge run sweeps lists an older release left behind.
+- **The client** (`apps/web/src/lib/lists/`) is confirmed state plus a queue of
+  unsaved operations, one save at a time. Renames and todo deletions are
+  optimistic; a list deletion waits for the server. Read design D7 before
+  changing it.
+
 ## Auth flow overview
 
 - **Registration:** email + password → Argon2id hash → unverified user → email code.

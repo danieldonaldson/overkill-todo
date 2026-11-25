@@ -48,9 +48,9 @@ fn request(
     }
     if body.is_some() {
         builder = builder.header(header::CONTENT_TYPE, "application/json");
-        if csrf && let Some(session) = session {
-            builder = builder.header("x-csrf-token", &session.csrf);
-        }
+    }
+    if csrf && let Some(session) = session {
+        builder = builder.header("x-csrf-token", &session.csrf);
     }
     let body = body.map_or_else(Body::empty, |value| {
         Body::from(serde_json::to_vec(value).unwrap())
@@ -129,6 +129,18 @@ async fn another_members_ids_answer_exactly_like_unknown_ids(pool: PgPool) {
         let paths: Vec<(&str, String, Option<Value>, bool)> = vec![
             ("GET", format!("/api/v1/lists/{foreign}"), None, false),
             (
+                "PATCH",
+                format!("/api/v1/lists/{foreign}"),
+                Some(json!({ "version": 1, "name": "x" })),
+                true,
+            ),
+            (
+                "DELETE",
+                format!("/api/v1/lists/{foreign}?version=1&todo_count=0"),
+                None,
+                true,
+            ),
+            (
                 "POST",
                 format!("/api/v1/lists/{foreign}/todos"),
                 Some(json!({ "key": uuid::Uuid::now_v7(), "title": "x" })),
@@ -140,9 +152,33 @@ async fn another_members_ids_answer_exactly_like_unknown_ids(pool: PgPool) {
                 Some(json!({ "version": 1, "done": true })),
                 true,
             ),
+            (
+                "PATCH",
+                format!("/api/v1/lists/{foreign}/todos/{}", f.other_todo),
+                Some(json!({ "version": 1, "title": "x" })),
+                true,
+            ),
+            (
+                "DELETE",
+                format!("/api/v1/lists/{foreign}/todos/{}?version=1", f.other_todo),
+                None,
+                true,
+            ),
         ];
         let unknown_paths: Vec<(&str, String, Option<Value>, bool)> = vec![
             ("GET", format!("/api/v1/lists/{unknown}"), None, false),
+            (
+                "PATCH",
+                format!("/api/v1/lists/{unknown}"),
+                Some(json!({ "version": 1, "name": "x" })),
+                true,
+            ),
+            (
+                "DELETE",
+                format!("/api/v1/lists/{unknown}?version=1&todo_count=0"),
+                None,
+                true,
+            ),
             (
                 "POST",
                 format!("/api/v1/lists/{unknown}/todos"),
@@ -153,6 +189,18 @@ async fn another_members_ids_answer_exactly_like_unknown_ids(pool: PgPool) {
                 "PATCH",
                 format!("/api/v1/lists/{unknown}/todos/{}", f.unknown_todo),
                 Some(json!({ "version": 1, "done": true })),
+                true,
+            ),
+            (
+                "PATCH",
+                format!("/api/v1/lists/{unknown}/todos/{}", f.unknown_todo),
+                Some(json!({ "version": 1, "title": "x" })),
+                true,
+            ),
+            (
+                "DELETE",
+                format!("/api/v1/lists/{unknown}/todos/{}?version=1", f.unknown_todo),
+                None,
                 true,
             ),
         ];
@@ -176,32 +224,46 @@ async fn another_members_ids_answer_exactly_like_unknown_ids(pool: PgPool) {
     }
 
     // A todo in another Member's list, requested through the caller's own list,
-    // is the same as an unknown todo ID.
-    let foreign_todo = response(
-        &f.app,
-        request(
+    // is the same as an unknown todo ID — for a mark, a rename and a delete.
+    for (method, suffix, body) in [
+        (
             "PATCH",
-            &format!("/api/v1/lists/{own}/todos/{}", f.other_todo),
-            Some(&f.member),
-            Some(&json!({ "version": 1, "done": true })),
-            true,
+            String::new(),
+            Some(json!({ "version": 1, "done": true })),
         ),
-    )
-    .await;
-    let unknown_todo = response(
-        &f.app,
-        request(
+        (
             "PATCH",
-            &format!("/api/v1/lists/{own}/todos/{}", f.unknown_todo),
-            Some(&f.member),
-            Some(&json!({ "version": 1, "done": true })),
-            true,
+            String::new(),
+            Some(json!({ "version": 1, "title": "x" })),
         ),
-    )
-    .await;
-    assert_eq!(foreign_todo, unknown_todo);
-    assert_eq!(foreign_todo.0, StatusCode::NOT_FOUND);
-    assert_eq!(foreign_todo.1["code"], "todo_not_found");
+        ("DELETE", "?version=1".to_string(), None),
+    ] {
+        let foreign_todo = response(
+            &f.app,
+            request(
+                method,
+                &format!("/api/v1/lists/{own}/todos/{}{suffix}", f.other_todo),
+                Some(&f.member),
+                body.as_ref(),
+                true,
+            ),
+        )
+        .await;
+        let unknown_todo = response(
+            &f.app,
+            request(
+                method,
+                &format!("/api/v1/lists/{own}/todos/{}{suffix}", f.unknown_todo),
+                Some(&f.member),
+                body.as_ref(),
+                true,
+            ),
+        )
+        .await;
+        assert_eq!(foreign_todo, unknown_todo, "{method} {suffix}");
+        assert_eq!(foreign_todo.0, StatusCode::NOT_FOUND);
+        assert_eq!(foreign_todo.1["code"], "todo_not_found");
+    }
 
     assert_other_untouched(&f).await;
 
@@ -265,6 +327,8 @@ async fn staff_get_the_same_404_and_never_see_another_accounts_lists(pool: PgPoo
         assert_eq!(foreign.1["code"], "list_not_found");
 
         for (method, path, body) in [
+            ("PATCH", String::new(), json!({ "version": 1, "name": "x" })),
+            ("DELETE", "?version=1&todo_count=0".to_string(), Value::Null),
             (
                 "POST",
                 "/todos".to_string(),
@@ -275,16 +339,23 @@ async fn staff_get_the_same_404_and_never_see_another_accounts_lists(pool: PgPoo
                 format!("/todos/{}", f.other_todo),
                 json!({ "version": 1, "done": true }),
             ),
+            (
+                "PATCH",
+                format!("/todos/{}", f.other_todo),
+                json!({ "version": 1, "title": "x" }),
+            ),
+            (
+                "DELETE",
+                format!("/todos/{}?version=1", f.other_todo),
+                Value::Null,
+            ),
         ] {
+            let body = (!body.is_null()).then_some(&body);
             let mut answers = Vec::new();
             for list in [&f.other_list, &f.unknown_list] {
                 let uri = format!("/api/v1/lists/{list}{path}");
                 answers.push(
-                    response(
-                        &f.app,
-                        request(method, &uri, Some(&session), Some(&body), true),
-                    )
-                    .await,
+                    response(&f.app, request(method, &uri, Some(&session), body, true)).await,
                 );
             }
             assert_eq!(answers[0], answers[1], "{role} {method}");
@@ -328,6 +399,18 @@ async fn visitors_and_unverified_members_are_refused(pool: PgPool) {
             false,
         ),
         (
+            "PATCH",
+            format!("/api/v1/lists/{}", f.other_list),
+            Some(json!({ "version": 1, "name": "x" })),
+            true,
+        ),
+        (
+            "DELETE",
+            format!("/api/v1/lists/{}?version=1&todo_count=0", f.other_list),
+            None,
+            true,
+        ),
+        (
             "POST",
             format!("/api/v1/lists/{}/todos", f.other_list),
             Some(json!({ "key": uuid::Uuid::now_v7(), "title": "x" })),
@@ -337,6 +420,21 @@ async fn visitors_and_unverified_members_are_refused(pool: PgPool) {
             "PATCH",
             format!("/api/v1/lists/{}/todos/{}", f.other_list, f.other_todo),
             Some(json!({ "version": 1, "done": true })),
+            true,
+        ),
+        (
+            "PATCH",
+            format!("/api/v1/lists/{}/todos/{}", f.other_list, f.other_todo),
+            Some(json!({ "version": 1, "title": "x" })),
+            true,
+        ),
+        (
+            "DELETE",
+            format!(
+                "/api/v1/lists/{}/todos/{}?version=1",
+                f.other_list, f.other_todo
+            ),
+            None,
             true,
         ),
     ];
@@ -391,6 +489,29 @@ async fn a_missing_csrf_token_refuses_every_change(pool: PgPool) {
             "PATCH",
             format!("/api/v1/lists/{}/todos/{}", f.own_list, f.own_todo),
             Some(json!({ "version": 1, "done": true })),
+        ),
+        (
+            "PATCH",
+            format!("/api/v1/lists/{}/todos/{}", f.own_list, f.own_todo),
+            Some(json!({ "version": 1, "title": "x" })),
+        ),
+        (
+            "PATCH",
+            format!("/api/v1/lists/{}", f.own_list),
+            Some(json!({ "version": 1, "name": "x" })),
+        ),
+        (
+            "DELETE",
+            format!("/api/v1/lists/{}?version=1&todo_count=1", f.own_list),
+            None,
+        ),
+        (
+            "DELETE",
+            format!(
+                "/api/v1/lists/{}/todos/{}?version=1",
+                f.own_list, f.own_todo
+            ),
+            None,
         ),
     ];
     for (method, uri, body) in changes {

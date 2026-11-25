@@ -737,6 +737,127 @@ async fn list_and_todo_content_never_reaches_telemetry(pool: PgPool) {
     .await;
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 
+    // Renames and deletes, accepted and refused.
+    let renamed_list_name = format!("LIST-RENAMED-{marker}");
+    let (resp, _) = send(
+        &app,
+        authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}"),
+            Some(json!({ "version": 1, "name": renamed_list_name })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let (resp, _) = send(
+        &app,
+        authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}"),
+            Some(json!({ "version": 1, "name": format!("LIST-CONFLICT-{marker}") })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let (resp, _) = send(
+        &app,
+        authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}"),
+            Some(json!({ "version": 2, "name": format!("LIST-INVALID-{marker}\nmore") })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+    let renamed_todo_title = format!("TODO-RENAMED-{marker}");
+    let (resp, _) = send(
+        &app,
+        authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}/todos/{todo_id}"),
+            Some(json!({ "version": 2, "title": renamed_todo_title })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let (resp, _) = send(
+        &app,
+        authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}/todos/{todo_id}"),
+            Some(json!({ "version": 1, "title": format!("TODO-CONFLICT-{marker}") })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    let (resp, _) = send(
+        &app,
+        authed(
+            "DELETE",
+            &format!("/api/v1/lists/{list_id}/todos/{todo_id}?version=99"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let deleted_list_name = format!("LIST-DELETED-{marker}");
+    let (resp, doomed_list) = send(
+        &app,
+        authed(
+            "POST",
+            "/api/v1/lists",
+            Some(json!({ "key": uuid::Uuid::now_v7(), "name": deleted_list_name })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let doomed_list_id = doomed_list["id"].as_str().unwrap().to_string();
+    let (resp, _) = send(
+        &app,
+        authed(
+            "DELETE",
+            &format!("/api/v1/lists/{doomed_list_id}?version=1&todo_count=0"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    let (resp, _) = send(
+        &app,
+        authed(
+            "DELETE",
+            &format!("/api/v1/lists/{list_id}?version=2&todo_count=99"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let deleted_todo_title = format!("TODO-DELETED-{marker}");
+    let (resp, doomed_todo) = send(
+        &app,
+        authed(
+            "POST",
+            &format!("/api/v1/lists/{list_id}/todos"),
+            Some(json!({ "key": uuid::Uuid::now_v7(), "title": deleted_todo_title })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let doomed_todo_id = doomed_todo["id"].as_str().unwrap().to_string();
+    let (resp, _) = send(
+        &app,
+        authed(
+            "DELETE",
+            &format!("/api/v1/lists/{list_id}/todos/{doomed_todo_id}?version=1"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
     let (resp, _) = send(
         &app,
         authed("GET", &format!("/api/v1/lists/{list_id}"), None),
@@ -761,13 +882,43 @@ async fn list_and_todo_content_never_reaches_telemetry(pool: PgPool) {
     .await;
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
 
+    let failed_save_name = format!("LIST-FAILED-SAVE-{marker}");
+    let (resp, _) = send(
+        &app,
+        authed(
+            "PATCH",
+            &format!("/api/v1/lists/{list_id}"),
+            Some(json!({ "version": 2, "name": failed_save_name })),
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let (resp, _) = send(
+        &app,
+        authed(
+            "DELETE",
+            &format!("/api/v1/lists/{list_id}?version=2&todo_count=2"),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
     let everything = telemetry.everything();
     assert_ne!(everything.len(), 0, "nothing was captured");
     for marker in [
         list_name.as_str(),
         todo_title.as_str(),
         second_title.as_str(),
+        renamed_list_name.as_str(),
+        renamed_todo_title.as_str(),
+        deleted_list_name.as_str(),
+        deleted_todo_title.as_str(),
+        failed_save_name.as_str(),
         "LIST-CONTENT-REFUSED",
+        "LIST-CONFLICT",
+        "LIST-INVALID",
+        "TODO-CONFLICT",
         "FAILED-SAVE-TITLE",
     ] {
         assert!(

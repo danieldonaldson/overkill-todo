@@ -22,8 +22,9 @@ pub use auth::{
 };
 
 pub use lists::{
-    AddTodoUseCase, CreateListUseCase, GetListUseCase, ListError, ListListsUseCase,
-    MarkTodoUseCase, MutationOutcome,
+    AddTodoUseCase, CreateListUseCase, DeleteListUseCase, DeleteTodoUseCase, GetListUseCase,
+    ListError, ListListsUseCase, MarkTodoUseCase, MutationOutcome, RenameListUseCase,
+    RenameTodoUseCase,
 };
 
 pub use telemetry::RecordClientTelemetryUseCase;

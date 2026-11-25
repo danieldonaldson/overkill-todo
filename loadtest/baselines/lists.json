@@ -1,0 +1,65 @@
+{
+  "scenario": "lists",
+  "started": "2026-11-25T19:06:02.346Z",
+  "complete": true,
+  "planned_ms": 210000,
+  "elapsed_ms": 213109.112703,
+  "passed": true,
+  "meta": {
+    "db_max_connections": "5",
+    "commit": "4092160-dirty",
+    "backend_cpuset": "0,6",
+    "db_cpuset": "1,7",
+    "dev_mode": "true",
+    "backend_cpus": "2",
+    "k6_cpuset": "3,4,9,10",
+    "backend_memory_mb": "1024",
+    "db_memory_mb": "2048",
+    "argon2": "m=65536,t=3,p=4"
+  },
+  "error_rate": 0,
+  "dropped_iterations": 0,
+  "routes": {
+    "GET /api/v1/lists": {
+      "count": 1801,
+      "p50": 1.128033,
+      "p95": 1.439159,
+      "p99": 1.819065,
+      "max": 2.988174,
+      "error_rate": 0
+    },
+    "POST /api/v1/lists/{id}/todos": {
+      "error_rate": 0,
+      "count": 1801,
+      "p50": 2.05603,
+      "p95": 2.818185,
+      "p99": 5.465149,
+      "max": 73.487241
+    },
+    "GET /api/v1/lists/{id}": {
+      "error_rate": 0,
+      "count": 1801,
+      "p50": 0.884185,
+      "p95": 1.177808,
+      "p99": 1.603488,
+      "max": 2.168743
+    },
+    "POST /api/v1/lists": {
+      "count": 361,
+      "p50": 2.43307,
+      "p95": 3.581251,
+      "p99": 4.310274599999996,
+      "max": 7.759276,
+      "error_rate": 0
+    },
+    "PATCH /api/v1/lists/{id}/todos/{todo_id}": {
+      "error_rate": 0,
+      "count": 1801,
+      "p50": 1.857949,
+      "p95": 2.533609,
+      "p99": 3.507224,
+      "max": 74.848423
+    }
+  },
+  "exceeded": []
+}

@@ -367,8 +367,12 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
     let lists = OpenApiRouter::new()
         .routes(routes!(list_handler::list_lists, list_handler::create_list))
         .routes(routes!(list_handler::get_list))
+        .routes(routes!(
+            list_handler::rename_list,
+            list_handler::delete_list
+        ))
         .routes(routes!(list_handler::add_todo))
-        .routes(routes!(list_handler::mark_todo))
+        .routes(routes!(list_handler::patch_todo, list_handler::delete_todo))
         .require_verified_email()
         .require_auth();
 

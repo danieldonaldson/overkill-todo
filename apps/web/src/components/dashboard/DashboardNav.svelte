@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import HomeIcon from '@lucide/svelte/icons/home'
+  import ListTodoIcon from '@lucide/svelte/icons/list-todo'
   import ScrollTextIcon from '@lucide/svelte/icons/scroll-text'
   import SettingsIcon from '@lucide/svelte/icons/settings'
   import ShieldIcon from '@lucide/svelte/icons/shield'
@@ -36,6 +37,7 @@
 
   const baseLinks = [
     { href: '/dashboard', label: 'Home', icon: HomeIcon },
+    { href: '/dashboard/lists', label: 'Lists', icon: ListTodoIcon },
     { href: '/dashboard/settings', label: 'Settings', icon: SettingsIcon },
   ]
   const links = $derived([

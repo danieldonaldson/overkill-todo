@@ -53,12 +53,12 @@ Delivers these scenarios (dashboard): List panel crashes; Open Lists from the
 navigation; Lists load but todos fail; Signed out part-way; Moving to another
 dashboard page while saving; Closing the tab while saving.
 
-- [ ] 2.1 Remaining states: a crash contained to the list panel, todos failing while the picker works, session loss while saving, a save failing after an in-site move, and `beforeunload` (D7). Vitest browser tests for each.
-- [ ] 2.2 Flows: Playwright with the API mocked for slow answers out of order, moving and closing while saving, and an expired session. Check at 360 px without horizontal scrolling.
-- [ ] 2.3 Performance: a load scenario that opens a list, adds and marks todos, and a run against a list of 1,000. Add its budget and baseline, and record the numbers in design.md Risks. Also export 100 lists of 1,000 todos with 500-character titles on the capped stack: it must be complete, with backend memory within the cap. Record time and peak memory.
-- [ ] 2.4 Alerting: confirm that failed list saves are covered by the existing 5xx alert and that a failure is found in the logs by its trace ID, without the title. Verify by forcing one locally.
-- [ ] 2.5 Add the Lists navigation entry, with `DashboardNav` tests, and update README and `backend/ARCHITECTURE.md`. Get `just ci` green. Note for the first deploy: `just smoke <url>`, then open Lists from the navigation.
-- [ ] 2.6 Revise design.md with what both slices showed, and revise slices 3 to 5 below to match. Verify with `openspec validate ot-013-todos --strict`.
+- [x] 2.1 Remaining states: a crash contained to the list panel, todos failing while the picker works, session loss while saving, a save failing after an in-site move, and `beforeunload` (D7). Vitest browser tests for each.
+- [x] 2.2 Flows: Playwright with the API mocked for slow answers out of order, moving and closing while saving, and an expired session. Check at 360 px without horizontal scrolling.
+- [x] 2.3 Performance: a load scenario that opens a list, adds and marks todos, and a run against a list of 1,000. Add its budget and baseline, and record the numbers in design.md Risks. Also export 100 lists of 1,000 todos with 500-character titles on the capped stack: it must be complete, with backend memory within the cap. Record time and peak memory.
+- [x] 2.4 Alerting: confirm that failed list saves are covered by the existing 5xx alert and that a failure is found in the logs by its trace ID, without the title. Verify by forcing one locally.
+- [x] 2.5 Add the Lists navigation entry, with `DashboardNav` tests, and update README and `backend/ARCHITECTURE.md`. Get `just ci` green. Note for the first deploy: `just smoke <url>`, then open Lists from the navigation.
+- [x] 2.6 Revise design.md with what both slices showed, and revise slices 3 to 5 below to match. Verify with `openspec validate ot-013-todos --strict`.
 
 ## 3. Slice 3: rename and delete todos and lists, with their conflicts
 
@@ -77,13 +77,13 @@ Delivers these scenarios:
 - **security, observability, analytics:** their scenarios again, for the new
   actions.
 
-- [ ] 3.1 Application and persistence: rename a list or todo, delete a todo, and delete a list by `version` and `todo_count`, all under the list lock (D4, D5). Mock tests for every outcome. `#[sqlx::test]` cases: stale rename and delete refused with the current row, a rename already in place succeeds with the version unchanged, different todos don't conflict, list deletion refused when the name or count changed and serialised with a concurrent add, and room again at both limits. Run `just db-prepare` and commit `backend/.sqlx/`. The refusal of a list deletion carries the current name, version and count.
-- [ ] 3.2 API: `PATCH` and `DELETE /lists/{id}`, `DELETE /lists/{id}/todos/{todo_id}`, and `title` in the todo `PATCH`, with exactly one of `title` and `done` (D5). Integration tests for each status, including neither or both fields and a missing version. Run `just api-types`; verify with `just fuzz-api`. Turn `positive_data_acceptance` off for both `PATCH` operations, with the D5 reason.
-- [ ] 3.3 Extend the P-35 route tests and the marker-string telemetry test to the new routes. Verify with `just threat-model-check` and `just test`.
-- [ ] 3.4 Client store: rename and delete operations, edits queued on an item still being added, dependent edits dropped with one message, 404 removes the item, 404 on a delete counts as success, and dropped text kept to submit again (D7). Extend the two-tab random test with renames and deletions. Verify 10,000 seeds pass and the broken variant still fails.
-- [ ] 3.5 Web UI: rename in place (cancel with Escape), delete a todo, the list deletion confirmation with its count and second confirmation, and the "changed elsewhere" and "deleted elsewhere" notes. Deleting a list is not optimistic. Vitest browser tests for each, including focus after a deletion. A list can be deleted only while open.
-- [ ] 3.6 Flows: Playwright with the API mocked for rename, failed rename, lost answer and list deletion; two-tab flows in `tests/integration/` for each conflict scenario above.
-- [ ] 3.7 Update README if needed, and get `just ci` green. Note for the first deploy: `just smoke <url>`, then rename and delete a todo and a list.
+- [x] 3.1 Application and persistence: rename a list or todo, delete a todo, and delete a list by `version` and `todo_count`, all under the list lock (D4, D5). Mock tests for every outcome. `#[sqlx::test]` cases: stale rename and delete refused with the current row, a rename already in place succeeds with the version unchanged, different todos don't conflict, list deletion refused when the name or count changed and serialised with a concurrent add, and room again at both limits. Run `just db-prepare` and commit `backend/.sqlx/`. The refusal of a list deletion carries the current name, version and count.
+- [x] 3.2 API: `PATCH` and `DELETE /lists/{id}`, `DELETE /lists/{id}/todos/{todo_id}`, and `title` in the todo `PATCH`, with exactly one of `title` and `done` (D5). Integration tests for each status, including neither or both fields and a missing version. Run `just api-types`; verify with `just fuzz-api`, and with several seeds at 500 examples. Reuse the name and title patterns from `lists_dto.rs`, which spell out the server's whitespace. Turn `positive_data_acceptance` off for both `PATCH` operations, with the D5 reason. Add the new routes to the `lists` load scenario with budgets.
+- [x] 3.3 Extend the P-35 route tests and the marker-string telemetry test to the new routes. Verify with `just threat-model-check` and `just test`.
+- [x] 3.4 Client store: rename and delete operations, edits queued on an item still being added, dependent edits dropped with one message, 404 removes the item, 404 on a delete counts as success, and dropped text kept to submit again (D7). Extend the two-tab random test with renames and deletions, and `regressions.test.ts`, which compares with no refetch and allows no conflict message. Verify 10,000 seeds pass and the broken variant still fails. A dropped rename keeps its text like a dropped addition (`unsaved`), and each operation's `listId` and item name go through `itemKey` and `todoIdOf`.
+- [x] 3.5 Web UI: rename in place (cancel with Escape), delete a todo, the list deletion confirmation with its count and second confirmation, and the "changed elsewhere" and "deleted elsewhere" notes. Deleting a list is not optimistic. Vitest browser tests for each, including focus after a deletion (as after a tick). A list can be deleted only while open. Check 500-character titles at 360 px in every new state.
+- [x] 3.6 Flows: Playwright with the API mocked for rename, failed rename, lost answer and list deletion; two-tab flows in `tests/integration/` for each conflict scenario above.
+- [x] 3.7 Update README if needed, and get `just ci` green. Note for the first deploy: `just smoke <url>`, then rename and delete a todo and a list.
 
 ## 4. Slice 4: reorder open todos
 
@@ -98,8 +98,8 @@ Delivers these scenarios:
 
 - [ ] 4.1 Domain: the midpoint and renumbering rules as pure functions (D6). Property tests: a move lands strictly between its neighbours or asks for renumbering, and renumbering keeps the order.
 - [ ] 4.2 Application and persistence: the move use case and repository method, with `above` and `below` resolved under the list lock. Mock tests per outcome. `#[sqlx::test]` cases: top, middle and bottom; 1,000 moves between the same two todos; concurrent moves, adds and completions leave every todo once; neighbours deleted, done or foreign; a done or deleted todo; the version unchanged. Run `just db-prepare` and commit `backend/.sqlx/`. The todo's own ID in `above` or `below` is ignored.
-- [ ] 4.3 API: `POST /lists/{id}/todos/{todo_id}/move`, with at most 20 IDs each way. Integration tests for each status, and a foreign neighbour answered exactly as an unknown one (P-35). Run `just api-types`; verify with `just fuzz-api` and `just threat-model-check`.
-- [ ] 4.4 Client store: move operations that apply the returned order beneath pending operations (D7). Extend the two-tab random test with moves: no todo lost or duplicated, and one order once both queues drain. Verify 10,000 seeds pass. An answer whose IDs differ from the known open todos triggers a refetch, and a move of a todo still being added is sent after its creation; test both.
+- [ ] 4.3 API: `POST /lists/{id}/todos/{todo_id}/move`, with at most 20 IDs each way. Integration tests for each status, and a foreign neighbour answered exactly as an unknown one (P-35). Run `just api-types`; verify with `just fuzz-api` (several seeds at 500 examples) and `just threat-model-check`. Add it to `lists-large` with a budget: renumbering is the slowest list write.
+- [ ] 4.4 Client store: move operations that apply the returned order beneath pending operations (D7). Extend the two-tab random test with moves: no todo lost or duplicated, and one order once both queues drain. Extend `regressions.test.ts` with moves too: order without a refetch is where slice 1's bugs hid. Verify 10,000 seeds pass. An answer whose IDs differ from the known open todos triggers a refetch, and a move of a todo still being added is sent after its creation; test both.
 - [ ] 4.5 Web UI: a drag handle for mouse and touch with `touch-action: none` on the handle alone, cancel with Escape, and keyboard moves that keep focus and announce the position. Vitest browser tests for each, and that done todos have no handle.
 - [ ] 4.6 Flows: Playwright with the API mocked for drag, keyboard, cancelled drag and failed move; a two-tab flow in `tests/integration/` for concurrent moves.
 - [ ] 4.7 Get `just ci` green. Note for the first deploy: `just smoke <url>`, then reorder a list and reload it.
@@ -111,13 +111,51 @@ Delivers these scenarios:
 - **lists:** A full list stays usable.
 - **dashboard:** Phone; Touch.
 
-- [ ] 5.1 Phone layout: the picker as a drawer that traps focus, closes on choosing a list and returns focus. Vitest browser and Playwright tests at 360 px without horizontal scrolling.
+- [ ] 5.1 Phone layout (slice 2 already keeps list pages from scrolling sideways at 360 px): the picker as a drawer that traps focus, closes on choosing a list and returns focus. Vitest browser and Playwright tests at 360 px without horizontal scrolling.
 - [ ] 5.2 Touch: a Playwright test with touch emulation that swipes over todos (the list scrolls, nothing moves) and drags by the handle.
 - [ ] 5.3 Full lists: `content-visibility: auto` on rows. Check adding, marking, renaming and reordering on 1,000 todos with a Vitest bench and a Playwright flow, with interactions under 200 ms on the CI runner. Record the numbers in design.md Risks.
 - [ ] 5.4 Get `just ci` green. Note for the first deploy: `just smoke <url>`, then open a list on a phone.
 
-## 6. Feature done
+## 6. Slice 6: proofs and the formal coverage gate
 
-- [ ] 6.1 Every scenario in the spec deltas is delivered by a slice above and has a test; list any exception with its reason. Verify by walking the specs against the tests.
-- [ ] 6.2 README, `backend/ARCHITECTURE.md` and the threat model match what was built, and the first-deploy checks are recorded. There is no flag to remove (D11). Verify with `just ci`.
-- [ ] 6.3 Archive the change with `/opsx:archive`, and verify with `openspec validate --specs --strict`.
+Delivers these scenarios (security): breaking a list guarantee fails the gate;
+a model that drifts from the code fails replay; bounds and assumptions are
+visible; a guarantee with no check fails.
+
+- [ ] 6.1 Add a `docs/formal-coverage.yaml` manifest for the machine-checked list requirement in the security delta, mapping every OT-013 requirement and P-35 to a proof, a model, a conformance test, or its test plus the reason no proof or model applies. Add `just formal-coverage`, which fails when an entry is missing or names a check that no longer exists, and run it red before any proof. Put it in `just ci`.
+- [ ] 6.2 Kani proofs for the pure rules (D13): `append_position` is monotonic and exact unless saturated; the midpoint and renumbering functions from 4.1 land strictly between their neighbours or ask for renumbering, and renumbering keeps the order; list names and todo titles trim, count code points and refuse control characters within the stated bounds; a todo is open or done and its transitions bump the version by one. Each harness states its bounds. Break each rule on a scratch edit and see `just verify` fail.
+- [ ] 6.3 `just verify` green and CI runs it; record runtime. Update README and `backend/ARCHITECTURE.md` with the new proofs, their bounds and assumptions.
+
+## 7. Slice 7: server concurrency model
+
+Delivers these scenarios (lists): edits made elsewhere are never silently
+overwritten; a repeated save takes effect once; concurrent moves settle on one
+order; lists and todos have limits; lists and todos are private to their
+Member.
+
+- [ ] 7.1 `models/list_writes.qnt`: two Members, two lists and three todos. Each action is the SQL the repository runs, one model step per statement or transaction, under the list lock: create, rename and delete a list; add, rename, mark and delete a todo; move a todo. A list delete compares both `version` and `todo_count`. State the 8-step Apalache bound.
+- [ ] 7.2 Invariants: a write at a stale version changes nothing; a repeated save changes nothing more; an accepted write moves the version by one unless the state already matched; the 100-list and 1,000-todo limits hold; one Member's writes never touch another's rows; list deletion leaves no todos; open positions stay unique and strictly ordered; concurrent moves leave every todo exactly once and one order. Check every invariant with `quint verify`, then run 10,000 random traces at 30 steps.
+- [ ] 7.3 Broken modules for every guard (`no_version_check`, `no_count_check`, `no_lock`, `no_limit`, `no_owner_check`); each must produce a counterexample, so no invariant is vacuous.
+- [ ] 7.4 Export ITF traces and replay every list step through the real repository in `tests/model_conformance.rs` or a sibling, checking results and stored rows after each step. A model step without a passing replay fails.
+- [ ] 7.5 `just models` and its replay green; record runtime and bounds in `backend/ARCHITECTURE.md` and `just ci`.
+
+## 8. Slice 8: client queue model
+
+Delivers these scenarios (dashboard): list changes appear at once and save in
+the background; a crashing panel is contained; rapid edits in one tab; edit a
+todo that is still being added; save fails; unknown outcome. Delivers these
+scenarios (lists): edits made elsewhere are never silently overwritten; changes
+to something deleted elsewhere are handled; concurrent moves settle on one
+order.
+
+- [ ] 8.1 Freeze D7 after review, then `models/list_client.qnt`: two clients with confirmed state, queue, versions and unsaved text; sends, answers (success, stale, 404, lost) and refetches. State the Apalache bound.
+- [ ] 8.2 Invariants: a queued edit sends the version the Member saw; a refetch never advances a queued version; another tab's change is never silently overwritten; a dependent edit is dropped with one message; a 404 removes the item; both queues drain to one order; no todo is lost or duplicated.
+- [ ] 8.3 Broken clients (send a stale version, apply a success without the expected version, ignore a 404); each must fail an invariant.
+- [ ] 8.4 Replay the ITF traces through the real `ListsEngine` and memory server in a web test. Decode only the ITF this model emits; map each action to the public engine API; compare state after every step. Keep the trace fixtures out of the normal web test run.
+- [ ] 8.5 `just models`, `just test-web` and `just ci` green; record runtime and bounds.
+
+## 9. Feature done
+
+- [ ] 9.1 Every scenario in the spec deltas is delivered by a slice above and has a test; list any exception with its reason. Verify by walking the specs against the tests and the formal coverage manifest.
+- [ ] 9.2 README, `backend/ARCHITECTURE.md` and the threat model match what was built, and the first-deploy checks are recorded. There is no flag to remove (D11). Verify with `just ci`.
+- [ ] 9.3 Archive the change with `/opsx:archive`, and verify with `openspec validate --specs --strict`.

@@ -7,13 +7,14 @@
 use std::sync::Arc;
 
 use application::dto::{
-    AddTodoRequest, CreateListRequest, LimitConflictResponse, ListDetailResponse, ListResponse,
+    AddTodoRequest, CreateListRequest, DeleteListQuery, DeleteTodoQuery, LimitConflictResponse,
+    ListDetailResponse, ListResponse, RenameListRequest, StaleListConflictResponse,
     StaleTodoConflictResponse, TodoPatchRequest, TodoResponse,
 };
 use application::ports::outgoing::{LimitKind, ListSummary, ListWithTodos};
 use application::use_cases::{
-    AddTodoUseCase, CreateListUseCase, GetListUseCase, ListListsUseCase, MarkTodoUseCase,
-    MutationOutcome,
+    AddTodoUseCase, CreateListUseCase, DeleteListUseCase, DeleteTodoUseCase, GetListUseCase,
+    ListListsUseCase, MarkTodoUseCase, MutationOutcome, RenameListUseCase, RenameTodoUseCase,
 };
 use axum::{
     Json,
@@ -28,7 +29,7 @@ use uuid::Uuid;
 
 use crate::{
     error::AppError,
-    extractors::{ApiJson, ApiPath},
+    extractors::{ApiJson, ApiPath, ApiQuery},
     middleware::AuthUser,
 };
 
@@ -37,8 +38,12 @@ pub struct ListHandlerDeps {
     pub list_lists: Arc<ListListsUseCase>,
     pub create_list: Arc<CreateListUseCase>,
     pub get_list: Arc<GetListUseCase>,
+    pub rename_list: Arc<RenameListUseCase>,
+    pub delete_list: Arc<DeleteListUseCase>,
     pub add_todo: Arc<AddTodoUseCase>,
     pub mark_todo: Arc<MarkTodoUseCase>,
+    pub rename_todo: Arc<RenameTodoUseCase>,
+    pub delete_todo: Arc<DeleteTodoUseCase>,
 }
 
 /// A list ID in the path.
@@ -104,6 +109,18 @@ fn stale_todo_response(todo: &Todo) -> Response {
             code: "stale".to_string(),
             message: "This todo changed elsewhere".to_string(),
             current: todo_response(todo),
+        }),
+    )
+        .into_response()
+}
+
+fn stale_list_response(summary: &ListSummary) -> Response {
+    (
+        StatusCode::CONFLICT,
+        Json(StaleListConflictResponse {
+            code: "stale".to_string(),
+            message: "This list changed elsewhere".to_string(),
+            current: summary_response(summary),
         }),
     )
         .into_response()
@@ -193,6 +210,91 @@ pub async fn get_list(
     Ok(Json(detail_response(&detail)))
 }
 
+/// Rename a list.
+#[utoipa::path(
+    patch,
+    path = "/lists/{id}",
+    tag = "Lists",
+    params(("id" = Uuid, Path, description = "List ID")),
+    request_body = RenameListRequest,
+    responses(
+        (status = 200, description = "The list after the change", body = ListResponse),
+        (status = 400, description = "Invalid name, missing version or malformed body"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Email address not verified"),
+        (status = 404, description = "List not found (`list_not_found`)"),
+        (status = 409, description = "The list changed elsewhere", body = StaleListConflictResponse)
+    )
+)]
+/// # Errors
+/// Returns `list_not_found` for a missing or foreign list, or invalid input.
+#[tracing::instrument(name = "handler.rename_list", skip_all)]
+pub async fn rename_list(
+    State(deps): State<Arc<ListHandlerDeps>>,
+    auth_user: AuthUser,
+    ApiPath(path): ApiPath<ListPath>,
+    ApiJson(request): ApiJson<RenameListRequest>,
+) -> Result<Response, AppError> {
+    let outcome = deps
+        .rename_list
+        .execute(
+            &auth_user.user_id,
+            &ListId::from_uuid(path.id),
+            request.version,
+            &request.name,
+        )
+        .await?;
+    Ok(match outcome {
+        MutationOutcome::Applied(summary) => Json(summary_response(&summary)).into_response(),
+        MutationOutcome::Stale(summary) => stale_list_response(&summary),
+        MutationOutcome::LimitReached(limit) => limit_response(limit),
+    })
+}
+
+/// Delete a list and its todos.
+#[utoipa::path(
+    delete,
+    path = "/lists/{id}",
+    tag = "Lists",
+    params(
+        ("id" = Uuid, Path, description = "List ID"),
+        ("version" = i64, Query, description = "Version the client saw"),
+        ("todo_count" = i64, Query, description = "Todo count the confirmation named")
+    ),
+    responses(
+        (status = 204, description = "The list and its todos are gone"),
+        (status = 400, description = "Missing version or todo count"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Email address not verified"),
+        (status = 404, description = "List not found (`list_not_found`)"),
+        (status = 409, description = "The list changed or its count does", body = StaleListConflictResponse)
+    )
+)]
+/// # Errors
+/// Returns `list_not_found` for a missing or foreign list.
+#[tracing::instrument(name = "handler.delete_list", skip_all)]
+pub async fn delete_list(
+    State(deps): State<Arc<ListHandlerDeps>>,
+    auth_user: AuthUser,
+    ApiPath(path): ApiPath<ListPath>,
+    ApiQuery(query): ApiQuery<DeleteListQuery>,
+) -> Result<Response, AppError> {
+    let outcome = deps
+        .delete_list
+        .execute(
+            &auth_user.user_id,
+            &ListId::from_uuid(path.id),
+            query.version,
+            query.todo_count,
+        )
+        .await?;
+    Ok(match outcome {
+        MutationOutcome::Applied(_) => StatusCode::NO_CONTENT.into_response(),
+        MutationOutcome::Stale(summary) => stale_list_response(&summary),
+        MutationOutcome::LimitReached(limit) => limit_response(limit),
+    })
+}
+
 /// Add a todo at the bottom of the list.
 #[utoipa::path(
     post,
@@ -235,7 +337,51 @@ pub async fn add_todo(
     })
 }
 
-/// Mark a todo done or not done.
+/// Delete a todo.
+#[utoipa::path(
+    delete,
+    path = "/lists/{id}/todos/{todo_id}",
+    tag = "Lists",
+    params(
+        ("id" = Uuid, Path, description = "List ID"),
+        ("todo_id" = Uuid, Path, description = "Todo ID"),
+        ("version" = i64, Query, description = "Version the client saw")
+    ),
+    responses(
+        (status = 204, description = "The todo is gone"),
+        (status = 400, description = "Missing version"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Email address not verified"),
+        (status = 404, description = "List or todo not found (`list_not_found` / `todo_not_found`)"),
+        (status = 409, description = "The todo changed elsewhere", body = StaleTodoConflictResponse)
+    )
+)]
+/// # Errors
+/// Returns the 404 codes for a missing or foreign ID.
+#[tracing::instrument(name = "handler.delete_todo", skip_all)]
+pub async fn delete_todo(
+    State(deps): State<Arc<ListHandlerDeps>>,
+    auth_user: AuthUser,
+    ApiPath(path): ApiPath<TodoPath>,
+    ApiQuery(query): ApiQuery<DeleteTodoQuery>,
+) -> Result<Response, AppError> {
+    let outcome = deps
+        .delete_todo
+        .execute(
+            &auth_user.user_id,
+            &ListId::from_uuid(path.id),
+            &TodoId::from_uuid(path.todo_id),
+            query.version,
+        )
+        .await?;
+    Ok(match outcome {
+        MutationOutcome::Applied(_) => StatusCode::NO_CONTENT.into_response(),
+        MutationOutcome::Stale(todo) => stale_todo_response(&todo),
+        MutationOutcome::LimitReached(limit) => limit_response(limit),
+    })
+}
+
+/// Rename a todo, or mark it done or not done.
 #[utoipa::path(
     patch,
     path = "/lists/{id}/todos/{todo_id}",
@@ -247,7 +393,7 @@ pub async fn add_todo(
     request_body = TodoPatchRequest,
     responses(
         (status = 200, description = "The todo after the change", body = TodoResponse),
-        (status = 400, description = "Missing version or malformed body"),
+        (status = 400, description = "Exactly one of title and done is required, with a version"),
         (status = 401, description = "Not authenticated"),
         (status = 403, description = "Email address not verified"),
         (status = 404, description = "List or todo not found (`list_not_found` / `todo_not_found`)"),
@@ -255,25 +401,40 @@ pub async fn add_todo(
     )
 )]
 /// # Errors
-/// Returns the 404 codes for a missing or foreign ID.
-#[tracing::instrument(name = "handler.mark_todo", skip_all)]
-pub async fn mark_todo(
+/// Returns the 404 codes for a missing or foreign ID, or invalid input.
+#[tracing::instrument(name = "handler.patch_todo", skip_all)]
+pub async fn patch_todo(
     State(deps): State<Arc<ListHandlerDeps>>,
     auth_user: AuthUser,
     ApiPath(path): ApiPath<TodoPath>,
     ApiJson(request): ApiJson<TodoPatchRequest>,
 ) -> Result<Response, AppError> {
-    let TodoPatchRequest::Done(done_patch) = request;
-    let outcome = deps
-        .mark_todo
-        .execute(
-            &auth_user.user_id,
-            &ListId::from_uuid(path.id),
-            &TodoId::from_uuid(path.todo_id),
-            done_patch.version,
-            done_patch.done,
-        )
-        .await?;
+    let list_id = ListId::from_uuid(path.id);
+    let todo_id = TodoId::from_uuid(path.todo_id);
+    let outcome = match request {
+        TodoPatchRequest::Done(done_patch) => {
+            deps.mark_todo
+                .execute(
+                    &auth_user.user_id,
+                    &list_id,
+                    &todo_id,
+                    done_patch.version,
+                    done_patch.done,
+                )
+                .await?
+        }
+        TodoPatchRequest::Title(title_patch) => {
+            deps.rename_todo
+                .execute(
+                    &auth_user.user_id,
+                    &list_id,
+                    &todo_id,
+                    title_patch.version,
+                    &title_patch.title,
+                )
+                .await?
+        }
+    };
     Ok(match outcome {
         MutationOutcome::Applied(todo) => Json(todo_response(&todo)).into_response(),
         MutationOutcome::Stale(todo) => stale_todo_response(&todo),

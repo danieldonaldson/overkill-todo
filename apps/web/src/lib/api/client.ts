@@ -1,7 +1,7 @@
 import type { RefreshResponse } from '../types'
 import { redirect } from '../navigation'
 import { clearSessionUser, getSessionUser } from '../auth/session'
-import { accountChanged } from './account-changed'
+import { accountChanged, sessionEnded } from './account-changed'
 import { getDeviceFingerprint } from '../auth/fingerprint'
 import {
   setTokenExpiry,
@@ -141,6 +141,7 @@ export class HttpClient {
       if (!tokenValid) {
         clearTokenExpiry()
         clearSessionUser()
+        sessionEnded()
         redirect(hadSession ? '/login?session=expired' : '/login')
         throw new SessionEndedError('Session expired')
       }
@@ -213,6 +214,7 @@ export class HttpClient {
       // Refresh failed - session is truly expired
       clearTokenExpiry()
       clearSessionUser()
+      sessionEnded()
       redirect(hadSession ? '/login?session=expired' : '/login')
       throw new SessionEndedError('Session expired')
     }
@@ -239,6 +241,7 @@ export class HttpClient {
       try {
         const errorBody: ApiError = await response.clone().json()
         if (getErrorCode(errorBody) === 'email_not_verified') {
+          sessionEnded()
           redirect('/verify-email')
           throw new SessionEndedError('Email not verified')
         }

@@ -63,7 +63,7 @@ export class MemoryListsServer {
     const existing = this.keys.get(`todo:${listId}:${key}`)
     if (existing) {
       const todo = list.todos.find((candidate) => candidate.id === existing)
-      if (todo) return this.todo(todo)
+      if (todo) return this.todoBody(todo)
     }
     if (list.todos.length >= MAX_TODOS) {
       throw new ApiErrorException(
@@ -84,7 +84,7 @@ export class MemoryListsServer {
     if (doneAt === -1) list.todos.push(todo)
     else list.todos.splice(doneAt, 0, todo)
     this.keys.set(`todo:${listId}:${key}`, id)
-    return this.todo(todo)
+    return this.todoBody(todo)
   }
 
   markTodo(listId: string, todoId: string, version: number, done: boolean): Todo {
@@ -92,10 +92,10 @@ export class MemoryListsServer {
     if (!list) throw notFound('list_not_found', 'List not found')
     const todo = list.todos.find((candidate) => candidate.id === todoId)
     if (!todo) throw notFound('todo_not_found', 'Todo not found')
-    if (todo.done === done) return this.todo(todo)
+    if (todo.done === done) return this.todoBody(todo)
     if (todo.version !== version) {
       throw new ApiErrorException(
-        { code: 'stale', message: 'This todo changed elsewhere', current: this.todo(todo) },
+        { code: 'stale', message: 'This todo changed elsewhere', current: this.todoBody(todo) },
         { status: 409, message: 'This todo changed elsewhere' }
       )
     }
@@ -105,7 +105,61 @@ export class MemoryListsServer {
     list.todos = list.todos.filter((candidate) => candidate.id !== todoId)
     const doneAt = list.todos.findIndex((candidate) => candidate.done)
     list.todos.splice(doneAt === -1 ? list.todos.length : doneAt, 0, todo)
-    return this.todo(todo)
+    return this.todoBody(todo)
+  }
+
+  renameList(listId: string, version: number, name: string): List {
+    const list = this.lists.get(listId)
+    if (!list) throw notFound('list_not_found', 'List not found')
+    const trimmed = name.trim()
+    if (list.name === trimmed) return this.summary(list)
+    if (list.version !== version) {
+      throw new ApiErrorException(
+        { code: 'stale', message: 'This list changed elsewhere', current: this.summary(list) },
+        { status: 409, message: 'This list changed elsewhere' }
+      )
+    }
+    list.name = trimmed
+    list.version += 1
+    return this.summary(list)
+  }
+
+  deleteList(listId: string, version: number, todoCount: number): void {
+    const list = this.lists.get(listId)
+    if (!list) throw notFound('list_not_found', 'List not found')
+    if (list.version !== version || list.todos.length !== todoCount) {
+      throw new ApiErrorException(
+        { code: 'stale', message: 'This list changed elsewhere', current: this.summary(list) },
+        { status: 409, message: 'This list changed elsewhere' }
+      )
+    }
+    this.lists.delete(listId)
+  }
+
+  renameTodo(listId: string, todoId: string, version: number, title: string): Todo {
+    const { todo } = this.findTodo(listId, todoId)
+    const trimmed = title.trim()
+    if (todo.title === trimmed) return this.todoBody(todo)
+    if (todo.version !== version) {
+      throw new ApiErrorException(
+        { code: 'stale', message: 'This todo changed elsewhere', current: this.todoBody(todo) },
+        { status: 409, message: 'This todo changed elsewhere' }
+      )
+    }
+    todo.title = trimmed
+    todo.version += 1
+    return this.todoBody(todo)
+  }
+
+  deleteTodo(listId: string, todoId: string, version: number): void {
+    const { list, todo } = this.findTodo(listId, todoId)
+    if (todo.version !== version) {
+      throw new ApiErrorException(
+        { code: 'stale', message: 'This todo changed elsewhere', current: this.todoBody(todo) },
+        { status: 409, message: 'This todo changed elsewhere' }
+      )
+    }
+    list.todos = list.todos.filter((candidate) => candidate.id !== todoId)
   }
 
   list(): List[] {
@@ -117,7 +171,7 @@ export class MemoryListsServer {
     if (!list) throw notFound('list_not_found', 'List not found')
     return {
       list: this.summary(list),
-      todos: list.todos.map((todo) => this.todo(todo)),
+      todos: list.todos.map((todo) => this.todoBody(todo)),
     }
   }
 
@@ -125,7 +179,7 @@ export class MemoryListsServer {
   state(): { lists: List[]; todos: Record<string, Todo[]> } {
     const todos: Record<string, Todo[]> = {}
     for (const list of this.lists.values())
-      todos[list.id] = list.todos.map((todo) => this.todo(todo))
+      todos[list.id] = list.todos.map((todo) => this.todoBody(todo))
     return { lists: this.list(), todos }
   }
 
@@ -146,6 +200,14 @@ export class MemoryListsServer {
     return list.id
   }
 
+  private findTodo(listId: string, todoId: string): { list: StoredList; todo: StoredTodo } {
+    const list = this.lists.get(listId)
+    if (!list) throw notFound('list_not_found', 'List not found')
+    const todo = list.todos.find((candidate) => candidate.id === todoId)
+    if (!todo) throw notFound('todo_not_found', 'Todo not found')
+    return { list, todo }
+  }
+
   private summary(list: StoredList): List {
     return {
       id: list.id,
@@ -156,7 +218,7 @@ export class MemoryListsServer {
     }
   }
 
-  private todo(todo: StoredTodo): Todo {
+  private todoBody(todo: StoredTodo): Todo {
     return {
       id: todo.id,
       title: todo.title,
@@ -186,6 +248,14 @@ export function serverApi(
       await between()
       return server.createList(key, name)
     },
+    renameList: async (id, version, name) => {
+      await between()
+      return server.renameList(id, version, name)
+    },
+    deleteList: async (id, version, todoCount) => {
+      await between()
+      server.deleteList(id, version, todoCount)
+    },
     getList: async (id) => {
       await between()
       return server.getList(id)
@@ -197,6 +267,14 @@ export function serverApi(
     markTodo: async (listId, todoId, version, done) => {
       await between()
       return server.markTodo(listId, todoId, version, done)
+    },
+    renameTodo: async (listId, todoId, version, title) => {
+      await between()
+      return server.renameTodo(listId, todoId, version, title)
+    },
+    deleteTodo: async (listId, todoId, version) => {
+      await between()
+      server.deleteTodo(listId, todoId, version)
     },
   }
 }

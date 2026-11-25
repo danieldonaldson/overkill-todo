@@ -526,3 +526,236 @@ async fn a_deleted_account_cannot_create_a_list(pool: PgPool) {
     assert!(matches!(err, domain::errors::DomainError::Authorization(_)));
     assert_eq!(count_lists(&pool, user_id).await, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Rename and delete (task 3.1)
+// ---------------------------------------------------------------------------
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_stale_list_rename_is_refused_with_the_current_list(pool: PgPool) {
+    let (user_id, user) = user(&pool, "rename-list@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    let repo = repo(&pool);
+
+    let outcome = repo
+        .rename_list(&user, &list_id, 9, &name("Job"))
+        .await
+        .unwrap();
+    match outcome {
+        ListWrite::Stale(current) => {
+            assert_eq!(current.list.name().as_str(), "Work");
+            assert_eq!(current.list.version(), 1);
+        }
+        other => panic!("expected Stale, got {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_list_rename_already_in_place_succeeds_without_changing_the_version(pool: PgPool) {
+    let (user_id, user) = user(&pool, "same-name@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    let repo = repo(&pool);
+
+    let outcome = repo
+        .rename_list(&user, &list_id, 9, &name("Work"))
+        .await
+        .unwrap();
+    match outcome {
+        ListWrite::Repeated(current) => {
+            assert_eq!(current.list.name().as_str(), "Work");
+            assert_eq!(current.list.version(), 1);
+        }
+        other => panic!("expected Repeated, got {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn renaming_different_todos_does_not_conflict(pool: PgPool) {
+    let (user_id, user) = user(&pool, "rename-todos@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    let first = TodoId::from_uuid(insert_todo(&pool, list, "one", Some(1), None).await);
+    let second = TodoId::from_uuid(insert_todo(&pool, list, "two", Some(2), None).await);
+    let repo = repo(&pool);
+
+    assert!(matches!(
+        repo.rename_todo(&user, &list_id, &first, 1, &title("first"))
+            .await
+            .unwrap(),
+        ListWrite::Applied(_)
+    ));
+    // The second todo is still at version 1, though the list has other writes.
+    assert!(matches!(
+        repo.rename_todo(&user, &list_id, &second, 1, &title("second"))
+            .await
+            .unwrap(),
+        ListWrite::Applied(_)
+    ));
+    // The first moved to version 2: a rename at 1 is stale, the second stays.
+    match repo
+        .rename_todo(&user, &list_id, &first, 1, &title("again"))
+        .await
+        .unwrap()
+    {
+        ListWrite::Stale(current) => {
+            assert_eq!(current.title().as_str(), "first");
+            assert_eq!(current.version(), 2);
+        }
+        other => panic!("expected Stale, got {other:?}"),
+    }
+    let detail = repo.find_list(&user, &list_id).await.unwrap().unwrap();
+    assert_eq!(detail.todos[1].title().as_str(), "second");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_todo_delete_is_refused_at_a_stale_version(pool: PgPool) {
+    let (user_id, user) = user(&pool, "delete-todo@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    let todo = TodoId::from_uuid(insert_todo(&pool, list, "Buy milk", Some(1), None).await);
+    let repo = repo(&pool);
+
+    match repo.delete_todo(&user, &list_id, &todo, 9).await.unwrap() {
+        ListWrite::Stale(current) => {
+            assert_eq!(current.title().as_str(), "Buy milk");
+            assert_eq!(current.version(), 1);
+        }
+        other => panic!("expected Stale, got {other:?}"),
+    }
+    assert_eq!(count_todos(&pool, list).await, 1);
+
+    assert!(matches!(
+        repo.delete_todo(&user, &list_id, &todo, 1).await.unwrap(),
+        ListWrite::Applied(_)
+    ));
+    assert_eq!(count_todos(&pool, list).await, 0);
+    assert!(matches!(
+        repo.delete_todo(&user, &list_id, &todo, 1).await.unwrap(),
+        ListWrite::TodoNotFound
+    ));
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn deleting_a_list_requires_the_name_and_count_it_was_confirmed_with(pool: PgPool) {
+    let (user_id, user) = user(&pool, "delete-list@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    for (i, title) in ["one", "two", "three"].iter().enumerate() {
+        insert_todo(
+            &pool,
+            list,
+            title,
+            Some(i64::try_from(i).unwrap() + 1),
+            None,
+        )
+        .await;
+    }
+    let repo = repo(&pool);
+
+    // A count other than the stored one deletes nothing, even at the version.
+    match repo.delete_list(&user, &list_id, 1, 2).await.unwrap() {
+        ListWrite::Stale(current) => {
+            assert_eq!(current.todo_count, 3);
+            assert_eq!(current.open_count, 3);
+            assert_eq!(current.list.version(), 1);
+        }
+        other => panic!("expected Stale, got {other:?}"),
+    }
+    assert_eq!(count_todos(&pool, list).await, 3);
+
+    // A rename now shows a newer version, and the refusal names it.
+    assert!(matches!(
+        repo.rename_list(&user, &list_id, 1, &name("Job"))
+            .await
+            .unwrap(),
+        ListWrite::Applied(_)
+    ));
+    match repo.delete_list(&user, &list_id, 1, 3).await.unwrap() {
+        ListWrite::Stale(current) => {
+            assert_eq!(current.list.name().as_str(), "Job");
+            assert_eq!(current.list.version(), 2);
+            assert_eq!(current.todo_count, 3);
+        }
+        other => panic!("expected Stale, got {other:?}"),
+    }
+    assert_eq!(count_lists(&pool, user_id).await, 1);
+
+    assert!(matches!(
+        repo.delete_list(&user, &list_id, 2, 3).await.unwrap(),
+        ListWrite::Applied(_)
+    ));
+    assert_eq!(count_lists(&pool, user_id).await, 0);
+    assert_eq!(count_todos(&pool, list).await, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_concurrent_add_makes_the_list_delete_stale_or_waits_until_after_it(pool: PgPool) {
+    let (user_id, user) = user(&pool, "delete-race@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    let repo = Arc::new(repo(&pool));
+    let added_title = title("added elsewhere");
+    let added = repo.add_todo(&user, &list_id, Uuid::now_v7(), &added_title);
+    let deleted = repo.delete_list(&user, &list_id, 1, 0);
+    let (added, deleted) = tokio::join!(added, deleted);
+
+    match (added.unwrap(), deleted.unwrap()) {
+        // The add went first: the delete saw a different count.
+        (ListWrite::Applied(_), ListWrite::Stale(current)) => {
+            assert_eq!(current.todo_count, 1);
+            assert_eq!(count_lists(&pool, user_id).await, 1);
+            assert_eq!(count_todos(&pool, list).await, 1);
+        }
+        // The delete went first: nothing was added to a deleted list.
+        (ListWrite::ListNotFound, ListWrite::Applied(_)) => {
+            assert_eq!(count_lists(&pool, user_id).await, 0);
+        }
+        (added, deleted) => panic!("inconsistent outcomes: {added:?}, {deleted:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn deleting_makes_room_again_at_both_limits(pool: PgPool) {
+    let (_user_id, user) = user(&pool, "room-again@example.com").await;
+    let repo = repo(&pool);
+    for i in 0..100 {
+        repo.create_list(&user, Uuid::now_v7(), &name(&format!("List {i}")))
+            .await
+            .unwrap();
+    }
+    let lists = repo.list_summaries(&user).await.unwrap();
+    let first = lists[0].list.id().to_owned();
+    assert!(matches!(
+        repo.delete_list(&user, &first, 1, 0).await.unwrap(),
+        ListWrite::Applied(_)
+    ));
+    assert!(matches!(
+        repo.create_list(&user, Uuid::now_v7(), &name("Replacement"))
+            .await
+            .unwrap(),
+        ListWrite::Applied(_)
+    ));
+
+    let list = *lists[1].list.id().as_uuid();
+    let list_id = ListId::from_uuid(list);
+    seed_list_todos(&pool, list, 1000).await;
+    let todos = repo
+        .find_list(&user, &list_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .todos;
+    let last = todos.last().unwrap().id().to_owned();
+    assert!(matches!(
+        repo.delete_todo(&user, &list_id, &last, 1).await.unwrap(),
+        ListWrite::Applied(_)
+    ));
+    assert!(matches!(
+        repo.add_todo(&user, &list_id, Uuid::now_v7(), &title("room"))
+            .await
+            .unwrap(),
+        ListWrite::Applied(_)
+    ));
+}

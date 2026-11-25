@@ -1,5 +1,5 @@
-// Auth flows: what a Member does with a session. Todo flows go in a sibling
-// file (flows/todos.js) once todo endpoints exist, and scenarios mix them in.
+// Auth flows: what a Member does with a session. Todo list flows
+// are in flows/lists.js.
 import { USERS, TEST_PASSWORD, testEmail } from '../lib/config.js'
 
 /** Seeded Member for this VU, so each VU keeps its own session. */

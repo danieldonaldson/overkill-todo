@@ -105,16 +105,31 @@ describe('lists engine: order without a refetch', () => {
       await engine.loadLists()
       await engine.loadList(id)
       const intent = new Map<string, boolean>()
-      for (let step = 0; step < 25; step++) {
+      let lastName = 'Work'
+      for (let step = 0; step < 30; step++) {
         const todos = engine.snapshot().details[id].todos
         const roll = rng()
-        if (roll < 0.3 || todos.length === 0) {
+        if (roll < 0.25 || todos.length === 0) {
           engine.addTodo(id, `t-${step}`)
           intent.set(`t-${step}`, false)
-        } else if (roll < 0.85) {
+        } else if (roll < 0.5) {
           const todo = todos[Math.floor(rng() * todos.length)]
           engine.markTodo(id, todo, !todo.done)
           intent.set(todo.title, !todo.done)
+        } else if (roll < 0.65) {
+          const todo = todos[Math.floor(rng() * todos.length)]
+          const title = `r-${step}`
+          engine.renameTodo(id, todo, title)
+          intent.set(title, intent.get(todo.title) ?? todo.done)
+          intent.delete(todo.title)
+        } else if (roll < 0.78 && todos.length > 1) {
+          const todo = todos[Math.floor(rng() * todos.length)]
+          engine.deleteTodo(id, todo)
+          intent.delete(todo.title)
+        } else if (roll < 0.9) {
+          // Also back to a name already used: it must not be lost on the way.
+          lastName = step % 2 ? 'Work' : `L-${step}`
+          engine.renameList(id, lastName)
         } else {
           void engine.loadList(id)
           void engine.loadLists()
@@ -125,6 +140,11 @@ describe('lists engine: order without a refetch', () => {
       expect(notices, `seed ${seed}: no false conflict`).toEqual([])
       const stored = server.getList(id).todos
       expect(shape(engine.snapshot().details[id].todos), `seed ${seed}`).toEqual(shape(stored))
+      expect(
+        engine.snapshot().lists.find((list) => list.id === id)?.name,
+        `seed ${seed}: list name`
+      ).toBe(server.getList(id).list.name)
+      expect(server.getList(id).list.name, `seed ${seed}: last name`).toBe(lastName)
       for (const [title, done] of intent) {
         expect(stored.find((t) => t.title === title)?.done, `seed ${seed}: ${title}`).toBe(done)
       }

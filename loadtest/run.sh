@@ -76,6 +76,31 @@ SQL
   echo "load: cleared $cleared test-Member refresh tokens"
 fi
 
+# Same starting lists too (OT-013): none, or for lists-large one list of 1,000
+# todos for each Member the scenario uses.
+if [[ -z ${LOAD_BASE_URL:-} && $scenario == lists* ]]; then
+  "${compose[@]}" exec -T db psql -U overkill_todo -d overkill_todo -q -v ON_ERROR_STOP=1 <<'SQL' ||
+DELETE FROM lists WHERE user_id IN (SELECT id FROM users WHERE email LIKE 'test-load-%@example.test');
+SQL
+    die "couldn't clear the test Members' lists"
+  if [[ $scenario == lists-large ]]; then
+    "${compose[@]}" exec -T db psql -U overkill_todo -d overkill_todo -q -v ON_ERROR_STOP=1 <<'SQL' ||
+WITH l AS (
+  INSERT INTO lists (id, user_id, creation_key, name)
+  SELECT gen_random_uuid(), id, gen_random_uuid(), 'Load list of 1,000'
+  FROM users WHERE email IN (SELECT format('test-load-%s@example.test', n) FROM generate_series(0, 4) n)
+  RETURNING id
+)
+INSERT INTO todos (id, list_id, creation_key, title, position)
+SELECT gen_random_uuid(), l.id, gen_random_uuid(), 'Load todo ' || n, n * 1048576::bigint
+FROM l, generate_series(1, 1000) n;
+SQL
+      die "couldn't fill the test Members' lists"
+  fi
+  "${compose[@]}" exec -T db psql -U overkill_todo -d overkill_todo -qc 'VACUUM (ANALYZE) lists, todos' ||
+    die "couldn't vacuum the lists"
+fi
+
 commit=$(git rev-parse --short HEAD)
 git diff --quiet HEAD -- backend 2>/dev/null || commit+="-dirty"
 k6_env+=(-e "LOAD_META_COMMIT=$commit" -e "LOAD_META_K6_CPUSET=${LOAD_CPUSET_K6:-3,4,9,10}")

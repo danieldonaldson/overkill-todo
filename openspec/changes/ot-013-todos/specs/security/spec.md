@@ -45,3 +45,39 @@ todos. This SHALL be a numbered property in the threat model, with a check.
 #### Scenario: The property is checked
 - **WHEN** the check for this property is removed from the threat model's catalogue or renamed
 - **THEN** the full gate and CI fail, naming the property
+
+### Requirement: List guarantees are machine-checked on every change
+Each guarantee in the lists capability that concerns ordering, versions, limits,
+ownership or deletion SHALL be checked by the strongest method that fits it,
+over every input or interleaving within stated bounds:
+
+- a proof over every input within stated bounds for the pure ordering,
+  validation and version rules;
+- a model checked over every interleaving within stated bounds for the server
+  writes and for the client queue;
+- a conformance test that replays the model's traces through the real code.
+
+Each guarantee that cannot be checked formally SHALL name its test and state why
+no proof or model applies. These checks SHALL run in the full local gate and in
+CI. Each SHALL state its bounds and assumptions next to it. A change that breaks
+a guarantee SHALL fail the build with a concrete counterexample or trace.
+
+#### Scenario: Breaking a guarantee fails the gate
+- **WHEN** a change makes a list guarantee false for some input or interleaving within its bounds
+- **THEN** the full gate and CI fail, naming the guarantee and a counterexample or trace
+
+#### Scenario: A removed guard is noticed
+- **WHEN** a guard that enforces a modelled guarantee is removed
+- **THEN** the broken variant produces a counterexample, so the guarantee is not vacuously true
+
+#### Scenario: A model that drifts from the code fails replay
+- **WHEN** the code's behaviour for a modelled step changes but the model does not
+- **THEN** the conformance replay fails, naming the trace and step
+
+#### Scenario: Bounds and assumptions are visible
+- **WHEN** a reader looks at any proof, model or conformance replay
+- **THEN** the input or interleaving bounds and assumptions it covers are written next to it
+
+#### Scenario: A guarantee without a check
+- **WHEN** a list guarantee has no proof, model, conformance test, or stated reason that none applies
+- **THEN** `just formal-coverage` fails and names the guarantee

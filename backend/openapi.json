@@ -1733,6 +1733,261 @@
             "session_cookie": []
           }
         ]
+      },
+      "delete": {
+        "tags": [
+          "Lists"
+        ],
+        "summary": "Delete a list and its todos.\n# Errors\nReturns `list_not_found` for a missing or foreign list.",
+        "operationId": "delete_list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "List ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version the client saw",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "todo_count",
+            "in": "query",
+            "description": "Todo count the confirmation named",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "x-account-id",
+            "in": "header",
+            "description": "ID of the account the change was made for. If given, it must be the signed-in account's.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The list and its todos are gone"
+          },
+          "400": {
+            "description": "Missing version or todo count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "List not found (`list_not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The list changed or its count does",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaleListConflictResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Made for another account than the one signed in (`account_changed`); nothing was changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf_header": [],
+            "session_cookie": []
+          }
+        ]
+      },
+      "patch": {
+        "tags": [
+          "Lists"
+        ],
+        "summary": "Rename a list.\n# Errors\nReturns `list_not_found` for a missing or foreign list, or invalid input.",
+        "operationId": "rename_list",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "List ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "x-account-id",
+            "in": "header",
+            "description": "ID of the account the change was made for. If given, it must be the signed-in account's.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameListRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The list after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name, missing version or malformed body",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "List not found (`list_not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The list changed elsewhere",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaleListConflictResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Made for another account than the one signed in (`account_changed`); nothing was changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf_header": [],
+            "session_cookie": []
+          }
+        ]
       }
     },
     "/api/v1/lists/{id}/todos": {
@@ -1864,12 +2119,141 @@
       }
     },
     "/api/v1/lists/{id}/todos/{todo_id}": {
+      "delete": {
+        "tags": [
+          "Lists"
+        ],
+        "summary": "Delete a todo.\n# Errors\nReturns the 404 codes for a missing or foreign ID.",
+        "operationId": "delete_todo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "List ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "todo_id",
+            "in": "path",
+            "description": "Todo ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "Version the client saw",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "x-account-id",
+            "in": "header",
+            "description": "ID of the account the change was made for. If given, it must be the signed-in account's.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The todo is gone"
+          },
+          "400": {
+            "description": "Missing version",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "List or todo not found (`list_not_found` / `todo_not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The todo changed elsewhere",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaleTodoConflictResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Made for another account than the one signed in (`account_changed`); nothing was changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf_header": [],
+            "session_cookie": []
+          }
+        ]
+      },
       "patch": {
         "tags": [
           "Lists"
         ],
-        "summary": "Mark a todo done or not done.\n# Errors\nReturns the 404 codes for a missing or foreign ID.",
-        "operationId": "mark_todo",
+        "summary": "Rename a todo, or mark it done or not done.\n# Errors\nReturns the 404 codes for a missing or foreign ID, or invalid input.",
+        "operationId": "patch_todo",
         "parameters": [
           {
             "name": "id",
@@ -1923,7 +2307,7 @@
             }
           },
           "400": {
-            "description": "Missing version or malformed body",
+            "description": "Exactly one of title and done is required, with a version",
             "content": {
               "application/json": {
                 "schema": {
@@ -3717,6 +4101,27 @@
           "poor"
         ]
       },
+      "RenameListRequest": {
+        "type": "object",
+        "description": "Rename a list at the version the Member saw.",
+        "required": [
+          "version",
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "1–100 trimmed characters, one line.",
+            "example": "Job",
+            "pattern": "^[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000](?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])?[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*$"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Version the client saw; a change at another version is refused."
+          }
+        }
+      },
       "RequestDeletionRequest": {
         "type": "object",
         "description": "Request to delete account.",
@@ -3887,6 +4292,28 @@
           }
         }
       },
+      "StaleListConflictResponse": {
+        "type": "object",
+        "description": "A `409` for a list edit based on a version or count that has since changed.",
+        "required": [
+          "code",
+          "message",
+          "current"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Always `\"stale\"`."
+          },
+          "current": {
+            "$ref": "#/components/schemas/ListResponse",
+            "description": "The list as the server now holds it, with its current counts."
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "StaleTodoConflictResponse": {
         "type": "object",
         "description": "A `409` for an edit based on a version that has since changed.",
@@ -3908,6 +4335,28 @@
             "type": "string"
           }
         }
+      },
+      "TitleTodoPatch": {
+        "type": "object",
+        "description": "Rename a todo at the version the Member saw.",
+        "required": [
+          "version",
+          "title"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "1–500 trimmed characters, one line.",
+            "example": "Buy oat milk",
+            "pattern": "^[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000](?:[^\\u0000-\\u001F\\u007F\\u2028\\u2029]*[^\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000])?[\\u0009-\\u000D\\u0020\\u0085\\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000]*$"
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Version the client saw; a change at another version is refused."
+          }
+        },
+        "additionalProperties": false
       },
       "TodoExport": {
         "type": "object",
@@ -3948,9 +4397,12 @@
         "oneOf": [
           {
             "$ref": "#/components/schemas/DoneTodoPatch"
+          },
+          {
+            "$ref": "#/components/schemas/TitleTodoPatch"
           }
         ],
-        "description": "Change a todo. Exactly one of `title` and `done` will be accepted; slice 1\nsupports only `done`."
+        "description": "Change a todo: exactly one of `title` and `done`."
       },
       "TodoResponse": {
         "type": "object",

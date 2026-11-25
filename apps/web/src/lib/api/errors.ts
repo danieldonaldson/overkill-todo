@@ -13,8 +13,10 @@ import type { components } from './schema'
 type Schemas = components['schemas']
 
 export type ApiError = Partial<Schemas['ErrorResponse']> &
-  Partial<Schemas['VerificationErrorResponse']> &
-  Partial<Pick<Schemas['StaleTodoConflictResponse'], 'current'>>
+  Partial<Schemas['VerificationErrorResponse']> & {
+    /** The current row a `stale` conflict carries (a todo or a list). */
+    current?: Schemas['TodoResponse'] | Schemas['ListResponse']
+  }
 
 /**
  * Narrow an unknown thrown value to an {@link ApiError}-shaped object.

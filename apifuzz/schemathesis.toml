@@ -107,6 +107,11 @@ include-method = "POST"
 checks.positive_data_acceptance.enabled = false
 
 [[operations]]
+include-path = "/api/v1/lists/{id}"
+include-method = "PATCH"
+checks.positive_data_acceptance.enabled = false
+
+[[operations]]
 include-path = "/api/v1/lists/{id}/todos"
 include-method = "POST"
 checks.positive_data_acceptance.enabled = false

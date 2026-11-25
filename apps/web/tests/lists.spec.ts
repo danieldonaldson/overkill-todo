@@ -24,7 +24,17 @@ interface State {
   lists: List[]
   todos: Record<string, Todo[]>
   failAdds: number
+  /** Answer the next renames with this status instead of saving. */
+  failRenames?: number
+  /** Hold each rename until this resolves. */
+  holdRenames?: Promise<void>
+  /** Apply the next rename, then drop its answer. */
+  loseNextRename?: boolean
   delay: Record<string, number>
+  /** Hold each mark until this resolves. */
+  holdMarks?: Promise<void>
+  /** Answer marks with this status instead of saving. */
+  failMarks?: number
 }
 
 function mockLists(page: Page, state: State) {
@@ -34,12 +44,18 @@ function mockLists(page: Page, state: State) {
       open_count: state.todos[list.id]?.filter((todo) => !todo.done).length ?? 0,
       todo_count: state.todos[list.id]?.length ?? 0,
     }))
+  const currentList = (id: string) => lists().find((candidate) => candidate.id === id)
 
   page.route('**/api/v1/**', async (route) => {
     const request = route.request()
     const path = new URL(request.url()).pathname.replace(/^\/api\/v1/, '')
+    const query = new URL(request.url()).searchParams
     const method = request.method()
     if (path === '/auth/me') return route.fulfill({ json: TEST_USER })
+    if (path === '/auth/refresh') {
+      if (state.failMarks === 401) return route.fulfill({ status: 401, json: {} })
+      return route.fulfill({ json: { expires_at: Math.floor(Date.now() / 1000) + 3600 } })
+    }
     if (path === '/lists' && method === 'GET') return route.fulfill({ json: lists() })
     if (path === '/lists' && method === 'POST') {
       const body = request.postDataJSON() as { name: string }
@@ -50,17 +66,74 @@ function mockLists(page: Page, state: State) {
     }
 
     const detail = path.match(/^\/lists\/([^/]+)$/)
-    if (detail && method === 'GET') {
+    if (detail) {
       const id = detail[1]
-      await new Promise((resolve) => setTimeout(resolve, state.delay[id] ?? 0))
-      const list = lists().find((candidate) => candidate.id === id)
-      if (!list) {
-        return route.fulfill({
-          status: 404,
-          json: { code: 'list_not_found', message: 'Not found' },
-        })
+      if (method === 'GET') {
+        await new Promise((resolve) => setTimeout(resolve, state.delay[id] ?? 0))
+        const list = currentList(id)
+        if (!list) {
+          return route.fulfill({
+            status: 404,
+            json: { code: 'list_not_found', message: 'Not found' },
+          })
+        }
+        return route.fulfill({ json: { list, todos: state.todos[id] ?? [] } })
       }
-      return route.fulfill({ json: { list, todos: state.todos[id] ?? [] } })
+      if (method === 'PATCH') {
+        const body = request.postDataJSON() as { version: number; name: string }
+        await state.holdRenames
+        if (state.failRenames) {
+          state.failRenames -= 1
+          return route.fulfill({
+            status: 500,
+            json: { code: 'internal_error', message: 'Something went wrong' },
+          })
+        }
+        const stored = state.lists.find((candidate) => candidate.id === id)
+        if (!stored) {
+          return route.fulfill({
+            status: 404,
+            json: { code: 'list_not_found', message: 'Not found' },
+          })
+        }
+        if (stored.name !== body.name && stored.version !== body.version) {
+          return route.fulfill({
+            status: 409,
+            json: {
+              code: 'stale',
+              message: 'This list changed elsewhere',
+              current: currentList(id),
+            },
+          })
+        }
+        if (stored.name !== body.name) {
+          stored.name = body.name
+          stored.version += 1
+        }
+        return route.fulfill({ json: currentList(id) })
+      }
+      if (method === 'DELETE') {
+        const list = currentList(id)
+        if (!list) {
+          return route.fulfill({
+            status: 404,
+            json: { code: 'list_not_found', message: 'Not found' },
+          })
+        }
+        const todoCount = state.todos[id]?.length ?? 0
+        if (
+          list.version !== Number(query.get('version')) ||
+          todoCount !== Number(query.get('todo_count'))
+        ) {
+          return route.fulfill({
+            status: 409,
+            json: { code: 'stale', message: 'This list changed elsewhere', current: list },
+          })
+        }
+        state.lists = state.lists.filter((candidate) => candidate.id !== id)
+        delete state.todos[id]
+        return route.fulfill({ status: 204 })
+      }
     }
 
     const add = path.match(/^\/lists\/([^/]+)\/todos$/)
@@ -85,14 +158,72 @@ function mockLists(page: Page, state: State) {
       return route.fulfill({ json: todo })
     }
 
-    const mark = path.match(/^\/lists\/([^/]+)\/todos\/([^/]+)$/)
-    if (mark && method === 'PATCH') {
-      const body = request.postDataJSON() as { version: number; done: boolean }
-      const todo = state.todos[mark[1]]!.find((candidate) => candidate.id === mark[2])!
-      todo.done = body.done
-      todo.version += 1
-      todo.completed_at = body.done ? '2026-11-25T10:05:00Z' : null
-      return route.fulfill({ json: todo })
+    const todoPath = path.match(/^\/lists\/([^/]+)\/todos\/([^/]+)$/)
+    if (todoPath) {
+      const todo = state.todos[todoPath[1]]!.find((candidate) => candidate.id === todoPath[2])
+      if (method === 'PATCH') {
+        const body = request.postDataJSON() as {
+          version: number
+          done?: boolean
+          title?: string
+        }
+        const renaming = body.title !== undefined
+        await (renaming ? state.holdRenames : state.holdMarks)
+        if (renaming && state.failRenames) {
+          state.failRenames -= 1
+          return route.fulfill({
+            status: 500,
+            json: { code: 'internal_error', message: 'Something went wrong' },
+          })
+        }
+        if (!renaming && state.failMarks) {
+          const status = state.failMarks
+          return route.fulfill({ status, json: { code: 'failed', message: 'Failed' } })
+        }
+        if (!todo) {
+          return route.fulfill({
+            status: 404,
+            json: { code: 'todo_not_found', message: 'Not found' },
+          })
+        }
+        if (renaming ? todo.title !== body.title : todo.done !== body.done) {
+          if (todo.version !== body.version) {
+            return route.fulfill({
+              status: 409,
+              json: { code: 'stale', message: 'This todo changed elsewhere', current: todo },
+            })
+          }
+          if (renaming) todo.title = body.title!
+          else {
+            todo.done = body.done!
+            todo.completed_at = body.done ? '2026-11-25T10:05:00Z' : null
+          }
+          todo.version += 1
+          if (renaming && state.loseNextRename) {
+            state.loseNextRename = false
+            return route.abort('connectionreset')
+          }
+        }
+        return route.fulfill({ json: todo })
+      }
+      if (method === 'DELETE') {
+        if (!todo) {
+          return route.fulfill({
+            status: 404,
+            json: { code: 'todo_not_found', message: 'Not found' },
+          })
+        }
+        if (todo.version !== Number(query.get('version'))) {
+          return route.fulfill({
+            status: 409,
+            json: { code: 'stale', message: 'This todo changed elsewhere', current: todo },
+          })
+        }
+        state.todos[todoPath[1]] = state.todos[todoPath[1]]!.filter(
+          (candidate) => candidate.id !== todoPath[2]
+        )
+        return route.fulfill({ status: 204 })
+      }
     }
 
     return route.fulfill({ status: 404, json: { code: 'not_found', message: 'Not found' } })
@@ -158,4 +289,228 @@ test('a slow answer for the previous list cannot replace the one now open', asyn
   await page.waitForTimeout(800)
   await expect(page.getByRole('heading', { name: 'Beta' })).toBeVisible()
   expect(new URL(page.url()).pathname).toBe(`/dashboard/lists/${LIST_B}`)
+})
+
+function oneTodo(): State {
+  const state = freshState()
+  state.lists = [{ id: LIST_A, name: 'Alpha', version: 1 }]
+  state.todos[LIST_A] = [
+    {
+      id: '8a1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e',
+      title: 'Buy milk',
+      done: false,
+      version: 1,
+      created_at: '2026-11-25T10:00:00Z',
+      completed_at: null,
+    },
+  ]
+  return state
+}
+
+const tick = (page: Page) =>
+  page.getByRole('checkbox', { name: 'Mark "Buy milk" done', exact: true }).click()
+
+test('Lists opens from the navigation without rebuilding the header', async ({ page }) => {
+  await seedSession(page)
+  mockLists(page, oneTodo())
+  await page.goto('/dashboard')
+  const header = page.locator('header')
+  await header.evaluate((element) => element.setAttribute('data-same', 'yes'))
+  await page.getByRole('link', { name: 'Lists' }).click()
+  await expect(page).toHaveURL(/\/dashboard\/lists\/?$/)
+  await expect(page.getByRole('button', { name: /^Alpha/ })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Lists' })).toHaveAttribute('aria-current', 'page')
+  await expect(header).toHaveAttribute('data-same', 'yes')
+
+  await page.getByRole('button', { name: /^Alpha/ }).click()
+  await expect(page.getByText('Buy milk')).toBeVisible()
+  await page.goBack()
+  await expect(page.getByText('Select a list to see its todos.')).toBeVisible()
+  await expect(header).toHaveAttribute('data-same', 'yes')
+})
+
+test('a save goes on after moving to Settings, and says so if it fails', async ({ page }) => {
+  await seedSession(page)
+  const state = oneTodo()
+  const hold = Promise.withResolvers<void>()
+  state.holdMarks = hold.promise
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await tick(page)
+  await expect(page.getByRole('button', { name: /Completed \(1\)/ })).toBeVisible()
+
+  let asked = false
+  page.on('dialog', (dialog) => {
+    asked = true
+    void dialog.dismiss()
+  })
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible()
+  expect(asked).toBe(false)
+
+  state.failMarks = 400
+  hold.resolve()
+  await expect(page.getByText('Failed')).toBeVisible()
+  await page.getByRole('link', { name: 'Lists' }).click()
+  await page.getByRole('button', { name: /^Alpha/ }).click()
+  await expect(page.getByRole('checkbox', { name: 'Mark "Buy milk" done' })).not.toBeChecked()
+})
+
+test('closing the tab asks only while a change is unsaved', async ({ page }) => {
+  await seedSession(page)
+  const state = oneTodo()
+  const hold = Promise.withResolvers<void>()
+  state.holdMarks = hold.promise
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await tick(page)
+  await expect(page.getByRole('button', { name: /Completed \(1\)/ })).toBeVisible()
+
+  const dialog = page.waitForEvent('dialog')
+  await page.close({ runBeforeUnload: true })
+  const asked = await dialog
+  expect(asked.type()).toBe('beforeunload')
+  await asked.dismiss()
+
+  // Saved: leaving asks nothing.
+  const saved = page.waitForResponse((response) => response.request().method() === 'PATCH')
+  hold.resolve()
+  await saved
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const event = new Event('beforeunload', { cancelable: true })
+        window.dispatchEvent(event)
+        return event.defaultPrevented
+      })
+    )
+    .toBe(false)
+})
+
+test('a session that ends while saving goes to sign-in without asking', async ({ page }) => {
+  await seedSession(page)
+  const state = oneTodo()
+  const hold = Promise.withResolvers<void>()
+  state.holdMarks = hold.promise
+  state.failMarks = 401
+  mockLists(page, state)
+  let asked = false
+  page.on('dialog', (dialog) => {
+    asked = true
+    void dialog.accept()
+  })
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  // A second change still waiting behind the first.
+  await page.getByLabel('New todo title').fill('Waiting')
+  await tick(page)
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  hold.resolve()
+  await expect(page).toHaveURL(/\/login\?session=expired/)
+  expect(asked).toBe(false)
+  expect(state.todos[LIST_A]![0]!.done).toBe(false)
+  expect(state.todos[LIST_A]).toHaveLength(1)
+})
+
+test('a crashed list panel leaves the header and navigation working', async ({ page }) => {
+  await seedSession(page)
+  mockLists(page, oneTodo())
+  await page.addInitScript(() => {
+    ;(globalThis as { __otCrashIsland?: string }).__otCrashIsland = 'ListsPanel'
+  })
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible()
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible()
+})
+
+test('nothing scrolls sideways at 360 px', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 })
+  await seedSession(page, { cachedUser: { ...TEST_USER, role: 'super_admin' } })
+  const state = oneTodo()
+  state.lists[0]!.name = 'x'.repeat(100)
+  state.todos[LIST_A]![0]!.title = 'y'.repeat(500)
+  mockLists(page, state)
+  const overflow = () =>
+    page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+  await page.goto('/dashboard/lists')
+  await expect(page.getByText('Select a list to see its todos.')).toBeVisible()
+  expect(await overflow()).toBeLessThanOrEqual(0)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await expect(page.getByRole('checkbox')).toBeVisible()
+  expect(await overflow()).toBeLessThanOrEqual(0)
+})
+
+test('renames and deletes a todo, renames the list, and deletes it', async ({ page }) => {
+  await seedSession(page)
+  const state = oneTodo()
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  const todos = page.getByRole('list', { name: 'Todos' })
+  await expect(todos.getByText('Buy milk')).toBeVisible()
+
+  await todos.getByRole('button', { name: 'Rename' }).click()
+  await page.getByLabel('Todo title', { exact: true }).fill('Buy oat milk')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(todos.getByText('Buy oat milk')).toBeVisible()
+
+  await todos.getByRole('button', { name: 'Delete' }).click()
+  await expect(todos.getByText('Buy oat milk')).toHaveCount(0)
+  await expect(page.getByText('No todos yet. Add your first one.')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Rename' }).first().click()
+  await page.getByLabel('List name', { exact: true }).fill('Weekend')
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('heading', { name: 'Weekend' })).toBeVisible()
+
+  await page.getByRole('button', { name: 'Delete list' }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toContainText('Delete "Weekend"?')
+  await expect(dialog).toContainText('It holds 0 todos')
+  await dialog.getByRole('button', { name: 'Delete list' }).click()
+  await expect(page).toHaveURL(/\/dashboard\/lists$/)
+  await expect(page.getByText('No lists yet.', { exact: false })).toBeVisible()
+})
+
+test('a failed rename keeps the old title and offers the new one again', async ({ page }) => {
+  await seedSession(page)
+  const state = oneTodo()
+  state.failRenames = 2
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  const todos = page.getByRole('list', { name: 'Todos' })
+
+  await todos.getByRole('button', { name: 'Rename' }).click()
+  await page.getByLabel('Todo title', { exact: true }).fill('Never saved')
+  await page.getByRole('button', { name: 'Save' }).click()
+
+  await expect(page.getByText(/Couldn't save your change/)).toBeVisible()
+  await expect(todos.getByText('Buy milk')).toBeVisible()
+  const notSaved = page.getByRole('list', { name: 'Not saved' })
+  await expect(notSaved.getByText('Never saved')).toBeVisible()
+  expect(state.todos[LIST_A]![0]!.title).toBe('Buy milk')
+
+  await notSaved.getByRole('button', { name: 'Try again' }).click()
+  await expect(todos.getByText('Never saved')).toBeVisible()
+})
+
+test('a lost rename answer does not rename twice or show a failure', async ({ page }) => {
+  await seedSession(page)
+  const state = oneTodo()
+  state.loseNextRename = true
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  const todos = page.getByRole('list', { name: 'Todos' })
+
+  await todos.getByRole('button', { name: 'Rename' }).click()
+  await page.getByLabel('Todo title', { exact: true }).fill('Answer lost')
+  await page.getByRole('button', { name: 'Save' }).click()
+
+  await expect(todos.getByText('Answer lost')).toBeVisible()
+  await expect(page.getByText(/Couldn't save your change/)).toHaveCount(0)
+  // The first attempt applied the rename before its answer was lost.
+  await expect.poll(() => state.todos[LIST_A]![0]!.title).toBe('Answer lost')
+  await page.reload()
+  await expect(todos.getByText('Answer lost')).toHaveCount(1)
+  expect(state.todos[LIST_A]![0]!.title).toBe('Answer lost')
+  expect(state.todos[LIST_A]![0]!.version).toBe(2)
 })

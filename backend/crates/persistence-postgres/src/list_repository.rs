@@ -405,6 +405,176 @@ impl ListRepository for PostgresListRepository {
         Ok(ListWrite::Applied(Self::row_to_todo(&row)?))
     }
 
+    #[tracing::instrument(name = "repo.list.rename_list", skip_all, fields(db.system = "postgresql", user_id = %user_id, list_id = %list_id))]
+    async fn rename_list(
+        &self,
+        user_id: &UserId,
+        list_id: &ListId,
+        version: i64,
+        name: &ListName,
+    ) -> Result<ListWrite<ListSummary>, DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+        if !Self::lock_list(&mut tx, user_id, list_id).await? {
+            tx.rollback().await.map_err(persist_err)?;
+            return Ok(ListWrite::ListNotFound);
+        }
+
+        let current = Self::list_summary_on(&mut tx, user_id, list_id).await?;
+        // The same name already stored succeeds without changing the version
+        // (design D1), whatever version the client claimed.
+        if current.list.name().as_str() == name.as_str() {
+            tx.commit().await.map_err(persist_err)?;
+            return Ok(ListWrite::Repeated(current));
+        }
+        if current.list.version() != version {
+            tx.commit().await.map_err(persist_err)?;
+            return Ok(ListWrite::Stale(current));
+        }
+
+        let row = sqlx::query_as!(
+            ListRow,
+            r#"
+            UPDATE lists
+            SET name = $3, version = version + 1
+            WHERE id = $1 AND user_id = $2
+            RETURNING id, user_id, name, version, created_at
+            "#,
+            list_id.as_uuid(),
+            user_id.as_uuid(),
+            name.as_str(),
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+        tx.commit().await.map_err(persist_err)?;
+        Ok(ListWrite::Applied(ListSummary {
+            list: Self::row_to_list(&row)?,
+            open_count: current.open_count,
+            todo_count: current.todo_count,
+        }))
+    }
+
+    #[tracing::instrument(name = "repo.list.delete_list", skip_all, fields(db.system = "postgresql", user_id = %user_id, list_id = %list_id))]
+    async fn delete_list(
+        &self,
+        user_id: &UserId,
+        list_id: &ListId,
+        version: i64,
+        todo_count: i64,
+    ) -> Result<ListWrite<ListSummary>, DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+        if !Self::lock_list(&mut tx, user_id, list_id).await? {
+            tx.rollback().await.map_err(persist_err)?;
+            return Ok(ListWrite::ListNotFound);
+        }
+
+        let current = Self::list_summary_on(&mut tx, user_id, list_id).await?;
+        // Under the lock, so an add between the confirmation and the delete is
+        // seen as a changed count and deletes nothing (spec: confirm again).
+        if current.list.version() != version || current.todo_count != todo_count {
+            tx.commit().await.map_err(persist_err)?;
+            return Ok(ListWrite::Stale(current));
+        }
+
+        sqlx::query!(
+            "DELETE FROM lists WHERE id = $1 AND user_id = $2",
+            list_id.as_uuid(),
+            user_id.as_uuid(),
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+        tx.commit().await.map_err(persist_err)?;
+        Ok(ListWrite::Applied(current))
+    }
+
+    #[tracing::instrument(name = "repo.list.rename_todo", skip_all, fields(db.system = "postgresql", user_id = %user_id, list_id = %list_id, todo_id = %todo_id))]
+    async fn rename_todo(
+        &self,
+        user_id: &UserId,
+        list_id: &ListId,
+        todo_id: &TodoId,
+        version: i64,
+        title: &TodoTitle,
+    ) -> Result<ListWrite<Todo>, DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+        if !Self::lock_list(&mut tx, user_id, list_id).await? {
+            tx.rollback().await.map_err(persist_err)?;
+            return Ok(ListWrite::ListNotFound);
+        }
+
+        let Some(row) = Self::todo_row(&mut tx, list_id, todo_id).await? else {
+            tx.rollback().await.map_err(persist_err)?;
+            return Ok(ListWrite::TodoNotFound);
+        };
+        let current = Self::row_to_todo(&row)?;
+
+        // Asking for the title already stored succeeds without changing the
+        // version, whatever version the client claimed (design D1).
+        if current.title().as_str() == title.as_str() {
+            tx.commit().await.map_err(persist_err)?;
+            return Ok(ListWrite::Repeated(current));
+        }
+        if i64::from(row.version) != version {
+            tx.commit().await.map_err(persist_err)?;
+            return Ok(ListWrite::Stale(current));
+        }
+
+        let updated = sqlx::query_as!(
+            TodoRow,
+            r#"
+            UPDATE todos
+            SET title = $3, version = version + 1
+            WHERE id = $1 AND list_id = $2
+            RETURNING id, list_id, title, version, position, completed_at, created_at
+            "#,
+            todo_id.as_uuid(),
+            list_id.as_uuid(),
+            title.as_str(),
+        )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+        tx.commit().await.map_err(persist_err)?;
+        Ok(ListWrite::Applied(Self::row_to_todo(&updated)?))
+    }
+
+    #[tracing::instrument(name = "repo.list.delete_todo", skip_all, fields(db.system = "postgresql", user_id = %user_id, list_id = %list_id, todo_id = %todo_id))]
+    async fn delete_todo(
+        &self,
+        user_id: &UserId,
+        list_id: &ListId,
+        todo_id: &TodoId,
+        version: i64,
+    ) -> Result<ListWrite<Todo>, DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+        if !Self::lock_list(&mut tx, user_id, list_id).await? {
+            tx.rollback().await.map_err(persist_err)?;
+            return Ok(ListWrite::ListNotFound);
+        }
+
+        let Some(row) = Self::todo_row(&mut tx, list_id, todo_id).await? else {
+            tx.rollback().await.map_err(persist_err)?;
+            return Ok(ListWrite::TodoNotFound);
+        };
+        let current = Self::row_to_todo(&row)?;
+        if i64::from(row.version) != version {
+            tx.commit().await.map_err(persist_err)?;
+            return Ok(ListWrite::Stale(current));
+        }
+
+        sqlx::query!(
+            "DELETE FROM todos WHERE id = $1 AND list_id = $2",
+            todo_id.as_uuid(),
+            list_id.as_uuid(),
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(persist_err)?;
+        tx.commit().await.map_err(persist_err)?;
+        Ok(ListWrite::Applied(current))
+    }
+
     #[tracing::instrument(name = "repo.list.mark_todo", skip_all, fields(db.system = "postgresql", user_id = %user_id, list_id = %list_id, todo_id = %todo_id))]
     async fn mark_todo(
         &self,

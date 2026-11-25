@@ -25,11 +25,15 @@ approach:
   another person.
 - Every list write is authorised, limited and ordered under one lock.
 - A save can be repeated safely, so a lost answer never needs a guess.
+- Every list guarantee names the strongest check that fits it, and a gate fails
+  when one is missing or has drifted.
 
 **Non-Goals:**
 - Merging fields, offline queues or CRDTs. A conflict is shown, not merged.
 - Deciding how sharing grants access. D3 keeps ownership in one place for it.
 - Virtualised rendering. A list holds at most 1,000 todos.
+- Proving rendering, layout, CSS, SQL text, HTTP wiring or third-party code;
+  those guarantees name their tests and why no proof or model applies.
 
 ## Hypothesis
 
@@ -257,12 +261,17 @@ confirmed state, so undoing a failed save is removing it from the queue.
   the account last confirmed in any tab (an ID in `localStorage`) is this tab's.
   If not, `/auth/me` decides first; the screen doesn't wait. Another account
   clears the store. A switch while a request is already on its way isn't caught.
-- **Session ended:** when the client has already redirected, the save isn't
-  repeated and no message is shown.
+- **Session ended:** the client tells the store before it redirects
+  (`sessionEnded()` in `lib/api/account-changed.ts`), which drops the queue, so
+  leaving for the sign-in page doesn't ask to confirm. The save isn't repeated
+  and no message is shown.
 - **Versions:** an operation stores the version on screen when the Member
   acted. When a save moves a todo from version n to n + 1, later queued
   operations on that todo at n move to n + 1. Nothing else changes a stored
   version: not a refetch, and not a success whose version isn't n + 1.
+- **Renames** take their version when the form opens, not when it is saved: the
+  form hides what a load brings in meanwhile. Until submitted, a started rename
+  follows this tab's own saves like a queued edit, and nothing else.
 - **409 or 404:** the operation and later queued ones on the same item are
   dropped, the current version is shown (or the item removed), and the Member
   sees one message. Dropped text stays available to submit again: it goes back
@@ -277,7 +286,8 @@ confirmed state, so undoing a failed save is removing it from the queue.
 - **List deletion** waits for the server, because it is permanent.
 - **Out-of-order loads:** an answer is applied only to the list it names.
 - **Leaving:** the store survives in-site moves. `beforeunload` asks to confirm
-  while the queue isn't empty. The store is in memory only, and is cleared on
+  while the queue isn't empty; it is listened for only then, since a permanent
+  listener keeps the page out of the back/forward cache. The store is in memory only, and is cleared on
   sign-out and when the account changes, also when the background `/auth/me`
   check is what finds the other account; open panels then load again.
 - **Messages** use the sonner toaster, mounted in the persisted header, so a
@@ -347,7 +357,8 @@ UUID shows "list not found" without a request.
   200 MB, too much to build in memory on any deploy, so from slice 1 the body is
   streamed one list at a time. Each list is consistent in itself; the export as
   a whole isn't one snapshot. A failure part-way aborts the response, so the
-  browser reports a failed download rather than saving a partial file. The
+  browser reports a failed download rather than saving a partial file. A list
+  deleted since the export started is left out, not a failure. The
   audit event is recorded before the first byte.
 
 ### D11. No feature flag
@@ -363,8 +374,44 @@ that try every list operation as another Member, an Admin, a Super Admin, an
 unverified Member and a Visitor, comparing each 404 with that of an unknown ID.
 The existing route-guard walk covers the Visitor case for future routes.
 
+### D13. Formal coverage of lists (domain, persistence-postgres, web)
+
+- **Scope:** every OT-013 guarantee is classified as a proof, a model with
+  conformance replay, or a test with a written reason no proof applies.
+  "Everything" means every guarantee, not every line of UI, SQL text or
+  third-party code.
+- **Domain proofs (Kani):** pure ordering and validation rules over integer
+  inputs, following the auth proofs' bounds. The midpoint and renumbering
+  functions arrive in slice 4. Kani can't get through `jiff`, so time is an
+  argument or a generic integer, never a `Timestamp`.
+- **Server model (Quint):** `list_writes.qnt` models two Members, two lists and
+  three todos; one step per repository statement or transaction under the list
+  lock. Apalache checks 8 steps; 10k random traces check deeper runs. Broken
+  modules remove each guard and must break an invariant.
+- **Client model (Quint):** `list_client.qnt` models D7's confirmed state,
+  queue and versions for two clients. Traces replay through the real
+  `ListsEngine` and memory server, so a model that drifts from the engine fails.
+- **Coverage gate:** `docs/formal-coverage.yaml` names the check for every
+  requirement and P-35. `just formal-coverage` fails on a missing or renamed
+  check, and runs in `just ci`.
+- **Not formalized:** rendering, layout, CSS, SQL text, HTTP wiring, telemetry
+  content filtering and third-party behaviour. Their requirements state their
+  tests and why a proof or model does not apply.
+
 ## Risks / Trade-offs
 
+- [A formal check drifts from the code it describes] → Every model step is
+  replayed through the real repository or engine, and `just formal-coverage`
+  fails when a named check disappears. Update the model and replay in the same
+  commit as the code.
+- [Kani or Quint runtime grows past the gate] → Proofs stay on integer-time
+  cores, models keep stated bounds, and each runs as its own CI job. Record
+  runtimes.
+- [The client model freezes the wrong behaviour] → Freeze D7 after the review,
+  model only the public engine API, and prove each invariant can fail before
+  trusting it.
+- [The coverage gate becomes a vacuous checklist] → Every guarded invariant
+  names a broken variant that must produce a counterexample.
 - [Repeating a lost add after the todo was deleted in another tab recreates it]
   → Only within the single immediate repeat; the Member can delete it again.
 - [A request the browser gave up on is applied after the refetch] → The next
@@ -374,7 +421,20 @@ The existing route-guard walk covers the Visitor case for future routes.
 - [One queue per tab means a slow save delays the rest] → Requests are small,
   and the timeout and single repeat bound it at about 30 seconds.
 - [A list write lock serialises a shared list's editors later] → Transactions
-  are a few short statements. Measured in slice 2 with a load scenario.
+  are a few short statements. Measured in slice 2 (2026-11-25, capped stack,
+  10 iterations/s for 3 minutes, worst of 5 runs of each scenario, no errors):
+  p95 / p99 in ms.
+  - `lists`: GET lists 1.44 / 1.92, POST list 3.58 / 7.26, GET list 1.19 / 1.75,
+    POST todo 2.82 / 7.31, PATCH todo 2.55 / 6.56.
+  - `lists-large` (five lists of 1,000 todos, each open in several tabs): GET
+    list 4.12 / 5.11, PATCH todo 7.29 / 7.80. All budgets are at their floors of
+    25 / 50.
+- [The largest export exhausts memory] → Streamed (D10). Measured in slice 2,
+  100 lists of 1,000 todos with 500-character titles, always complete:
+  62.5 MB in 0.5 s with ASCII titles, and 212.5 MB in 1.0 s with four-byte
+  characters. In the four-byte case backend memory peaked at 155 MiB since
+  start, sign-in included, under the 1 GB cap, also with a reader that took
+  131 s.
 - [1,000 rows make drag or keyboard moves slow] → `content-visibility: auto`,
   and an Interaction to Next Paint check on a full list in the ordering slice.
 - [Touch scrolling starts a drag] → Only a drag handle starts one, with
@@ -399,5 +459,6 @@ second page-view beacon that D9's rewrite does not cover.
 
 ## Open Questions
 
-- Whether a Quint model of D7 is worth adding. The random test covers the same
-  interleavings; decide before sharing, when more than one person edits.
+- Whether the client replay reads ITF directly or generated JSON fixtures.
+  Either keeps the model as the source; decide in slice 8 by what the web test
+  runner can load reliably.

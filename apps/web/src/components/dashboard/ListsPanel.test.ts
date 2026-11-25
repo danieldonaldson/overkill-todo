@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render } from 'vitest-browser-svelte'
+import { page, userEvent } from 'vitest/browser'
 import ListsPanel from './ListsPanel.svelte'
 
 const toastError = vi.hoisted(() => vi.fn())
@@ -11,9 +12,13 @@ vi.mock('../../lib/api', () => ({
     lists: {
       list: vi.fn(),
       create: vi.fn(),
+      rename: vi.fn(),
+      deleteList: vi.fn(),
       get: vi.fn(),
       addTodo: vi.fn(),
       markTodo: vi.fn(),
+      renameTodo: vi.fn(),
+      deleteTodo: vi.fn(),
     },
   },
 }))
@@ -33,7 +38,7 @@ vi.mock('../../lib/telemetry/island-timing', async (importOriginal) => {
   }
 })
 
-import { ApiErrorException } from '../../lib/api/errors'
+import { ApiErrorException, SessionEndedError } from '../../lib/api/errors'
 import { api } from '../../lib/api'
 import { lists } from '../../lib/lists/store.svelte'
 import { navigate } from '../../lib/navigation'
@@ -77,6 +82,13 @@ function typeInto(locator: { element(): HTMLElement | SVGElement }, value: strin
 function mockLoaded(todos: Todo[] = [], summary = list()) {
   vi.mocked(api.lists.list).mockResolvedValue([summary])
   vi.mocked(api.lists.get).mockResolvedValue(detail(todos, summary))
+}
+
+/** Whether closing or reloading the tab now would ask to confirm. */
+function leavingAsks(): boolean {
+  const event = new Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(event)
+  return event.defaultPrevented
 }
 
 beforeEach(() => {
@@ -426,5 +438,300 @@ describe('ListsPanel', () => {
     expect(markReady).not.toHaveBeenCalled()
     answer.resolve(detail([]))
     await vi.waitFor(() => expect(markReady).toHaveBeenCalled())
+  })
+
+  it('contains a crash to the panel and rebuilds it on Try again', async () => {
+    mockLoaded([todo()])
+    const hook = globalThis as { __otCrashIsland?: string }
+    hook.__otCrashIsland = 'ListsPanel'
+    try {
+      const screen = await render(ListsPanel)
+      const again = screen.getByRole('button', { name: 'Try again' })
+      await expect.element(again).toBeInTheDocument()
+      expect(screen.getByText('Deliberate', { exact: false }).elements()).toHaveLength(0)
+      delete hook.__otCrashIsland
+      await again.click()
+      await expect.element(screen.getByText('Buy milk')).toBeInTheDocument()
+    } finally {
+      delete hook.__otCrashIsland
+    }
+  })
+
+  it('keeps the picker usable when only the todos fail to load', async () => {
+    vi.mocked(api.lists.list).mockResolvedValue([list(), list({ id: OTHER_ID, name: 'Home' })])
+    vi.mocked(api.lists.get).mockRejectedValue(new ApiErrorException(null, { status: 500 }))
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText("Couldn't load this list.")).toBeInTheDocument()
+    expect(screen.getByText("Couldn't load your lists.").elements()).toHaveLength(0)
+    expect(screen.getByText('List not found').elements()).toHaveLength(0)
+    expect(screen.getByText('No todos yet', { exact: false }).elements()).toHaveLength(0)
+    await screen.getByRole('button', { name: /Home/ }).click()
+    expect(navigate).toHaveBeenCalledWith(`/dashboard/lists/${OTHER_ID}`)
+  })
+
+  it('does not show a change as saved when the session ends, and asks nothing on leaving', async () => {
+    mockLoaded([todo()])
+    vi.mocked(api.lists.markTodo).mockRejectedValue(new SessionEndedError('Session expired'))
+    const screen = await render(ListsPanel)
+    await screen.getByRole('checkbox', { name: 'Mark "Buy milk" done' }).click()
+    await vi.waitFor(() => expect(lists.snapshot.queueLength).toBe(0))
+    expect(toastError).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Completed/ }).elements()).toHaveLength(0)
+    expect(leavingAsks()).toBe(false)
+  })
+
+  it('reports a save that fails after the Member moved away', async () => {
+    mockLoaded([])
+    const answer = Promise.withResolvers<Todo>()
+    vi.mocked(api.lists.addTodo).mockReturnValue(answer.promise)
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByRole('heading', { name: 'Work' })).toBeInTheDocument()
+    lists.addTodo(LIST_ID, 'Left behind')
+    await screen.unmount()
+    answer.reject(new ApiErrorException(null, { status: 400, message: 'refused' }))
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalledTimes(1))
+
+    // Back on the list, the text can be submitted again.
+    const back = await render(ListsPanel)
+    await expect.element(back.getByPlaceholder('Add a todo...')).toHaveValue('Left behind')
+  })
+
+  it('renames a todo in place and cancels with Escape', async () => {
+    mockLoaded([todo({ id: 'todo-1', title: 'Buy milk' })])
+    vi.mocked(api.lists.renameTodo).mockResolvedValue(
+      todo({ id: 'todo-1', title: 'Buy oat milk', version: 2 })
+    )
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText('Buy milk')).toBeInTheDocument()
+
+    await screen.getByRole('button', { name: 'Rename' }).nth(1).click()
+    const input = screen.getByLabelText('Todo title')
+    await expect.element(input).toHaveValue('Buy milk')
+    typeInto(input, 'not saved')
+    input.element().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await expect.element(screen.getByText('Buy milk')).toBeInTheDocument()
+    expect(api.lists.renameTodo).not.toHaveBeenCalled()
+
+    await screen.getByRole('button', { name: 'Rename' }).nth(1).click()
+    typeInto(screen.getByLabelText('Todo title'), 'Buy oat milk')
+    await screen.getByRole('button', { name: 'Save' }).click()
+
+    await expect.element(screen.getByText('Buy oat milk')).toBeInTheDocument()
+    expect(api.lists.renameTodo).toHaveBeenCalledWith(
+      LIST_ID,
+      'todo-1',
+      expect.objectContaining({ title: 'Buy oat milk', version: 1 })
+    )
+  })
+
+  it('deletes a todo and moves focus to the next one', async () => {
+    mockLoaded([todo({ id: 'a', title: 'one' }), todo({ id: 'b', title: 'two' })])
+    vi.mocked(api.lists.deleteTodo).mockResolvedValue(undefined)
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText('one')).toBeInTheDocument()
+
+    await screen.getByRole('button', { name: 'Delete' }).first().click()
+
+    await expect.element(screen.getByText('one')).not.toBeInTheDocument()
+    await vi.waitFor(() =>
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Mark "two" done')
+    )
+    expect(api.lists.deleteTodo).toHaveBeenCalledWith(LIST_ID, 'a', 1)
+  })
+
+  it('renames a list in place', async () => {
+    mockLoaded([], list({ name: 'Work' }))
+    vi.mocked(api.lists.rename).mockResolvedValue(list({ name: 'Job', version: 2 }))
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByRole('heading', { name: 'Work' })).toBeInTheDocument()
+
+    await screen.getByRole('button', { name: 'Rename' }).first().click()
+    const input = screen.getByLabelText('List name')
+    await expect.element(input).toHaveValue('Work')
+    typeInto(input, 'Job')
+    await screen.getByRole('button', { name: 'Save' }).click()
+
+    await expect.element(screen.getByRole('heading', { name: 'Job' })).toBeInTheDocument()
+    expect(api.lists.rename).toHaveBeenCalledWith(
+      LIST_ID,
+      expect.objectContaining({ name: 'Job', version: 1 })
+    )
+  })
+
+  it('confirms a list deletion with its name and todo count', async () => {
+    const summary = list({ todo_count: 2, open_count: 1 })
+    mockLoaded(
+      [todo({ id: 'a', title: 'one' }), todo({ id: 'b', title: 'two', done: true })],
+      summary
+    )
+    vi.mocked(api.lists.deleteList).mockResolvedValue(undefined)
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText('one')).toBeInTheDocument()
+
+    await screen.getByRole('button', { name: 'Delete list' }).click()
+    const dialog = screen.getByRole('dialog')
+    await expect.element(dialog).toBeInTheDocument()
+    await expect.element(dialog.getByText('Delete "Work"?')).toBeInTheDocument()
+    await expect.element(dialog.getByText(/It holds\s+2\s+todos/)).toBeInTheDocument()
+
+    await dialog.getByRole('button', { name: 'Delete list' }).click()
+    await vi.waitFor(() => expect(navigate).toHaveBeenCalledWith('/dashboard/lists'))
+    expect(api.lists.deleteList).toHaveBeenCalledWith(LIST_ID, 1, 2)
+  })
+
+  it('shows the current title and a note when a rename changed elsewhere', async () => {
+    mockLoaded([todo({ id: 'todo-1', title: 'one' })])
+    vi.mocked(api.lists.renameTodo).mockRejectedValue(
+      new ApiErrorException(
+        {
+          code: 'stale',
+          message: 'This todo changed elsewhere',
+          current: todo({ id: 'todo-1', title: 'theirs', version: 2 }),
+        },
+        { status: 409, message: 'This todo changed elsewhere' }
+      )
+    )
+    const screen = await render(ListsPanel)
+    await screen.getByRole('button', { name: 'Rename' }).nth(1).click()
+    typeInto(screen.getByLabelText('Todo title'), 'mine')
+    await screen.getByRole('button', { name: 'Save' }).click()
+
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalled())
+    expect(toastError.mock.calls[0][0]).toMatch(/changed elsewhere/)
+    await expect.element(screen.getByText('theirs')).toBeInTheDocument()
+    await expect.element(screen.getByText('mine')).toBeInTheDocument()
+  })
+
+  it('asks again with the current count when the list changed meanwhile', async () => {
+    const summary = list({ todo_count: 2, open_count: 2 })
+    mockLoaded([todo({ id: 'a', title: 'one' }), todo({ id: 'b', title: 'two' })], summary)
+    vi.mocked(api.lists.deleteList).mockRejectedValue(
+      new ApiErrorException(
+        {
+          code: 'stale',
+          message: 'This list changed elsewhere',
+          current: list({ todo_count: 3, open_count: 3 }),
+        },
+        { status: 409, message: 'This list changed elsewhere' }
+      )
+    )
+    const screen = await render(ListsPanel)
+    await screen.getByRole('button', { name: 'Delete list' }).click()
+    const dialog = screen.getByRole('dialog')
+    await dialog.getByRole('button', { name: 'Delete list' }).click()
+
+    await expect.element(dialog.getByText(/Check the name and number of todos/)).toBeInTheDocument()
+    await expect.element(dialog.getByText(/It holds\s+3\s+todos/)).toBeInTheDocument()
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('turns line breaks pasted into the rename fields into spaces', async () => {
+    mockLoaded([todo({ id: 'a', title: 'one' })])
+    const screen = await render(ListsPanel)
+    const pasteInto = (label: string) => {
+      const input = screen.getByLabelText(label).element() as HTMLInputElement
+      const data = new DataTransfer()
+      data.setData('text/plain', 'Buy milk\nand eggs')
+      const paste = new ClipboardEvent('paste', { bubbles: true, cancelable: true })
+      Object.defineProperty(paste, 'clipboardData', { value: data })
+      input.value = ''
+      input.dispatchEvent(paste)
+      return input.value
+    }
+    await screen.getByRole('button', { name: 'Rename' }).nth(1).click()
+    expect(pasteInto('Todo title')).toBe('Buy milk and eggs')
+    await screen.getByRole('button', { name: 'Rename' }).first().click()
+    expect(pasteInto('List name')).toBe('Buy milk and eggs')
+  })
+
+  it('saves a rename at the version shown when the form opened', async () => {
+    mockLoaded([todo({ id: 'a', title: 'one' })])
+    vi.mocked(api.lists.renameTodo).mockReturnValue(new Promise(() => {}))
+    const screen = await render(ListsPanel)
+    await screen.getByRole('button', { name: 'Rename' }).nth(1).click()
+    mockLoaded([todo({ id: 'a', title: 'theirs', version: 2 })])
+    await lists.loadList(LIST_ID)
+    typeInto(screen.getByLabelText('Todo title'), 'mine')
+    await screen.getByRole('button', { name: 'Save' }).click()
+    await vi.waitFor(() =>
+      expect(api.lists.renameTodo).toHaveBeenCalledWith(LIST_ID, 'a', { version: 1, title: 'mine' })
+    )
+  })
+
+  it('says a deletion failed, not that the list changed, when the server is down', async () => {
+    mockLoaded([])
+    vi.mocked(api.lists.deleteList).mockRejectedValue(
+      new ApiErrorException(null, { status: 503, message: 'down' })
+    )
+    const screen = await render(ListsPanel)
+    await screen.getByRole('button', { name: 'Delete list' }).click()
+    const dialog = screen.getByRole('dialog')
+    await dialog.getByRole('button', { name: 'Delete list' }).click()
+    await expect.element(dialog.getByText(/couldn't be deleted/)).toBeInTheDocument()
+    await expect.element(dialog.getByText(/changed elsewhere/)).not.toBeInTheDocument()
+  })
+
+  it('stays where the Member went while a deletion was saving', async () => {
+    mockLoaded([])
+    const { promise, resolve } = Promise.withResolvers<undefined>()
+    vi.mocked(api.lists.deleteList).mockReturnValue(promise)
+    const screen = await render(ListsPanel)
+    await screen.getByRole('button', { name: 'Delete list' }).click()
+    await screen.getByRole('dialog').getByRole('button', { name: 'Delete list' }).click()
+    await vi.waitFor(() => expect(api.lists.deleteList).toHaveBeenCalled())
+    setPath('/dashboard/settings')
+    resolve(undefined)
+    await vi.waitFor(() => expect(lists.snapshot.lists).toEqual([]))
+    await new Promise((done) => setTimeout(done, 20))
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('makes the page behind the deletion dialog inert, and Escape cancels', async () => {
+    mockLoaded([])
+    const screen = await render(ListsPanel)
+    await screen.getByRole('button', { name: 'Delete list' }).click()
+    const dialog = screen.getByRole('dialog')
+    await expect.element(dialog).toBeInTheDocument()
+    expect(dialog.element().matches(':modal')).toBe(true)
+    const field = document.getElementById('new-todo-title')!
+    field.focus()
+    expect(document.activeElement).not.toBe(field)
+    await userEvent.keyboard('{Escape}')
+    await expect.element(dialog).not.toBeInTheDocument()
+    expect(api.lists.deleteList).not.toHaveBeenCalled()
+  })
+
+  it('fits 500-character titles at 360 px in every new state', async () => {
+    await page.viewport(360, 740)
+    try {
+      mockLoaded([todo({ id: 'a', title: '😀'.repeat(500) })], list({ todo_count: 1 }))
+      const screen = await render(ListsPanel)
+      await expect.element(screen.getByRole('list', { name: 'Todos' })).toBeInTheDocument()
+
+      const fits = () => expect(document.documentElement.scrollWidth).toBeLessThanOrEqual(360)
+
+      await screen
+        .getByRole('list', { name: 'Todos' })
+        .getByRole('button', { name: 'Rename' })
+        .click()
+      fits()
+      screen
+        .getByLabelText('Todo title')
+        .element()
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+
+      await screen.getByRole('button', { name: 'Rename' }).first().click()
+      fits()
+      screen
+        .getByLabelText('List name')
+        .element()
+        .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+
+      await screen.getByRole('button', { name: 'Delete list' }).click()
+      await expect.element(screen.getByRole('dialog')).toBeInTheDocument()
+      fits()
+    } finally {
+      await page.viewport(1280, 720)
+    }
   })
 })
