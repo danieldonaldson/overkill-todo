@@ -192,6 +192,8 @@ just load-up            # release images behind Caddy, pinned to cores and cappe
 just load-seed          # 500 verified test Members via the real sign-up flow (about 1 min, repeatable)
 just load smoke         # 30 s, every route, zero errors allowed
 just load auth-mix      # sign in, check session, refresh, sign out at 10/s for 3 min
+just load lists         # open a list, add and tick todos, at 10/s for 3 min
+just load lists-large   # the same list of 1,000 todos from several tabs, at 10/s for 3 min
 just load-baseline auth-mix  # make the latest complete run the baseline (commit it)
 just load-reset         # delete the test Members
 just load-down
@@ -209,7 +211,7 @@ just load-down
   both threads of a core in one service. It also forces production Argon2 cost, so sign-in isn't
   flattered by the cheap local setting. Every result records these settings, and
   the report warns when a baseline was taken with different ones. Each run first
-  clears the test Members' refresh tokens, and waits until the stack has been
+  clears the test Members' refresh tokens (a list scenario also resets their lists), and waits until the stack has been
   idle for 2 minutes since the last run (`LOAD_IDLE_SECONDS`, `0` skips). After
   7–10 minutes of continuous load, refresh and sign-out drift into a slower
   state that only an idle period clears, so back-to-back runs wouldn't be

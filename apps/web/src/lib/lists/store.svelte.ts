@@ -57,10 +57,26 @@ function reset(): void {
   engine.reset()
 }
 
+// Listening only while something is unsaved: a permanent handler would keep the
+// page out of the back/forward cache.
+let asking = false
+
+function confirmLeaving(event: BeforeUnloadEvent): void {
+  event.preventDefault()
+}
+
+function askBeforeLeaving(unsavedChanges: boolean): void {
+  if (typeof window === 'undefined' || unsavedChanges === asking) return
+  asking = unsavedChanges
+  if (asking) window.addEventListener('beforeunload', confirmLeaving)
+  else window.removeEventListener('beforeunload', confirmLeaving)
+}
+
 const engine = new ListsEngine({
   api: transport,
   onChange: (snapshot) => {
     view.snapshot = snapshot
+    askBeforeLeaving(snapshot.queueLength > 0)
   },
   onNotice: handleNotice,
 })

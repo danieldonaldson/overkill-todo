@@ -25,6 +25,10 @@ interface State {
   todos: Record<string, Todo[]>
   failAdds: number
   delay: Record<string, number>
+  /** Hold each mark until this resolves. */
+  holdMarks?: Promise<void>
+  /** Answer marks with this status instead of saving. */
+  failMarks?: number
 }
 
 function mockLists(page: Page, state: State) {
@@ -40,6 +44,10 @@ function mockLists(page: Page, state: State) {
     const path = new URL(request.url()).pathname.replace(/^\/api\/v1/, '')
     const method = request.method()
     if (path === '/auth/me') return route.fulfill({ json: TEST_USER })
+    if (path === '/auth/refresh') {
+      if (state.failMarks === 401) return route.fulfill({ status: 401, json: {} })
+      return route.fulfill({ json: { expires_at: Math.floor(Date.now() / 1000) + 3600 } })
+    }
     if (path === '/lists' && method === 'GET') return route.fulfill({ json: lists() })
     if (path === '/lists' && method === 'POST') {
       const body = request.postDataJSON() as { name: string }
@@ -88,6 +96,11 @@ function mockLists(page: Page, state: State) {
     const mark = path.match(/^\/lists\/([^/]+)\/todos\/([^/]+)$/)
     if (mark && method === 'PATCH') {
       const body = request.postDataJSON() as { version: number; done: boolean }
+      await state.holdMarks
+      if (state.failMarks) {
+        const status = state.failMarks
+        return route.fulfill({ status, json: { code: 'failed', message: 'Failed' } })
+      }
       const todo = state.todos[mark[1]]!.find((candidate) => candidate.id === mark[2])!
       todo.done = body.done
       todo.version += 1
@@ -158,4 +171,153 @@ test('a slow answer for the previous list cannot replace the one now open', asyn
   await page.waitForTimeout(800)
   await expect(page.getByRole('heading', { name: 'Beta' })).toBeVisible()
   expect(new URL(page.url()).pathname).toBe(`/dashboard/lists/${LIST_B}`)
+})
+
+function oneTodo(): State {
+  const state = freshState()
+  state.lists = [{ id: LIST_A, name: 'Alpha', version: 1 }]
+  state.todos[LIST_A] = [
+    {
+      id: '8a1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e',
+      title: 'Buy milk',
+      done: false,
+      version: 1,
+      created_at: '2026-11-25T10:00:00Z',
+      completed_at: null,
+    },
+  ]
+  return state
+}
+
+const tick = (page: Page) =>
+  page.getByRole('checkbox', { name: 'Mark "Buy milk" done', exact: true }).click()
+
+test('Lists opens from the navigation without rebuilding the header', async ({ page }) => {
+  await seedSession(page)
+  mockLists(page, oneTodo())
+  await page.goto('/dashboard')
+  const header = page.locator('header')
+  await header.evaluate((element) => element.setAttribute('data-same', 'yes'))
+  await page.getByRole('link', { name: 'Lists' }).click()
+  await expect(page).toHaveURL(/\/dashboard\/lists\/?$/)
+  await expect(page.getByRole('button', { name: /^Alpha/ })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Lists' })).toHaveAttribute('aria-current', 'page')
+  await expect(header).toHaveAttribute('data-same', 'yes')
+
+  await page.getByRole('button', { name: /^Alpha/ }).click()
+  await expect(page.getByText('Buy milk')).toBeVisible()
+  await page.goBack()
+  await expect(page.getByText('Select a list to see its todos.')).toBeVisible()
+  await expect(header).toHaveAttribute('data-same', 'yes')
+})
+
+test('a save goes on after moving to Settings, and says so if it fails', async ({ page }) => {
+  await seedSession(page)
+  const state = oneTodo()
+  const hold = Promise.withResolvers<void>()
+  state.holdMarks = hold.promise
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await tick(page)
+  await expect(page.getByRole('button', { name: /Completed \(1\)/ })).toBeVisible()
+
+  let asked = false
+  page.on('dialog', (dialog) => {
+    asked = true
+    void dialog.dismiss()
+  })
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible()
+  expect(asked).toBe(false)
+
+  state.failMarks = 400
+  hold.resolve()
+  await expect(page.getByText('Failed')).toBeVisible()
+  await page.getByRole('link', { name: 'Lists' }).click()
+  await page.getByRole('button', { name: /^Alpha/ }).click()
+  await expect(page.getByRole('checkbox', { name: 'Mark "Buy milk" done' })).not.toBeChecked()
+})
+
+test('closing the tab asks only while a change is unsaved', async ({ page }) => {
+  await seedSession(page)
+  const state = oneTodo()
+  const hold = Promise.withResolvers<void>()
+  state.holdMarks = hold.promise
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await tick(page)
+  await expect(page.getByRole('button', { name: /Completed \(1\)/ })).toBeVisible()
+
+  const dialog = page.waitForEvent('dialog')
+  await page.close({ runBeforeUnload: true })
+  const asked = await dialog
+  expect(asked.type()).toBe('beforeunload')
+  await asked.dismiss()
+
+  // Saved: leaving asks nothing.
+  const saved = page.waitForResponse((response) => response.request().method() === 'PATCH')
+  hold.resolve()
+  await saved
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const event = new Event('beforeunload', { cancelable: true })
+        window.dispatchEvent(event)
+        return event.defaultPrevented
+      })
+    )
+    .toBe(false)
+})
+
+test('a session that ends while saving goes to sign-in without asking', async ({ page }) => {
+  await seedSession(page)
+  const state = oneTodo()
+  const hold = Promise.withResolvers<void>()
+  state.holdMarks = hold.promise
+  state.failMarks = 401
+  mockLists(page, state)
+  let asked = false
+  page.on('dialog', (dialog) => {
+    asked = true
+    void dialog.accept()
+  })
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  // A second change still waiting behind the first.
+  await page.getByLabel('New todo title').fill('Waiting')
+  await tick(page)
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  hold.resolve()
+  await expect(page).toHaveURL(/\/login\?session=expired/)
+  expect(asked).toBe(false)
+  expect(state.todos[LIST_A]![0]!.done).toBe(false)
+  expect(state.todos[LIST_A]).toHaveLength(1)
+})
+
+test('a crashed list panel leaves the header and navigation working', async ({ page }) => {
+  await seedSession(page)
+  mockLists(page, oneTodo())
+  await page.addInitScript(() => {
+    ;(globalThis as { __otCrashIsland?: string }).__otCrashIsland = 'ListsPanel'
+  })
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible()
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible()
+})
+
+test('nothing scrolls sideways at 360 px', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 })
+  await seedSession(page, { cachedUser: { ...TEST_USER, role: 'super_admin' } })
+  const state = oneTodo()
+  state.lists[0]!.name = 'x'.repeat(100)
+  state.todos[LIST_A]![0]!.title = 'y'.repeat(500)
+  mockLists(page, state)
+  const overflow = () =>
+    page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+  await page.goto('/dashboard/lists')
+  await expect(page.getByText('Select a list to see its todos.')).toBeVisible()
+  expect(await overflow()).toBeLessThanOrEqual(0)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await expect(page.getByRole('checkbox')).toBeVisible()
+  expect(await overflow()).toBeLessThanOrEqual(0)
 })

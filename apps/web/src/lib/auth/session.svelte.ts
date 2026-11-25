@@ -19,7 +19,7 @@
 
 import { toast } from 'svelte-sonner'
 import { api } from '../api'
-import { onAccountChanged } from '../api/account-changed'
+import { onAccountChanged, onSessionEnded } from '../api/account-changed'
 import { ApiErrorException, SessionEndedError } from '../api/errors'
 import { navigateReplace, reload } from '../navigation'
 import type { User } from '../types'
@@ -233,6 +233,9 @@ async function ensureSameAccount(): Promise<void> {
 
 lists.guardSaves(ensureSameAccount)
 onAccountChanged(leaveAccount)
+// Nothing can be saved any more: drop the queue first, so leaving for the
+// sign-in page doesn't ask to confirm (OT-013 design D7).
+onSessionEnded(() => lists.reset())
 
 if (typeof window !== 'undefined') {
   // Another tab confirmed a different account: drop this one's lists at once.

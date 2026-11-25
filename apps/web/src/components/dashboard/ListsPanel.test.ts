@@ -33,7 +33,7 @@ vi.mock('../../lib/telemetry/island-timing', async (importOriginal) => {
   }
 })
 
-import { ApiErrorException } from '../../lib/api/errors'
+import { ApiErrorException, SessionEndedError } from '../../lib/api/errors'
 import { api } from '../../lib/api'
 import { lists } from '../../lib/lists/store.svelte'
 import { navigate } from '../../lib/navigation'
@@ -77,6 +77,13 @@ function typeInto(locator: { element(): HTMLElement | SVGElement }, value: strin
 function mockLoaded(todos: Todo[] = [], summary = list()) {
   vi.mocked(api.lists.list).mockResolvedValue([summary])
   vi.mocked(api.lists.get).mockResolvedValue(detail(todos, summary))
+}
+
+/** Whether closing or reloading the tab now would ask to confirm. */
+function leavingAsks(): boolean {
+  const event = new Event('beforeunload', { cancelable: true })
+  window.dispatchEvent(event)
+  return event.defaultPrevented
 }
 
 beforeEach(() => {
@@ -426,5 +433,74 @@ describe('ListsPanel', () => {
     expect(markReady).not.toHaveBeenCalled()
     answer.resolve(detail([]))
     await vi.waitFor(() => expect(markReady).toHaveBeenCalled())
+  })
+
+  it('contains a crash to the panel and rebuilds it on Try again', async () => {
+    mockLoaded([todo()])
+    const hook = globalThis as { __otCrashIsland?: string }
+    hook.__otCrashIsland = 'ListsPanel'
+    try {
+      const screen = await render(ListsPanel)
+      const again = screen.getByRole('button', { name: 'Try again' })
+      await expect.element(again).toBeInTheDocument()
+      expect(screen.getByText('Deliberate', { exact: false }).elements()).toHaveLength(0)
+      delete hook.__otCrashIsland
+      await again.click()
+      await expect.element(screen.getByText('Buy milk')).toBeInTheDocument()
+    } finally {
+      delete hook.__otCrashIsland
+    }
+  })
+
+  it('keeps the picker usable when only the todos fail to load', async () => {
+    vi.mocked(api.lists.list).mockResolvedValue([list(), list({ id: OTHER_ID, name: 'Home' })])
+    vi.mocked(api.lists.get).mockRejectedValue(new ApiErrorException(null, { status: 500 }))
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText("Couldn't load this list.")).toBeInTheDocument()
+    expect(screen.getByText("Couldn't load your lists.").elements()).toHaveLength(0)
+    expect(screen.getByText('List not found').elements()).toHaveLength(0)
+    expect(screen.getByText('No todos yet', { exact: false }).elements()).toHaveLength(0)
+    await screen.getByRole('button', { name: /Home/ }).click()
+    expect(navigate).toHaveBeenCalledWith(`/dashboard/lists/${OTHER_ID}`)
+  })
+
+  it('does not show a change as saved when the session ends, and asks nothing on leaving', async () => {
+    mockLoaded([todo()])
+    vi.mocked(api.lists.markTodo).mockRejectedValue(new SessionEndedError('Session expired'))
+    const screen = await render(ListsPanel)
+    await screen.getByRole('checkbox', { name: 'Mark "Buy milk" done' }).click()
+    await vi.waitFor(() => expect(lists.snapshot.queueLength).toBe(0))
+    expect(toastError).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: /Completed/ }).elements()).toHaveLength(0)
+    expect(leavingAsks()).toBe(false)
+  })
+
+  it('reports a save that fails after the Member moved away', async () => {
+    mockLoaded([])
+    const answer = Promise.withResolvers<Todo>()
+    vi.mocked(api.lists.addTodo).mockReturnValue(answer.promise)
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByRole('heading', { name: 'Work' })).toBeInTheDocument()
+    lists.addTodo(LIST_ID, 'Left behind')
+    await screen.unmount()
+    answer.reject(new ApiErrorException(null, { status: 400, message: 'refused' }))
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalledTimes(1))
+
+    // Back on the list, the text can be submitted again.
+    const back = await render(ListsPanel)
+    await expect.element(back.getByPlaceholder('Add a todo...')).toHaveValue('Left behind')
+  })
+
+  it('asks before leaving only while a change is unsaved', async () => {
+    mockLoaded([todo()])
+    const answer = Promise.withResolvers<Todo>()
+    vi.mocked(api.lists.markTodo).mockReturnValue(answer.promise)
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText('Buy milk')).toBeInTheDocument()
+    expect(leavingAsks()).toBe(false)
+    await screen.getByRole('checkbox', { name: 'Mark "Buy milk" done' }).click()
+    expect(leavingAsks()).toBe(true)
+    answer.resolve(todo({ done: true, version: 2 }))
+    await vi.waitFor(() => expect(leavingAsks()).toBe(false))
   })
 })

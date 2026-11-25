@@ -29,7 +29,7 @@
 
 <TelemetryBoundary name="DashboardHeader">
   <header class="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
-    <div class="mx-auto flex h-16 w-full max-w-6xl items-center gap-6 px-4">
+    <div class="mx-auto flex h-16 w-full max-w-6xl items-center gap-2 px-4 sm:gap-6">
       <a href="/dashboard" class="flex items-center gap-2 text-lg font-semibold text-primary">
         <span
           class="flex size-8 items-center justify-center rounded-md bg-primary text-sm font-bold text-primary-foreground"
@@ -37,7 +37,7 @@
         >
           t
         </span>
-        <span>Overkill Todo</span>
+        <span class="sr-only sm:not-sr-only">Overkill Todo</span>
       </a>
 
       <DashboardNav />

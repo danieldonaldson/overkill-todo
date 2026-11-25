@@ -110,4 +110,17 @@ describe('DashboardNav', () => {
       .element(screen.getByRole('link', { name: /home/i }))
       .not.toHaveAttribute('aria-current')
   })
+
+  it.each(['/dashboard/lists', '/dashboard/lists/3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e'])(
+    'marks Lists as the current page on %s, for every Member',
+    async (pathname) => {
+      const screen = await render(DashboardNav, { pathname })
+      const link = screen.getByRole('link', { name: 'Lists' })
+      await expect.element(link).toHaveAttribute('href', '/dashboard/lists')
+      await expect.element(link).toHaveAttribute('aria-current', 'page')
+      await expect
+        .element(screen.getByRole('link', { name: 'Home' }))
+        .not.toHaveAttribute('aria-current')
+    }
+  )
 })

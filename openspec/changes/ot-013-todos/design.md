@@ -257,8 +257,10 @@ confirmed state, so undoing a failed save is removing it from the queue.
   the account last confirmed in any tab (an ID in `localStorage`) is this tab's.
   If not, `/auth/me` decides first; the screen doesn't wait. Another account
   clears the store. A switch while a request is already on its way isn't caught.
-- **Session ended:** when the client has already redirected, the save isn't
-  repeated and no message is shown.
+- **Session ended:** the client tells the store before it redirects
+  (`sessionEnded()` in `lib/api/account-changed.ts`), which drops the queue, so
+  leaving for the sign-in page doesn't ask to confirm. The save isn't repeated
+  and no message is shown.
 - **Versions:** an operation stores the version on screen when the Member
   acted. When a save moves a todo from version n to n + 1, later queued
   operations on that todo at n move to n + 1. Nothing else changes a stored
@@ -277,7 +279,8 @@ confirmed state, so undoing a failed save is removing it from the queue.
 - **List deletion** waits for the server, because it is permanent.
 - **Out-of-order loads:** an answer is applied only to the list it names.
 - **Leaving:** the store survives in-site moves. `beforeunload` asks to confirm
-  while the queue isn't empty. The store is in memory only, and is cleared on
+  while the queue isn't empty; it is listened for only then, since a permanent
+  listener keeps the page out of the back/forward cache. The store is in memory only, and is cleared on
   sign-out and when the account changes, also when the background `/auth/me`
   check is what finds the other account; open panels then load again.
 - **Messages** use the sonner toaster, mounted in the persisted header, so a
@@ -374,7 +377,20 @@ The existing route-guard walk covers the Visitor case for future routes.
 - [One queue per tab means a slow save delays the rest] → Requests are small,
   and the timeout and single repeat bound it at about 30 seconds.
 - [A list write lock serialises a shared list's editors later] → Transactions
-  are a few short statements. Measured in slice 2 with a load scenario.
+  are a few short statements. Measured in slice 2 (2026-11-25, capped stack,
+  10 iterations/s for 3 minutes, worst of 5 runs of each scenario, no errors):
+  p95 / p99 in ms.
+  - `lists`: GET lists 1.44 / 1.92, POST list 3.58 / 7.26, GET list 1.19 / 1.75,
+    POST todo 2.82 / 7.31, PATCH todo 2.55 / 6.56.
+  - `lists-large` (five lists of 1,000 todos, each open in several tabs): GET
+    list 4.12 / 5.11, PATCH todo 7.29 / 7.80. All budgets are at their floors of
+    25 / 50.
+- [The largest export exhausts memory] → Streamed (D10). Measured in slice 2,
+  100 lists of 1,000 todos with 500-character titles, always complete:
+  62.5 MB in 0.5 s with ASCII titles, and 212.5 MB in 1.0 s with four-byte
+  characters. In the four-byte case backend memory peaked at 155 MiB since
+  start, sign-in included, under the 1 GB cap, also with a reader that took
+  131 s.
 - [1,000 rows make drag or keyboard moves slow] → `content-visibility: auto`,
   and an Interaction to Next Paint check on a full list in the ordering slice.
 - [Touch scrolling starts a drag] → Only a drag handle starts one, with

@@ -1,0 +1,41 @@
+{
+  "scenario": "lists-large",
+  "started": "2026-11-25T18:38:12.275Z",
+  "complete": true,
+  "planned_ms": 210000,
+  "elapsed_ms": 210464.810096,
+  "passed": true,
+  "meta": {
+    "backend_cpus": "2",
+    "backend_memory_mb": "1024",
+    "dev_mode": "true",
+    "db_max_connections": "5",
+    "commit": "4092160-dirty",
+    "k6_cpuset": "3,4,9,10",
+    "backend_cpuset": "0,6",
+    "argon2": "m=65536,t=3,p=4",
+    "db_cpuset": "1,7",
+    "db_memory_mb": "2048"
+  },
+  "error_rate": 0,
+  "dropped_iterations": 0,
+  "routes": {
+    "PATCH /api/v1/lists/{id}/todos/{todo_id}": {
+      "count": 1801,
+      "p50": 2.283944,
+      "p95": 2.794247,
+      "p99": 3.495101,
+      "max": 32.648724,
+      "error_rate": 0
+    },
+    "GET /api/v1/lists/{id} (1000 todos)": {
+      "count": 1801,
+      "p50": 3.401254,
+      "p95": 4.080076,
+      "p99": 4.685589,
+      "max": 8.27595,
+      "error_rate": 0
+    }
+  },
+  "exceeded": []
+}

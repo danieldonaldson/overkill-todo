@@ -1,13 +1,23 @@
-// What to do when the server refuses a change because another account is signed
-// in (OT-015 design D6). Its own module so the HTTP client doesn't depend on the
-// session store, which depends on the client.
+// Told by the HTTP client, which can't depend on the session store (the store
+// depends on the client).
 
-let handler: () => void = () => {}
+let changed: () => void = () => {}
+let ended: () => void = () => {}
 
+/** A change was refused because another account is signed in (OT-015 design D6). */
 export function onAccountChanged(handle: () => void): void {
-  handler = handle
+  changed = handle
 }
 
 export function accountChanged(): void {
-  handler()
+  changed()
+}
+
+/** The session is over and the client is about to leave the page. */
+export function onSessionEnded(handle: () => void): void {
+  ended = handle
+}
+
+export function sessionEnded(): void {
+  ended()
 }

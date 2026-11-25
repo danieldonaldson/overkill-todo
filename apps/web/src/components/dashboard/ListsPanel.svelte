@@ -203,13 +203,13 @@
 </script>
 
 <TelemetryBoundary name="ListsPanel" {timing}>
-  <div class="grid gap-6 md:grid-cols-[16rem_1fr]">
+  <div class="grid grid-cols-[minmax(0,1fr)] gap-6 md:grid-cols-[16rem_minmax(0,1fr)]">
     {#snippet unsavedTexts(items: UnsavedText[], canSubmit: boolean)}
       {#if items.length > 0}
         <ul class="space-y-1 rounded-md border border-border p-2 text-sm" aria-label="Not saved">
           {#each items as item (item.id)}
             <li class="flex items-center gap-2">
-              <span class="min-w-0 flex-1 break-words">{item.text}</span>
+              <span class="min-w-0 flex-1 wrap-anywhere">{item.text}</span>
               {#if canSubmit}
                 <Button type="button" size="sm" variant="outline" onclick={() => submitAgain(item)}>
                   Try again
@@ -229,7 +229,7 @@
       {/if}
     {/snippet}
 
-    <aside aria-label="Your lists" class="space-y-3">
+    <aside aria-label="Your lists" class="min-w-0 space-y-3">
       <div class="flex items-center justify-between gap-2">
         <h1 class="text-lg font-semibold">Lists</h1>
         {#if snapshot.listsStatus === 'ready'}
@@ -284,7 +284,7 @@
                 disabled={list.pending || !list.id}
                 onclick={() => list.id && chooseList(list.id)}
               >
-                <span class="truncate">{list.name}</span>
+                <span class="min-w-0 truncate">{list.name}</span>
                 <span class="text-xs text-muted-foreground">{list.open_count}</span>
               </button>
             </li>
@@ -334,7 +334,7 @@
         </div>
       {:else}
         <div class="space-y-4">
-          <h2 class="text-xl font-semibold">{currentList?.name ?? 'List'}</h2>
+          <h2 class="text-xl font-semibold wrap-anywhere">{currentList?.name ?? 'List'}</h2>
 
           {#if detail.refreshFailed}
             <div role="alert" class="flex items-center gap-2 text-sm text-muted-foreground">
@@ -382,7 +382,7 @@
                       aria-label={`Mark "${todo.title}" done`}
                       onchange={(event) => toggleTodo(todo, event)}
                     />
-                    <span class="min-w-0 flex-1 break-words">{todo.title}</span>
+                    <span class="min-w-0 flex-1 wrap-anywhere">{todo.title}</span>
                   </li>
                 {/each}
               </ul>
@@ -413,7 +413,9 @@
                           aria-label={`Mark "${todo.title}" not done`}
                           onchange={(event) => toggleTodo(todo, event)}
                         />
-                        <span class="min-w-0 flex-1 break-words text-muted-foreground line-through">
+                        <span
+                          class="min-w-0 flex-1 wrap-anywhere text-muted-foreground line-through"
+                        >
                           {todo.title}
                         </span>
                       </li>
