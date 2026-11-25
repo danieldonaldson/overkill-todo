@@ -14,7 +14,7 @@ metadata:
   name: canary
   namespace: canary
   annotations:
-    secret.reloader.stakater.com/reload: canary
+    reloader.stakater.com/auto: 'true'
 spec:
   replicas: 1
   progressDeadlineSeconds: 300
@@ -41,7 +41,7 @@ spec:
               'printf %s "$VERSION" >/www/index.html; trap "sleep 5; exit 0" TERM; httpd -f -p 8080 -h /www & wait',
             ]
           envFrom:
-            - secretRef: { name: canary }
+            - secretRef: { name: canary-v2 }
           ports: [{ name: http, containerPort: 8080 }]
           readinessProbe:
             httpGet: { path: /, port: http }

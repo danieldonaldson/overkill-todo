@@ -36,3 +36,5 @@ spec:
         maxDuration: 1m
     syncOptions:
       - ServerSideApply=true
+      # Keep the previous secret version until the new one is in use.
+      - PruneLast=true
