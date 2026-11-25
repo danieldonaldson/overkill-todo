@@ -8,6 +8,8 @@ const args = process.argv.slice(2)
 const portIndex = args.indexOf('--port')
 const port = portIndex === -1 ? '4323' : (args[portIndex + 1] ?? '4323')
 
+const api = process.env.API_PROXY_TARGET ?? `http://localhost:${process.env.API_PORT ?? 4322}`
+
 const caddy = spawn('caddy', ['run', '--config', 'Caddyfile', '--adapter', 'caddyfile'], {
   stdio: 'inherit',
   env: {
@@ -15,7 +17,18 @@ const caddy = spawn('caddy', ['run', '--config', 'Caddyfile', '--adapter', 'cadd
     WEB_PORT: port,
     WEB_ROOT: 'dist',
     CONFIG_ROOT: 'dist',
+    // Localhost only, with /api forwarded to the local backend like `astro dev`.
+    WEB_PREVIEW: `bind 127.0.0.1\nhandle /api/* {\nreverse_proxy ${api}\n}`,
   },
+})
+
+caddy.on('error', (error) => {
+  console.error(
+    error.code === 'ENOENT'
+      ? 'caddy is not installed: run `mise install` (it is pinned in .mise.toml)'
+      : `caddy failed to start: ${error.message}`
+  )
+  process.exit(1)
 })
 
 const stop = (signal) => () => {

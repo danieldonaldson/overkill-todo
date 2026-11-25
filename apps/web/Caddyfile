@@ -13,6 +13,8 @@
 
 :{$WEB_PORT:8080} {
 	root * {$WEB_ROOT:/srv}
+	# Empty in the image; `pnpm preview` binds to localhost and forwards /api.
+	{$WEB_PREVIEW}
 
 	encode zstd gzip
 

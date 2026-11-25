@@ -8,6 +8,9 @@ rust = { version = "1.100.0", components = "rustfmt,clippy,llvm-tools" }
 node = "26"
 pnpm = "11"
 just = "latest"
+# Serves the built site for `pnpm preview` and `just e2e` (apps/web/scripts/preview.mjs).
+# Same version as the caddy stage in apps/web/Dockerfile; CI installs it from here.
+caddy = "2.11.9"
 sops = "latest"          # SOPS+age: encrypted secrets committed to git
 age = "latest"
 yq = "4"                # scripts/secrets.sh (mikefarah yq; preinstalled on CI runners)

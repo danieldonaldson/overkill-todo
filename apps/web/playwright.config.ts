@@ -21,10 +21,7 @@ export default defineConfig({
   webServer: externalBaseURL
     ? undefined
     : {
-        // --ignore-lock keeps the server in the foreground: Astro 7.4+ otherwise
-        // detaches `astro preview` when run under an AI agent, and Playwright
-        // reads the early exit as a crash.
-        command: `pnpm preview --port ${previewPort} --ignore-lock`,
+        command: `pnpm preview --port ${previewPort}`,
         port: previewPort,
         reuseExistingServer: !process.env.CI,
         timeout: 30000,

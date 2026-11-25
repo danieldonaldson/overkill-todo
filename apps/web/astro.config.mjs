@@ -11,7 +11,7 @@ import tailwindcss from '@tailwindcss/vite'
 // (WEB_PORT / API_PORT in .worktree.env, which just loads).
 const webPort = Number(process.env.WEB_PORT ?? 4321)
 
-// Where the dev/preview server forwards /api. The backend's port.
+// Where the dev server forwards /api. The backend's port.
 const apiTarget = process.env.API_PROXY_TARGET ?? `http://localhost:${process.env.API_PORT ?? 4322}`
 
 // Behind a TLS proxy (e.g. the optional k8s dev loop), the HMR websocket must dial
@@ -93,10 +93,6 @@ export default defineConfig({
       // Vite 8 moved the HMR client-connection options from `server.hmr.*` to `server.ws.*`.
       ...(hmrClientPort ? { ws: { clientPort: hmrClientPort } } : {}),
       ...(devAllowedHosts ? { allowedHosts: devAllowedHosts } : {}),
-    },
-    preview: {
-      strictPort: true,
-      proxy: { '/api': { target: apiTarget, changeOrigin: false } },
     },
   },
 })
