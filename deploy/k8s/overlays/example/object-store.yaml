@@ -1,4 +1,4 @@
-# Where CNPG archives WAL and base backups. Credentials live in a sealed/encrypted Secret.
+# Where CNPG archives WAL and base backups. Credentials come from a SopsSecret.
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:

@@ -77,6 +77,27 @@ and age 1.3.2, and SOPS parses hybrid (`age1pq1`, `AGE-SECRET-KEY-PQ-1`) keys fr
   hand). With it, reverts recovered in 41–46 s.
 - About 10,000 requests across all runs, none failed.
 
+### Slice 1 drills (2026-11-25)
+
+With the canary workload on the local cluster and a request loop running: about
+14,000 requests in these drills, none failed. Times are from the push.
+
+| Drill | Outcome | Time | Limit |
+| --- | --- | --- | --- |
+| Deploy a new image | running, one pod | 115 s | 10 min |
+| Roll back (revert) | previous image running | 89 s | 10 min |
+| Drift: workload replicas | reverted | 2 s | 15 min |
+| Drift: ArgoCD's own setting | reverted | 18 s | 15 min |
+| Drift: the root Application | reverted | 70 s | 15 min |
+| Image that doesn't exist | old pod serves; `k8s-status` names it; Degraded after the 300 s deadline | revert 41–74 s | |
+| Missing secret | old pod serves; status names the secret | revert 112 s | |
+| Undecryptable secret | see Result | revert 29–46 s | |
+| Manifest the API rejects | old state serves; status names the resource | seen at 32 s, revert 92 s | |
+| Overlay that doesn't render | old state serves; status names the file | 192 s (was 331 s before the shorter grace period) | |
+| Repository unreachable | workload serves, and restarts; status says so | clean 6 s after it returned | |
+
+Not yet tested: a machine restart (slice 2).
+
 ## Decisions
 
 **D1. One Talos VM under QEMU.** One control-plane node that also runs
@@ -116,6 +137,8 @@ handles ciphertext, which is the style its docs recommend.
 - `SopsSecret`s sync in an earlier wave, with a custom health check that is
   healthy only when the operator says so. Waves across separate Applications
   wouldn't hold back an ordinary commit, since each syncs on its own.
+- `secrets-check` fails if values change and the name doesn't (agreed
+  2026-11-25).
 - The `SopsSecret` and its Secret share a versioned name (`canary-v2`), which
   workloads refer to. Any change to the values bumps it: a new name has no status
   until the operator decrypts it, and a pod can't start without its Secret.
@@ -207,6 +230,8 @@ default is 2 minutes plus up to 1). Automated sync with `prune`, `selfHeal`,
 and `ServerSideApply`, and a `retry` with backoff, no limit and
 `refresh: true`, so a failure that clears doesn't need a hand and a revert is
 picked up. `selfHeal` reverts manual changes.
+ArgoCD hides repository errors, a commit that doesn't
+render included, for a grace period; it is cut from 180 s to 30.
 Deployments set `progressDeadlineSeconds: 300`, so a stuck rollout turns the
 Application Degraded.
 

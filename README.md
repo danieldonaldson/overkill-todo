@@ -13,7 +13,7 @@ at its first real feature instead of at login.
 - **Tests:** unit (mockall, proptest), integration (`#[sqlx::test]`), Vitest
   browser-mode components, Playwright e2e (mocked API), real-stack e2e, smoke
 - **Ops:** Docker images, Compose for local and single-host production,
-  optional Kubernetes base, GitHub Actions CI, Dependabot
+  a local Kubernetes cluster run from Git (ArgoCD), GitHub Actions CI, Dependabot
 
 ## Start a project from it
 
@@ -432,7 +432,7 @@ backend/            Rust API (see backend/README.md, backend/ARCHITECTURE.md)
 apps/web/           Astro + Svelte site, Caddy image
 packages/           shared design tokens
 deploy/compose/     single-host production (Caddy TLS, digests, nightly dumps)
-deploy/k8s/         optional kustomize base (CNPG Postgres, Ingress)
+deploy/k8s/         local Kubernetes cluster, filled from Git by ArgoCD (`just k8s-up`)
 docs/security/      auth threat model: attackers, properties, and the check for each
 apifuzz/            API fuzzer (Schemathesis): config, sign-in hooks, run script
 scripts/            dev env generation, worktree create/remove

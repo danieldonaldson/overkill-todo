@@ -5,7 +5,7 @@ namespace: overkill-todo-production
 resources:
   - ../../base
   - object-store.yaml
-  # - backend-secrets.sealed.yaml   # SealedSecret or SOPS-encrypted; never a plain Secret
+  # Secrets are SopsSecrets in deploy/secrets/<env>/, never a plain Secret here.
 images:
   - name: backend
     newName: ghcr.io/OWNER/REPO/backend
