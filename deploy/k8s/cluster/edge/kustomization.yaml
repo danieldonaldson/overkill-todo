@@ -1,0 +1,6 @@
+# How the host reaches the cluster's edge (OT-014 2.4): Cilium gives Traefik's
+# LoadBalancer Service an address on the VM bridge and answers ARP for it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - address-pool.yaml

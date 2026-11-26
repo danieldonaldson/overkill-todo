@@ -12,10 +12,20 @@ log:
 accessLog:
   enabled: true
   format: json
-# Reached from the host in slice 2 (2.4); until then, inside the cluster only.
+# Reached from the host at the edge Application's address (2.4).
 service:
   spec:
-    type: ClusterIP
+    type: LoadBalancer
+  annotations:
+    lbipam.cilium.io/ips: 10.5.0.100
+ports:
+  web:
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
 resources:
   requests: { cpu: 50m, memory: 64Mi }
   limits: { memory: 256Mi }

@@ -39,3 +39,10 @@ hubble:
     auto:
       # `helm`, the default, makes a new CA on every render ArgoCD does.
       method: cronJob
+# The edge's LoadBalancer address is answered for on the VM bridge (2.4).
+l2announcements:
+  enabled: true
+# L2 announcements renew a lease per Service; the default client limit is too low.
+k8sClientRateLimit:
+  qps: 10
+  burst: 20

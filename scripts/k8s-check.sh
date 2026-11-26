@@ -49,7 +49,7 @@ pinned() { # Application, versions.env value
 
 cmd_check() {
   local dir f
-  for dir in deploy/k8s/overlays/*/ deploy/k8s/cluster/storage; do
+  for dir in deploy/k8s/overlays/*/ deploy/k8s/cluster/storage deploy/k8s/cluster/edge; do
     check_rendered "$dir" kubectl kustomize "$dir"
   done
   for f in "$apps"/*.yaml deploy/secrets/*/*.sops.yaml; do
@@ -96,6 +96,8 @@ cmd_schemas() {
   from_crd "isindir/sops-secrets-operator/$SOPS_OPERATOR_VERSION/config/crd/bases/isindir.github.com_sopssecrets.yaml"
   from_crd "cloudnative-pg/cloudnative-pg/$CNPG_VERSION/config/crd/bases/postgresql.cnpg.io_clusters.yaml"
   from_crd "cloudnative-pg/cloudnative-pg/$CNPG_VERSION/config/crd/bases/postgresql.cnpg.io_scheduledbackups.yaml"
+  from_crd "cilium/cilium/v$CILIUM_VERSION/pkg/k8s/apis/cilium.io/client/crds/v2/ciliumloadbalancerippools.yaml"
+  from_crd "cilium/cilium/v$CILIUM_VERSION/pkg/k8s/apis/cilium.io/client/crds/v2alpha1/ciliuml2announcementpolicies.yaml"
   from_crd "cloudnative-pg/plugin-barman-cloud/$BARMAN_PLUGIN_VERSION/config/crd/bases/barmancloud.cnpg.io_objectstores.yaml"
 }
 
