@@ -96,6 +96,7 @@ cmd_schemas() {
   from_crd "isindir/sops-secrets-operator/$SOPS_OPERATOR_VERSION/config/crd/bases/isindir.github.com_sopssecrets.yaml"
   from_crd "cloudnative-pg/cloudnative-pg/$CNPG_VERSION/config/crd/bases/postgresql.cnpg.io_clusters.yaml"
   from_crd "cloudnative-pg/cloudnative-pg/$CNPG_VERSION/config/crd/bases/postgresql.cnpg.io_scheduledbackups.yaml"
+  from_crd "cloudnative-pg/cloudnative-pg/$CNPG_VERSION/config/crd/bases/postgresql.cnpg.io_databases.yaml"
   from_crd "cilium/cilium/v$CILIUM_VERSION/pkg/k8s/apis/cilium.io/client/crds/v2/ciliumloadbalancerippools.yaml"
   from_crd "cilium/cilium/v$CILIUM_VERSION/pkg/k8s/apis/cilium.io/client/crds/v2alpha1/ciliuml2announcementpolicies.yaml"
   from_crd "cert-manager/cert-manager/$CERT_MANAGER_VERSION/deploy/crds/cert-manager.io_clusterissuers.yaml"
