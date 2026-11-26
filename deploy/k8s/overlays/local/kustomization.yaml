@@ -11,7 +11,7 @@ resources:
 images:
   - name: backend
     newName: ghcr.io/danieldonaldson/overkill-todo/backend
-    digest: sha256:0000000000000000000000000000000000000000000000000000000000000001 # does not exist
+    digest: sha256:980453e1cad9a4df6992d20f70586919cecd4ba6ebbbaec39036c9b8212df85d # 47c6baf
   - name: web
     newName: ghcr.io/danieldonaldson/overkill-todo/web
     digest: sha256:bf8742e6bcef4e5aed20f9bf76dac38e88dc9717a505789ba75a51ec01297d7f # 47c6baf
