@@ -4,8 +4,8 @@ A local single-node cluster that ArgoCD fills from Git (OT-014). It sits beside
 `../compose/`, which stays the way to run the app locally and has its own
 production override. Which one production uses is not decided.
 
-> **Status:** slice 1 done. The cluster, ArgoCD and secrets work; nothing runs in
-> it yet but the app's empty namespace. The app itself arrives in slice 2.
+> **Status:** slice 2 in progress. The app runs at https://todo.k8s.test with
+> development mode off; backups arrive in slice 3.
 
 ```
 cluster/apps/      ArgoCD Applications; root.yaml owns them all, itself included
@@ -48,6 +48,20 @@ The ArgoCD UI, user `admin`:
 kubectl -n argocd port-forward svc/argocd-server 8443:443   # https://localhost:8443
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
 ```
+
+## The app
+
+`k8s-up` adds `todo.k8s.test` to `/etc/hosts` (`./scripts/k8s.sh hosts` does it
+alone). Trust the local CA once, in the NSS store that Chromium-based browsers and
+Playwright use (Firefox has its own):
+
+```bash
+certutil -d sql:$HOME/.pki/nssdb -A -t "C,," -n "overkill-todo local CA" -i deploy/k8s/local-ca.crt
+NODE_EXTRA_CA_CERTS=$PWD/deploy/k8s/local-ca.crt just smoke https://todo.k8s.test
+```
+
+The CA can only sign names under `k8s.test`. Email goes to an Ethereal sandbox:
+codes appear in its Messages tab, never in a real inbox.
 
 ## What is not in Git
 

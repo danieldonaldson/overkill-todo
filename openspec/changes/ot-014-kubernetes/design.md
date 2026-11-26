@@ -103,7 +103,28 @@ Applications Synced and Healthy, the secret decrypted and `k8s-status` clean wit
 5 minutes of the node registering. CoreDNS and the ArgoCD pods waited for the
 network and the Redis password, as expected, and nothing needed a hand.
 
-### What slice 1 changed for later slices
+### Slice 2 so far (2026-11-26)
+
+- The edge: Traefik's LoadBalancer Service gets `10.5.0.100` from Cilium's LB-IPAM,
+  announced over L2 on the VM bridge; `k8s-up` maps `todo.k8s.test` to it in
+  `/etc/hosts`. Cilium only applies a changed setting on restart, so its pods now
+  roll on config changes (`rollOutCiliumPods`); before that, L2 announcements were
+  on in the ConfigMap and off in the agent.
+- TLS: a local CA whose key is a `local` SopsSecret, so it survives rebuilds and is
+  trusted once; it is name-constrained to `k8s.test`. cert-manager issues the
+  edge's certificate. TLS 1.3 negotiates `X25519MLKEM768`; `just smoke` passes
+  (28 checks), Chromium trusting the CA through the NSS store, without
+  `ignoreHTTPSErrors`.
+- First boot with development mode off found, in order: five settings the overlays
+  lacked (Argon2 cost, token lifetimes; the example overlay too), the app owner
+  unable to create `pg_stat_statements` (now a CNPG `Database` with that extension,
+  in the base), and a sender name with parentheses, which the backend can't parse.
+  Each was named by `k8s-status` and stopped by the 300 s progress deadline, with
+  web serving throughout.
+- Email: a Mailtrap sandbox was replaced by Ethereal (Mailtrap allows 50 a month);
+  `backend-v1` to `backend-v2`, the old one pruned.
+
+
 
 - An overlay can't be emptied: Kustomize refuses to render one, and ArgoCD refuses
   to prune an Application to nothing. The canary's removal left the app's namespace.
