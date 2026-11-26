@@ -146,6 +146,17 @@ rollback after it lost nothing. Roll back ran against the same schema: main adde
 no migration between the two commits, so "against the newer schema" waits for a
 deploy that brings one (7.1).
 
+### Slice 3 so far (2026-11-26)
+
+- Garage with barman-cloud (3.1): Garage v2.6.0 in a container, with the plugin
+  v0.16.0's own sidecar image as the client (barman 3.20.1, boto3 1.43). A base
+  backup of Postgres 18 and its WAL arrived, requests were path-style
+  (`http://<host>:3900/<bucket>?...`), and boto3's default request checksums
+  were accepted without the `when_required` workaround other S3 clones need. A copy
+  restored with `barman-cloud-restore` and `barman-cloud-wal-restore` recovered
+  a row written after the backup. Garage checks the signing region (`garage` here),
+  so the ObjectStore's credentials need a region.
+
 ### What slice 2 changed for later slices
 
 - Every cluster setting change needs its consumer to restart or reload; check it
@@ -287,7 +298,7 @@ this to the threat model's edge assumptions.
 **D7. Backups go to S3-compatible storage on the host.** Garage in a container
 with its own volume, reached over the VM bridge, with the barman-cloud plugin
 installed in the cluster. Slice 3 first proves Garage with barman-cloud,
-path-style addressing included; its compatibility is unverified. A normal
+path-style addressing included; verified in 3.1 (Garage v2.6.0). A normal
 rebuild uses `bootstrap.recovery`; `initdb` is a separate, explicit first-run
 overlay, so nothing silently starts empty. _Alternatives:_ in-cluster storage
 (destroyed by the wipe); MinIO (repository archived).

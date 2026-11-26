@@ -43,7 +43,7 @@ Smoke checks pass; Database unavailable; Machine restarts.
 Delivers: Destroying the cluster touches nothing else; Restore into a rebuilt
 cluster; Rebuild never silently starts empty; Backup storage unavailable.
 
-- [ ] 3.1 Prove Garage with barman-cloud, path-style addressing included, and pin it (D7). Verify: a base backup and WAL arrive, recorded in design.md; otherwise revise D7.
+- [x] 3.1 Prove Garage with barman-cloud, path-style addressing included, and pin it (D7). Verify: a base backup and WAL arrive, recorded in design.md; otherwise revise D7.
 - [ ] 3.2 Run Garage on the host with its own volume, reached from the VM at the bridge's gateway (10.5.0.1, check ufw allows it); its credentials are `local` secrets. Verify: `k8s-down` leaves its data.
 - [ ] 3.3 Install the barman-cloud plugin as an Application (chart `plugin-barman-cloud` 0.9.0 for v0.16.0; it needs cert-manager), and add the base's backup to the local overlay, with a separate explicit first-run `initdb` overlay and `bootstrap.recovery` for a rebuild. CNPG reads `bootstrap` only when it creates a Cluster, so switching the running one to `recovery` changes nothing until a rebuild. Verify: with no usable backup the database doesn't start.
 - [ ] 3.4 Drill: write a row, confirm its backup, destroy and rebuild, restore. Verify: the row is there; duration and newest data recovered are recorded.
