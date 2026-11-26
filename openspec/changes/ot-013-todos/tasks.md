@@ -112,10 +112,10 @@ Delivers these scenarios:
 - **lists:** A full list stays usable.
 - **dashboard:** Phone; Touch.
 
-- [ ] 5.1 Phone layout (slice 2 already keeps list pages from scrolling sideways at 360 px): the picker as a drawer that traps focus, closes on choosing a list and returns focus. Vitest browser and Playwright tests at 360 px without horizontal scrolling.
-- [ ] 5.2 Touch: a Playwright test with touch emulation that swipes over todos (the list scrolls, nothing moves) and drags by the handle.
-- [ ] 5.3 Full lists: `content-visibility: auto` on rows. Check adding, marking, renaming and reordering on 1,000 todos with a Vitest bench and a Playwright flow, with interactions under 200 ms on the CI runner. Record the numbers in design.md Risks.
-- [ ] 5.4 Get `just ci` green. Note for the first deploy: `just smoke <url>`, then open a list on a phone.
+- [x] 5.1 Phone layout (slice 2 already keeps list pages from scrolling sideways at 360 px): the picker as a drawer that traps focus, closes on choosing a list and returns focus. Vitest browser and Playwright tests at 360 px without horizontal scrolling.
+- [x] 5.2 Touch: a Playwright test with touch emulation that swipes over todos (the list scrolls, nothing moves) and drags by the handle.
+- [x] 5.3 Full lists: `content-visibility: auto` on rows. Check adding, marking, renaming and reordering on 1,000 todos with a Vitest bench and a Playwright flow, with interactions under 200 ms on the CI runner. Record the numbers in design.md Risks.
+- [x] 5.4 Get `just ci` green. Note for the first deploy: `just smoke <url>`, then open a list on a phone.
 
 ## 6. Slice 6: proofs and the formal coverage gate
 

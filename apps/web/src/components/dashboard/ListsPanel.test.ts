@@ -92,7 +92,10 @@ function leavingAsks(): boolean {
   return event.defaultPrevented
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  // Vitest's default viewport is phone-sized; the picker sits beside the list
+  // from the `md` breakpoint, which most of these tests use.
+  await page.viewport(1280, 720)
   lists.reset()
   vi.clearAllMocks()
   vi.mocked(api.lists.list).mockResolvedValue([])
@@ -894,5 +897,106 @@ describe('ListsPanel: reordering', () => {
     await userEvent.keyboard('{Home}')
     await vi.waitFor(() => expect(toastError).toHaveBeenCalledOnce())
     expect(shown()).toEqual(titles)
+  })
+})
+
+// Component tests load no Tailwind, so which picker is visible and whether
+// anything scrolls sideways are checked in tests/lists.spec.ts.
+describe('ListsPanel: phone', () => {
+  beforeEach(async () => {
+    await page.viewport(360, 740)
+    vi.mocked(api.lists.list).mockResolvedValue([list(), list({ id: OTHER_ID, name: 'Home' })])
+    vi.mocked(api.lists.get).mockResolvedValue(detail([todo()]))
+  })
+
+  async function openDrawer() {
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText('Buy milk')).toBeInTheDocument()
+    const button = screen.getByRole('button', { name: 'All lists' })
+    await expect.element(button).toHaveAttribute('aria-expanded', 'false')
+    await button.click()
+    const drawer = screen.getByRole('dialog', { name: 'Your lists' })
+    await expect.element(drawer).toBeInTheDocument()
+    return { screen, button, drawer }
+  }
+
+  it('has a picker button only with a list open', async () => {
+    setPath('/dashboard/lists')
+    const overview = await render(ListsPanel)
+    await expect.element(overview.getByRole('button', { name: /Home/ })).toBeInTheDocument()
+    expect(overview.getByRole('button', { name: 'All lists' }).elements()).toHaveLength(0)
+  })
+
+  it('opens the picker as a modal drawer that keeps focus, and Escape returns it', async () => {
+    const { button, drawer } = await openDrawer()
+    expect(drawer.element().matches(':modal')).toBe(true)
+    await expect.element(button).toHaveAttribute('aria-expanded', 'true')
+    expect(drawer.element().contains(document.activeElement)).toBe(true)
+    await expect.element(drawer.getByRole('button', { name: /Home/ })).toBeInTheDocument()
+    // One picker at a time, so its fields' IDs stay unique.
+    expect(document.querySelectorAll('#new-list-name')).toHaveLength(1)
+    expect(document.querySelectorAll('aside')).toHaveLength(0)
+
+    // The page behind is inert, and Tab stays in the drawer.
+    const field = document.getElementById('new-todo-title')!
+    field.focus()
+    expect(document.activeElement).not.toBe(field)
+    for (let step = 0; step < 8; step++) {
+      await userEvent.keyboard('{Tab}')
+      const at = document.activeElement
+      expect(at === document.body || drawer.element().contains(at)).toBe(true)
+    }
+
+    await userEvent.keyboard('{Escape}')
+    await expect.element(drawer).not.toBeInTheDocument()
+    await expect.element(button).toHaveFocus()
+    await expect.element(button).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('closes when the open list is chosen, returning focus', async () => {
+    const { button, drawer } = await openDrawer()
+    await drawer.getByRole('button', { name: /Work/ }).click()
+    await expect.element(drawer).not.toBeInTheDocument()
+    await expect.element(button).toHaveFocus()
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it("closes when another list is chosen, and that list's page focuses the picker button", async () => {
+    const { screen, drawer } = await openDrawer()
+    await drawer.getByRole('button', { name: /Home/ }).click()
+    await expect.element(drawer).not.toBeInTheDocument()
+    expect(navigate).toHaveBeenCalledExactlyOnceWith(`/dashboard/lists/${OTHER_ID}`)
+
+    // The navigation mounts a new panel on the new address.
+    screen.unmount()
+    setPath(`/dashboard/lists/${OTHER_ID}`)
+    const next = await render(ListsPanel)
+    await expect.element(next.getByRole('button', { name: 'All lists' })).toHaveFocus()
+
+    // Only once: a later visit doesn't take focus.
+    next.unmount()
+    const later = await render(ListsPanel)
+    await expect.element(later.getByRole('button', { name: 'All lists' })).toBeInTheDocument()
+    expect(document.activeElement).toBe(document.body)
+  })
+
+  it('closes on a tap on the backdrop, the Close button, or widening the window', async () => {
+    const { screen, button, drawer } = await openDrawer()
+    const box = drawer.element().getBoundingClientRect()
+    await userEvent.click(document.body, { position: { x: 5, y: box.bottom + 20 } })
+    await expect.element(drawer).not.toBeInTheDocument()
+    await expect.element(button).toHaveFocus()
+
+    await button.click()
+    await screen.getByRole('button', { name: 'Close' }).click()
+    await expect.element(drawer).not.toBeInTheDocument()
+
+    await button.click()
+    await expect.element(drawer).toBeInTheDocument()
+    await page.viewport(1280, 720)
+    await expect.element(drawer).not.toBeInTheDocument()
+    await expect
+      .element(screen.getByRole('complementary', { name: 'Your lists' }))
+      .toBeInTheDocument()
   })
 })

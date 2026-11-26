@@ -553,6 +553,20 @@ The existing route-guard walk covers the Visitor case for future routes.
   131 s.
 - [1,000 rows make drag or keyboard moves slow] → `content-visibility: auto`,
   and an Interaction to Next Paint check on a full list in the ordering slice.
+  Measured in slice 5 (2026-11-26, this machine):
+  - `tests/lists.spec.ts` "a full list" opens 999 todos, adds the 1,000th, then
+    marks, renames and moves by keyboard and by drag, and fails if any
+    interaction's latency, as the browser measures it for INP, reaches 200 ms.
+    It runs in `just e2e`, so the budget holds on the CI runner too. Three runs:
+    every interaction 16 to 48 ms. Without `content-visibility`: 16 to 64 ms,
+    the moves slowest, so it helps most where layout is the cost.
+  - A first run reported 288 ms for opening a rename. A CPU profile showed
+    Playwright's label lookup (`getByLabel`) computing labels for all 1,000
+    rows in the page, during the click's frame; the panel itself took about
+    4 ms. The flow therefore finds fields by ID while it measures.
+  - `ListsPanel.bench.ts` (Vitest, `just bench-web`, no Tailwind, so without
+    `content-visibility`): opening 1,000 todos 113 ms mean (p99 189); each
+    change and its undo, both saved, 66 to 73 ms mean (p99 88 to 95).
 - [Touch scrolling starts a drag] → Only a drag handle starts one, with
   `touch-action: none` on the handle alone.
 

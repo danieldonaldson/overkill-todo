@@ -464,6 +464,60 @@ test('nothing scrolls sideways at 360 px', async ({ page }) => {
   expect(await overflow()).toBeLessThanOrEqual(0)
 })
 
+test('on a phone, the picker is a drawer that closes on choosing a list', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 })
+  await seedSession(page)
+  const state = oneTodo()
+  state.lists[0]!.name = 'x'.repeat(100)
+  state.lists.push({ id: LIST_B, name: 'Beta', version: 1 })
+  state.todos[LIST_B] = []
+  mockLists(page, state)
+  const overflow = () =>
+    page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)
+
+  // The overview is the picker itself.
+  await page.goto('/dashboard/lists')
+  await expect(page.getByRole('button', { name: /^Beta/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'All lists' })).toHaveCount(0)
+
+  // With a list open, the picker is behind a button.
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await expect(page.getByText('Buy milk')).toBeVisible()
+  await expect(page.getByRole('complementary', { name: 'Your lists' })).toBeHidden()
+  const button = page.getByRole('button', { name: 'All lists' })
+  await button.click()
+
+  const drawer = page.getByRole('dialog', { name: 'Your lists' })
+  await expect(drawer).toBeVisible()
+  const box = (await drawer.boundingBox())!
+  expect(box.x).toBe(0)
+  expect(box.width).toBeLessThan(360)
+  // A 100-character name is cut short rather than widening the drawer.
+  expect(await drawer.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeLessThanOrEqual(
+    0
+  )
+  expect(await overflow()).toBeLessThanOrEqual(0)
+
+  // Escape gives focus back to the button.
+  await page.keyboard.press('Escape')
+  await expect(drawer).toBeHidden()
+  await expect(button).toBeFocused()
+
+  // Choosing another list opens it, closes the drawer, and its page focuses the button.
+  await button.click()
+  await drawer.getByRole('button', { name: /^Beta/ }).click()
+  await expect(page.getByRole('heading', { name: 'Beta' })).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe(`/dashboard/lists/${LIST_B}`)
+  await expect(drawer).toBeHidden()
+  await expect(page.getByRole('button', { name: 'All lists' })).toBeFocused()
+  expect(await overflow()).toBeLessThanOrEqual(0)
+
+  // Wider than a phone, the picker is beside the list and there is no button.
+  await page.setViewportSize({ width: 1024, height: 740 })
+  await expect(page.getByRole('complementary', { name: 'Your lists' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'All lists' })).toBeHidden()
+})
+
 test('renames and deletes a todo, renames the list, and deletes it', async ({ page }) => {
   await seedSession(page)
   const state = oneTodo()
@@ -645,6 +699,216 @@ test('a failed move goes back and says so', async ({ page }) => {
 
   await handle(page, 'Three').press('Home')
   await expectOrder(page, ['Three', 'One', 'Two'])
+})
+
+test.describe('on a touch screen', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 360, height: 740 } })
+
+  /** A list long enough to scroll: 'Todo 1' to 'Todo 40'. */
+  function longList(): State {
+    const state = threeTodos()
+    state.todos[LIST_A] = Array.from({ length: 40 }, (_, index) => ({
+      id: `8a1c2d3e-4f5a-6b7c-8d9e-${String(index).padStart(12, '0')}`,
+      title: `Todo ${index + 1}`,
+      done: false,
+      version: 1,
+      created_at: '2026-11-25T10:00:00Z',
+      completed_at: null,
+    }))
+    return state
+  }
+
+  /**
+   * One finger from `from` to `to`, as real touch input: Chromium scrolls,
+   * honours touch-action and fires touch pointer events, as on a phone.
+   */
+  async function swipe(
+    page: Page,
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+    steps = 12
+  ) {
+    const cdp = await page.context().newCDPSession(page)
+    const point = (x: number, y: number) => [{ x, y, id: 1, radiusX: 4, radiusY: 4, force: 1 }]
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: point(from.x, from.y),
+    })
+    for (let step = 1; step <= steps; step++) {
+      const x = from.x + ((to.x - from.x) * step) / steps
+      const y = from.y + ((to.y - from.y) * step) / steps
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: point(x, y) })
+      await page.waitForTimeout(16)
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await cdp.detach()
+  }
+
+  const centre = async (locator: ReturnType<Page['locator']>) => {
+    const box = (await locator.boundingBox())!
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  }
+  const titles = (count: number) => Array.from({ length: count }, (_, index) => `Todo ${index + 1}`)
+
+  test('a swipe over the todos scrolls the list and moves nothing', async ({ page }) => {
+    await seedSession(page)
+    const state = longList()
+    mockLists(page, state)
+    await page.goto(`/dashboard/lists/${LIST_A}`)
+    await expectOrder(page, titles(40))
+
+    // Up the screen from the middle of a todo's title, as a thumb scrolls down.
+    const start = await centre(page.getByText('Todo 6', { exact: true }))
+    await swipe(page, start, { x: start.x, y: start.y - 400 })
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(200)
+
+    await expect(page.getByTestId('drop-line')).toHaveCount(0)
+    await expectOrder(page, titles(40))
+    await page.waitForTimeout(300)
+    expect(state.moves ?? 0).toBe(0)
+  })
+
+  test("dragging by a todo's handle moves it and doesn't scroll", async ({ page }) => {
+    await seedSession(page)
+    const state = longList()
+    mockLists(page, state)
+    await page.goto(`/dashboard/lists/${LIST_A}`)
+    await expectOrder(page, titles(40))
+
+    const from = await centre(handle(page, 'Todo 3'))
+    const to = (await handle(page, 'Todo 1').boundingBox())!
+    await swipe(page, from, { x: from.x, y: to.y + 1 })
+
+    const moved = ['Todo 3', 'Todo 1', 'Todo 2', ...titles(40).slice(3)]
+    await expectOrder(page, moved)
+    await expect.poll(() => state.moves ?? 0).toBe(1)
+    expect(await page.evaluate(() => window.scrollY)).toBe(0)
+  })
+})
+
+test.describe('a full list', () => {
+  // Interaction to Next Paint's own budget for "good". The test runs on the CI
+  // runner too, so a slow full list fails the gate there.
+  const BUDGET_MS = 200
+
+  function nearlyFull(): State {
+    const state = threeTodos()
+    state.todos[LIST_A] = Array.from({ length: 999 }, (_, index) => ({
+      id: `8a1c2d3e-4f5a-6b7c-8d9e-${String(index).padStart(12, '0')}`,
+      title: `Todo ${index + 1}`,
+      done: false,
+      version: 1,
+      created_at: '2026-11-25T10:00:00Z',
+      completed_at: null,
+    }))
+    return state
+  }
+
+  /** Records every interaction's latency as the browser measures it for INP. */
+  async function recordInteractions(page: Page) {
+    await page.addInitScript(() => {
+      const seen: { id: number; duration: number }[] = []
+      ;(globalThis as { __interactions?: typeof seen }).__interactions = seen
+      new PerformanceObserver((list) => {
+        for (const entry of list.getEntries() as (PerformanceEntry & { interactionId?: number })[])
+          if (entry.interactionId) seen.push({ id: entry.interactionId, duration: entry.duration })
+      }).observe({
+        type: 'event',
+        durationThreshold: 16,
+        buffered: true,
+      } as PerformanceObserverInit)
+    })
+  }
+
+  /** The slowest interaction since the last call, after the browser has reported it. */
+  async function slowest(page: Page): Promise<number> {
+    // Entries arrive after the next paint.
+    await page.evaluate(
+      () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))
+    )
+    await page.waitForTimeout(100)
+    return page.evaluate(() => {
+      const seen = (globalThis as { __interactions?: { duration: number }[] }).__interactions!
+      const worst = Math.max(0, ...seen.map((entry) => entry.duration))
+      seen.length = 0
+      return worst
+    })
+  }
+
+  test('adding, marking, renaming and reordering stay under 200 ms with 1,000 todos', async ({
+    page,
+  }, testInfo) => {
+    await recordInteractions(page)
+    await seedSession(page)
+    const state = nearlyFull()
+    mockLists(page, state)
+    await page.goto(`/dashboard/lists/${LIST_A}`)
+    const todos = page.getByRole('list', { name: 'Todos' })
+    await expect(todos.getByText('Todo 999', { exact: true })).toBeAttached()
+    await slowest(page)
+
+    const timings: Record<string, number> = {}
+    const step = async (name: string, act: () => Promise<void>) => {
+      await act()
+      timings[name] = await slowest(page)
+    }
+
+    // The 1,000th todo.
+    await step('add', async () => {
+      await page.getByLabel('New todo title').fill('The last one')
+      await page.getByLabel('New todo title').press('Enter')
+      await expect(todos.getByText('The last one')).toBeAttached()
+    })
+    await expect.poll(() => state.todos[LIST_A]!.length).toBe(1000)
+
+    // Every todo can be reached.
+    await todos.getByText('The last one').scrollIntoViewIfNeeded()
+    await expect(todos.getByText('The last one')).toBeInViewport()
+    await page.evaluate(() => window.scrollTo(0, 0))
+
+    await step('mark', async () => {
+      await page.getByRole('checkbox', { name: 'Mark "Todo 4" done', exact: true }).click()
+      await expect(todos.getByText('Todo 4', { exact: true })).toHaveCount(0)
+    })
+
+    await step('open rename', async () => {
+      await todos
+        .getByRole('listitem')
+        .filter({ hasText: 'Todo 2' })
+        .first()
+        .getByRole('button', { name: 'Rename' })
+        .click()
+      // By ID: finding a field by its label runs in the page over all 1,000
+      // rows (about 270 ms), and would be counted in the interaction measured.
+      await expect(page.locator('[id^="rename-todo-"]')).toBeFocused()
+    })
+    await page.getByLabel('Todo title', { exact: true }).fill('Renamed')
+    await step('save rename', async () => {
+      await page.getByLabel('Todo title', { exact: true }).press('Enter')
+      await expect(todos.getByText('Renamed', { exact: true })).toBeVisible()
+    })
+
+    await step('move with the keyboard', async () => {
+      await handle(page, 'Todo 3').press('ArrowUp')
+      await expectOrder(page, ['Todo 1', 'Todo 3', 'Renamed', 'Todo 5'])
+    })
+
+    await step('drag', async () => {
+      await dragAbove(page, 'Todo 5', 'Todo 1')
+      await page.mouse.up()
+      await expectOrder(page, ['Todo 5', 'Todo 1', 'Todo 3', 'Renamed'])
+    })
+    await expect.poll(() => state.moves ?? 0).toBe(2)
+
+    // Shown in the report and the CI log, for design.md's Risks.
+    const summary = Object.entries(timings)
+      .map(([name, ms]) => `${name} ${ms} ms`)
+      .join(', ')
+    testInfo.annotations.push({ type: 'interactions (1,000 todos)', description: summary })
+    console.log(`interactions (1,000 todos): ${summary}`)
+    for (const [name, ms] of Object.entries(timings))
+      expect(ms, `${name} took ${ms} ms`).toBeLessThan(BUDGET_MS)
+  })
 })
 
 test('only the drag handle turns off touch scrolling', async ({ page }) => {
