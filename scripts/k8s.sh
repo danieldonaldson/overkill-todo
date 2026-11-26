@@ -5,6 +5,7 @@
 #   k8s.sh down    destroy it, whatever state it is in
 #   k8s.sh status  what is out of sync, failing or stuck; exits 1 if anything is
 #   k8s.sh env     print the exports for kubectl and talosctl
+#   k8s.sh hosts   add the app's name to /etc/hosts (up does this)
 #
 # Runs as you; only the VM, its network and one firewall rule need sudo, and each
 # such command is printed first. State is in $XDG_STATE_HOME/overkill-todo/k8s.
@@ -15,6 +16,10 @@ name=overkill-todo
 cidr=10.5.0.0/24
 gateway=10.5.0.1
 node=10.5.0.2
+# Traefik's LoadBalancer address (deploy/k8s/cluster/edge) and the app's name.
+edge_ip=10.5.0.100
+app_host=todo.k8s.test
+hosts_tag="# $name k8s"
 cpus=4
 mem_gib=12
 disk_gib=40
@@ -100,6 +105,16 @@ bootstrap_argocd() {
   "${apply[@]}" -f deploy/k8s/cluster/apps/root.yaml >/dev/null
 }
 
+# One line in /etc/hosts, tagged so `down` removes only its own.
+add_host() {
+  grep -qF "$hosts_tag" /etc/hosts && return
+  printf '%s %s %s\n' "$edge_ip" "$app_host" "$hosts_tag" | as_root tee -a /etc/hosts >/dev/null
+}
+remove_host() {
+  grep -qF "$hosts_tag" /etc/hosts || return 0
+  as_root sed -i "\\|$hosts_tag\$|d" /etc/hosts
+}
+
 cmd_up() {
   preflight
   # Plaintext machine secrets live in memory only, and go when this exits.
@@ -152,6 +167,8 @@ cmd_up() {
   # The node is Ready before cluster DNS answers.
   kubectl -n kube-system rollout status deployment/coredns --timeout=300s
   bootstrap_argocd
+  add_host
+  say "the app will be at https://$app_host once ArgoCD has synced; trust deploy/k8s/local-ca.crt"
   say "ready. For kubectl and talosctl: eval \"\$(./scripts/k8s.sh env)\""
 }
 
@@ -175,6 +192,7 @@ cmd_down() {
   fi
   [[ ! -e $state/clusters ]] || as_root rm -rf "$state/clusters"
   rm -f "$state/kubeconfig" "$state/talosconfig"
+  remove_host
   say "the cluster is gone"
 }
 
@@ -224,7 +242,9 @@ cmd_status() {
   echo "every Application is synced and healthy, every secret decrypted, every rollout finished"
 }
 
+cmd_hosts() { add_host; grep -F "$hosts_tag" /etc/hosts; }
+
 case ${1:-} in
-  up | down | status | env) "cmd_$1" ;;
-  *) sed -n '2,10s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+  up | down | status | env | hosts) "cmd_$1" ;;
+  *) sed -n '2,11s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
 esac

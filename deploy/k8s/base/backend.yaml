@@ -11,6 +11,8 @@ metadata:
     app.kubernetes.io/name: backend
 spec:
   replicas: 1
+  # A rollout that never becomes ready turns Degraded instead of waiting forever.
+  progressDeadlineSeconds: 300
   strategy:
     type: RollingUpdate
     rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }
