@@ -292,7 +292,8 @@ Observability is
 `restricted` except the log collector, which reads host paths and gets its own
 `privileged` namespace. Cilium, ArgoCD, the SOPS operator, Reloader, storage, Traefik, cert-manager and CNPG
 are listed exceptions with reasons, and have limits where their charts set
-them. _Alternative:_ Kyverno, more capable but unneeded for this.
+them. CNPG, cert-manager and Traefik turned out to run under `restricted`
+unchanged (2026-11-26), so they aren't exceptions. _Alternative:_ Kyverno, more capable but unneeded for this.
 
 **D13. Manifest checks.** `kubeconform` v0.8.0 in strict mode, with custom
 resource schemas generated from the pinned definitions and committed, so CNPG,
