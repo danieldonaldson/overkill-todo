@@ -32,7 +32,8 @@ configMapGenerator:
       - ARGON2_MEMORY_COST=65536
       - ARGON2_TIME_COST=3
       - ARGON2_PARALLELISM=4
-      - SMTP_FROM_NAME=Overkill Todo (local cluster)
+      # Plain words: the backend parses "name <address>" unquoted, so ()<>@,;:" break it.
+      - SMTP_FROM_NAME=Overkill Todo Local
       - MX_VALIDATION_ENABLED=true
       # The collector arrives in slice 5; until then export fails quietly.
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.observability:4317
