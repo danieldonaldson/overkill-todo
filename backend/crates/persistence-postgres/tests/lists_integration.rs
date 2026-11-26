@@ -3,14 +3,22 @@
 //! The deliberately invalid writes use runtime `sqlx::query` (not the
 //! compile-checked macros) so they can target constraints directly.
 
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
-use application::ports::outgoing::{LimitKind, ListRepository, ListWrite, TodoMove};
-use domain::value_objects::{ListId, ListName, TodoId, TodoTitle, UserId};
+use application::ports::outgoing::{
+    AccountLifecycleRepository, LimitKind, ListRepository, ListWrite, TodoMove, UserRepository,
+};
+use domain::entities::AuditEvent;
+use domain::errors::DomainError;
+use domain::value_objects::{Email, ListId, ListName, TodoId, TodoTitle, UserId};
 use jiff::Timestamp;
 use persistence_postgres::time::ToDb;
-use persistence_postgres::{Database, PostgresListRepository};
-use sqlx::PgPool;
+use persistence_postgres::{Database, PostgresListRepository, PostgresUserRepository};
+use sqlx::postgres::PgPoolOptions;
+use sqlx::{PgPool, Postgres, Transaction};
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 fn repo(pool: &PgPool) -> PostgresListRepository {
@@ -284,31 +292,6 @@ async fn a_repeated_creation_key_returns_the_existing_list_also_at_the_limit(poo
 }
 
 #[sqlx::test(migrations = "../../migrations")]
-async fn concurrent_list_creation_at_the_limit_saves_one(pool: PgPool) {
-    let (user_id, user) = user(&pool, "list-race@example.com").await;
-    for i in 0..99 {
-        insert_list(&pool, user_id, &format!("List {i}")).await;
-    }
-    let repo = Arc::new(repo(&pool));
-    let (name_a, name_b) = (name("A"), name("B"));
-    let (a, b) = tokio::join!(
-        repo.create_list(&user, Uuid::now_v7(), &name_a),
-        repo.create_list(&user, Uuid::now_v7(), &name_b),
-    );
-    let outcomes = [a.unwrap(), b.unwrap()];
-    let applied = outcomes
-        .iter()
-        .filter(|o| matches!(o, ListWrite::Applied(_)))
-        .count();
-    let limited = outcomes
-        .iter()
-        .filter(|o| matches!(o, ListWrite::LimitReached(LimitKind::Lists)))
-        .count();
-    assert_eq!((applied, limited), (1, 1));
-    assert_eq!(count_lists(&pool, user_id).await, 100);
-}
-
-#[sqlx::test(migrations = "../../migrations")]
 async fn a_repeated_todo_key_returns_the_existing_todo_also_at_the_limit(pool: PgPool) {
     let (user_id, user) = user(&pool, "todo-limit@example.com").await;
     let list = insert_list(&pool, user_id, "Work").await;
@@ -339,36 +322,6 @@ async fn a_repeated_todo_key_returns_the_existing_todo_also_at_the_limit(pool: P
             .unwrap(),
         ListWrite::LimitReached(LimitKind::Todos)
     ));
-    assert_eq!(count_todos(&pool, list).await, 1000);
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn concurrent_todo_additions_at_the_limit_save_one(pool: PgPool) {
-    let (user_id, user) = user(&pool, "todo-race@example.com").await;
-    let list = insert_list(&pool, user_id, "Work").await;
-    let list_id = ListId::from_uuid(list);
-    seed_list_todos(&pool, list, 999).await;
-    let repo = Arc::new(repo(&pool));
-    let (title_a, title_b) = (title("a"), title("b"));
-    let (a, b) = tokio::join!(
-        repo.add_todo(&user, &list_id, Uuid::now_v7(), &title_a),
-        repo.add_todo(&user, &list_id, Uuid::now_v7(), &title_b),
-    );
-    let outcomes = [a.unwrap(), b.unwrap()];
-    assert_eq!(
-        outcomes
-            .iter()
-            .filter(|o| matches!(o, ListWrite::Applied(_)))
-            .count(),
-        1
-    );
-    assert_eq!(
-        outcomes
-            .iter()
-            .filter(|o| matches!(o, ListWrite::LimitReached(LimitKind::Todos)))
-            .count(),
-        1
-    );
     assert_eq!(count_todos(&pool, list).await, 1000);
 }
 
@@ -688,32 +641,6 @@ async fn deleting_a_list_requires_the_name_and_count_it_was_confirmed_with(pool:
     ));
     assert_eq!(count_lists(&pool, user_id).await, 0);
     assert_eq!(count_todos(&pool, list).await, 0);
-}
-
-#[sqlx::test(migrations = "../../migrations")]
-async fn a_concurrent_add_makes_the_list_delete_stale_or_waits_until_after_it(pool: PgPool) {
-    let (user_id, user) = user(&pool, "delete-race@example.com").await;
-    let list = insert_list(&pool, user_id, "Work").await;
-    let list_id = ListId::from_uuid(list);
-    let repo = Arc::new(repo(&pool));
-    let added_title = title("added elsewhere");
-    let added = repo.add_todo(&user, &list_id, Uuid::now_v7(), &added_title);
-    let deleted = repo.delete_list(&user, &list_id, 1, 0);
-    let (added, deleted) = tokio::join!(added, deleted);
-
-    match (added.unwrap(), deleted.unwrap()) {
-        // The add went first: the delete saw a different count.
-        (ListWrite::Applied(_), ListWrite::Stale(current)) => {
-            assert_eq!(current.todo_count, 1);
-            assert_eq!(count_lists(&pool, user_id).await, 1);
-            assert_eq!(count_todos(&pool, list).await, 1);
-        }
-        // The delete went first: nothing was added to a deleted list.
-        (ListWrite::ListNotFound, ListWrite::Applied(_)) => {
-            assert_eq!(count_lists(&pool, user_id).await, 0);
-        }
-        (added, deleted) => panic!("inconsistent outcomes: {added:?}, {deleted:?}"),
-    }
 }
 
 #[sqlx::test(migrations = "../../migrations")]
@@ -1039,4 +966,454 @@ async fn a_move_waits_for_the_list_lock(pool: PgPool) {
     tx.commit().await.unwrap();
     assert_eq!(moved(moving.await.unwrap()), [c, b]);
     assert_eq!(open_order(&pool, &list).await, [c, b]);
+}
+
+// ---------------------------------------------------------------------------
+// Overlapping transactions (task 7.5)
+// ---------------------------------------------------------------------------
+//
+// Model replay calls each repository method once, at its commit, so it can't
+// notice a missing lock (design D13). These tests make two requests overlap
+// on purpose. A transaction of the test's own holds the rows a request would
+// lock (`hold`), and each request is started only once the one before it is
+// waiting. With the lock in place, both requests wait for it before reading
+// anything; without it, both read, then wait at their writes (a row they
+// update, or the row a foreign key checks), so releasing the hold lets them
+// write on what they read. Postgres grants a row's waiters in turn, so the
+// first request started goes first.
+//
+// Each was seen to fail with its lock removed on a scratch edit (`FOR UPDATE`
+// dropped from `lock_list`, or from the account lock in `create_list`).
+
+/// A repository on a connection of its own, so requests run in separate sessions.
+async fn own_repo(pool: &PgPool) -> Arc<PostgresListRepository> {
+    let single = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    Arc::new(PostgresListRepository::new(Arc::new(Database::from_pool(
+        single,
+    ))))
+}
+
+/// Holds a list row and all its todos, as a request's `lock_list` would.
+async fn hold_list(pool: &PgPool, list: Uuid) -> Transaction<'static, Postgres> {
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM lists WHERE id = $1 FOR UPDATE")
+        .bind(list)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    sqlx::query("SELECT id FROM todos WHERE list_id = $1 FOR UPDATE")
+        .bind(list)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx
+}
+
+/// Holds an account row, as `create_list` and the purge would.
+async fn hold_account(pool: &PgPool, user: Uuid) -> Transaction<'static, Postgres> {
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM users WHERE id = $1 FOR UPDATE")
+        .bind(user)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx
+}
+
+/// Starts `request` and returns once it waits for a lock (the `waiting`th
+/// session in this database to do so) or has finished without waiting.
+async fn start<T, F>(pool: &PgPool, waiting: i64, request: F) -> JoinHandle<T>
+where
+    F: Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let task = tokio::spawn(request);
+    for _ in 0..1000 {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pg_stat_activity
+             WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if count >= waiting || task.is_finished() {
+            return task;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the request neither waited for a lock nor finished within 10 s");
+}
+
+/// Releases the hold and returns both requests' results, in the order started.
+async fn release<A, B>(
+    hold: Transaction<'static, Postgres>,
+    a: JoinHandle<A>,
+    b: JoinHandle<B>,
+) -> (A, B) {
+    hold.rollback().await.unwrap();
+    (a.await.unwrap(), b.await.unwrap())
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn concurrent_todo_additions_at_the_limit_save_one(pool: PgPool) {
+    let (user_id, user) = user(&pool, "todo-race@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    seed_list_todos(&pool, list, 999).await;
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+
+    let hold = hold_list(&pool, list).await;
+    let a = start(&pool, 1, async move {
+        first
+            .add_todo(&user, &list_id, Uuid::now_v7(), &title("a"))
+            .await
+    })
+    .await;
+    let b = start(&pool, 2, async move {
+        second
+            .add_todo(&user, &list_id, Uuid::now_v7(), &title("b"))
+            .await
+    })
+    .await;
+    let (a, b) = release(hold, a, b).await;
+
+    assert!(matches!(a.unwrap(), ListWrite::Applied(_)));
+    assert!(matches!(
+        b.unwrap(),
+        ListWrite::LimitReached(LimitKind::Todos)
+    ));
+    assert_eq!(count_todos(&pool, list).await, 1000);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn concurrent_list_creation_at_the_limit_saves_one(pool: PgPool) {
+    let (user_id, user) = user(&pool, "list-race@example.com").await;
+    for i in 0..99 {
+        insert_list(&pool, user_id, &format!("List {i}")).await;
+    }
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+
+    let hold = hold_account(&pool, user_id).await;
+    let a = start(&pool, 1, async move {
+        first.create_list(&user, Uuid::now_v7(), &name("A")).await
+    })
+    .await;
+    let b = start(&pool, 2, async move {
+        second.create_list(&user, Uuid::now_v7(), &name("B")).await
+    })
+    .await;
+    let (a, b) = release(hold, a, b).await;
+
+    assert!(matches!(a.unwrap(), ListWrite::Applied(_)));
+    assert!(matches!(
+        b.unwrap(),
+        ListWrite::LimitReached(LimitKind::Lists)
+    ));
+    assert_eq!(count_lists(&pool, user_id).await, 100);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn one_todo_key_sent_twice_at_once_saves_one_todo(pool: PgPool) {
+    let (user_id, user) = user(&pool, "todo-key-race@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    let key = Uuid::now_v7();
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+
+    let hold = hold_list(&pool, list).await;
+    let a = start(&pool, 1, async move {
+        first.add_todo(&user, &list_id, key, &title("milk")).await
+    })
+    .await;
+    let b = start(&pool, 2, async move {
+        second.add_todo(&user, &list_id, key, &title("milk")).await
+    })
+    .await;
+    let (a, b) = release(hold, a, b).await;
+
+    let ListWrite::Applied(added) = a.unwrap() else {
+        panic!("the first request should add the todo")
+    };
+    match b.unwrap() {
+        ListWrite::Repeated(repeated) => assert_eq!(repeated.id(), added.id()),
+        other => panic!("expected Repeated, got {other:?}"),
+    }
+    assert_eq!(count_todos(&pool, list).await, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn one_list_key_sent_twice_at_once_saves_one_list(pool: PgPool) {
+    let (user_id, user) = user(&pool, "list-key-race@example.com").await;
+    let key = Uuid::now_v7();
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+
+    let hold = hold_account(&pool, user_id).await;
+    let a = start(&pool, 1, async move {
+        first.create_list(&user, key, &name("Work")).await
+    })
+    .await;
+    let b = start(&pool, 2, async move {
+        second.create_list(&user, key, &name("Work")).await
+    })
+    .await;
+    let (a, b) = release(hold, a, b).await;
+
+    let ListWrite::Applied(created) = a.unwrap() else {
+        panic!("the first request should create the list")
+    };
+    match b.unwrap() {
+        ListWrite::Repeated(repeated) => assert_eq!(repeated.list.id(), created.list.id()),
+        other => panic!("expected Repeated, got {other:?}"),
+    }
+    assert_eq!(count_lists(&pool, user_id).await, 1);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn two_todo_renames_at_one_version_apply_one(pool: PgPool) {
+    let (user_id, user) = user(&pool, "rename-race@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    let todo = TodoId::from_uuid(insert_todo(&pool, list, "milk", Some(1), None).await);
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+
+    let hold = hold_list(&pool, list).await;
+    let a = start(&pool, 1, async move {
+        first
+            .rename_todo(&user, &list_id, &todo, 1, &title("A"))
+            .await
+    })
+    .await;
+    let b = start(&pool, 2, async move {
+        second
+            .rename_todo(&user, &list_id, &todo, 1, &title("B"))
+            .await
+    })
+    .await;
+    let (a, b) = release(hold, a, b).await;
+
+    assert!(matches!(a.unwrap(), ListWrite::Applied(_)));
+    match b.unwrap() {
+        ListWrite::Stale(current) => {
+            assert_eq!(current.title().as_str(), "A");
+            assert_eq!(current.version(), 2);
+        }
+        other => panic!("expected Stale, got {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn two_marks_at_one_version_move_the_version_once(pool: PgPool) {
+    let (user_id, user) = user(&pool, "mark-race@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    let todo = TodoId::from_uuid(insert_todo(&pool, list, "milk", Some(1), None).await);
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+
+    let hold = hold_list(&pool, list).await;
+    let a = start(&pool, 1, async move {
+        first.mark_todo(&user, &list_id, &todo, 1, true).await
+    })
+    .await;
+    let b = start(&pool, 2, async move {
+        second.mark_todo(&user, &list_id, &todo, 1, true).await
+    })
+    .await;
+    let (a, b) = release(hold, a, b).await;
+
+    assert!(matches!(a.unwrap(), ListWrite::Applied(_)));
+    // Done in both tabs: the second asks for what is stored (spec: no note).
+    match b.unwrap() {
+        ListWrite::Repeated(current) => assert_eq!(current.version(), 2),
+        other => panic!("expected Repeated, got {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn two_list_renames_at_one_version_apply_one(pool: PgPool) {
+    let (user_id, user) = user(&pool, "list-rename-race@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+
+    let hold = hold_list(&pool, list).await;
+    let a = start(&pool, 1, async move {
+        first.rename_list(&user, &list_id, 1, &name("Job")).await
+    })
+    .await;
+    let b = start(&pool, 2, async move {
+        second.rename_list(&user, &list_id, 1, &name("Home")).await
+    })
+    .await;
+    let (a, b) = release(hold, a, b).await;
+
+    assert!(matches!(a.unwrap(), ListWrite::Applied(_)));
+    match b.unwrap() {
+        ListWrite::Stale(current) => {
+            assert_eq!(current.list.name().as_str(), "Job");
+            assert_eq!(current.list.version(), 2);
+        }
+        other => panic!("expected Stale, got {other:?}"),
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_concurrent_add_makes_the_list_delete_stale_or_waits_until_after_it(pool: PgPool) {
+    // The add first: the delete sees a different count and deletes nothing.
+    let (user_id, user) = user(&pool, "delete-race@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    let list_id = ListId::from_uuid(list);
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+    let hold = hold_list(&pool, list).await;
+    let added = start(&pool, 1, async move {
+        first
+            .add_todo(&user, &list_id, Uuid::now_v7(), &title("added elsewhere"))
+            .await
+    })
+    .await;
+    let deleted = start(&pool, 2, async move {
+        second.delete_list(&user, &list_id, 1, 0).await
+    })
+    .await;
+    let (added, deleted) = release(hold, added, deleted).await;
+    assert!(matches!(added.unwrap(), ListWrite::Applied(_)));
+    match deleted.unwrap() {
+        ListWrite::Stale(current) => assert_eq!(current.todo_count, 1),
+        other => panic!("expected Stale, got {other:?}"),
+    }
+    assert_eq!(count_todos(&pool, list).await, 1);
+
+    // The delete first: nothing is added to the deleted list.
+    let list = insert_list(&pool, user_id, "Home").await;
+    let list_id = ListId::from_uuid(list);
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+    let hold = hold_list(&pool, list).await;
+    let deleted = start(&pool, 1, async move {
+        first.delete_list(&user, &list_id, 1, 0).await
+    })
+    .await;
+    let added = start(&pool, 2, async move {
+        second
+            .add_todo(&user, &list_id, Uuid::now_v7(), &title("added elsewhere"))
+            .await
+    })
+    .await;
+    let (deleted, added) = release(hold, deleted, added).await;
+    assert!(matches!(deleted.unwrap(), ListWrite::Applied(_)));
+    assert!(matches!(added.unwrap(), ListWrite::ListNotFound));
+    assert_eq!(count_todos(&pool, list).await, 0);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn concurrent_moves_settle_on_one_order(pool: PgPool) {
+    let (user_id, user) = user(&pool, "move-race@example.com").await;
+    let gap = 1 << 20;
+    let (list, ids) = list_at(&pool, user_id, &[gap, 2 * gap, 3 * gap, 4 * gap]).await;
+    let list_uuid = *list.as_uuid();
+    let [a, b, c, d] = [ids[0], ids[1], ids[2], ids[3]];
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+
+    // Both move a todo directly below `a`: from the same read, both would
+    // take the midpoint of `a` and `b`.
+    let hold = hold_list(&pool, list_uuid).await;
+    let one = start(&pool, 1, async move {
+        first.move_todo(&user, &list, &c, &[a], &[b]).await
+    })
+    .await;
+    let two = start(&pool, 2, async move {
+        second.move_todo(&user, &list, &d, &[a], &[b]).await
+    })
+    .await;
+    let (one, two) = release(hold, one, two).await;
+
+    assert_eq!(moved(one), vec![a, c, b, d]);
+    assert_eq!(moved(two), vec![a, d, c, b]);
+    assert_eq!(open_order(&pool, &list).await, vec![a, d, c, b]);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_move_after_its_todo_was_completed_or_deleted_concurrently_changes_nothing(pool: PgPool) {
+    let (user_id, user) = user(&pool, "move-gone-race@example.com").await;
+    let gap = 1 << 20;
+    let (list, ids) = list_at(&pool, user_id, &[gap, 2 * gap, 3 * gap]).await;
+    let list_uuid = *list.as_uuid();
+    let [a, b, c] = [ids[0], ids[1], ids[2]];
+
+    // Marked done first: the move finds a done todo.
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+    let hold = hold_list(&pool, list_uuid).await;
+    let marked = start(&pool, 1, async move {
+        first.mark_todo(&user, &list, &c, 1, true).await
+    })
+    .await;
+    let moving = start(&pool, 2, async move {
+        second.move_todo(&user, &list, &c, &[], &[a]).await
+    })
+    .await;
+    let (marked, moving) = release(hold, marked, moving).await;
+    assert!(matches!(marked.unwrap(), ListWrite::Applied(_)));
+    assert!(matches!(moving.unwrap(), TodoMove::Done(_)));
+    assert_eq!(open_order(&pool, &list).await, vec![a, b]);
+
+    // Deleted first: the move finds no todo.
+    let (first, second) = (own_repo(&pool).await, own_repo(&pool).await);
+    let hold = hold_list(&pool, list_uuid).await;
+    let deleted = start(&pool, 1, async move {
+        first.delete_todo(&user, &list, &b, 1).await
+    })
+    .await;
+    let moving = start(&pool, 2, async move {
+        second.move_todo(&user, &list, &b, &[], &[a]).await
+    })
+    .await;
+    let (deleted, moving) = release(hold, deleted, moving).await;
+    assert!(matches!(deleted.unwrap(), ListWrite::Applied(_)));
+    assert!(matches!(moving.unwrap(), TodoMove::TodoNotFound));
+    assert_eq!(open_order(&pool, &list).await, vec![a]);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_list_created_during_the_purge_is_refused(pool: PgPool) {
+    let (user_id, user) = user(&pool, "purge-race@example.com").await;
+    let list = insert_list(&pool, user_id, "Work").await;
+    sqlx::query(
+        "UPDATE users SET deletion_scheduled_at = NOW() - interval '1 minute' WHERE id = $1",
+    )
+    .bind(user_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let accounts = PostgresUserRepository::new(Arc::new(Database::from_pool(pool.clone())));
+    let mut anonymized = accounts.find_by_id(&user).await.unwrap().unwrap();
+    anonymized
+        .anonymize(
+            Email::new(&format!("deleted-{user_id}@anonymized.local")).unwrap(),
+            Timestamp::now(),
+        )
+        .unwrap();
+    let creator = own_repo(&pool).await;
+
+    // The purge takes the account, then waits for the held list; the
+    // creation then waits for the account, and finds it purged.
+    let hold = hold_list(&pool, list).await;
+    let purge = start(&pool, 1, async move {
+        accounts
+            .anonymize_account(&anonymized, &AuditEvent::account_deleted(user))
+            .await
+    })
+    .await;
+    let created = start(&pool, 2, async move {
+        creator
+            .create_list(&user, Uuid::now_v7(), &name("Late"))
+            .await
+    })
+    .await;
+    let (purge, created) = release(hold, purge, created).await;
+
+    assert!(purge.unwrap());
+    assert!(matches!(created, Err(DomainError::Authorization(_))));
+    assert_eq!(count_lists(&pool, user_id).await, 0);
 }

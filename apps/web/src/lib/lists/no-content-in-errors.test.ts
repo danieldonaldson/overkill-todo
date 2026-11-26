@@ -2,7 +2,7 @@
 // list names or todo titles out of a script error, so the list code must never
 // build an error message from data. Every error it creates has a fixed
 // message; one built from a template literal or a concatenation fails here.
-// The memory server is test-only, so it may.
+// The memory server and the model replay are test-only, so they may.
 import { describe, expect, it } from 'vitest'
 
 const sources = import.meta.glob(
@@ -11,6 +11,7 @@ const sources = import.meta.glob(
     '/src/components/dashboard/ListsPanel.svelte',
     '!/src/lib/lists/*.test.ts',
     '!/src/lib/lists/memory-server.ts',
+    '!/src/lib/lists/*.replay.ts',
   ],
   { query: '?raw', import: 'default', eager: true }
 ) as Record<string, string>

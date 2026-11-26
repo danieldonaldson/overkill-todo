@@ -50,8 +50,11 @@ capabilities:
           checks:
             - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::makes the page behind the deletion dialog inert, and Escape cancels'
         'Todo added in another tab before confirming':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::listDeleteRefusesChangedCount'
+            - invariant: 'models/list_writes.qnt::noTodoOutlivesItsList'
+            - broken: 'models/list_writes.qnt::no_count_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::deleting_a_list_requires_the_name_and_count_it_was_confirmed_with'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_concurrent_add_makes_the_list_delete_stale_or_waits_until_after_it'
             - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::asks again with the current count when the list changed meanwhile'
@@ -170,22 +173,32 @@ capabilities:
     'Lists and todos have limits':
       scenarios:
         'List limit':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::listLimitHolds'
+            - broken: 'models/list_writes.qnt::no_limit'
+            - broken: 'models/list_writes.qnt::no_user_lock'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: 'backend/crates/server/tests/lists_integration.rs::list_limit_answers_409_and_names_the_limit'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_repeated_creation_key_returns_the_existing_list_also_at_the_limit'
         'Todo limit':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::todoLimitHolds'
+            - broken: 'models/list_writes.qnt::no_limit'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: 'backend/crates/server/tests/lists_integration.rs::todo_limit_answers_409_and_keeps_the_list_at_1000'
             - web: 'apps/web/src/lib/lists/engine.test.ts::removes an addition refused at the limit and keeps its text'
         'Room again after deleting':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::listLimitHolds'
+            - invariant: 'models/list_writes.qnt::todoLimitHolds'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::deleting_makes_room_again_at_both_limits'
         'Concurrent additions at the limit':
-          pending: '7.5'
           checks:
+            - invariant: 'models/list_writes.qnt::todoLimitHolds'
+            - invariant: 'models/list_writes.qnt::listLimitHolds'
+            - broken: 'models/list_writes.qnt::no_lock'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::concurrent_todo_additions_at_the_limit_save_one'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::concurrent_list_creation_at_the_limit_saves_one'
         'A full list stays usable':
@@ -194,27 +207,42 @@ capabilities:
     'Edits made elsewhere are never silently overwritten':
       scenarios:
         'Renamed in two tabs':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::staleChangesNothing'
+            - invariant: 'models/list_writes.qnt::versionsMoveByOne'
+            - broken: 'models/list_writes.qnt::no_version_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::two_todo_renames_at_one_version_apply_one'
             - web: 'apps/web/src/lib/lists/engine.test.ts::never overwrites a todo renamed elsewhere while the form was open'
             - web: 'apps/web/src/lib/lists/engine.test.ts::shows the current title on a stale rename and keeps the text'
             - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows the current title and a note when a rename changed elsewhere'
         'Renamed in one tab, marked done in another':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::staleChangesNothing'
+            - invariant: 'models/list_writes.qnt::versionsMoveByOne'
+            - broken: 'models/list_writes.qnt::no_version_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_stale_mark_is_refused_with_the_current_row'
             - web: 'apps/web/src/lib/lists/engine.test.ts::shows the current row when a save is stale'
         'Marked done in both tabs':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::versionsMoveByOne'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::two_marks_at_one_version_move_the_version_once'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_mark_already_in_place_succeeds_without_changing_the_version'
         'Deleting a todo renamed elsewhere':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::staleChangesNothing'
+            - broken: 'models/list_writes.qnt::no_version_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_todo_delete_is_refused_at_a_stale_version'
         'List renamed in two tabs':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::staleChangesNothing'
+            - invariant: 'models/list_writes.qnt::versionsMoveByOne'
+            - broken: 'models/list_writes.qnt::no_version_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::two_list_renames_at_one_version_apply_one'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_stale_list_rename_is_refused_with_the_current_list'
             - web: 'apps/web/src/lib/lists/engine.test.ts::never overwrites a list renamed elsewhere while the form was open'
         'Different todos in two tabs':
@@ -222,8 +250,10 @@ capabilities:
           checks:
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::renaming_different_todos_does_not_conflict'
         'Moved in one tab, renamed in another':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::movesKeepEveryTodoOnce'
+            - invariant: 'models/list_writes.qnt::versionsMoveByOne'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::moves_never_change_a_version'
             - web: 'apps/web/src/lib/lists/regressions.test.ts::keeps a move beside a rename made elsewhere'
         'No version given':
@@ -250,29 +280,43 @@ capabilities:
     'Concurrent moves settle on one order':
       scenarios:
         'Different todos moved at once':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::openPositionsAreUnique'
+            - invariant: 'models/list_writes.qnt::movesKeepEveryTodoOnce'
+            - broken: 'models/list_writes.qnt::no_lock'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::concurrent_moves_settle_on_one_order'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::concurrent_moves_adds_and_completions_keep_every_todo_once'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_move_waits_for_the_list_lock'
         'Same todo moved at once':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::openPositionsAreUnique'
+            - invariant: 'models/list_writes.qnt::movesKeepEveryTodoOnce'
+            - broken: 'models/list_writes.qnt::no_lock'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::concurrent_moves_adds_and_completions_keep_every_todo_once'
         'Neighbour gone':
           checks:
             - kani: 'backend/crates/domain/src/entities/todo_order.rs::a_move_takes_the_slot_its_neighbours_name'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::neighbours_that_are_gone_done_or_foreign_are_ignored'
         'Moved todo was completed elsewhere':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::movesKeepEveryTodoOnce'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_move_after_its_todo_was_completed_or_deleted_concurrently_changes_nothing'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_done_deleted_or_foreign_todo_does_not_move'
             - rust: 'backend/crates/application/src/use_cases/lists/move_todo.rs::moving_a_done_todo_is_stale'
             - web: 'apps/web/src/lib/lists/regressions.test.ts::undoes a failed move, and shows a todo completed or deleted elsewhere'
     'A repeated save takes effect once':
       scenarios:
         'Answer lost':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::repeatStoresOneRow'
+            - broken: 'models/list_writes.qnt::no_key_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::one_todo_key_sent_twice_at_once_saves_one_todo'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::one_list_key_sent_twice_at_once_saves_one_list'
+            - web: 'apps/web/src/lib/lists/memory-server.test.ts::creates a new list for the key of a deleted list, as Postgres does'
             - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_repeated_todo_key_returns_the_existing_todo_also_at_the_limit'
             - rust: 'backend/crates/server/tests/lists_integration.rs::a_repeated_creation_key_returns_one_list'
             - web: 'apps/web/src/lib/lists/engine.test.ts::refetches after an unknown addition outcome'
@@ -308,13 +352,19 @@ capabilities:
           checks:
             - rust: 'backend/crates/persistence-postgres/tests/account_deletion_integration.rs::a_cancelled_deletion_keeps_lists_and_todos'
         'Account purged':
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::purgeLeavesNoLists'
+            - invariant: 'models/list_writes.qnt::noListForPurgedAccount'
+            - invariant: 'models/list_writes.qnt::writesStayWithTheirMember'
+            - broken: 'models/list_writes.qnt::no_deleted_check'
+            - broken: 'models/list_writes.qnt::no_user_lock'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_list_created_during_the_purge_is_refused'
             - rust: 'backend/crates/persistence-postgres/tests/account_deletion_integration.rs::purging_one_account_leaves_another_members_lists_untouched'
             - rust: 'backend/crates/persistence-postgres/tests/account_deletion_integration.rs::anonymize_scrubs_pii_and_purges_child_rows'
         'Purge fails part-way':
-          pending: '7.5'
           checks:
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_list_created_during_the_purge_is_refused'
             - rust: 'backend/crates/persistence-postgres/tests/account_deletion_integration.rs::the_sweep_runs_before_the_no_due_early_return'
             - rust: 'backend/crates/application/src/use_cases/user/purge_scheduled_accounts.rs::sweeps_lists_even_when_no_account_is_due'
   dashboard:
@@ -618,27 +668,37 @@ capabilities:
           }
   security:
     Lists and todos are private to their Member:
-      reason: Sessions, verified-email and CSRF guards are HTTP wiring (D13 Not formalized), tested at the boundary against real Postgres; the repositories' owner checks are modelled in 7.2 (pending on those scenarios).
+      reason: Sessions, verified-email and CSRF guards are HTTP wiring (D13 Not formalized), tested at the boundary against real Postgres; the repositories' owner checks are modelled in list_writes.qnt and replayed.
       scenarios:
         Another Member's list:
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::writesStayWithTheirMember'
+            - invariant: 'models/list_writes.qnt::findListStaysWithItsMember'
+            - broken: 'models/list_writes.qnt::no_owner_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: backend/crates/server/tests/lists_security_integration.rs::another_members_ids_answer_exactly_like_unknown_ids
             - rust: backend/crates/server/tests/lists_integration.rs::unknown_and_foreign_ids_share_the_404_codes
         Another list's todo:
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::writesStayWithTheirMember'
+            - broken: 'models/list_writes.qnt::no_todo_list_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: backend/crates/server/tests/lists_security_integration.rs::another_members_ids_answer_exactly_like_unknown_ids
             - rust: backend/crates/server/tests/lists_integration.rs::unknown_and_foreign_ids_share_the_404_codes
         Positioning next to another Member's todo:
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::writesStayWithTheirMember'
+            - broken: 'models/list_writes.qnt::no_neighbour_scope'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - kani: backend/crates/domain/src/entities/todo_order.rs::a_move_takes_the_slot_its_neighbours_name
             - rust: backend/crates/server/tests/lists_security_integration.rs::a_foreign_neighbour_answers_exactly_like_an_unknown_one
             - rust: backend/crates/persistence-postgres/tests/lists_integration.rs::neighbours_that_are_gone_done_or_foreign_are_ignored
         Reused creation ID:
-          pending: '7.2'
           checks:
+            - invariant: 'models/list_writes.qnt::writesStayWithTheirMember'
+            - invariant: 'models/list_writes.qnt::repeatStoresOneRow'
+            - broken: 'models/list_writes.qnt::no_owner_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
             - rust: backend/crates/persistence-postgres/tests/lists_integration.rs::another_members_list_and_key_are_invisible
         Admin or Super Admin:
           checks:
@@ -665,8 +725,24 @@ capabilities:
             - kani: backend/crates/domain/src/entities/todo.rs::appending_goes_one_gap_below_the_last_or_saturates
             - kani: backend/crates/domain/src/value_objects/single_line.rs::the_single_line_rule_trims_counts_code_points_and_refuses_line_breaks
             - just: verify
-        A removed guard is noticed: { pending: '7.3' }
-        A model that drifts from the code fails replay: { pending: '7.4' }
+        A removed guard is noticed:
+          checks:
+            - broken: 'models/list_writes.qnt::no_version_check'
+            - broken: 'models/list_writes.qnt::no_count_check'
+            - broken: 'models/list_writes.qnt::no_lock'
+            - broken: 'models/list_writes.qnt::no_user_lock'
+            - broken: 'models/list_writes.qnt::no_limit'
+            - broken: 'models/list_writes.qnt::no_owner_check'
+            - broken: 'models/list_writes.qnt::no_key_check'
+            - broken: 'models/list_writes.qnt::no_deleted_check'
+            - broken: 'models/list_writes.qnt::no_todo_list_check'
+            - broken: 'models/list_writes.qnt::no_neighbour_scope'
+            - just: models
+        A model that drifts from the code fails replay:
+          checks:
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - web: 'apps/web/src/lib/lists/server-model.replay.ts::replays every exported trace for the operations it implements'
+            - just: models
         Bounds and assumptions are visible:
           checks:
             - kani: backend/crates/domain/src/entities/todo_order.rs::renumbering_keeps_the_order_of_five

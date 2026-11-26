@@ -3,8 +3,8 @@
 //! code fails here.
 //!
 //! `just models` exports random traces of `models/attempt_claim.qnt` (modules
-//! `email_codes` and `reset_codes`) and `models/refresh_rotation.qnt` into
-//! `MODEL_TRACES_DIR`, then runs this suite. Each model step is one SQL
+//! `email_codes` and `reset_codes`), `models/refresh_rotation.qnt` and
+//! `models/list_writes.qnt` into `MODEL_TRACES_DIR`, then runs this suite. Each model step is one SQL
 //! statement (or one transaction); the replay runs it through the repository
 //! method that issues it, on that request's own database connection, in the
 //! trace's order. After every step it checks the call's result and the stored
@@ -22,20 +22,27 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use application::ports::outgoing::{
+    AccountLifecycleRepository, LimitKind, ListRepository, ListSummary, ListWrite, TodoMove,
+};
 use application::ports::{
     EmailVerificationRepository, PasswordResetRepository, RefreshTokenRepository, UserRepository,
 };
 use domain::entities::attempt_lockout::{AttemptOutcome, IssueOutcome, RESEND_COOLDOWN_MINUTES};
 use domain::entities::{
-    AuditEvent, EmailVerificationCode, PasswordResetCode, RefreshToken, RefreshTokenStatus,
-    RevocationReason, User, email_verification_code, password_reset_code,
+    AuditEvent, EmailVerificationCode, MAX_LISTS_PER_USER, MAX_TODOS_PER_LIST, PasswordResetCode,
+    RefreshToken, RefreshTokenStatus, RevocationReason, User, email_verification_code,
+    password_reset_code,
 };
 use domain::errors::DomainError;
-use domain::value_objects::{Email, RefreshTokenId, ResetCodeId, UserId, VerificationCodeId};
+use domain::value_objects::{
+    Email, ListId, ListName, RefreshTokenId, ResetCodeId, TodoId, TodoTitle, UserId,
+    VerificationCodeId,
+};
 use jiff::{SignedDuration, Timestamp};
 use persistence_postgres::{
-    Database, PostgresEmailVerificationRepository, PostgresPasswordResetRepository,
-    PostgresRefreshTokenRepository, PostgresUserRepository,
+    Database, PostgresEmailVerificationRepository, PostgresListRepository,
+    PostgresPasswordResetRepository, PostgresRefreshTokenRepository, PostgresUserRepository,
 };
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
@@ -922,4 +929,581 @@ async fn refresh_tokens_follow_the_rotation_model(pool: PgPool) {
         "no trace presented a deleted token: {coverage:?}"
     );
     assert!(coverage.logged_out > 0, "no trace logged out: {coverage:?}");
+}
+
+// ── list_writes.qnt ────────────────────────────────────────────────────────
+//
+// Each request is replayed at its `commit`, through the repository method it
+// models, on that writer's own connection; `send` and `begin` (taking a lock
+// and reading) call nothing, and `find_list`'s interleaved reads aren't
+// replayed. So replay checks each write's decisions and rows, not its locks:
+// the overlapping-transaction tests in lists_integration.rs check those.
+//
+// The model's limits (2 lists, 3 todos) stand for the real ones (100, 1,000):
+// every account starts with 98 filler lists and every list holds 997 filler
+// todos, all done, so positions are unaffected and every count is offset by
+// the filler. A list the trace creates gets its filler as soon as it exists.
+
+/// Filler lists per account and filler todos per list.
+#[expect(clippy::cast_possible_wrap, reason = "the limits are 100 and 1,000")]
+const FILLER_LISTS: i64 = MAX_LISTS_PER_USER as i64 - 2;
+#[expect(clippy::cast_possible_wrap, reason = "the limits are 100 and 1,000")]
+const FILLER_TODOS: i64 = MAX_TODOS_PER_LIST as i64 - 3;
+
+#[derive(Debug, Clone, Deserialize)]
+struct ModelList {
+    used: bool,
+    exists: bool,
+    owner: i64,
+    key: i64,
+    name: i64,
+    version: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ModelTodo {
+    used: bool,
+    exists: bool,
+    list: i64,
+    key: i64,
+    title: i64,
+    version: i64,
+    done: bool,
+    pos: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ModelWriter {
+    op: String,
+    member: i64,
+    list: i64,
+    todo: i64,
+    key: i64,
+    version: i64,
+    text: i64,
+    done: bool,
+    count: i64,
+    above: i64,
+    below: i64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ListStep {
+    act: String,
+    writer: i64,
+    op: String,
+    outcome: String,
+    id: i64,
+    renumbered: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ListsState {
+    deleted: BTreeMap<i64, bool>,
+    lists: BTreeMap<i64, ModelList>,
+    todos: BTreeMap<i64, ModelTodo>,
+    writers: BTreeMap<i64, ModelWriter>,
+    last: ListStep,
+}
+
+impl ListsState {
+    /// The open todos of list `l` in order.
+    fn open_order(&self, l: i64) -> Vec<i64> {
+        let mut open: Vec<(i64, i64)> = self
+            .todos
+            .iter()
+            .filter(|(_, t)| t.exists && !t.done && t.list == l)
+            .map(|(&id, t)| (t.pos, id))
+            .collect();
+        open.sort_unstable();
+        open.into_iter().map(|(_, id)| id).collect()
+    }
+}
+
+fn list_name(n: i64) -> String {
+    format!("name {n}")
+}
+
+fn todo_title(n: i64) -> String {
+    format!("title {n}")
+}
+
+/// Which outcome the repository gave, and the row it answered.
+fn list_write<T>(write: &ListWrite<T>, id: impl Fn(&T) -> Uuid) -> (&'static str, Option<Uuid>) {
+    match write {
+        ListWrite::Applied(row) => ("applied", Some(id(row))),
+        ListWrite::Repeated(row) => ("repeated", Some(id(row))),
+        ListWrite::Stale(row) => ("stale", Some(id(row))),
+        ListWrite::LimitReached(LimitKind::Lists) => ("listLimit", None),
+        ListWrite::LimitReached(LimitKind::Todos) => ("todoLimit", None),
+        ListWrite::ListNotFound => ("listNotFound", None),
+        ListWrite::TodoNotFound => ("todoNotFound", None),
+    }
+}
+
+const fn summary_id(summary: &ListSummary) -> Uuid {
+    *summary.list.id().as_uuid()
+}
+
+const fn todo_id(todo: &domain::entities::Todo) -> Uuid {
+    *todo.id().as_uuid()
+}
+
+#[derive(Debug, Default)]
+struct ListCoverage {
+    outcomes: BTreeMap<String, usize>,
+    renumbered: usize,
+    bound: usize,
+}
+
+/// One trace's real rows: the model's IDs, keys and accounts mapped to real ones.
+struct ListWorld {
+    users: BTreeMap<i64, User>,
+    lists: BTreeMap<i64, Uuid>,
+    todos: BTreeMap<i64, Uuid>,
+    list_keys: BTreeMap<i64, Uuid>,
+    todo_keys: BTreeMap<i64, Uuid>,
+}
+
+impl ListWorld {
+    fn user(&self, m: i64) -> UserId {
+        *self.users[&m].id()
+    }
+    fn list(&self, l: i64) -> ListId {
+        ListId::from_uuid(self.lists[&l])
+    }
+    fn todo(&self, t: i64) -> TodoId {
+        TodoId::from_uuid(self.todos[&t])
+    }
+    /// A neighbour list of at most one ID; 0 is an empty list.
+    fn neighbours(&self, t: i64) -> Vec<TodoId> {
+        if t == 0 { vec![] } else { vec![self.todo(t)] }
+    }
+}
+
+struct ListsReplay<'a> {
+    pool: &'a PgPool,
+    lists: BTreeMap<i64, PostgresListRepository>,
+    accounts: BTreeMap<i64, PostgresUserRepository>,
+    sweeper: PostgresUserRepository,
+}
+
+impl ListsReplay<'_> {
+    async fn add_filler_todos(&self, list: Uuid) {
+        sqlx::query(
+            "INSERT INTO todos (id, list_id, creation_key, title, completed_at)
+             SELECT gen_random_uuid(), $1, gen_random_uuid(), 'filler', clock_timestamp()
+             FROM generate_series(1, $2)",
+        )
+        .bind(list)
+        .bind(FILLER_TODOS)
+        .execute(self.pool)
+        .await
+        .unwrap();
+    }
+
+    /// Seeds the trace's initial state, with filler up to the real limits.
+    async fn seed(&self, n: usize, first: &ListsState) -> ListWorld {
+        let repo = PostgresUserRepository::new(Arc::new(Database::from_pool(self.pool.clone())));
+        let mut users = BTreeMap::new();
+        for (&m, &deleted) in &first.deleted {
+            let mut user = User::new(
+                Email::new(&format!("lists-{n}-member-{m}@conformance.example.com")).unwrap(),
+                Some("hash".to_string()),
+                "Model".to_string(),
+                "Replay".to_string(),
+            );
+            user.mark_email_verified();
+            repo.save(&user).await.unwrap();
+            // Due for purging from the start (unless already purged), so the
+            // model's purge can run at any step; a pending deletion doesn't
+            // affect list writes.
+            sqlx::query(
+                "UPDATE users SET
+                     deletion_scheduled_at = CASE WHEN NOT $2 THEN NOW() - interval '1 minute' END,
+                     deleted_at = CASE WHEN $2 THEN NOW() END
+                 WHERE id = $1",
+            )
+            .bind(user.id().as_uuid())
+            .bind(deleted)
+            .execute(self.pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO lists (id, user_id, creation_key, name)
+                 SELECT gen_random_uuid(), $1, gen_random_uuid(), 'filler'
+                 FROM generate_series(1, $2)",
+            )
+            .bind(user.id().as_uuid())
+            .bind(FILLER_LISTS)
+            .execute(self.pool)
+            .await
+            .unwrap();
+            users.insert(m, user);
+        }
+        // Unused model IDs name rows that don't exist, until the trace creates
+        // them; equal model keys are equal real keys, also across accounts.
+        let world = ListWorld {
+            users,
+            lists: first.lists.keys().map(|&l| (l, Uuid::new_v4())).collect(),
+            todos: first.todos.keys().map(|&t| (t, Uuid::new_v4())).collect(),
+            list_keys: (0..=4).map(|k| (k, Uuid::new_v4())).collect(),
+            todo_keys: (0..=4).map(|k| (k, Uuid::new_v4())).collect(),
+        };
+        for (&l, list) in first.lists.iter().filter(|(_, list)| list.exists) {
+            sqlx::query(
+                "INSERT INTO lists (id, user_id, creation_key, name, version)
+                 VALUES ($1, $2, $3, $4, $5)",
+            )
+            .bind(world.lists[&l])
+            .bind(world.user(list.owner).as_uuid())
+            .bind(world.list_keys[&list.key])
+            .bind(list_name(list.name))
+            .bind(i32::try_from(list.version).unwrap())
+            .execute(self.pool)
+            .await
+            .unwrap();
+            self.add_filler_todos(world.lists[&l]).await;
+        }
+        for (&t, todo) in first.todos.iter().filter(|(_, todo)| todo.exists) {
+            sqlx::query(
+                "INSERT INTO todos (id, list_id, creation_key, title, version, position, completed_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $7 THEN clock_timestamp() END)",
+            )
+            .bind(world.todos[&t])
+            .bind(world.lists[&todo.list])
+            .bind(world.todo_keys[&todo.key])
+            .bind(todo_title(todo.title))
+            .bind(i32::try_from(todo.version).unwrap())
+            .bind((!todo.done).then_some(todo.pos))
+            .bind(todo.done)
+            .execute(self.pool)
+            .await
+            .unwrap();
+        }
+        world
+    }
+
+    /// The stored rows match the model's: every list and todo it has used,
+    /// versions and positions included, the filler counts and the accounts.
+    async fn check(&self, world: &ListWorld, state: &ListsState, at_step: &str) {
+        for (&m, &deleted) in &state.deleted {
+            let user = world.user(m);
+            let (stored_deleted, count): (bool, i64) = sqlx::query_as(
+                "SELECT u.deleted_at IS NOT NULL,
+                        (SELECT COUNT(*) FROM lists l WHERE l.user_id = u.id)
+                 FROM users u WHERE u.id = $1",
+            )
+            .bind(user.as_uuid())
+            .fetch_one(self.pool)
+            .await
+            .unwrap();
+            assert_eq!(stored_deleted, deleted, "{at_step}: account {m} purged");
+            if !deleted {
+                let model = state
+                    .lists
+                    .values()
+                    .filter(|list| list.exists && list.owner == m)
+                    .count();
+                assert_eq!(
+                    count,
+                    i64::try_from(model).unwrap() + FILLER_LISTS,
+                    "{at_step}: account {m}'s list count (filler {FILLER_LISTS} included)"
+                );
+            }
+        }
+        for (&l, model) in state.lists.iter().filter(|(_, list)| list.used) {
+            let stored: Option<(Uuid, Uuid, String, i32, i64)> = sqlx::query_as(
+                "SELECT l.user_id, l.creation_key, l.name, l.version,
+                        (SELECT COUNT(*) FROM todos t WHERE t.list_id = l.id)
+                 FROM lists l WHERE l.id = $1",
+            )
+            .bind(world.lists[&l])
+            .fetch_optional(self.pool)
+            .await
+            .unwrap();
+            assert_eq!(stored.is_some(), model.exists, "{at_step}: list {l} stored");
+            let Some((owner, key, name, version, count)) = stored else {
+                continue;
+            };
+            assert_eq!(
+                owner,
+                *world.user(model.owner).as_uuid(),
+                "{at_step}: list {l} owner"
+            );
+            assert_eq!(key, world.list_keys[&model.key], "{at_step}: list {l} key");
+            assert_eq!(name, list_name(model.name), "{at_step}: list {l} name");
+            assert_eq!(
+                i64::from(version),
+                model.version,
+                "{at_step}: list {l} version"
+            );
+            let todos = state
+                .todos
+                .values()
+                .filter(|todo| todo.exists && todo.list == l)
+                .count();
+            assert_eq!(
+                count,
+                i64::try_from(todos).unwrap() + FILLER_TODOS,
+                "{at_step}: list {l}'s todo count (filler {FILLER_TODOS} included)"
+            );
+        }
+        for (&t, model) in state.todos.iter().filter(|(_, todo)| todo.used) {
+            let stored: Option<(Uuid, Uuid, String, i32, Option<i64>, bool)> = sqlx::query_as(
+                "SELECT list_id, creation_key, title, version, position, completed_at IS NOT NULL
+                 FROM todos WHERE id = $1",
+            )
+            .bind(world.todos[&t])
+            .fetch_optional(self.pool)
+            .await
+            .unwrap();
+            assert_eq!(stored.is_some(), model.exists, "{at_step}: todo {t} stored");
+            let Some((list, key, title, version, position, done)) = stored else {
+                continue;
+            };
+            assert_eq!(list, world.lists[&model.list], "{at_step}: todo {t} list");
+            assert_eq!(key, world.todo_keys[&model.key], "{at_step}: todo {t} key");
+            assert_eq!(title, todo_title(model.title), "{at_step}: todo {t} title");
+            assert_eq!(
+                i64::from(version),
+                model.version,
+                "{at_step}: todo {t} version"
+            );
+            assert_eq!(done, model.done, "{at_step}: todo {t} done");
+            let expected = (!model.done).then_some(model.pos);
+            assert_eq!(position, expected, "{at_step}: todo {t} position");
+        }
+    }
+
+    /// Calls the repository method `request` models, at its commit, and
+    /// returns the outcome and the real ID of the row answered.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one match arm per repository method reads best as one function"
+    )]
+    async fn call(
+        &self,
+        world: &ListWorld,
+        w: i64,
+        request: &ModelWriter,
+    ) -> (&'static str, Option<Uuid>, Option<Vec<TodoId>>) {
+        let repo = &self.lists[&w];
+        let user = world.user(request.member);
+        let list = || world.list(request.list);
+        let todo = || world.todo(request.todo);
+        match request.op.as_str() {
+            "createList" => {
+                let name = ListName::new(&list_name(request.text)).unwrap();
+                match repo
+                    .create_list(&user, world.list_keys[&request.key], &name)
+                    .await
+                {
+                    Ok(write) => {
+                        let (outcome, id) = list_write(&write, summary_id);
+                        (outcome, id, None)
+                    }
+                    Err(DomainError::Authorization(_)) => ("accountGone", None, None),
+                    Err(e) => panic!("create_list failed: {e}"),
+                }
+            }
+            "renameList" => {
+                let name = ListName::new(&list_name(request.text)).unwrap();
+                let write = repo
+                    .rename_list(&user, &list(), request.version, &name)
+                    .await
+                    .unwrap();
+                let (outcome, id) = list_write(&write, summary_id);
+                (outcome, id, None)
+            }
+            "deleteList" => {
+                let write = repo
+                    .delete_list(
+                        &user,
+                        &list(),
+                        request.version,
+                        request.count + FILLER_TODOS,
+                    )
+                    .await
+                    .unwrap();
+                let (outcome, id) = list_write(&write, summary_id);
+                (outcome, id, None)
+            }
+            "addTodo" => {
+                let title = TodoTitle::new(&todo_title(request.text)).unwrap();
+                let write = repo
+                    .add_todo(&user, &list(), world.todo_keys[&request.key], &title)
+                    .await
+                    .unwrap();
+                let (outcome, id) = list_write(&write, todo_id);
+                (outcome, id, None)
+            }
+            "renameTodo" => {
+                let title = TodoTitle::new(&todo_title(request.text)).unwrap();
+                let write = repo
+                    .rename_todo(&user, &list(), &todo(), request.version, &title)
+                    .await
+                    .unwrap();
+                let (outcome, id) = list_write(&write, todo_id);
+                (outcome, id, None)
+            }
+            "markTodo" => {
+                let write = repo
+                    .mark_todo(&user, &list(), &todo(), request.version, request.done)
+                    .await
+                    .unwrap();
+                let (outcome, id) = list_write(&write, todo_id);
+                (outcome, id, None)
+            }
+            "deleteTodo" => {
+                let write = repo
+                    .delete_todo(&user, &list(), &todo(), request.version)
+                    .await
+                    .unwrap();
+                let (outcome, id) = list_write(&write, todo_id);
+                (outcome, id, None)
+            }
+            "moveTodo" => {
+                let moved = repo
+                    .move_todo(
+                        &user,
+                        &list(),
+                        &todo(),
+                        &world.neighbours(request.above),
+                        &world.neighbours(request.below),
+                    )
+                    .await
+                    .unwrap();
+                match moved {
+                    TodoMove::Moved(order) => ("moved", Some(*todo().as_uuid()), Some(order)),
+                    TodoMove::Done(row) => ("stale", Some(todo_id(&row)), None),
+                    TodoMove::ListNotFound => ("listNotFound", None, None),
+                    TodoMove::TodoNotFound => ("todoNotFound", None, None),
+                }
+            }
+            "purge" => {
+                let mut anonymized = world.users[&request.member].clone();
+                let email = Email::new(&format!("deleted-{user}@anonymized.local")).unwrap();
+                anonymized.anonymize(email, Timestamp::now()).unwrap();
+                let purged = self.accounts[&w]
+                    .anonymize_account(&anonymized, &AuditEvent::account_deleted(user))
+                    .await
+                    .unwrap();
+                (if purged { "purged" } else { "notDue" }, None, None)
+            }
+            other => panic!("no repository method for model request {other}"),
+        }
+    }
+
+    async fn replay(&self, path: &Path, n: usize, coverage: &mut ListCoverage) {
+        let states: Vec<ListsState> = load(path);
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let mut world = self.seed(n, &states[0]).await;
+        self.check(&world, &states[0], &format!("{name} initial state"))
+            .await;
+
+        for (index, pair) in states.windows(2).enumerate() {
+            let (before, after) = (&pair[0], &pair[1]);
+            let step = &after.last;
+            let at_step = format!(
+                "{name} step {} {} {} by writer {}",
+                index + 1,
+                step.act,
+                step.op,
+                step.writer
+            );
+            match (step.act.as_str(), step.op.as_str()) {
+                ("send" | "begin", _) | ("commit", "findList") => continue,
+                ("sweep", _) => {
+                    self.sweeper
+                        .delete_lists_of_deleted_accounts()
+                        .await
+                        .unwrap();
+                    *coverage.outcomes.entry("swept".into()).or_default() += 1;
+                }
+                ("commit", _) if step.outcome == "bound" => {
+                    // No free model ID: the end of the bound, not a behaviour.
+                    coverage.bound += 1;
+                    return;
+                }
+                ("commit", _) => {
+                    let request = &before.writers[&step.writer];
+                    let (outcome, id, order) = self.call(&world, step.writer, request).await;
+                    assert_eq!(outcome, step.outcome, "{at_step}: outcome");
+                    if step.op == "createList" && outcome == "applied" {
+                        let id = id.unwrap();
+                        world.lists.insert(step.id, id);
+                        self.add_filler_todos(id).await;
+                    } else if step.op == "addTodo" && outcome == "applied" {
+                        world.todos.insert(step.id, id.unwrap());
+                    } else if let Some(id) = id {
+                        let expected = if step.op.ends_with("List") {
+                            world.lists[&step.id]
+                        } else {
+                            world.todos[&step.id]
+                        };
+                        assert_eq!(id, expected, "{at_step}: row answered");
+                    }
+                    if let Some(order) = order {
+                        let expected: Vec<TodoId> = after
+                            .open_order(request.list)
+                            .iter()
+                            .map(|&t| world.todo(t))
+                            .collect();
+                        assert_eq!(order, expected, "{at_step}: order answered");
+                    }
+                    *coverage.outcomes.entry(outcome.into()).or_default() += 1;
+                    coverage.renumbered += usize::from(step.renumbered);
+                }
+                (act, _) => panic!("{at_step}: unknown model step {act}"),
+            }
+            self.check(&world, after, &at_step).await;
+        }
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "replays exported model traces; run with `just models`"]
+async fn list_writes_follow_the_model(pool: PgPool) {
+    let mut lists = BTreeMap::new();
+    let mut accounts = BTreeMap::new();
+    for w in 1..=2 {
+        let db = session(&pool).await;
+        lists.insert(w, PostgresListRepository::new(db.clone()));
+        accounts.insert(w, PostgresUserRepository::new(db));
+    }
+    let replay = ListsReplay {
+        pool: &pool,
+        lists,
+        accounts,
+        sweeper: PostgresUserRepository::new(session(&pool).await),
+    };
+    let mut coverage = ListCoverage::default();
+    let files = traces("list_writes");
+    for (n, path) in files.iter().enumerate() {
+        replay.replay(path, n, &mut coverage).await;
+    }
+    eprintln!("list_writes: {} traces replayed, {coverage:?}", files.len());
+    for outcome in [
+        "applied",
+        "repeated",
+        "stale",
+        "listLimit",
+        "todoLimit",
+        "listNotFound",
+        "todoNotFound",
+        "moved",
+        "accountGone",
+        "purged",
+        "swept",
+    ] {
+        assert!(
+            coverage.outcomes.get(outcome).copied().unwrap_or(0) > 0,
+            "no trace reached {outcome}: {coverage:?}"
+        );
+    }
+    assert!(
+        coverage.renumbered > 0,
+        "no trace renumbered a list: {coverage:?}"
+    );
 }

@@ -28,6 +28,15 @@ interface StoredList {
 export const MAX_LISTS = 100
 export const MAX_TODOS = 1000
 
+/** Rows to start from, as the server model's replay seeds them. */
+export interface SeedList {
+  id: string
+  key: string
+  name: string
+  version: number
+  todos: { id: string; key: string; title: string; version: number; done: boolean }[]
+}
+
 const now = () => new Date().toISOString()
 
 export class MemoryListsServer {
@@ -35,16 +44,32 @@ export class MemoryListsServer {
   private keys = new Map<string, string>()
   private nextId = 1
 
+  private readonly limits: { lists: number; todos: number }
+  private readonly idPrefix: string
+
+  /**
+   * @param options.lists, options.todos Smaller limits for the server model's
+   *   replay (2 lists and 3 todos there); the messages still name the real ones.
+   * @param options.idPrefix Starts every ID this server makes, so that two
+   *   servers (one per Member in the replay) never make the same one.
+   */
+  constructor(options: { lists?: number; todos?: number; idPrefix?: string } = {}) {
+    this.limits = { lists: options.lists ?? MAX_LISTS, todos: options.todos ?? MAX_TODOS }
+    this.idPrefix = options.idPrefix ?? ''
+  }
+
   createList(key: string, name: string): List {
-    const existing = this.keys.get(`list:${key}`)
-    if (existing) return this.summary(this.lists.get(existing)!)
-    if (this.lists.size >= MAX_LISTS) {
+    // A key whose list was deleted creates a new list, as in Postgres, where
+    // the key is looked up among stored lists only.
+    const existing = this.lists.get(this.keys.get(`list:${key}`) ?? '')
+    if (existing) return this.summary(existing)
+    if (this.lists.size >= this.limits.lists) {
       throw new ApiErrorException(
         { code: 'limit_reached', message: 'You can have at most 100 lists' },
         { status: 409, message: 'You can have at most 100 lists' }
       )
     }
-    const id = `list-${this.nextId++}`
+    const id = `${this.idPrefix}list-${this.nextId++}`
     const list: StoredList = {
       id,
       name: name.trim(),
@@ -65,13 +90,13 @@ export class MemoryListsServer {
       const todo = list.todos.find((candidate) => candidate.id === existing)
       if (todo) return this.todoBody(todo)
     }
-    if (list.todos.length >= MAX_TODOS) {
+    if (list.todos.length >= this.limits.todos) {
       throw new ApiErrorException(
         { code: 'limit_reached', message: 'A list can hold at most 1,000 todos' },
         { status: 409, message: 'A list can hold at most 1,000 todos' }
       )
     }
-    const id = `todo-${this.nextId++}`
+    const id = `${this.idPrefix}todo-${this.nextId++}`
     const todo: StoredTodo = {
       id,
       title: title.trim(),
@@ -211,6 +236,29 @@ export class MemoryListsServer {
   /** Test helper: another tab deletes a list. */
   removeList(listId: string): void {
     this.lists.delete(listId)
+  }
+
+  /** Test helper: stores lists and todos exactly as given (open todos in order). */
+  restore(lists: SeedList[]): void {
+    for (const seed of lists) {
+      const todos: StoredTodo[] = seed.todos.map((todo) => ({
+        id: todo.id,
+        title: todo.title,
+        version: todo.version,
+        done: todo.done,
+        created_at: now(),
+        completed_at: todo.done ? now() : undefined,
+      }))
+      this.lists.set(seed.id, {
+        id: seed.id,
+        name: seed.name,
+        version: seed.version,
+        created_at: now(),
+        todos: [...todos.filter((todo) => !todo.done), ...todos.filter((todo) => todo.done)],
+      })
+      this.keys.set(`list:${seed.key}`, seed.id)
+      for (const todo of seed.todos) this.keys.set(`todo:${seed.id}:${todo.key}`, todo.id)
+    }
   }
 
   seededList(name: string, titles: string[]): string {

@@ -509,26 +509,54 @@ against the real repositories.
   Each request is the sequence of SQL statements it really runs, one model step
   per statement (or per transaction). The invariants are threat model P-11,
   P-12, P-14 and P-15, each named in its property's `Checks:`.
+- **Lists (`list_writes.qnt`, OT-013 design D13):** two Members' lists and
+  todos written by two concurrent requests through `PostgresListRepository`,
+  plus the purge, the D10 sweep and `find_list`'s two reads. Each request is
+  `send`, `begin` (take the account or list lock, then read) and `commit`.
+  Bounds: `MAX_LISTS = 2` of 4 list IDs, `MAX_TODOS = 3` of 5 todo IDs, keys
+  1 to 3, three initial states (at both limits with adjacent positions, just
+  below them, and a list left behind by a previous release's purge), the real
+  `POSITION_GAP`. Thirteen invariants cover versions, repeats, both limits,
+  purge and sweep, ownership (P-35), list deletion, positions and moves; ten
+  broken modules each drop one guard (`no_lock`, `no_owner_check`, …).
+  Apalache only reaches 3 steps here (every single request from every initial
+  state, about 5 minutes; 55 s at 2 steps and about four times as long per
+  step, so the 6 steps of a race would take hours), so its gate is random
+  simulation: every invariant over 100 000 traces of 30 steps (about 40 s
+  alone), and each broken module must fail within 200 000 (`no_lock`, the
+  slowest, after about 50 000). Locks can't show in a replay, which calls
+  each method once at `commit`; the overlapping-transaction tests in
+  `tests/lists_integration.rs` hold the rows a request locks so that two
+  requests always overlap, and fail with `FOR UPDATE` removed.
 - **What it checks:** Apalache (`quint verify`) checks every interleaving up
   to 8 steps from any starting code; `quint run` searches 10 000 random
   executions of 30 steps. The `unguarded_upsert`, `claim_by_user` and `lock_only_guard` modules
   model the code before OT-010 slice 4 and must still have counterexamples,
   which keeps the invariants from becoming vacuous.
 - **Conformance:** `quint run --out-itf` exports 300 random traces per model,
-  plus witness traces that reach a refused reissue, and
+  plus witness traces that reach a refused reissue (for the lists: a stale
+  write, a repeated key, both limits, both 404s, a renumbering, two overlapping
+  moves, a purge and a sweep), and
   `tests/model_conformance.rs` replays each step through the repository method
   that issues that statement, one connection per request, checking results and
   stored rows after every step. A change to a repository's SQL that the model
   doesn't allow fails there, naming the trace and step. The suite is
   `#[ignore]`d in `just test-integration`, because it needs the exported
-  traces.
+  traces. List traces start from the model's rows plus filler (98 lists per
+  account, 997 done todos per list) so the model's limits are the real ones;
+  a write that runs out of model IDs ends its trace. They are also replayed
+  through the web client's `MemoryListsServer`, which the client tests trust
+  (`apps/web/src/lib/lists/server-model.replay.ts`, Node-mode Vitest, one
+  server per Member, up to the first purge or sweep, which it doesn't have).
 - **Not covered:** inside one statement, the model assumes atomicity; P-12
   records the one place a snapshot read can still give a misleading message.
   Logins and other users aren't modelled.
 - **Setup:** `mise install` installs the pinned Quint and the Java that
   Apalache needs (`.mise.toml`); Quint downloads its Apalache release on first
-  use. `just models` takes about 4 minutes and is in `just ci`; CI runs it as
-  its own job with the same pins (`scripts/models.sh`).
+  use. `just models` takes about 6 minutes (2026-11-26, this machine; the
+  longest job is Apalache on `list_writes.qnt`, about 4.5 minutes) and is in
+  `just ci`; CI runs it as its own job with the same pins (`scripts/models.sh`),
+  with pnpm for the `MemoryListsServer` replay.
 - **When you change a statement** the models describe (the attempt claim, the
   issuing upsert, rotation, revocation, cleanup), change the model step too,
   then see `just models` fail on a scratch break of the new rule before
