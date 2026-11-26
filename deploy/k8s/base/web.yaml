@@ -31,6 +31,11 @@ spec:
       containers:
         - name: web
           image: web # pinned by digest in the overlay (images:)
+          # Keep serving until the edge has dropped this pod from its endpoints; without
+          # it a rollout lost a request (OT-014 2.6). The backend does this in main.rs.
+          lifecycle:
+            preStop:
+              sleep: { seconds: 5 }
           ports:
             - { name: http, containerPort: 8080 }
           envFrom:
