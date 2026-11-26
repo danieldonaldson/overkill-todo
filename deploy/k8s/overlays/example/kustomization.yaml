@@ -20,6 +20,12 @@ configMapGenerator:
       - SERVER_PORT=4322
       - FRONTEND_BASE_URL=https://app.example.com
       - MX_VALIDATION_ENABLED=true
+      - JWT_EXPIRATION_MINUTES=15
+      - REFRESH_TOKEN_EXPIRATION_DAYS=30
+      # Production cost (backend/.env.example): 64 MiB per hash.
+      - ARGON2_MEMORY_COST=65536
+      - ARGON2_TIME_COST=3
+      - ARGON2_PARALLELISM=4
   - name: web-config
     literals:
       - PUBLIC_TURNSTILE_SITE_KEY=

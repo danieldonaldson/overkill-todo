@@ -26,6 +26,12 @@ configMapGenerator:
       - APP_NAME=Overkill Todo
       - FRONTEND_BASE_URL=https://todo.k8s.test
       - GOOGLE_OAUTH_ENABLED=false
+      - JWT_EXPIRATION_MINUTES=15
+      - REFRESH_TOKEN_EXPIRATION_DAYS=30
+      # Production cost (backend/.env.example): 64 MiB per hash.
+      - ARGON2_MEMORY_COST=65536
+      - ARGON2_TIME_COST=3
+      - ARGON2_PARALLELISM=4
       - SMTP_FROM_NAME=Overkill Todo (local cluster)
       - MX_VALIDATION_ENABLED=true
       # The collector arrives in slice 5; until then export fails quietly.
