@@ -30,9 +30,12 @@ securityContext:
 resources:
   requests:
     memory: 320Mi
+# Restart on a config change; otherwise a changed setting waits for a reboot.
+rollOutCiliumPods: true
 operator:
   # The default 2 share a host port, so on one node the second stays Pending.
   replicas: 1
+  rollOutPods: true
 hubble:
   enabled: true
   tls:
