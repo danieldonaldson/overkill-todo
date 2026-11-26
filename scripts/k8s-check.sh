@@ -61,6 +61,9 @@ cmd_check() {
   pinned argocd "$ARGOCD_CHART_VERSION"
   pinned sops-operator "$SOPS_OPERATOR_CHART_VERSION"
   pinned reloader "$RELOADER_CHART_VERSION"
+  pinned cnpg "$CNPG_CHART_VERSION"
+  pinned cert-manager "$CERT_MANAGER_VERSION"
+  pinned traefik "$TRAEFIK_CHART_VERSION"
   ((failed == 0)) || exit 1
   echo "k8s-check: every manifest renders and matches its schema"
 }

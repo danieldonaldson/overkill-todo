@@ -1,0 +1,38 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: '-2'
+spec:
+  project: default
+  sources:
+    - repoURL: https://cloudnative-pg.github.io/charts
+      chart: cloudnative-pg
+      targetRevision: 0.29.2
+      helm:
+        releaseName: cnpg
+        valueFiles:
+          - $repo/deploy/k8s/cluster/cnpg/values.yaml
+    - repoURL: https://github.com/danieldonaldson/overkill-todo.git
+      targetRevision: ot-014-kubernetes
+      ref: repo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      # Retry the newest commit: without it a failing sync retries its own
+      # revision for ever and never sees the revert.
+      refresh: true
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - ServerSideApply=true

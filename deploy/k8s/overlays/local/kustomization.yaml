@@ -1,7 +1,54 @@
 # The local cluster. Synced by the workloads Application, with the SopsSecrets in
-# deploy/secrets/local. The app arrives in slice 2. Never leave this empty: Kustomize
-# won't render it, and ArgoCD won't prune an Application to nothing.
+# deploy/secrets/local. Never leave this empty: Kustomize won't render it, and ArgoCD
+# won't prune an Application to nothing.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - namespace.yaml
+  - ../../base
+patches:
+  # Backups arrive in slice 3, with Garage (D7).
+  - patch: |
+      $patch: delete
+      apiVersion: postgresql.cnpg.io/v1
+      kind: ScheduledBackup
+      metadata:
+        name: overkill-todo-db-daily
+  - target: { kind: Cluster, name: overkill-todo-db }
+    patch: |
+      - op: remove
+        path: /spec/plugins
+      - op: add
+        path: /metadata/annotations
+        value:
+          argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+  # The app arrives in 2.4, with its secrets and images.
+  - patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: backend
+  - patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: backend
+  - patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: web
+  - patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: Service
+      metadata:
+        name: web
+  - patch: |
+      $patch: delete
+      apiVersion: networking.k8s.io/v1
+      kind: Ingress
+      metadata:
+        name: overkill-todo

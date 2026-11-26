@@ -1,0 +1,8 @@
+# CloudNativePG operator (D12, D14). Its CRDs come with the chart.
+crds:
+  create: true
+monitoring:
+  podMonitorEnabled: false
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { memory: 512Mi }

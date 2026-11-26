@@ -1,0 +1,21 @@
+# The edge (D6). It adopts a client's trace context; accepted, see D6's result.
+providers:
+  kubernetesIngress:
+    enabled: true
+  kubernetesCRD:
+    enabled: true
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+log:
+  format: json
+accessLog:
+  enabled: true
+  format: json
+# Reached from the host in slice 2 (2.4); until then, inside the cluster only.
+service:
+  spec:
+    type: ClusterIP
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { memory: 256Mi }

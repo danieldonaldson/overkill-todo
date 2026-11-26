@@ -1,7 +1,6 @@
 # Copy per environment (staging, production). A deploy is a commit that changes a digest here.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-namespace: overkill-todo-production
 resources:
   - ../../base
   - object-store.yaml

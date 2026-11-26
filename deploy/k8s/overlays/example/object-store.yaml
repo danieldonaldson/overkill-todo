@@ -3,6 +3,7 @@ apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
   name: overkill-todo-db-store
+  namespace: overkill-todo
 spec:
   retentionPolicy: 14d
   configuration:

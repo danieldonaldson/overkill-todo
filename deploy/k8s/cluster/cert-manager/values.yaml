@@ -1,0 +1,19 @@
+# Issues the edge's certificate from a local CA (D6). CRDs come with the chart and
+# stay if the chart is removed, so certificates aren't deleted with it.
+crds:
+  enabled: true
+  keep: true
+# A Helm hook that only waits for the webhook; ArgoCD's health checks do that.
+startupapicheck:
+  enabled: false
+resources:
+  requests: { cpu: 10m, memory: 64Mi }
+  limits: { memory: 256Mi }
+webhook:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+cainjector:
+  resources:
+    requests: { cpu: 10m, memory: 64Mi }
+    limits: { memory: 256Mi }

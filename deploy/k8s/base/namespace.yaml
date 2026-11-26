@@ -1,4 +1,4 @@
-# The app's namespace. Slice 2 moves it into the base (OT-014 D12).
+# The app and its database share a namespace (OT-014 D12); every overlay uses it.
 apiVersion: v1
 kind: Namespace
 metadata:
