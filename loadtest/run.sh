@@ -119,6 +119,13 @@ if [[ -n $("${compose[@]}" --profile observability ps -q --status running victor
 else
   echo "load: observability stack not running; no live metrics (the run is unaffected)"
 fi
+# Every request with its timestamp (ms), for finding when a tail happened.
+run_env=()
+if [[ -n ${LOAD_RAW:-} ]]; then
+  out+=(-o "csv=/results/$scenario-$stamp.csv.gz")
+  run_env+=(-e K6_CSV_TIME_FORMAT=unix_milli)
+  echo "load: writing every request to loadtest/results/$scenario-$stamp.csv.gz"
+fi
 
 # ── Start clean ──────────────────────────────────────────────────────────────────
 # Sustained load drives the write path into a slower state that an idle period
@@ -159,7 +166,7 @@ on_int() {
 }
 trap on_int INT TERM
 
-LOAD_UID=$(id -u) LOAD_GID=$(id -g) setsid "${compose[@]}" run --rm --no-deps -T --name "$name" \
+LOAD_UID=$(id -u) LOAD_GID=$(id -g) setsid "${compose[@]}" run --rm --no-deps -T "${run_env[@]}" --name "$name" \
   k6 run --quiet "${out[@]}" "${k6_env[@]}" -e "LOAD_RESULT_FILE=/results/$result" "$script" &
 run_pid=$!
 # `wait` returns early when a trapped signal arrives; keep waiting for k6.

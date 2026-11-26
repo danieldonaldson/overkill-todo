@@ -245,6 +245,7 @@ appears in a response.
 - Checks:
   - `backend/crates/server/tests/lists_security_integration.rs::another_members_ids_answer_exactly_like_unknown_ids`
   - `backend/crates/server/tests/lists_security_integration.rs::staff_get_the_same_404_and_never_see_another_accounts_lists`
+  - `backend/crates/server/tests/lists_security_integration.rs::a_foreign_neighbour_answers_exactly_like_an_unknown_one`
   - `backend/crates/server/tests/lists_security_integration.rs::visitors_and_unverified_members_are_refused`
   - `backend/crates/server/tests/lists_security_integration.rs::a_missing_csrf_token_refuses_every_change`
   - `backend/crates/server/tests/lists_integration.rs::unknown_and_foreign_ids_share_the_404_codes`

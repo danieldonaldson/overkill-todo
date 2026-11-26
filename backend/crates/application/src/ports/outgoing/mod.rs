@@ -31,7 +31,9 @@ pub use code_generator::CodeGenerator;
 pub use email_service::EmailService;
 pub use email_verification_repository::EmailVerificationRepository;
 
-pub use list_repository::{LimitKind, ListRepository, ListSummary, ListWithTodos, ListWrite};
+pub use list_repository::{
+    LimitKind, ListRepository, ListSummary, ListWithTodos, ListWrite, TodoMove,
+};
 pub use mx_validator::MxValidator;
 pub use oauth_account_repository::OAuthAccountRepository;
 pub use oauth_provider_client::OAuthProviderClient;

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE todos SET position = $3 WHERE id = $1 AND list_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "664e7f0d6c8d2eabfeac86bf012fe2fc3b55a5cb77bddcb2ca864e8058261cc9"
+}

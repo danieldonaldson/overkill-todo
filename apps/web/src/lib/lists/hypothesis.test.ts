@@ -67,6 +67,8 @@ function faultyApi(
       write(() => server.renameTodo(listId, todoId, version, title), true),
     deleteTodo: (listId, todoId, version) =>
       write(() => server.deleteTodo(listId, todoId, version), true),
+    moveTodo: (listId, todoId, above, below) =>
+      write(() => server.moveTodo(listId, todoId, above, below), true),
   }
 }
 
@@ -248,6 +250,15 @@ async function runSeed(seed: number, refetchAdvancesQueue = false): Promise<void
       const [started] = drafts.splice(Math.floor(rng() * drafts.length), 1)
       started.tab.submitRename(started.draft, `d-${seed}-${step}`)
     }
+    // Moves, also of a todo added a moment ago and still without an ID.
+    while (rng() < 0.4) {
+      const open = tab.snapshot().details[listId].todos.filter((todo) => !todo.done)
+      if (open.length === 0) break
+      const moved = open[Math.floor(rng() * open.length)]
+      tab.moveTodo(listId, moved, Math.floor(rng() * open.length))
+      const ids = tab.snapshot().details[listId].todos.map((todo) => todo.id ?? todo.key)
+      if (new Set(ids).size !== ids.length) violations.push('a todo is on screen twice')
+    }
     if (rng() < 0.3) tab.addTodo(otherId, `o-${seed}-${step}`)
     // Delete the other list, with what is queued on it, in some seeds.
     if (rng() < 0.03) {
@@ -368,6 +379,8 @@ async function refetchAdvancedQueuedVersion(refetchAdvancesQueue: boolean): Prom
       renameTodo: async (listId, todoId, version, title) =>
         server.renameTodo(listId, todoId, version, title),
       deleteTodo: async (listId, todoId, version) => server.deleteTodo(listId, todoId, version),
+      moveTodo: async (listId, todoId, above, below) =>
+        server.moveTodo(listId, todoId, above, below),
     },
     newKey: keys('a'),
     timeoutMs: Number.POSITIVE_INFINITY,

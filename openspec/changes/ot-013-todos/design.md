@@ -219,7 +219,10 @@ A move sends up to 20 open todo IDs above the target position and 20 below,
 nearest first. The server ignores the moved todo's own ID and any that aren't
 open in this list, including foreign IDs, and then places the todo directly below the first remaining ID in
 `above`, else directly above the first remaining one in `below`, else at the
-bottom. An empty `above` means the top. Moving a done todo answers `stale`.
+bottom. An `above` sent empty means the top; one whose IDs are all ignored does
+not. So a client whose only neighbours above were never saved sends the moved
+todo's own ID there. Moving a done todo answers `stale`. A todo already in its
+slot isn't rewritten, so repeats don't use up the gap.
 
 The answer holds IDs only, since full rows would be up to 500 KB per move. If
 its set of IDs differs from the open todos the tab knows, something changed
@@ -268,10 +271,15 @@ confirmed state, so undoing a failed save is removing it from the queue.
 - **Versions:** an operation stores the version on screen when the Member
   acted. When a save moves a todo from version n to n + 1, later queued
   operations on that todo at n move to n + 1. Nothing else changes a stored
-  version: not a refetch, and not a success whose version isn't n + 1.
+  version: not a refetch, not a success whose version isn't n + 1, and not a
+  success that asked for what version n already held. That last one changed
+  nothing, so n + 1 is another tab's change; the prototype model (4.4) found that
+  it advanced a queued deletion onto a change the Member hadn't seen.
 - **Renames** take their version when the form opens, not when it is saved: the
   form hides what a load brings in meanwhile. Until submitted, a started rename
   follows this tab's own saves like a queued edit, and nothing else.
+- **Moves** have no version, and go to the place the server's rule would give on
+  screen. The answered order is applied beneath what is queued.
 - **409 or 404:** the operation and later queued ones on the same item are
   dropped, the current version is shown (or the item removed), and the Member
   sees one message. Dropped text stays available to submit again: it goes back
@@ -377,36 +385,120 @@ The existing route-guard walk covers the Visitor case for future routes.
 ### D13. Formal coverage of lists (domain, persistence-postgres, web)
 
 - **Scope:** every OT-013 guarantee is classified as a proof, a model with
-  conformance replay, or a test with a written reason no proof applies.
+  conformance replay, or a test with a written reason no proof or model applies.
   "Everything" means every guarantee, not every line of UI, SQL text or
   third-party code.
-- **Domain proofs (Kani):** pure ordering and validation rules over integer
-  inputs, following the auth proofs' bounds. The midpoint and renumbering
-  functions arrive in slice 4. Kani can't get through `jiff`, so time is an
-  argument or a generic integer, never a `Timestamp`.
-- **Server model (Quint):** `list_writes.qnt` models two Members, two lists and
-  three todos; one step per repository statement or transaction under the list
-  lock. Apalache checks 8 steps; 10k random traces check deeper runs. Broken
-  modules remove each guard and must break an invariant.
-- **Client model (Quint):** `list_client.qnt` models D7's confirmed state,
-  queue and versions for two clients. Traces replay through the real
-  `ListsEngine` and memory server, so a model that drifts from the engine fails.
-- **Coverage gate:** `docs/formal-coverage.yaml` names the check for every
-  requirement and P-35. `just formal-coverage` fails on a missing or renamed
-  check, and runs in `just ci`.
+- **Proofs cover code that runs.** SQL bumps versions (`version = version + 1`),
+  and nothing in production calls `List::rename`, `Todo::mark_done`,
+  `Todo::mark_not_done` or `Todo::rename`. They are removed, and the version rule
+  is checked by the server model and its replay, not by Kani.
+- **Domain proofs (Kani):** ordering and validation over integer inputs.
+  - Kani can't get through `jiff` or OS randomness, so harnesses use integer
+    kernels and no `Timestamp` or `Uuid::new_v4`. The open-or-done rule is
+    extracted as a kernel over the two columns' presence, used by
+    `from_persistence`.
+  - The midpoint and renumbering kernels are written and proved in slice 4, before
+    the repository uses them; the other proofs come in slice 6.
+  - The midpoint kernel covers all `i64` neighbours, with no overflow in the
+    midpoint or in moves above the first. At either end of `i64` it asks for
+    renumbering. `append_position` is strictly increasing unless it saturates;
+    at saturation the caller must renumber, or the bound is stated with why
+    it can't be reached.
+  - CBMC can't unwind hundreds of symbolic characters or `String` allocations, so
+    `normalize_single_line` uses an allocation-free kernel, proved over up to 6
+    symbolic `char`s with `max <= 4`. A proptest ties it to the real function
+    at 100 and 500 characters.
+  - Renumbering is proved for up to 5 positions; a proptest covers 1,000.
+- **Server model (Quint):** `list_writes.qnt`, two Members, two writers in flight.
+  - `MAX_LISTS = 2` and `MAX_TODOS = 3`, with 4 list IDs and 5 todo IDs: one
+    Member can exceed either limit while another Member's row exists.
+    An ID universe no larger than a limit would make that invariant vacuous.
+  - `init` chooses among populated states that meet the table constraints: at and
+    just below each limit, lists of three open todos, done todos, and adjacent
+    positions. Starting empty, 8 steps reach neither a full list nor two
+    concurrent moves. Positions use the real `POSITION_GAP`, and renumbering is
+    reached from adjacent seeds, not by exhausting a 2^20 gap.
+  - Each write is `begin` (take the lock, then read) and `commit`. `create_list`
+    locks the user and is the only write that checks `deleted_at`; every other
+    write locks its list. Purge takes the user, then its lists. The D10 sweep
+    deletes lists of purged accounts. `find_list` is two reads, since under READ
+    COMMITTED the todos may be newer than the list row.
+  - Apalache checks 8 steps; 10,000 random traces check 30.
+- **Invariants are scoped to what the design promises:**
+  - Version rules cover renames, marks and deletes. A state already stored
+    succeeds at any version and changes nothing. Creations start at 1, and moves
+    neither check nor change a version.
+  - A repeated create or add stores one row while that row still exists. Accepted
+    exceptions (Risks): a repeat after another tab deleted the item recreates it,
+    and a repeated move may undo a later one, leaving one order.
+- **Locks need concurrent tests.** Replay calls each repository method once, at
+  `commit`, so it can't notice a missing `FOR UPDATE`. Every lock-dependent rule
+  also names an `#[sqlx::test]` with overlapping transactions, shown to fail with
+  the lock removed. Interleaved `find_list` reads are modelled but not replayed.
+- **Client model (Quint):** two smaller models instead of one:
+  `list_queue.qnt` (queue, versions, drafts, retry, 404 and stale answers, moves,
+  reset and account switch) and `list_loads.qnt` (load and save counters, dropped
+  loads, reloads, recovery).
+  - A request has separate `send`, `apply` (at the server) and `answer` steps, and
+    `apply` may come after a timeout, a retry or a refetch. The replay transport
+    has the same three steps.
+  - A reset drops the queue, and no request starts for the old epoch. A request
+    already on its way isn't recalled (D7).
+  - Convergence is a safety property: if drained, recovered and reloaded, with
+    no request in flight, each tab equals the server. That queues do drain is a
+    liveness claim, covered by the seeded tests under fair answers.
+- **Memory server:** client replay trusts `MemoryListsServer`, so the server
+  model's traces are replayed through it as well as Postgres, for the operations
+  it implements. Ownership, purge and sweep steps are Postgres-only.
+- **Bounds are measured first.** Each model starts with a prototype recording
+  state-space size and runtime. Its bounds are fixed from that and written
+  next to it, never raised or lowered silently. `list_queue.qnt` is first
+  prototyped without moves in slice 4, before the client queue gains them, for at
+  most a day: most slice 3 review findings were in that queue.
+- **Prototype result (slice 4, 2026-11-26).** `models/list_queue.qnt`: two
+  tabs, one todo (also run with two), queues of 2, 5 requests, 3 titles; mark,
+  rename by draft, delete, single retry, late applies, 404 and stale answers,
+  loads. No additions, moves, resets or account switches yet.
+  - **Found a bug** in the code as it stood (D7, now fixed with a regression
+    test): a rename asking for the title version n already held succeeded at
+    n + 1, another tab's tick, and advanced a queued deletion onto it. The random
+    simulation found it within 100,000 traces of 25 steps; the trace is longer
+    than Apalache can check.
+  - **Apalache, alone on this machine:** 4 steps 30 s, 5 steps 126 s, 6 steps
+    616 s, about five times per step; 8 steps would take hours. At 6 steps
+    `refetch_advances_queue` and `refetch_advances_draft` give counterexamples
+    in 701 s and 580 s. State-space size isn't reported by Apalache and wasn't
+    measured.
+  - **So 8.1 changes:** Apalache can't be the main check for the queue at
+    useful depths. Plan: `quint run` (random simulation, 25 to 30 steps, a fixed
+    number of samples) as the gate for the queue models, with Apalache at 5 steps
+    as a fast bounded check; each broken variant must fail the simulation within
+    its sample count. To be decided in 8.1, with the model kept small.
+- **Coverage gate:** `docs/formal-coverage.yaml` is keyed by capability,
+  requirement and scenario, plus P-35. `just formal-coverage` reads the spec
+  deltas while the change is active and `openspec/specs/` once it is archived.
+  The manifest lists the requirements in scope, so other features in merged specs
+  are not demanded.
+  - A check must exist and run: Rust tests aren't `#[ignore]`d (except the
+    conformance suite `just models` runs), web tests aren't skipped or todo, Kani
+    functions carry `#[kani::proof]`, and Quint invariants and broken variants are
+    invoked by `scripts/models.sh`.
+  - An entry may be `pending: <task>` while that task is unticked. A pending entry
+    for a ticked task, or any once the feature is done (`--final`, then the default
+    from task 9.1), fails.
 - **Not formalized:** rendering, layout, CSS, SQL text, HTTP wiring, telemetry
   content filtering and third-party behaviour. Their requirements state their
   tests and why a proof or model does not apply.
 
 ## Risks / Trade-offs
 
-- [A formal check drifts from the code it describes] → Every model step is
-  replayed through the real repository or engine, and `just formal-coverage`
+- [A formal check drifts from the code it describes] → Model steps are
+  replayed through the real repository or engine (D13 names the exceptions), and `just formal-coverage`
   fails when a named check disappears. Update the model and replay in the same
   commit as the code.
-- [Kani or Quint runtime grows past the gate] → Proofs stay on integer-time
-  cores, models keep stated bounds, and each runs as its own CI job. Record
-  runtimes.
+- [Kani or Quint runtime grows past the gate] → Proofs stay on integer cores,
+  each model is prototyped before its bounds are fixed, and the client is two
+  models. Each runs as its own job. Record runtimes.
 - [The client model freezes the wrong behaviour] → Freeze D7 after the review,
   model only the public engine API, and prove each invariant can fail before
   trusting it.
@@ -429,6 +521,30 @@ The existing route-guard walk covers the Visitor case for future routes.
   - `lists-large` (five lists of 1,000 todos, each open in several tabs): GET
     list 4.12 / 5.11, PATCH todo 7.29 / 7.80. All budgets are at their floors of
     25 / 50.
+  - Slice 4 (2026-11-26, same stack): `lists-large` also moves a todo each
+    iteration, directly below the first open todo, so about one move in 20
+    renumbers a list of 1,000. Five runs: move p95 7.1 to 8.3, p99 15 to 16,
+    max 95 ms. Four runs met every budget; one had PATCH todo p99 at 50 ms (max
+    77), against 3.2 to 4.2 ms in the others. Sampling during two more runs
+    showed 0 to 17,000 dead todo rows (5,079 live), autovacuum about once a
+    minute, `todos` indexes at 34 MB against a 1.6 MB table, and no lock waits
+    in 3-second samples.
+  - The slow tail is the developer machine's WAL flush, not the list code
+    (2026-11-26, five more runs with every request timed by k6 and Postgres
+    logging statements over 20 ms, lock waits over 10 ms, checkpoints and
+    autovacuums). All five met every budget: PATCH todo p99 3.5 to 6.6 ms, max
+    74. Ten of 27,000 requests exceeded 25 ms, singly, with the requests beside
+    them fast, and each slow tick matched a slow `COMMIT` to the millisecond
+    (74 ms tick, 72 ms `COMMIT`). No statement was slow, no lock wait was
+    logged, and the slow commits fell outside autovacuums and mostly outside
+    checkpoints. The database volume is on btrfs (zstd, copy-on-write) inside
+    LUKS, known for occasional fsync stalls; the failing run would be a worse
+    patch of them. Index bloat is reusable space: after autovacuum about 95% of
+    the index pages are free, and no query ran slow. Renumbering adds WAL but
+    does not create the stalls: ticks reached 13 to 33 ms before moves existed.
+    Accepted as environmental. If it recurs, put the load database on a
+    no-copy-on-write directory rather than turning off `synchronous_commit`,
+    which would hide what a commit costs.
 - [The largest export exhausts memory] → Streamed (D10). Measured in slice 2,
   100 lists of 1,000 todos with 500-character titles, always complete:
   62.5 MB in 0.5 s with ASCII titles, and 212.5 MB in 1.0 s with four-byte
@@ -437,6 +553,20 @@ The existing route-guard walk covers the Visitor case for future routes.
   131 s.
 - [1,000 rows make drag or keyboard moves slow] → `content-visibility: auto`,
   and an Interaction to Next Paint check on a full list in the ordering slice.
+  Measured in slice 5 (2026-11-26, this machine):
+  - `tests/lists.spec.ts` "a full list" opens 999 todos, adds the 1,000th, then
+    marks, renames and moves by keyboard and by drag, and fails if any
+    interaction's latency, as the browser measures it for INP, reaches 200 ms.
+    It runs in `just e2e`, so the budget holds on the CI runner too. Three runs:
+    every interaction 16 to 48 ms. Without `content-visibility`: 16 to 64 ms,
+    the moves slowest, so it helps most where layout is the cost.
+  - A first run reported 288 ms for opening a rename. A CPU profile showed
+    Playwright's label lookup (`getByLabel`) computing labels for all 1,000
+    rows in the page, during the click's frame; the panel itself took about
+    4 ms. The flow therefore finds fields by ID while it measures.
+  - `ListsPanel.bench.ts` (Vitest, `just bench-web`, no Tailwind, so without
+    `content-visibility`): opening 1,000 todos 113 ms mean (p99 189); each
+    change and its undo, both saved, 66 to 73 ms mean (p99 88 to 95).
 - [Touch scrolling starts a drag] → Only a drag handle starts one, with
   `touch-action: none` on the handle alone.
 
@@ -459,6 +589,7 @@ second page-view beacon that D9's rewrite does not cover.
 
 ## Open Questions
 
-- Whether the client replay reads ITF directly or generated JSON fixtures.
-  Either keeps the model as the source; decide in slice 8 by what the web test
-  runner can load reliably.
+- _Resolved (client trace replay):_ `scripts/models.sh` exports the client
+  models' ITF traces into `MODEL_TRACES_DIR` (`backend/target/model-traces`) and
+  runs a Node-mode Vitest replay through `ListsEngine` and `MemoryListsServer`.
+  No trace files are committed and `just test-web` is untouched.

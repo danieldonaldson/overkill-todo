@@ -373,6 +373,7 @@ pub fn api_routes() -> OpenApiRouter<AppState> {
         ))
         .routes(routes!(list_handler::add_todo))
         .routes(routes!(list_handler::patch_todo, list_handler::delete_todo))
+        .routes(routes!(list_handler::move_todo))
         .require_verified_email()
         .require_auth();
 

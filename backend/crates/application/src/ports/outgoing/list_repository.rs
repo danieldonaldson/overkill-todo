@@ -74,6 +74,18 @@ impl<T> ListWrite<T> {
     }
 }
 
+/// The answer to a move. It never conflicts on a version: moves neither check
+/// nor change one (design D1).
+#[derive(Debug, Clone)]
+pub enum TodoMove {
+    /// The list's open todos in order after the move.
+    Moved(Vec<TodoId>),
+    /// The todo is done, so it has no position to change.
+    Done(Todo),
+    ListNotFound,
+    TodoNotFound,
+}
+
 /// Storage for a Member's lists and todos.
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
@@ -166,6 +178,19 @@ pub trait ListRepository: Send + Sync {
         version: i64,
         done: bool,
     ) -> Result<ListWrite<Todo>, DomainError>;
+
+    /// Moves an open todo next to the first of its neighbours that remains.
+    ///
+    /// `above` and `below` are nearest first; IDs that aren't other open todos
+    /// of this list are ignored, and an empty `above` is the top (design D6).
+    async fn move_todo(
+        &self,
+        user_id: &UserId,
+        list_id: &ListId,
+        todo_id: &TodoId,
+        above: &[TodoId],
+        below: &[TodoId],
+    ) -> Result<TodoMove, DomainError>;
 
     /// The todos of one of `user_id`'s lists, for the streamed data export.
     async fn list_todos(

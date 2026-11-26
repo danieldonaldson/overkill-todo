@@ -7,6 +7,7 @@ use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
+use validator::Validate;
 
 /// A list as every answer carries it.
 #[derive(Debug, Serialize, ToSchema)]
@@ -130,6 +131,29 @@ pub struct DoneTodoPatch {
     /// Version the client saw; a change at another version is refused.
     pub version: i64,
     pub done: bool,
+}
+
+/// Move an open todo next to its new neighbours, nearest first.
+///
+/// IDs that aren't other open todos of the list are ignored. An empty `above`
+/// means the top; with no neighbour left the todo goes to the bottom.
+#[derive(Debug, Deserialize, Validate, ToSchema)]
+pub struct MoveTodoRequest {
+    /// Open todos above the new position, nearest first.
+    #[validate(length(max = 20))]
+    #[schema(max_items = 20)]
+    pub above: Vec<Uuid>,
+    /// Open todos below the new position, nearest first.
+    #[validate(length(max = 20))]
+    #[schema(max_items = 20)]
+    pub below: Vec<Uuid>,
+}
+
+/// The order after a move.
+#[derive(Debug, Serialize, ToSchema)]
+pub struct MoveTodoResponse {
+    /// Every open todo of the list, in order.
+    pub open_todo_ids: Vec<Uuid>,
 }
 
 /// A `409` for an edit based on a version that has since changed.

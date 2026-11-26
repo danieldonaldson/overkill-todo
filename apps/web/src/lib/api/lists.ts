@@ -4,6 +4,8 @@ import type {
   DoneTodoPatch,
   List,
   ListDetail,
+  MoveTodoRequest,
+  MoveTodoResponse,
   RenameListRequest,
   TitleTodoPatch,
   Todo,
@@ -66,6 +68,14 @@ export function createListsApi(client: HttpClient) {
         method: 'PATCH',
         body: JSON.stringify(body),
         route: '/lists/{id}/todos/{todo_id}',
+      }),
+
+    /** Move an open todo next to its new neighbours; answers the resulting order. */
+    moveTodo: (id: string, todoId: string, body: MoveTodoRequest): Promise<MoveTodoResponse> =>
+      client.request(`/lists/${id}/todos/${todoId}/move`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        route: '/lists/{id}/todos/{todo_id}/move',
       }),
 
     /** Delete a todo at the version the Member saw. */

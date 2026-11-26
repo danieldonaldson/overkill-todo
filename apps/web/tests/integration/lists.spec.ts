@@ -431,3 +431,126 @@ test('a todo added before confirming a list deletion asks again with the new cou
     await second.close()
   }
 })
+
+async function order(page: Page, titles: string[]) {
+  await expect(page.getByRole('list', { name: 'Todos' }).getByRole('listitem')).toContainText(
+    titles
+  )
+}
+
+function saved(page: Page) {
+  return page.waitForResponse((response) => response.url().endsWith('/move') && response.ok())
+}
+
+async function move(page: Page, title: string, key: string) {
+  const answered = saved(page)
+  await page.getByRole('button', { name: `Move "${title}"` }).press(key)
+  await answered
+}
+
+/** Both tabs open on a list of three todos. */
+async function twoTabs(page: Page) {
+  await register(page)
+  const address = await newList(page, 'Ordered list')
+  for (const title of ['One', 'Two', 'Three']) await addTodo(page, title)
+  const second = await page.context().newPage()
+  await second.goto(address)
+  await order(second, ['One', 'Two', 'Three'])
+  return second
+}
+
+async function shownOrder(page: Page): Promise<string[]> {
+  const rows = page.getByRole('list', { name: 'Todos' }).getByRole('listitem')
+  await expect(rows.first()).toBeVisible()
+  return rows.getByRole('checkbox').evaluateAll((boxes) => boxes.map((box) => box.ariaLabel ?? ''))
+}
+
+test('two tabs move different todos at once and settle on one order', async ({ page }) => {
+  const second = await twoTabs(page)
+  try {
+    await Promise.all([move(page, 'Three', 'Home'), move(second, 'One', 'End')])
+    await Promise.all([page.reload(), second.reload()])
+    const [first, other] = [await shownOrder(page), await shownOrder(second)]
+    expect(first).toHaveLength(3)
+    expect(new Set(first).size).toBe(3)
+    expect(other).toEqual(first)
+  } finally {
+    await second.close()
+  }
+})
+
+test('two tabs move the same todo at once and it ends in one of the two places', async ({
+  page,
+}) => {
+  const second = await twoTabs(page)
+  try {
+    await Promise.all([move(page, 'Two', 'Home'), move(second, 'Two', 'End')])
+    await Promise.all([page.reload(), second.reload()])
+    const [first, other] = [await shownOrder(page), await shownOrder(second)]
+    expect(other).toEqual(first)
+    expect(first).toHaveLength(3)
+    expect([0, 2]).toContain(first.indexOf('Mark "Two" done'))
+  } finally {
+    await second.close()
+  }
+})
+
+test('a move next to a todo deleted elsewhere is saved and shows the resulting order', async ({
+  page,
+}) => {
+  const second = await twoTabs(page)
+  try {
+    const deleted = page.waitForResponse((response) => response.request().method() === 'DELETE')
+    await deleteTodo(page, 'One')
+    await deleted
+    // Directly below One, as this tab still shows it.
+    await move(second, 'Three', 'ArrowUp')
+    await order(second, ['Three', 'Two'])
+    await expect(second.getByText(/elsewhere/)).toHaveCount(0)
+  } finally {
+    await second.close()
+  }
+})
+
+test('moving a todo completed elsewhere leaves it done, with a note', async ({ page }) => {
+  const second = await twoTabs(page)
+  try {
+    await page.getByRole('checkbox', { name: 'Mark "Two" done' }).click()
+    await expect(page.getByRole('button', { name: /Completed \(1\)/ })).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    await second.getByRole('button', { name: 'Move "Two"' }).press('Home')
+    await expect(second.getByText(/changed elsewhere/)).toBeVisible()
+    await expect(second.getByRole('button', { name: /Completed \(1\)/ })).toBeVisible()
+    await order(second, ['One', 'Three'])
+  } finally {
+    await second.close()
+  }
+})
+
+test('a todo moved in one tab and renamed in another keeps both', async ({ page }) => {
+  const second = await twoTabs(page)
+  try {
+    await move(page, 'Three', 'Home')
+    const renamed = second.waitForResponse((response) => response.request().method() === 'PATCH')
+    await renameTodo(second, 'Three', 'Third')
+    expect((await renamed).status()).toBe(200)
+    await page.reload()
+    await order(page, ['Third', 'One', 'Two'])
+  } finally {
+    await second.close()
+  }
+})
+
+test('moving a todo deleted elsewhere removes it with a note', async ({ page }) => {
+  const second = await twoTabs(page)
+  try {
+    const deleted = page.waitForResponse((response) => response.request().method() === 'DELETE')
+    await deleteTodo(page, 'Two')
+    await deleted
+    await second.getByRole('button', { name: 'Move "Two"' }).press('Home')
+    await expect(second.getByText(/todo was deleted elsewhere/)).toBeVisible()
+    await order(second, ['One', 'Three'])
+  } finally {
+    await second.close()
+  }
+})

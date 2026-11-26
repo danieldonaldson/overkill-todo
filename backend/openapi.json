@@ -2385,6 +2385,144 @@
         ]
       }
     },
+    "/api/v1/lists/{id}/todos/{todo_id}/move": {
+      "post": {
+        "tags": [
+          "Lists"
+        ],
+        "summary": "Move an open todo among the list's open todos.\n# Errors\nReturns the 404 codes for a missing or foreign list or todo, or invalid input.",
+        "operationId": "move_todo",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "List ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "todo_id",
+            "in": "path",
+            "description": "Todo ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "x-account-id",
+            "in": "header",
+            "description": "ID of the account the change was made for. If given, it must be the signed-in account's.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveTodoRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "The list's open todos in order",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoveTodoResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A missing field, a malformed ID, or more than 20 IDs either way",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Email address not verified",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "List or todo not found (`list_not_found` / `todo_not_found`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The todo is done",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaleTodoConflictResponse"
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Made for another account than the one signed in (`account_changed`); nothing was changed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "csrf_header": [],
+            "session_cookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/users/me": {
       "delete": {
         "tags": [
@@ -4041,6 +4179,51 @@
         "properties": {
           "success": {
             "type": "boolean"
+          }
+        }
+      },
+      "MoveTodoRequest": {
+        "type": "object",
+        "description": "Move an open todo next to its new neighbours, nearest first.\n\nIDs that aren't other open todos of the list are ignored. An empty `above`\nmeans the top; with no neighbour left the todo goes to the bottom.",
+        "required": [
+          "above",
+          "below"
+        ],
+        "properties": {
+          "above": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Open todos above the new position, nearest first.",
+            "maxItems": 20
+          },
+          "below": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Open todos below the new position, nearest first.",
+            "maxItems": 20
+          }
+        }
+      },
+      "MoveTodoResponse": {
+        "type": "object",
+        "description": "The order after a move.",
+        "required": [
+          "open_todo_ids"
+        ],
+        "properties": {
+          "open_todo_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Every open todo of the list, in order."
           }
         }
       },

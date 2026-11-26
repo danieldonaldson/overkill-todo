@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use application::ports::outgoing::{LimitKind, ListRepository, ListWrite};
+use application::ports::outgoing::{LimitKind, ListRepository, ListWrite, TodoMove};
 use domain::value_objects::{ListId, ListName, TodoId, TodoTitle, UserId};
 use jiff::Timestamp;
 use persistence_postgres::time::ToDb;
@@ -758,4 +758,285 @@ async fn deleting_makes_room_again_at_both_limits(pool: PgPool) {
             .unwrap(),
         ListWrite::Applied(_)
     ));
+}
+
+// ---------------------------------------------------------------------------
+// Moves (slice 4)
+// ---------------------------------------------------------------------------
+
+/// A list with open todos named `a`, `b`, … in order, at the given positions.
+async fn list_at(pool: &PgPool, user_id: Uuid, positions: &[i64]) -> (ListId, Vec<TodoId>) {
+    let list = insert_list(pool, user_id, "Work").await;
+    let mut ids = Vec::new();
+    for (index, position) in positions.iter().enumerate() {
+        let title = char::from(b'a' + u8::try_from(index).unwrap()).to_string();
+        let id = insert_todo(pool, list, &title, Some(*position), None).await;
+        ids.push(TodoId::from_uuid(id));
+    }
+    (ListId::from_uuid(list), ids)
+}
+
+/// The list's open todos in stored order.
+async fn open_order(pool: &PgPool, list: &ListId) -> Vec<TodoId> {
+    sqlx::query_scalar!(
+        "SELECT id FROM todos WHERE list_id = $1 AND position IS NOT NULL ORDER BY position",
+        list.as_uuid(),
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+    .into_iter()
+    .map(TodoId::from_uuid)
+    .collect()
+}
+
+fn moved(outcome: Result<TodoMove, domain::errors::DomainError>) -> Vec<TodoId> {
+    match outcome.unwrap() {
+        TodoMove::Moved(order) => order,
+        other => panic!("not moved: {other:?}"),
+    }
+}
+
+/// Sorted, for comparing which todos there are rather than their order.
+fn as_set(ids: &[TodoId]) -> Vec<Uuid> {
+    let mut ids: Vec<Uuid> = ids.iter().map(|id| *id.as_uuid()).collect();
+    ids.sort_unstable();
+    ids
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_todo_moves_to_the_top_the_middle_and_the_bottom(pool: PgPool) {
+    let (user_id, user) = user(&pool, "move@example.com").await;
+    let (list, ids) = list_at(&pool, user_id, &[10, 20, 30, 40]).await;
+    let [a, b, c, d] = ids[..] else { panic!() };
+    let repo = repo(&pool);
+
+    for (todo, above, below, expected) in [
+        (c, vec![], vec![a, b], [c, a, b, d]),
+        (d, vec![a, c], vec![b], [c, a, d, b]),
+        (c, vec![b, d, a], vec![], [a, d, b, c]),
+        // Already there.
+        (c, vec![b], vec![], [a, d, b, c]),
+        // Its own ID is ignored, both ways.
+        (b, vec![b, a], vec![b, d], [a, b, d, c]),
+        (c, vec![c], vec![c, d], [a, b, c, d]),
+    ] {
+        let order = moved(repo.move_todo(&user, &list, &todo, &above, &below).await);
+        assert_eq!(order, expected);
+        assert_eq!(open_order(&pool, &list).await, expected);
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn moves_never_change_a_version(pool: PgPool) {
+    let (user_id, user) = user(&pool, "move-version@example.com").await;
+    // Adjacent, so the move also renumbers.
+    let (list, ids) = list_at(&pool, user_id, &[1, 2, 3]).await;
+    let repo = repo(&pool);
+    moved(
+        repo.move_todo(&user, &list, &ids[2], &[ids[0]], &[ids[1]])
+            .await,
+    );
+    let detail = repo.find_list(&user, &list).await.unwrap().unwrap();
+    assert!(detail.todos.iter().all(|todo| todo.version() == 1));
+    assert_eq!(detail.list.version(), 1);
+
+    // So a rename from a tab that hasn't seen the move still applies.
+    let renamed = repo
+        .rename_todo(&user, &list, &ids[2], 1, &title("renamed"))
+        .await
+        .unwrap();
+    assert!(matches!(renamed, ListWrite::Applied(_)));
+    assert_eq!(
+        open_order(&pool, &list).await,
+        [ids[0], ids[2], ids[1]],
+        "the rename kept the move"
+    );
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_thousand_moves_between_the_same_two_todos_lose_nothing(pool: PgPool) {
+    let (user_id, user) = user(&pool, "move-many@example.com").await;
+    let gap = 1 << 20;
+    let (list, ids) = list_at(&pool, user_id, &[gap, 2 * gap, 3 * gap, 4 * gap]).await;
+    let [top, x, y, bottom] = ids[..] else {
+        panic!()
+    };
+    let repo = repo(&pool);
+
+    // Each move goes directly below `top`, halving the same gap every time.
+    let mut renumbered = 0;
+    for n in 0..1000 {
+        let (todo, other) = if n % 2 == 0 { (y, x) } else { (x, y) };
+        let order = moved(repo.move_todo(&user, &list, &todo, &[top], &[other]).await);
+        assert_eq!(order, [top, todo, other, bottom], "move {n}");
+        assert_eq!(open_order(&pool, &list).await, order, "move {n}");
+        let second = sqlx::query_scalar!(
+            r#"SELECT position AS "position!" FROM todos WHERE id = $1"#,
+            todo.as_uuid(),
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        renumbered += u32::from(second == 2 * gap);
+    }
+    assert!(renumbered > 10, "renumbered only {renumbered} times");
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_move_renumbers_at_either_end_of_the_range(pool: PgPool) {
+    let (user_id, user) = user(&pool, "move-ends@example.com").await;
+    let (list, ids) = list_at(&pool, user_id, &[i64::MIN, 0, i64::MAX]).await;
+    let [a, b, c] = ids[..] else { panic!() };
+    let repo = repo(&pool);
+    let order = moved(repo.move_todo(&user, &list, &b, &[], &[a]).await);
+    assert_eq!(order, [b, a, c]);
+    assert_eq!(open_order(&pool, &list).await, order);
+
+    let (list, ids) = list_at(&pool, user_id, &[0, 5, i64::MAX]).await;
+    let [a, b, c] = ids[..] else { panic!() };
+    let order = moved(repo.move_todo(&user, &list, &a, &[c], &[]).await);
+    assert_eq!(order, [b, c, a]);
+    assert_eq!(open_order(&pool, &list).await, order);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn neighbours_that_are_gone_done_or_foreign_are_ignored(pool: PgPool) {
+    let (user_id, member) = user(&pool, "move-gone@example.com").await;
+    let (other_id, _) = user(&pool, "move-foreign@example.com").await;
+    let (list, ids) = list_at(&pool, user_id, &[10, 20, 30, 40, 50]).await;
+    let [a, b, c, d, e] = ids[..] else { panic!() };
+    let (_, foreign) = list_at(&pool, other_id, &[10]).await;
+    let (_, own_other_list) = list_at(&pool, user_id, &[10]).await;
+    let repo = repo(&pool);
+    repo.delete_todo(&member, &list, &b, 1).await.unwrap();
+    repo.mark_todo(&member, &list, &c, 1, true).await.unwrap();
+    let gone = [b, c, foreign[0], own_other_list[0], TodoId::new()];
+
+    // Below the first that remains above.
+    let above = [&gone[..], &[a]].concat();
+    let order = moved(repo.move_todo(&member, &list, &e, &above, &[d]).await);
+    assert_eq!(order, [a, e, d]);
+    // None remains above: above the first that remains below.
+    let below = [&gone[..], &[a]].concat();
+    let order = moved(repo.move_todo(&member, &list, &d, &gone, &below).await);
+    assert_eq!(order, [d, a, e]);
+    // None remains either way: the bottom.
+    let order = moved(repo.move_todo(&member, &list, &d, &gone, &gone).await);
+    assert_eq!(order, [a, e, d]);
+    assert_eq!(open_order(&pool, &list).await, order);
+
+    // Each kind of absent neighbour gives the same answer as an unknown one.
+    for id in gone {
+        let order = moved(repo.move_todo(&member, &list, &e, &[id], &[]).await);
+        assert_eq!(order, [a, d, e]);
+        moved(repo.move_todo(&member, &list, &e, &[a], &[d]).await);
+    }
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_done_deleted_or_foreign_todo_does_not_move(pool: PgPool) {
+    let (user_id, member) = user(&pool, "move-done@example.com").await;
+    let (_, stranger) = user(&pool, "move-stranger@example.com").await;
+    let (list, ids) = list_at(&pool, user_id, &[10, 20, 30]).await;
+    let [a, b, c] = ids[..] else { panic!() };
+    let repo = repo(&pool);
+    repo.mark_todo(&member, &list, &a, 1, true).await.unwrap();
+    repo.delete_todo(&member, &list, &b, 1).await.unwrap();
+
+    match repo.move_todo(&member, &list, &a, &[c], &[]).await.unwrap() {
+        TodoMove::Done(todo) => {
+            assert_eq!(*todo.id(), a);
+            assert!(todo.is_done());
+            assert_eq!(todo.version(), 2);
+        }
+        other => panic!("{other:?}"),
+    }
+    for (todo, owner, list_id) in [(b, &member, list), (TodoId::new(), &member, list)] {
+        assert!(matches!(
+            repo.move_todo(owner, &list_id, &todo, &[c], &[])
+                .await
+                .unwrap(),
+            TodoMove::TodoNotFound
+        ));
+    }
+    for (owner, list_id) in [(&stranger, list), (&member, ListId::new())] {
+        assert!(matches!(
+            repo.move_todo(owner, &list_id, &c, &[], &[]).await.unwrap(),
+            TodoMove::ListNotFound
+        ));
+    }
+    assert_eq!(open_order(&pool, &list).await, [c]);
+}
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn concurrent_moves_adds_and_completions_keep_every_todo_once(pool: PgPool) {
+    let (user_id, user) = user(&pool, "move-race@example.com").await;
+    // Adjacent positions, so most rounds renumber while others write.
+    let (list, ids) = list_at(&pool, user_id, &[1, 2, 3, 4, 5, 6]).await;
+    let [a, b, c, d, e, f] = ids[..] else {
+        panic!()
+    };
+    let repo = repo(&pool);
+    let added = title("added");
+    let (top, under_b, under_a) = ([a], ([b], [c]), ([a], [b]));
+    for round in 0_i32..20 {
+        let done = round % 2 == 0;
+        let (to_top, same_todo, between, add, mark) = tokio::join!(
+            repo.move_todo(&user, &list, &e, &[], &top),
+            repo.move_todo(&user, &list, &e, &under_b.0, &under_b.1),
+            repo.move_todo(&user, &list, &f, &under_a.0, &under_a.1),
+            repo.add_todo(&user, &list, Uuid::now_v7(), &added),
+            repo.mark_todo(&user, &list, &d, 1 + i64::from(round), done),
+        );
+        for outcome in [to_top, same_todo, between] {
+            moved(outcome);
+        }
+        assert!(matches!(add.unwrap(), ListWrite::Applied(_)));
+        assert!(matches!(mark.unwrap(), ListWrite::Applied(_)));
+
+        let detail = repo.find_list(&user, &list).await.unwrap().unwrap();
+        let all: Vec<TodoId> = detail.todos.iter().map(|todo| *todo.id()).collect();
+        let mut distinct = as_set(&all);
+        distinct.dedup();
+        assert_eq!(distinct.len(), 6 + usize::try_from(round).unwrap() + 1);
+        assert!(ids.iter().all(|id| all.contains(id)));
+        let open = open_order(&pool, &list).await;
+        assert_eq!(open.contains(&d), !done);
+        assert_eq!(open[..], all[..open.len()], "one order");
+        // The same todo moved twice ended in one of the two places.
+        let place = |id: TodoId| open.iter().position(|other| *other == id).unwrap();
+        assert!(place(e) < place(a) || place(b) < place(e));
+    }
+}
+
+/// Overlapping transactions: with the list lock held elsewhere, a move waits,
+/// and then sees what was committed meanwhile.
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_move_waits_for_the_list_lock(pool: PgPool) {
+    let (user_id, user) = user(&pool, "move-lock@example.com").await;
+    let (list, ids) = list_at(&pool, user_id, &[10, 20, 30]).await;
+    let [a, b, c] = ids[..] else { panic!() };
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query!(
+        "SELECT id FROM lists WHERE id = $1 FOR UPDATE",
+        list.as_uuid()
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .unwrap();
+    let repo = Arc::new(repo(&pool));
+    let move_repo = Arc::clone(&repo);
+    let mut moving =
+        tokio::spawn(async move { move_repo.move_todo(&user, &list, &c, &[a], &[b]).await });
+    let early = tokio::time::timeout(std::time::Duration::from_millis(300), &mut moving).await;
+    assert!(early.is_err(), "the move did not wait for the lock");
+
+    sqlx::query!("DELETE FROM todos WHERE id = $1", a.as_uuid())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    tx.commit().await.unwrap();
+    assert_eq!(moved(moving.await.unwrap()), [c, b]);
+    assert_eq!(open_order(&pool, &list).await, [c, b]);
 }

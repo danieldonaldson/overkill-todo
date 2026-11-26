@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE todos SET position = new.position\n            FROM UNNEST($2::uuid[], $3::bigint[]) AS new (id, position)\n            WHERE todos.id = new.id AND todos.list_id = $1\n            ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "UuidArray",
+        "Int8Array"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "f9051b5bf27109973322c751f72c7205762a26505f43f17831d80f258a640e4f"
+}

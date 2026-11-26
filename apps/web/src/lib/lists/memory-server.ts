@@ -162,6 +162,25 @@ export class MemoryListsServer {
     list.todos = list.todos.filter((candidate) => candidate.id !== todoId)
   }
 
+  moveTodo(listId: string, todoId: string, above: string[], below: string[]): string[] {
+    const { list, todo } = this.findTodo(listId, todoId)
+    if (todo.done) {
+      throw new ApiErrorException(
+        { code: 'stale', message: 'This todo changed elsewhere', current: this.todoBody(todo) },
+        { status: 409, message: 'This todo changed elsewhere' }
+      )
+    }
+    const others = list.todos.filter((other) => !other.done && other !== todo)
+    const rank = (ids: string[]) =>
+      ids.map((id) => others.findIndex((other) => other.id === id)).find((index) => index !== -1)
+    const under = rank(above)
+    const slot =
+      above.length === 0 ? 0 : under !== undefined ? under + 1 : (rank(below) ?? others.length)
+    others.splice(slot, 0, todo)
+    list.todos = [...others, ...list.todos.filter((other) => other.done)]
+    return others.map((other) => other.id)
+  }
+
   list(): List[] {
     return [...this.lists.values()].map((list) => this.summary(list))
   }
@@ -275,6 +294,10 @@ export function serverApi(
     deleteTodo: async (listId, todoId, version) => {
       await between()
       server.deleteTodo(listId, todoId, version)
+    },
+    moveTodo: async (listId, todoId, above, below) => {
+      await between()
+      return server.moveTodo(listId, todoId, above, below)
     },
   }
 }

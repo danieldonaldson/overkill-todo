@@ -383,12 +383,12 @@ machete:
 
 # ── Formal verification (OT-010) ─────────────────────────────────────────────────
 
-# Kani proofs of the auth domain policy (OT-010): every harness, every input within
+# Kani proofs of the auth policy (OT-010) and todo ordering (OT-013): every harness, every input within
 # its stated bounds. Needs the pinned Kani from .mise.toml, then `cargo kani setup` once.
 # `-j` checks harnesses in parallel (Kani requires terse output for it), so this
 # takes about as long as the slowest one.
 [group('formal')]
-[doc('Kani proofs of the auth domain policy: every harness, every input within its bounds.')]
+[doc('Kani proofs of the domain rules: every harness, every input within its bounds.')]
 verify:
     @cargo kani --version >/dev/null 2>&1 || { echo "Kani isn't installed: run 'mise install', then 'cargo kani setup' once" >&2; exit 1; }
     cd {{backend}} && SQLX_OFFLINE=true cargo kani --workspace -j --output-format=terse

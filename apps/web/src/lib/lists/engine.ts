@@ -19,6 +19,8 @@ export interface ListsApi {
   markTodo(listId: string, todoId: string, version: number, done: boolean): Promise<Todo>
   renameTodo(listId: string, todoId: string, version: number, title: string): Promise<Todo>
   deleteTodo(listId: string, todoId: string, version: number): Promise<void>
+  /** Neighbours are nearest first. Answers the open todos' IDs in order. */
+  moveTodo(listId: string, todoId: string, above: string[], below: string[]): Promise<string[]>
 }
 
 export interface ListView {
@@ -108,7 +110,9 @@ interface Failure {
   message?: string
 }
 
-type SendResult = { ok: true; value: List | Todo | undefined } | { ok: false; error: Failure }
+type Saved = List | Todo | string[] | undefined
+
+type SendResult = { ok: true; value: Saved } | { ok: false; error: Failure }
 
 type Operation =
   | { kind: 'create_list'; key: string; name: string }
@@ -154,6 +158,21 @@ type Operation =
       todoKey?: string
       version: number
     }
+  | {
+      kind: 'move_todo'
+      listId: string
+      todoId?: string
+      todoKey?: string
+      /** Its new neighbours, nearest first. No version: moves never conflict (D1). */
+      above: TodoRef[]
+      below: TodoRef[]
+    }
+
+/** A todo by its ID or, until it has one, by its client key. */
+interface TodoRef {
+  todoId?: string
+  todoKey?: string
+}
 
 /**
  * A rename the Member has started. It holds the version they saw then, so what
@@ -174,6 +193,11 @@ export interface EngineOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000
+
+/** Neighbours a move sends each way (design D6). */
+export const MAX_MOVE_NEIGHBOURS = 20
+
+const refOf = (todo: TodoView): TodoRef => (todo.id ? { todoId: todo.id } : { todoKey: todo.key })
 
 /**
  * Todos are kept as the server orders them: open ones, then done ones newest
@@ -421,6 +445,29 @@ export class ListsEngine {
     this.kick()
   }
 
+  /** Move an open todo to `index` among the open todos now on screen. */
+  moveTodo(listId: string, todo: TodoView, index: number): void {
+    const open = (this.viewDetails()[listId]?.todos ?? []).filter((other) => !other.done)
+    const same = (other: TodoView) =>
+      (todo.id != null && other.id === todo.id) || (todo.key != null && other.key === todo.key)
+    const from = open.findIndex(same)
+    const to = Math.max(0, Math.min(index, open.length - 1))
+    if (from === -1 || from === to) return
+    const [moved] = open.splice(from, 1)
+    this.queue.push({
+      kind: 'move_todo',
+      listId,
+      ...refOf(moved),
+      above: open
+        .slice(Math.max(0, to - MAX_MOVE_NEIGHBOURS), to)
+        .reverse()
+        .map(refOf),
+      below: open.slice(to, to + MAX_MOVE_NEIGHBOURS).map(refOf),
+    })
+    this.notify()
+    this.kick()
+  }
+
   /** Load the caller's lists (beside the queue; a stale answer is dropped). */
   async loadLists(): Promise<void> {
     const epoch = this.epoch
@@ -588,6 +635,7 @@ export class ListsEngine {
       case 'delete_list':
       case 'delete_todo':
       case 'mark_todo':
+      case 'move_todo':
         return []
     }
   }
@@ -693,6 +741,10 @@ export class ListsEngine {
         removeTodo(todos, { id: this.todoIdOf(op), key: op.todoKey })
         continue
       }
+      if (op.kind === 'move_todo' && op.listId === listId) {
+        this.applyMove(op, todos)
+        continue
+      }
       if (op.kind !== 'mark_todo' || op.listId !== listId) continue
       const id = this.todoIdOf(op)
       const index = todos.findIndex(
@@ -707,6 +759,28 @@ export class ListsEngine {
       target.completed_at = op.done ? new Date().toISOString() : undefined
       insertTodo(todos, target)
     }
+  }
+
+  /** Place a queued move where the server's rule would (design D6). */
+  private applyMove(op: Extract<Operation, { kind: 'move_todo' }>, todos: TodoView[]): void {
+    const indexOf = (ref: TodoRef) => {
+      const id = this.todoIdOf(ref)
+      return todos.findIndex(
+        (todo) =>
+          !todo.done &&
+          ((id != null && todo.id === id) || (ref.todoKey != null && todo.key === ref.todoKey))
+      )
+    }
+    const from = indexOf(op)
+    if (from === -1) return
+    const [moved] = todos.splice(from, 1)
+    const first = (refs: TodoRef[]) => refs.map(indexOf).find((index) => index !== -1)
+    const above = first(op.above)
+    const below = first(op.below)
+    if (op.above.length === 0) todos.unshift(moved)
+    else if (above !== undefined) todos.splice(above + 1, 0, moved)
+    else if (below !== undefined) todos.splice(below, 0, moved)
+    else insertTodo(todos, moved)
   }
 
   private notify(): void {
@@ -812,6 +886,21 @@ export class ListsEngine {
           await this.timeout(this.api.deleteTodo(op.listId, todoId, op.version))
           return { ok: true, value: undefined }
         }
+        case 'move_todo': {
+          const todoId = this.todoIdOf(op)
+          if (!todoId) return { ok: false, error: { kind: 'not_found' } }
+          const ids = (refs: TodoRef[]) =>
+            refs.map((ref) => this.todoIdOf(ref)).filter((id) => id !== undefined)
+          // An empty `above` means the top. When neighbours were left out because
+          // they were never saved, the todo's own ID, which the server ignores,
+          // says that this is not the top.
+          const known = ids(op.above)
+          const above = known.length === 0 && op.above.length > 0 ? [todoId] : known
+          return {
+            ok: true,
+            value: await this.timeout(this.api.moveTodo(op.listId, todoId, above, ids(op.below))),
+          }
+        }
       }
     } catch (error) {
       return { ok: false, error: this.classify(error) }
@@ -851,7 +940,7 @@ export class ListsEngine {
     return { kind: 'unknown' }
   }
 
-  private applySuccess(op: Operation, value: List | Todo | undefined): void {
+  private applySuccess(op: Operation, value: Saved): void {
     switch (op.kind) {
       case 'create_list': {
         const list = value as List
@@ -890,24 +979,22 @@ export class ListsEngine {
         }
         break
       }
-      case 'mark_todo': {
-        const answer = value as Todo
-        const detail = this.details.get(op.listId)
-        if (detail) {
-          detail.knownAt = ++this.clock
-          putTodo(detail.todos, toTodoView(answer, this.keyById.get(answer.id)))
-        }
-        this.rebaseQueuedVersions(op, answer.version)
-        break
-      }
+      case 'mark_todo':
       case 'rename_todo': {
         const answer = value as Todo
         const detail = this.details.get(op.listId)
+        const known = detail?.todos.find((todo) => todo.id === answer.id)
+        // Only a save that changed something made `n → n + 1`. One that asked
+        // for what version n already held is a success too, and n + 1 is then
+        // another tab's change, which the Member may not have seen (D7).
+        const changed =
+          known?.version === op.version &&
+          (op.kind === 'mark_todo' ? known.done !== op.done : known.title !== op.title)
         if (detail) {
           detail.knownAt = ++this.clock
           putTodo(detail.todos, toTodoView(answer, this.keyById.get(answer.id)))
         }
-        this.rebaseQueuedVersions(op, answer.version)
+        if (changed) this.rebaseQueuedVersions(op, answer.version)
         break
       }
       case 'delete_todo': {
@@ -923,6 +1010,26 @@ export class ListsEngine {
         }
         break
       }
+      case 'move_todo': {
+        this.applyOrder(op.listId, value as string[])
+        break
+      }
+    }
+  }
+
+  /** The order after a move. Todos that came or went elsewhere need a load. */
+  private applyOrder(listId: string, order: string[]): void {
+    const detail = this.details.get(listId)
+    if (!detail?.loaded) return
+    const rank = new Map(order.map((id, index) => [id, index]))
+    const open = detail.todos.filter((todo) => !todo.done)
+    const rankOf = (todo: TodoView) => rank.get(todo.id ?? '') ?? order.length
+    detail.todos = [
+      ...open.sort((a, b) => rankOf(a) - rankOf(b)),
+      ...detail.todos.filter((todo) => todo.done),
+    ]
+    if (open.length !== rank.size || open.some((todo) => !rank.has(todo.id ?? ''))) {
+      this.listReloads.add(listId)
     }
   }
 

@@ -19,7 +19,7 @@ use application::{
         CreateListUseCase, DeleteListUseCase, DeleteTodoUseCase, ExportUserDataUseCase,
         GetCurrentUserUseCase, GetListUseCase, ListAuditEventsUseCase, ListListsUseCase,
         ListSecurityActivityUseCase, ListUsersUseCase, LoginUserUseCase, MarkTodoUseCase,
-        OAuthCallbackUseCase, OAuthUnlinkUseCase, PurgeScheduledAccountsUseCase,
+        MoveTodoUseCase, OAuthCallbackUseCase, OAuthUnlinkUseCase, PurgeScheduledAccountsUseCase,
         RefreshTokenUseCase, RegisterUserUseCase, RenameListUseCase, RenameTodoUseCase,
         RequestAccountDeletionUseCase, RequestPasswordResetUseCase, ResendVerificationUseCase,
         ResetPasswordUseCase, RevokeTokenUseCase, SendVerificationCodeUseCase, SetPasswordUseCase,
@@ -376,6 +376,7 @@ async fn main() -> anyhow::Result<std::process::ExitCode> {
         delete_list: Arc::new(DeleteListUseCase::new(list_repo.clone())),
         add_todo: Arc::new(AddTodoUseCase::new(list_repo.clone())),
         mark_todo: Arc::new(MarkTodoUseCase::new(list_repo.clone())),
+        move_todo: Arc::new(MoveTodoUseCase::new(list_repo.clone())),
         rename_todo: Arc::new(RenameTodoUseCase::new(list_repo.clone())),
         delete_todo: Arc::new(DeleteTodoUseCase::new(list_repo.clone())),
     });

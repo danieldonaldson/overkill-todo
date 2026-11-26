@@ -159,6 +159,12 @@ async fn another_members_ids_answer_exactly_like_unknown_ids(pool: PgPool) {
                 true,
             ),
             (
+                "POST",
+                format!("/api/v1/lists/{foreign}/todos/{}/move", f.other_todo),
+                Some(json!({ "above": [], "below": [] })),
+                true,
+            ),
+            (
                 "DELETE",
                 format!("/api/v1/lists/{foreign}/todos/{}?version=1", f.other_todo),
                 None,
@@ -198,6 +204,12 @@ async fn another_members_ids_answer_exactly_like_unknown_ids(pool: PgPool) {
                 true,
             ),
             (
+                "POST",
+                format!("/api/v1/lists/{unknown}/todos/{}/move", f.unknown_todo),
+                Some(json!({ "above": [], "below": [] })),
+                true,
+            ),
+            (
                 "DELETE",
                 format!("/api/v1/lists/{unknown}/todos/{}?version=1", f.unknown_todo),
                 None,
@@ -224,7 +236,7 @@ async fn another_members_ids_answer_exactly_like_unknown_ids(pool: PgPool) {
     }
 
     // A todo in another Member's list, requested through the caller's own list,
-    // is the same as an unknown todo ID — for a mark, a rename and a delete.
+    // is the same as an unknown todo ID — for a mark, a rename, a move and a delete.
     for (method, suffix, body) in [
         (
             "PATCH",
@@ -235,6 +247,11 @@ async fn another_members_ids_answer_exactly_like_unknown_ids(pool: PgPool) {
             "PATCH",
             String::new(),
             Some(json!({ "version": 1, "title": "x" })),
+        ),
+        (
+            "POST",
+            "/move".to_string(),
+            Some(json!({ "above": [], "below": [] })),
         ),
         ("DELETE", "?version=1".to_string(), None),
     ] {
@@ -345,6 +362,11 @@ async fn staff_get_the_same_404_and_never_see_another_accounts_lists(pool: PgPoo
                 json!({ "version": 1, "title": "x" }),
             ),
             (
+                "POST",
+                format!("/todos/{}/move", f.other_todo),
+                json!({ "above": [], "below": [] }),
+            ),
+            (
                 "DELETE",
                 format!("/todos/{}?version=1", f.other_todo),
                 Value::Null,
@@ -429,6 +451,12 @@ async fn visitors_and_unverified_members_are_refused(pool: PgPool) {
             true,
         ),
         (
+            "POST",
+            format!("/api/v1/lists/{}/todos/{}/move", f.other_list, f.other_todo),
+            Some(json!({ "above": [], "below": [] })),
+            true,
+        ),
+        (
             "DELETE",
             format!(
                 "/api/v1/lists/{}/todos/{}?version=1",
@@ -506,6 +534,11 @@ async fn a_missing_csrf_token_refuses_every_change(pool: PgPool) {
             None,
         ),
         (
+            "POST",
+            format!("/api/v1/lists/{}/todos/{}/move", f.own_list, f.own_todo),
+            Some(json!({ "above": [], "below": [] })),
+        ),
+        (
             "DELETE",
             format!(
                 "/api/v1/lists/{}/todos/{}?version=1",
@@ -523,4 +556,41 @@ async fn a_missing_csrf_token_refuses_every_change(pool: PgPool) {
         assert_eq!(refused.0, StatusCode::FORBIDDEN, "{method} {uri}");
         assert_eq!(refused.1["code"], "csrf_invalid");
     }
+}
+
+/// Spec: Positioning next to another Member's todo. A foreign neighbour gets
+/// the answer an unknown one gets, wherever it is named, and is untouched.
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_foreign_neighbour_answers_exactly_like_an_unknown_one(pool: PgPool) {
+    let f = fixture(pool.clone()).await;
+    let second = insert_todo(&pool, f.own_list, "My second", Some(2), None).await;
+    let third = insert_todo(&pool, f.own_list, "My third", Some(3), None).await;
+    let uri = format!("/api/v1/lists/{}/todos/{second}/move", f.own_list);
+    let reset = json!({ "above": [f.own_todo], "below": [third] });
+
+    let body = |neighbour: &str, shape: usize| match shape {
+        0 => json!({ "above": [neighbour], "below": [] }),
+        1 => json!({ "above": [], "below": [neighbour] }),
+        2 => json!({ "above": [neighbour], "below": [f.own_todo] }),
+        3 => json!({ "above": [neighbour, third], "below": [] }),
+        _ => json!({ "above": [neighbour], "below": [neighbour] }),
+    };
+    for shape in 0..5 {
+        let mut answers = Vec::new();
+        for neighbour in [&f.other_todo, &f.unknown_todo] {
+            let put_back = request("POST", &uri, Some(&f.member), Some(&reset), true);
+            assert_eq!(response(&f.app, put_back).await.0, StatusCode::OK);
+            let body = body(neighbour, shape);
+            let request = request("POST", &uri, Some(&f.member), Some(&body), true);
+            answers.push(response(&f.app, request).await);
+        }
+        assert_eq!(answers[0], answers[1], "shape {shape}");
+        assert_eq!(answers[0].0, StatusCode::OK, "shape {shape}");
+        assert_eq!(
+            answers[0].1["open_todo_ids"].as_array().unwrap().len(),
+            3,
+            "only the caller's todos"
+        );
+    }
+    assert_other_untouched(&f).await;
 }
