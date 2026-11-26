@@ -34,7 +34,7 @@ Smoke checks pass; Database unavailable; Machine restarts.
 - [x] 2.2 Commit the CNPG operator, cert-manager and the edge's chart as Applications, pinned and with schemas (D13), and Postgres running from `overlays/local` with the base's barman-cloud plugin and ScheduledBackup removed (until slice 3). Move the base's namespace into it and drop the overlay's `namespace.yaml` copy (D12). Verify: `just k8s-check` passes with no skipped resource, the database is ready with its data on local-path, and `overlays/example` still renders.
 - [x] 2.3 Add the `local` backend secrets: keys, Turnstile test keys, sandbox SMTP (D5); the operator supplies the SMTP credentials. Verify: `just secrets-check` passes, and the backend starts with `DEV_MODE=false`.
 - [x] 2.4 Run backend and web from pinned `main` digests behind Traefik (D6), TLS from a local CA, HTTP redirected. Verify: `just smoke` passes trusting the CA, post-quantum check included.
-- [ ] 2.5 Sign in as a Member over TLS with an emailed code. Verify: it works end to end in a real browser.
+- [x] 2.5 Sign in as a Member over TLS with an emailed code. Verify: it works end to end in a real browser.
 - [ ] 2.6 Drills with the app: deploy, rollback, broken image, database stopped and returned, VM restart (measured, data intact). Verify: outcomes and timings are in design.md and within the spec's limits.
 - [ ] 2.7 Merge `main` (D10), `just ci` green, README status updated, design.md revised, slice 3's tasks checked. Verify: strict validation passes.
 

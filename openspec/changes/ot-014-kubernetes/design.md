@@ -121,6 +121,9 @@ network and the Redis password, as expected, and nothing needed a hand.
   in the base), and a sender name with parentheses, which the backend can't parse.
   Each was named by `k8s-status` and stopped by the 300 s progress deadline, with
   web serving throughout.
+- Sign-in (2.5): the operator registered in Chromium over TLS with an emailed
+  code from Ethereal and reached the dashboard as a Member; one verified account in
+  the database, no backend warnings.
 - Email: a Mailtrap sandbox was replaced by Ethereal (Mailtrap allows 50 a month);
   `backend-v1` to `backend-v2`, the old one pruned.
 
