@@ -135,6 +135,39 @@ test.describe('Navigation timing', () => {
     expect(t.cspViolations).toEqual([])
   })
 
+  test('choosing another list in the picker is one in-site navigation to the list page', async ({
+    page,
+  }) => {
+    // observability: "Moving between lists". The address changes, but it is one
+    // page: both navigations are reported under the template, never the ID.
+    const t = await setup(page, { signedIn: true })
+    const alpha = { id: '3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e', name: 'Alpha' }
+    const beta = { id: '0d6c3b9e-8f7a-4e2b-9c1d-5a4b3c2d1e0f', name: 'Beta' }
+    const lists = [alpha, beta].map((l) => ({ ...l, open_count: 0, todo_count: 0, version: 1 }))
+    await page.route('**/api/v1/lists', (route) => route.fulfill({ json: lists }))
+    await page.route('**/api/v1/lists/*', (route) => {
+      const list = lists.find((l) => route.request().url().endsWith(l.id))!
+      return route.fulfill({ json: { list, todos: [] } })
+    })
+
+    await page.goto(`/dashboard/lists/${alpha.id}`)
+    await expect(page.getByRole('heading', { name: 'Alpha' })).toBeVisible()
+    await ready(page)
+    await page.getByRole('button', { name: /^Beta/ }).click()
+    await expect(page.getByRole('heading', { name: 'Beta' })).toBeVisible()
+    expect(new URL(page.url()).pathname).toBe(`/dashboard/lists/${beta.id}`)
+    await settled(page)
+    await hide(page)
+
+    await expect.poll(() => t.navigations().length).toBe(2)
+    const summary = t.navigations().map((n) => `${n.page} ${n.nav_type} ${n.outcome}`)
+    expect(summary.sort()).toEqual([
+      '/dashboard/lists/[id] hard completed',
+      '/dashboard/lists/[id] soft completed',
+    ])
+    expect(JSON.stringify(t.navigations())).not.toContain(beta.id)
+  })
+
   test('a browser without view transitions still reports, as unsupported', async ({ page }) => {
     await page.addInitScript(() => {
       delete (Document.prototype as { startViewTransition?: unknown }).startViewTransition

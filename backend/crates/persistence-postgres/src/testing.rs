@@ -648,3 +648,35 @@ pub async fn count_audit_events_for_email(pool: &PgPool, email: &str, kind: &str
     .unwrap()
     .unwrap_or(0)
 }
+
+/// Gives `user_id` `lists` lists of `todos` todos each, titles `title_chars`
+/// ASCII characters long, every third todo done: the largest export the
+/// limits allow, without going through the API a row at a time.
+pub async fn seed_full_lists(
+    pool: &PgPool,
+    user_id: Uuid,
+    lists: i32,
+    todos: i32,
+    title_chars: i32,
+) {
+    sqlx::query!(
+        "WITH new_lists AS (
+           INSERT INTO lists (id, user_id, creation_key, name)
+           SELECT gen_random_uuid(), $1, gen_random_uuid(), 'List ' || n
+           FROM generate_series(1, $2) AS n
+           RETURNING id
+         )
+         INSERT INTO todos (id, list_id, creation_key, title, position, completed_at)
+         SELECT gen_random_uuid(), l.id, gen_random_uuid(), lpad(t::text, $4, 'x'),
+                CASE WHEN t % 3 = 0 THEN NULL ELSE t::bigint * 1048576 END,
+                CASE WHEN t % 3 = 0 THEN now() END
+         FROM new_lists AS l CROSS JOIN generate_series(1, $3) AS t",
+        user_id,
+        lists,
+        todos,
+        title_chars,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+}

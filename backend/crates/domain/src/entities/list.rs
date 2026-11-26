@@ -2,7 +2,6 @@
 
 use jiff::Timestamp;
 
-use crate::errors::DomainError;
 use crate::value_objects::{ListId, ListName, UserId};
 
 /// Most lists one Member may have (design D5).
@@ -87,16 +86,6 @@ impl List {
     pub const fn created_at(&self) -> Timestamp {
         self.created_at
     }
-
-    /// Renames the list, bumping its version.
-    ///
-    /// # Errors
-    /// Propagates the name validation from [`ListName::new`].
-    pub fn rename(&mut self, name: &str) -> Result<(), DomainError> {
-        self.name = ListName::new(name)?;
-        self.version += 1;
-        Ok(())
-    }
 }
 
 #[cfg(test)]
@@ -116,13 +105,5 @@ mod tests {
     fn new_starts_at_version_one() {
         let list = list();
         assert_eq!(list.version(), 1);
-    }
-
-    #[test]
-    fn rename_bumps_the_version() {
-        let mut list = list();
-        list.rename("Job").unwrap();
-        assert_eq!(list.name().as_str(), "Job");
-        assert_eq!(list.version(), 2);
     }
 }

@@ -36,6 +36,7 @@ platform = { path = "../platform", features = ["test-support"] }
 opentelemetry_sdk = { workspace = true, features = ["testing"] }
 proptest.workspace = true
 tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+tracing-subscriber = { workspace = true, features = ["fmt"] }
 wiremock.workspace = true
 
 [lints]

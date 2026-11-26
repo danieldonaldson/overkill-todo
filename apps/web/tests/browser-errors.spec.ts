@@ -116,6 +116,42 @@ test.describe('browser error reports', () => {
     expect(rawBodies.join('\n')).not.toContain(id)
   })
 
+  test('a script error on a list page sends neither the list name nor a todo title', async ({
+    page,
+  }) => {
+    const { rawBodies, events } = await setup(page, { signedIn: true })
+    const id = '3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e'
+    const name = 'SECRET-LIST-NAME'
+    const title = 'SECRET-TODO-TITLE'
+    const list = { id, name, open_count: 1, todo_count: 1, version: 1 }
+    const todo = {
+      id: '8a1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5e',
+      title,
+      done: false,
+      version: 1,
+      created_at: '2026-11-25T10:00:00Z',
+      completed_at: null,
+    }
+    await page.route('**/api/v1/lists', (route) => route.fulfill({ json: [list] }))
+    await page.route('**/api/v1/lists/*', (route) =>
+      route.fulfill({ json: { list, todos: [todo] } })
+    )
+
+    await page.goto(`/dashboard/lists/${id}`)
+    await expect(page.getByText(title)).toBeVisible()
+    await ready(page)
+    // The reporter sends the error's message and stack, never the page around
+    // it; the list code never puts content into a message (see
+    // src/lib/lists/no-content-in-errors.test.ts).
+    await throwErrors(page, 1, false, 'rendering a todo failed')
+    await hide(page)
+
+    await expect.poll(() => events().length).toBeGreaterThan(0)
+    const everything = rawBodies.join('\n')
+    expect(everything).not.toContain(name)
+    expect(everything).not.toContain(title)
+  })
+
   test('a failed add reports the route and status but never the title', async ({ page }) => {
     const { rawBodies, reports } = await setup(page, { signedIn: true })
     const id = '3f2b8c1e-9d4a-4f6b-8c2d-1e0a9b8c7d6e'

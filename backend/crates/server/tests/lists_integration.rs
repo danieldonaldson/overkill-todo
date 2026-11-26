@@ -171,6 +171,51 @@ async fn a_repeated_creation_key_returns_one_list(pool: PgPool) {
     );
 }
 
+/// lists: "Same title on purpose". Two additions with the same title but
+/// their own creation keys are two todos; only a repeated key is one.
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_same_title_added_twice_on_purpose_is_two_todos(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    let session = signup_and_session(&app, "e2e-same-title@example.com").await;
+    let list = create_list(&app, &session, "Shopping").await;
+    let list_id = list["id"].as_str().unwrap();
+    let uri = format!("/api/v1/lists/{list_id}/todos");
+
+    let mut ids = Vec::new();
+    for key in [uuid::Uuid::now_v7(), uuid::Uuid::now_v7()] {
+        let body = json!({ "key": key, "title": "Buy milk" });
+        let resp = app
+            .clone()
+            .oneshot(authed("POST", &uri, &session, Some(&body), true))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        ids.push(body_json(resp.into_body()).await["id"].clone());
+    }
+    assert_ne!(ids[0], ids[1]);
+
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "GET",
+            &format!("/api/v1/lists/{list_id}"),
+            &session,
+            None,
+            false,
+        ))
+        .await
+        .unwrap();
+    let body = body_json(resp.into_body()).await;
+    let titles: Vec<_> = body["todos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|todo| todo["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(titles, vec!["Buy milk", "Buy milk"]);
+    assert_eq!(body["list"]["open_count"], 2);
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn blank_names_and_titles_are_400(pool: PgPool) {
     let app = common::create_test_app(pool);

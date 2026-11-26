@@ -143,8 +143,9 @@ mod verification {
         }
     }
 
-    /// Spec: a renumbered list starts above zero and stays in range, for every
-    /// `u16` rank and slot (a list holds at most 1,000 todos); no overflow.
+    /// Spec: a renumbered list starts above zero and stays in range. Bound: every
+    /// `u16` rank and slot (a list holds at most 1,000 todos); no assumptions
+    /// beyond `a < b`. No overflow.
     #[kani::proof]
     fn renumbered_positions_are_distinct_for_every_rank() {
         let (a, b, slot): (u16, u16, u16) = (kani::any(), kani::any(), kani::any());

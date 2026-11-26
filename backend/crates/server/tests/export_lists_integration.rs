@@ -171,6 +171,38 @@ async fn exports_open_and_done_todos_in_order(pool: PgPool) {
     assert!(!exported["todos"][0]["done"].as_bool().unwrap());
 }
 
+/// The largest export the limits allow (lists: "Largest export"): 100 lists
+/// (`MAX_LISTS_PER_USER`) of 1,000 todos (`MAX_TODOS_PER_LIST`), 500-character
+/// titles (`MAX_TODO_TITLE_CHARS`), a third of them done: about 60 MB of JSON.
+/// ASCII titles; four-byte ones (212 MB) were measured once in slice 2.
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_largest_export_is_complete(pool: PgPool) {
+    let app = common::create_test_app(pool.clone());
+    let email = "e2e-largest-export@example.com";
+    let session = signup_and_session(&app, email).await;
+    let user_id = testing::user_id_by_email(&pool, email).await;
+    testing::seed_full_lists(&pool, user_id, 100, 1000, 500).await;
+
+    let resp = export(&app, &session).await;
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp.into_body()).await;
+    let lists = body["lists"].as_array().unwrap();
+    assert_eq!(lists.len(), 100);
+    for list in lists {
+        let todos = list["todos"].as_array().unwrap();
+        assert_eq!(todos.len(), 1000, "a list was cut short");
+        assert_eq!(
+            todos.iter().filter(|todo| todo["done"] == true).count(),
+            333
+        );
+        assert!(
+            todos
+                .iter()
+                .all(|todo| todo["title"].as_str().unwrap().len() == 500)
+        );
+    }
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn export_with_no_lists_succeeds_with_an_empty_set(pool: PgPool) {
     let app = common::create_test_app(pool);

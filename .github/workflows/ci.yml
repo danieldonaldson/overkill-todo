@@ -50,6 +50,10 @@ jobs:
               - models/*.qnt
               - scripts/check-rust-pin.sh
               - scripts/models.sh
+              # The models job replays list_writes.qnt through the web client's
+              # in-memory server (OT-013 task 7.6).
+              - apps/web/src/lib/lists/**
+              - apps/web/vitest.models.config.ts
             # The Tamarin model (OT-010 design D9). Its result depends only on
             # the model; the tests its rules name are checked by the always-run
             # threat-model job.
@@ -317,8 +321,9 @@ jobs:
           # Harnesses in parallel, as `just verify` does.
           args: '--workspace -j --output-format=terse'
 
-  # Quint concurrency models (`just models`, OT-010): Apalache's bounded checks, the old
-  # code's counterexamples, then the exported traces replayed against Postgres. Node,
+  # Quint concurrency models (`just models`, OT-010, OT-013): Apalache's bounded checks,
+  # random simulation, the broken variants' counterexamples, then the exported traces
+  # replayed against Postgres and, for the lists, MemoryListsServer (with pnpm). Node,
   # Java and Quint come from .mise.toml through mise, so CI checks with the local pins.
   models:
     name: Concurrency models (Quint)
@@ -378,6 +383,9 @@ jobs:
           gh release download "evaluator/$version" --repo quint-co/quint --pattern "$asset" --dir "$dir" --clobber
           tar -xzf "$dir/$asset" -C "$dir" && rm "$dir/$asset"
           chmod +x "$dir/quint_evaluator"
+      # For the list traces' replay through MemoryListsServer (Node-mode Vitest).
+      - uses: pnpm/action-setup@v6
+      - run: pnpm install --frozen-lockfile
       - name: Run migrations
         working-directory: backend
         run: cargo sqlx migrate run
@@ -462,6 +470,29 @@ jobs:
       - uses: actions/checkout@v7
       - run: ./scripts/threat-model-check.sh
 
+  # Cheap and always run: the load tooling's checks that need no stack (OT-013).
+  # No path filter covers loadtest/, so this runs on every change.
+  loadtest:
+    name: Load tooling
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - run: node --test loadtest/tooling.test.mjs
+
+  # Cheap and always run: every list scenario names a proof, model, replay or test
+  # that exists and runs, and no pending entry outlives its task (OT-013 D13).
+  # yq is preinstalled on the runner.
+  formal-coverage:
+    name: Formal coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./scripts/formal-coverage.test.sh
+      - run: ./scripts/formal-coverage.sh
+
   # Images are built only from main, after every check passed, and tagged with the
   # commit. Deploys reference the tag's digest; CI holds no deploy credentials.
   # Once builds get slow, scope them to what changed since the last published image
@@ -481,6 +512,8 @@ jobs:
       - secrets
       - k8s
       - threat-model
+      - formal-coverage
+      - loadtest
     runs-on: ubuntu-24.04
     permissions:
       contents: read

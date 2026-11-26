@@ -415,9 +415,10 @@ Some properties are proven with [Kani](https://model-checking.github.io/kani/),
 a bounded model checker, for every input within stated bounds rather than for
 sampled ones. The harnesses sit in a `#[cfg(kani)] mod verification` next to
 the code they prove, and each has a doc comment stating its bounds.
-`just verify` runs them all (about 2 minutes warm, most of it the role-name
-and email proofs). It's in
-`just ci`, and CI runs it as its own job.
+`just verify` runs them all (31 harnesses, 2 min 15 s warm on 2026-11-26, most
+of it the role-name and email proofs; the list proofs take under 15 s, the
+validation kernel 10 s of that). It's in `just ci`, and CI runs it as its own
+job.
 
 - **Setup:** `mise install` installs the pinned `kani-verifier` (`.mise.toml`).
   Run `cargo kani setup` once to fetch Kani's own nightly toolchain, which
@@ -437,8 +438,27 @@ and email proofs). It's in
     no purge before the date, and the two columns round-trip (P-28)
   - email normalisation for short ASCII: case and surrounding whitespace
     don't change the identity, and normalising twice changes nothing (P-30)
+  - todo order (`todo_order.rs`, OT-013 D6): a move lands strictly between its
+    neighbours for every pair of `i64` positions, or asks for renumbering
+    exactly when no integer fits; renumbering keeps the order and puts the
+    moved todo in its slot (5 positions; a proptest covers 1,000); a move takes
+    the slot its neighbours name (3 todos, 2 IDs each way)
+  - appending (`todo.rs`): one gap below the last open todo, strictly
+    increasing for every `i64` unless within a gap of `i64::MAX`. That is out of
+    reach, also proved: no write raises a list's highest position by more than
+    one gap and renumbering stays under 65,537 gaps, so it takes about 2^43
+    writes to one list (and the unique constraint would refuse it)
+  - a todo is open or done, never both or neither, over the two columns'
+    presence (`todo_state`, which `Todo::from_persistence` uses)
+  - names and titles (`single_line.rs`): trimmed as `str::trim` trims, counted
+    in code points, refused when blank, too long or holding a control
+    character, U+2028 or U+2029. Bound: 6 symbolic `char`s with `max <= 4`,
+    since CBMC can't unwind hundreds of characters; a proptest ties the
+    allocation-free kernel to `str::trim` at 100 and 500
 
-  The proofs cover the domain's decisions, not the SQL around them. The
+  The proofs cover the domain's decisions, not the SQL around them. List
+  versions are bumped in SQL, so the version rules are left to the server
+  model (OT-013 task 7), not Kani. The
   concurrent writes are P-11, P-12 and P-14, modelled below; the
   last-Super-Admin guard and the purge job's due check are SQL, and tested.
 
@@ -451,6 +471,30 @@ and email proofs). It's in
   new proofs.
 - **Make a proof fail before trusting it:** break the rule it checks on a
   scratch edit, and see `just verify` fail with a counterexample.
+- **Strings become code points.** CBMC can't follow `String` allocation or
+  long strings, so a text rule is a kernel over `&[char]` (as
+  `check_single_line`), proved for a few symbolic `char`s, with a proptest
+  tying it to the real function at real lengths.
+
+### Formal coverage of lists (`just formal-coverage`)
+
+[`docs/formal-coverage.yaml`](../docs/formal-coverage.yaml) names, for every
+scenario in OT-013's specs and for P-35, the proof, model, replay or test that
+covers it. A requirement with no proof or model says why none applies. The
+gate (`scripts/formal-coverage.sh`, in `just ci` and an always-run CI job, under
+a second) fails when a scenario has no entry or an entry names one the specs no
+longer have, or when a named check is gone or wouldn't run: a Kani harness
+without `#[kani::proof]` or stated bounds, a test ignored directly or through
+`cfg_attr` (except the replays `just models` runs), a skipped or conditionally
+skipped web test, a flow under `apps/web/tests/integration` (which `just ci`
+doesn't run), or a Quint invariant `scripts/models.sh` doesn't check.
+`pending: <task>` is allowed while that task is unticked, also beside checks
+when a test covers a scenario now and a model is still owed;
+`just formal-coverage --final` allows none. A scenario no automated check can
+reach (a load test needing the capped stack) is an `exception:` with its
+reason, which `--final` accepts. It reads the change's
+spec deltas while the change is active and `openspec/specs/` once archived.
+Fixture tests: `scripts/formal-coverage.test.sh`, run first by the recipe.
 
 ### Concurrency models (`just models`)
 
@@ -465,26 +509,54 @@ against the real repositories.
   Each request is the sequence of SQL statements it really runs, one model step
   per statement (or per transaction). The invariants are threat model P-11,
   P-12, P-14 and P-15, each named in its property's `Checks:`.
+- **Lists (`list_writes.qnt`, OT-013 design D13):** two Members' lists and
+  todos written by two concurrent requests through `PostgresListRepository`,
+  plus the purge, the D10 sweep and `find_list`'s two reads. Each request is
+  `send`, `begin` (take the account or list lock, then read) and `commit`.
+  Bounds: `MAX_LISTS = 2` of 4 list IDs, `MAX_TODOS = 3` of 5 todo IDs, keys
+  1 to 3, three initial states (at both limits with adjacent positions, just
+  below them, and a list left behind by a previous release's purge), the real
+  `POSITION_GAP`. Thirteen invariants cover versions, repeats, both limits,
+  purge and sweep, ownership (P-35), list deletion, positions and moves; ten
+  broken modules each drop one guard (`no_lock`, `no_owner_check`, …).
+  Apalache only reaches 3 steps here (every single request from every initial
+  state, about 5 minutes; 55 s at 2 steps and about four times as long per
+  step, so the 6 steps of a race would take hours), so its gate is random
+  simulation: every invariant over 100 000 traces of 30 steps (about 40 s
+  alone), and each broken module must fail within 200 000 (`no_lock`, the
+  slowest, after about 50 000). Locks can't show in a replay, which calls
+  each method once at `commit`; the overlapping-transaction tests in
+  `tests/lists_integration.rs` hold the rows a request locks so that two
+  requests always overlap, and fail with `FOR UPDATE` removed.
 - **What it checks:** Apalache (`quint verify`) checks every interleaving up
   to 8 steps from any starting code; `quint run` searches 10 000 random
   executions of 30 steps. The `unguarded_upsert`, `claim_by_user` and `lock_only_guard` modules
   model the code before OT-010 slice 4 and must still have counterexamples,
   which keeps the invariants from becoming vacuous.
 - **Conformance:** `quint run --out-itf` exports 300 random traces per model,
-  plus witness traces that reach a refused reissue, and
+  plus witness traces that reach a refused reissue (for the lists: a stale
+  write, a repeated key, both limits, both 404s, a renumbering, two overlapping
+  moves, a purge and a sweep), and
   `tests/model_conformance.rs` replays each step through the repository method
   that issues that statement, one connection per request, checking results and
   stored rows after every step. A change to a repository's SQL that the model
   doesn't allow fails there, naming the trace and step. The suite is
   `#[ignore]`d in `just test-integration`, because it needs the exported
-  traces.
+  traces. List traces start from the model's rows plus filler (98 lists per
+  account, 997 done todos per list) so the model's limits are the real ones;
+  a write that runs out of model IDs ends its trace. They are also replayed
+  through the web client's `MemoryListsServer`, which the client tests trust
+  (`apps/web/src/lib/lists/server-model.replay.ts`, Node-mode Vitest, one
+  server per Member, up to the first purge or sweep, which it doesn't have).
 - **Not covered:** inside one statement, the model assumes atomicity; P-12
   records the one place a snapshot read can still give a misleading message.
   Logins and other users aren't modelled.
 - **Setup:** `mise install` installs the pinned Quint and the Java that
   Apalache needs (`.mise.toml`); Quint downloads its Apalache release on first
-  use. `just models` takes about 4 minutes and is in `just ci`; CI runs it as
-  its own job with the same pins (`scripts/models.sh`).
+  use. `just models` takes about 6 minutes (2026-11-26, this machine; the
+  longest job is Apalache on `list_writes.qnt`, about 4.5 minutes) and is in
+  `just ci`; CI runs it as its own job with the same pins (`scripts/models.sh`),
+  with pnpm for the `MemoryListsServer` replay.
 - **When you change a statement** the models describe (the attempt claim, the
   issuing upsert, rotation, revocation, cleanup), change the model step too,
   then see `just models` fail on a scratch break of the new rule before

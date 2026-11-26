@@ -404,6 +404,10 @@ The existing route-guard walk covers the Visitor case for future routes.
     renumbering. `append_position` is strictly increasing unless it saturates;
     at saturation the caller must renumber, or the bound is stated with why
     it can't be reached.
+    _Slice 6:_ the bound is stated and proved instead (`todo.rs`): no write
+    raises a list's highest position by more than one gap, and renumbering
+    stays under 65,537 gaps, so saturating takes about 2^43 writes to one list.
+    Were it reached, the unique constraint on positions refuses the write.
   - CBMC can't unwind hundreds of symbolic characters or `String` allocations, so
     `normalize_single_line` uses an allocation-free kernel, proved over up to 6
     symbolic `char`s with `max <= 4`. A proptest ties it to the real function
@@ -423,7 +427,16 @@ The existing route-guard walk covers the Visitor case for future routes.
     write locks its list. Purge takes the user, then its lists. The D10 sweep
     deletes lists of purged accounts. `find_list` is two reads, since under READ
     COMMITTED the todos may be newer than the list row.
-  - Apalache checks 8 steps; 10,000 random traces check 30.
+  - ~~Apalache checks 8 steps; 10,000 random traces check 30.~~ _Revised by
+    7.1 (2026-11-26), after the prototype:_ each request is `send`, `begin`
+    and `commit`, so two interleaved requests take 6 steps. Apalache took 55 s
+    at 2 steps and 226 s at 3, about four times per step, so 6 steps would take
+    hours and 8 days. As 8.1 decided for the queue, random simulation is the
+    gate: every invariant over 100,000 traces of 30 steps (about 40 s), and
+    each broken variant must fail within 200,000 (`no_lock`, the slowest, after
+    about 50,000). Apalache checks 3 steps, every single request from every
+    initial state (about 4 minutes). Races rest on the simulation and on the
+    overlapping-transaction tests (7.5).
 - **Invariants are scoped to what the design promises:**
   - Version rules cover renames, marks and deletes. A state already stored
     succeeds at any version and changes nothing. Creations start at 1, and moves

@@ -1,0 +1,765 @@
+# Formal coverage of lists (OT-013 design D13), checked by `just formal-coverage`
+# (scripts/formal-coverage.sh, which documents every rule and check kind).
+#
+# Every scenario of every requirement in scope names the checks that cover it,
+# `pending: <task>` while the task that will check it is unticked, or both: the
+# checks that cover it now and the task that still owes one (a model, usually).
+# Flows in apps/web/tests/integration aren't named: `just ci` doesn't run them. A
+# requirement with no proof, model or replay says in `reason:` why none applies.
+# Bounds and assumptions live next to each check: on each Kani harness's doc
+# comment, and at the top of each Quint model.
+#
+# Kani proofs: backend/crates/domain/src/entities/todo_order.rs (ordering, 4.1),
+# todo.rs (appending, open or done) and value_objects/single_line.rs
+# (validation), all run by `just verify`.
+
+change: ot-013-todos
+capabilities:
+  lists:
+    'A Member manages their lists':
+      reason: 'Screens and HTTP answers, tested; the version, limit and ownership rules they rely on are modelled under their own requirements.'
+      scenarios:
+        'No lists yet':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::never says there are no lists before the server has answered'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::empty_lists_and_create_with_counts'
+        'Create a list':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::creates a list and replaces the address without reloading'
+            - web: 'apps/web/tests/lists.spec.ts::create a list, add and tick a todo, and keep the title of a failed save'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::empty_lists_and_create_with_counts'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::lists_are_oldest_first_with_open_and_total_counts'
+        'Rename a list':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::renames a list in place'
+            - web: 'apps/web/tests/lists.spec.ts::renames and deletes a todo, renames the list, and deletes it'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::renaming_and_deleting_lists_and_todos'
+        'Count of open todos':
+          checks:
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::lists_are_oldest_first_with_open_and_total_counts'
+            - web: 'apps/web/src/lib/lists/engine.test.ts::counts a loaded list from its todos and other lists from GET /lists'
+    'Deleting a list is confirmed and permanent':
+      reason: 'Confirmation is a screen, tested; refusing a deletion after a change elsewhere is modelled in 7.2.'
+      scenarios:
+        'Confirm deletion':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::confirms a list deletion with its name and todo count'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::renaming_and_deleting_lists_and_todos'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::deleting_a_list_deletes_its_todos'
+        'Cancel deletion':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::makes the page behind the deletion dialog inert, and Escape cancels'
+        'Todo added in another tab before confirming':
+          checks:
+            - invariant: 'models/list_writes.qnt::listDeleteRefusesChangedCount'
+            - invariant: 'models/list_writes.qnt::noTodoOutlivesItsList'
+            - broken: 'models/list_writes.qnt::no_count_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::deleting_a_list_requires_the_name_and_count_it_was_confirmed_with'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_concurrent_add_makes_the_list_delete_stale_or_waits_until_after_it'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::asks again with the current count when the list changed meanwhile'
+    'Each list has its own address':
+      reason: 'Addresses are web server rewrites and page routing (HTTP wiring), tested end to end.'
+      scenarios:
+        'Reload or bookmark':
+          checks:
+            - web: 'apps/web/tests/list-address.spec.ts::survives a reload and an in-site move away and back'
+        'Address does not open a list':
+          checks:
+            - web: 'apps/web/tests/list-address.spec.ts::with a malformed id shows the shell and asks for nothing'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows list not found when the server says 404'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows list not found for a malformed address without a request'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows list not found for a nested address without a request'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::unknown_and_foreign_ids_share_the_404_codes'
+        'Shared address':
+          checks:
+            - rust: 'backend/crates/server/tests/lists_security_integration.rs::another_members_ids_answer_exactly_like_unknown_ids'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows list not found when the server says 404'
+    'A Member manages the todos in a list':
+      scenarios:
+        'Empty list':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows an empty list with the add field and no Completed group'
+        'Add a todo':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::adds a todo and marks it done optimistically'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::adding_and_marking_todos_orders_them_and_answers_409_on_stale'
+        'Mark done':
+          checks:
+            - kani: 'backend/crates/domain/src/entities/todo.rs::a_todo_is_open_or_done'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::marking_done_and_not_done_moves_the_todo_as_specified'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::done_todos_come_back_most_recently_completed_first'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::groups done todos in a collapsed Completed group'
+        'Mark not done':
+          checks:
+            - kani: 'backend/crates/domain/src/entities/todo.rs::appending_goes_one_gap_below_the_last_or_saturates'
+            - kani: 'backend/crates/domain/src/entities/todo.rs::no_write_raises_the_highest_position_by_more_than_one_gap'
+            - kani: 'backend/crates/domain/src/entities/todo.rs::a_todo_is_open_or_done'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::marking_done_and_not_done_moves_the_todo_as_specified'
+            - web: 'apps/web/src/lib/lists/regressions.test.ts::puts an unticked todo at the bottom of the open ones'
+        'Rename a todo':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::renames a todo in place and cancels with Escape'
+            - web: 'apps/web/tests/lists.spec.ts::renames and deletes a todo, renames the list, and deletes it'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::renaming_and_deleting_lists_and_todos'
+        'Delete a todo':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::deletes a todo and moves focus to the next one'
+            - web: 'apps/web/tests/lists.spec.ts::renames and deletes a todo, renames the list, and deletes it'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::renaming_and_deleting_lists_and_todos'
+        'Abandon a rename':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::renames a todo in place and cancels with Escape'
+    'Open todos can be reordered':
+      scenarios:
+        'Drag to a new position':
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::drags a todo to the top, and the order is kept'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::drags a todo to the bottom'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_todo_moves_to_the_top_the_middle_and_the_bottom'
+        'Move with the keyboard':
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::moves a todo with the keyboard alone'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::moves with the keyboard, keeping focus and announcing the position'
+        'Cancelled drag':
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::a drag cancelled with Escape changes and saves nothing'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::saves nothing for a drag that is cancelled or dropped where it was'
+        'Many moves':
+          checks:
+            - kani: 'backend/crates/domain/src/entities/todo_order.rs::a_move_lands_strictly_between_or_asks_for_renumbering'
+            - kani: 'backend/crates/domain/src/entities/todo_order.rs::renumbering_is_asked_for_only_without_room'
+            - kani: 'backend/crates/domain/src/entities/todo_order.rs::past_either_end_is_one_gap_or_renumbering'
+            - kani: 'backend/crates/domain/src/entities/todo_order.rs::renumbering_keeps_the_order_of_five'
+            - kani: 'backend/crates/domain/src/entities/todo_order.rs::renumbered_positions_are_distinct_for_every_rank'
+            - rust: 'backend/crates/domain/src/entities/todo_order.rs::a_move_lands_in_its_slot_in_up_to_1000_positions'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_thousand_moves_between_the_same_two_todos_lose_nothing'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_move_renumbers_at_either_end_of_the_range'
+    'Names and titles are validated':
+      scenarios:
+        'Blank':
+          checks:
+            - kani: 'backend/crates/domain/src/value_objects/single_line.rs::the_single_line_rule_trims_counts_code_points_and_refuses_line_breaks'
+            - rust: 'backend/crates/domain/src/value_objects/single_line.rs::whitespace_only_is_empty'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::blank_names_and_titles_are_400'
+        'At the length limit':
+          checks:
+            - kani: 'backend/crates/domain/src/value_objects/single_line.rs::the_single_line_rule_trims_counts_code_points_and_refuses_line_breaks'
+            - rust: 'backend/crates/domain/src/value_objects/single_line.rs::the_kernel_agrees_with_str_trim_at_100_and_500'
+            - rust: 'backend/crates/domain/src/value_objects/single_line.rs::the_kernel_agrees_with_str_trim_near_the_limits'
+            - rust: 'backend/crates/domain/src/value_objects/list_name.rs::list_name_limit_counts_code_points'
+            - rust: 'backend/crates/domain/src/value_objects/list_name.rs::todo_title_limit_counts_code_points'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::accepts 500 emoji and never uses maxlength'
+        'Too long':
+          checks:
+            - kani: 'backend/crates/domain/src/value_objects/single_line.rs::the_single_line_rule_trims_counts_code_points_and_refuses_line_breaks'
+            - rust: 'backend/crates/domain/src/value_objects/single_line.rs::the_kernel_agrees_with_str_trim_near_the_limits'
+            - rust: 'backend/crates/domain/src/value_objects/list_name.rs::list_name_limit_counts_code_points'
+            - rust: 'backend/crates/domain/src/value_objects/list_name.rs::todo_title_limit_counts_code_points'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::keeps its text and names the limit for 501 characters'
+        'Control characters sent to the server':
+          checks:
+            - kani: 'backend/crates/domain/src/value_objects/single_line.rs::the_single_line_rule_trims_counts_code_points_and_refuses_line_breaks'
+            - rust: 'backend/crates/domain/src/value_objects/single_line.rs::refuses_control_characters_and_separators'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::blank_names_and_titles_are_400'
+        'Pasted lines':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::turns pasted line breaks into spaces'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::turns line breaks pasted into a list name into spaces'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::turns line breaks pasted into the rename fields into spaces'
+        'Markup in a title':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows markup in a title literally'
+    'Lists and todos have limits':
+      scenarios:
+        'List limit':
+          checks:
+            - invariant: 'models/list_writes.qnt::listLimitHolds'
+            - broken: 'models/list_writes.qnt::no_limit'
+            - broken: 'models/list_writes.qnt::no_user_lock'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::list_limit_answers_409_and_names_the_limit'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_repeated_creation_key_returns_the_existing_list_also_at_the_limit'
+        'Todo limit':
+          checks:
+            - invariant: 'models/list_writes.qnt::todoLimitHolds'
+            - broken: 'models/list_writes.qnt::no_limit'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::todo_limit_answers_409_and_keeps_the_list_at_1000'
+            - web: 'apps/web/src/lib/lists/engine.test.ts::removes an addition refused at the limit and keeps its text'
+        'Room again after deleting':
+          checks:
+            - invariant: 'models/list_writes.qnt::listLimitHolds'
+            - invariant: 'models/list_writes.qnt::todoLimitHolds'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::deleting_makes_room_again_at_both_limits'
+        'Concurrent additions at the limit':
+          checks:
+            - invariant: 'models/list_writes.qnt::todoLimitHolds'
+            - invariant: 'models/list_writes.qnt::listLimitHolds'
+            - broken: 'models/list_writes.qnt::no_lock'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::concurrent_todo_additions_at_the_limit_save_one'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::concurrent_list_creation_at_the_limit_saves_one'
+        'A full list stays usable':
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::adding, marking, renaming and reordering stay under 200 ms with 1,000 todos'
+    'Edits made elsewhere are never silently overwritten':
+      scenarios:
+        'Renamed in two tabs':
+          checks:
+            - invariant: 'models/list_writes.qnt::staleChangesNothing'
+            - invariant: 'models/list_writes.qnt::versionsMoveByOne'
+            - broken: 'models/list_writes.qnt::no_version_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::two_todo_renames_at_one_version_apply_one'
+            - web: 'apps/web/src/lib/lists/engine.test.ts::never overwrites a todo renamed elsewhere while the form was open'
+            - web: 'apps/web/src/lib/lists/engine.test.ts::shows the current title on a stale rename and keeps the text'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows the current title and a note when a rename changed elsewhere'
+        'Renamed in one tab, marked done in another':
+          checks:
+            - invariant: 'models/list_writes.qnt::staleChangesNothing'
+            - invariant: 'models/list_writes.qnt::versionsMoveByOne'
+            - broken: 'models/list_writes.qnt::no_version_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_stale_mark_is_refused_with_the_current_row'
+            - web: 'apps/web/src/lib/lists/engine.test.ts::shows the current row when a save is stale'
+        'Marked done in both tabs':
+          checks:
+            - invariant: 'models/list_writes.qnt::versionsMoveByOne'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::two_marks_at_one_version_move_the_version_once'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_mark_already_in_place_succeeds_without_changing_the_version'
+        'Deleting a todo renamed elsewhere':
+          checks:
+            - invariant: 'models/list_writes.qnt::staleChangesNothing'
+            - broken: 'models/list_writes.qnt::no_version_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_todo_delete_is_refused_at_a_stale_version'
+        'List renamed in two tabs':
+          checks:
+            - invariant: 'models/list_writes.qnt::staleChangesNothing'
+            - invariant: 'models/list_writes.qnt::versionsMoveByOne'
+            - broken: 'models/list_writes.qnt::no_version_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::two_list_renames_at_one_version_apply_one'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_stale_list_rename_is_refused_with_the_current_list'
+            - web: 'apps/web/src/lib/lists/engine.test.ts::never overwrites a list renamed elsewhere while the form was open'
+        'Different todos in two tabs':
+          pending: '8.2'
+          checks:
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::renaming_different_todos_does_not_conflict'
+        'Moved in one tab, renamed in another':
+          checks:
+            - invariant: 'models/list_writes.qnt::movesKeepEveryTodoOnce'
+            - invariant: 'models/list_writes.qnt::versionsMoveByOne'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::moves_never_change_a_version'
+            - web: 'apps/web/src/lib/lists/regressions.test.ts::keeps a move beside a rename made elsewhere'
+        'No version given':
+          checks:
+            - rust: 'backend/crates/server/tests/lists_integration.rs::adding_and_marking_todos_orders_them_and_answers_409_on_stale'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::renaming_and_deleting_lists_and_todos'
+    'Changes to something deleted elsewhere are handled':
+      scenarios:
+        'Todo deleted elsewhere':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/src/lib/lists/engine.test.ts::removes a todo deleted elsewhere'
+            - web: 'apps/web/src/lib/lists/regressions.test.ts::undoes a failed move, and shows a todo completed or deleted elsewhere'
+        'List deleted elsewhere':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/src/lib/lists/engine.test.ts::shows list not found when a todo is deleted in a list deleted elsewhere'
+            - web: 'apps/web/src/lib/lists/engine.test.ts::keeps every text queued on an addition whose list was deleted elsewhere'
+            - web: 'apps/web/src/lib/lists/regressions.test.ts::drops every edit of a deleted list with one message and keeps the texts'
+        'Deleted in both tabs':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/src/lib/lists/engine.test.ts::deletes a todo at once, and a 404 counts as success'
+    'Concurrent moves settle on one order':
+      scenarios:
+        'Different todos moved at once':
+          checks:
+            - invariant: 'models/list_writes.qnt::openPositionsAreUnique'
+            - invariant: 'models/list_writes.qnt::movesKeepEveryTodoOnce'
+            - broken: 'models/list_writes.qnt::no_lock'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::concurrent_moves_settle_on_one_order'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::concurrent_moves_adds_and_completions_keep_every_todo_once'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_move_waits_for_the_list_lock'
+        'Same todo moved at once':
+          checks:
+            - invariant: 'models/list_writes.qnt::openPositionsAreUnique'
+            - invariant: 'models/list_writes.qnt::movesKeepEveryTodoOnce'
+            - broken: 'models/list_writes.qnt::no_lock'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::concurrent_moves_adds_and_completions_keep_every_todo_once'
+        'Neighbour gone':
+          checks:
+            - kani: 'backend/crates/domain/src/entities/todo_order.rs::a_move_takes_the_slot_its_neighbours_name'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::neighbours_that_are_gone_done_or_foreign_are_ignored'
+        'Moved todo was completed elsewhere':
+          checks:
+            - invariant: 'models/list_writes.qnt::movesKeepEveryTodoOnce'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_move_after_its_todo_was_completed_or_deleted_concurrently_changes_nothing'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_done_deleted_or_foreign_todo_does_not_move'
+            - rust: 'backend/crates/application/src/use_cases/lists/move_todo.rs::moving_a_done_todo_is_stale'
+            - web: 'apps/web/src/lib/lists/regressions.test.ts::undoes a failed move, and shows a todo completed or deleted elsewhere'
+    'A repeated save takes effect once':
+      scenarios:
+        'Answer lost':
+          checks:
+            - invariant: 'models/list_writes.qnt::repeatStoresOneRow'
+            - broken: 'models/list_writes.qnt::no_key_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::one_todo_key_sent_twice_at_once_saves_one_todo'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::one_list_key_sent_twice_at_once_saves_one_list'
+            - web: 'apps/web/src/lib/lists/memory-server.test.ts::creates a new list for the key of a deleted list, as Postgres does'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_repeated_todo_key_returns_the_existing_todo_also_at_the_limit'
+            - rust: 'backend/crates/server/tests/lists_integration.rs::a_repeated_creation_key_returns_one_list'
+            - web: 'apps/web/src/lib/lists/engine.test.ts::refetches after an unknown addition outcome'
+            - web: 'apps/web/tests/lists.spec.ts::a lost rename answer does not rename twice or show a failure'
+        'Same title on purpose':
+          {
+            checks:
+              [
+                {
+                  rust: 'backend/crates/server/tests/lists_integration.rs::the_same_title_added_twice_on_purpose_is_two_todos',
+                },
+              ],
+          }
+    'Lists follow the account through export and deletion':
+      scenarios:
+        'Export':
+          checks:
+            - rust: 'backend/crates/server/tests/export_lists_integration.rs::exports_open_and_done_todos_in_order'
+            - rust: 'backend/crates/server/tests/export_lists_integration.rs::export_contains_only_the_callers_lists'
+        'Export with no lists':
+          checks:
+            - rust: 'backend/crates/server/tests/export_lists_integration.rs::export_with_no_lists_succeeds_with_an_empty_set'
+        'Largest export':
+          {
+            checks:
+              [
+                {
+                  rust: 'backend/crates/server/tests/export_lists_integration.rs::the_largest_export_is_complete',
+                },
+              ],
+          }
+        'Deletion pending, then cancelled':
+          checks:
+            - rust: 'backend/crates/persistence-postgres/tests/account_deletion_integration.rs::a_cancelled_deletion_keeps_lists_and_todos'
+        'Account purged':
+          checks:
+            - invariant: 'models/list_writes.qnt::purgeLeavesNoLists'
+            - invariant: 'models/list_writes.qnt::noListForPurgedAccount'
+            - invariant: 'models/list_writes.qnt::writesStayWithTheirMember'
+            - broken: 'models/list_writes.qnt::no_deleted_check'
+            - broken: 'models/list_writes.qnt::no_user_lock'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_list_created_during_the_purge_is_refused'
+            - rust: 'backend/crates/persistence-postgres/tests/account_deletion_integration.rs::purging_one_account_leaves_another_members_lists_untouched'
+            - rust: 'backend/crates/persistence-postgres/tests/account_deletion_integration.rs::anonymize_scrubs_pii_and_purges_child_rows'
+        'Purge fails part-way':
+          checks:
+            - rust: 'backend/crates/persistence-postgres/tests/lists_integration.rs::a_list_created_during_the_purge_is_refused'
+            - rust: 'backend/crates/persistence-postgres/tests/account_deletion_integration.rs::the_sweep_runs_before_the_no_due_early_return'
+            - rust: 'backend/crates/application/src/use_cases/user/purge_scheduled_accounts.rs::sweeps_lists_even_when_no_account_is_due'
+  dashboard:
+    'A crashing panel is contained':
+      reason: 'Rendering and error boundaries in the browser; no proof or model applies (D13 Not formalized).'
+      scenarios:
+        'Settings panel crashes':
+          checks:
+            - web: 'apps/web/tests/browser-errors.spec.ts::a crashed Settings panel is replaced, and the header and navigation still work'
+        'Try again succeeds':
+          checks:
+            - web: 'apps/web/tests/browser-errors.spec.ts::Try again rebuilds the panel without a reload once the problem has gone'
+            - web: 'apps/web/src/lib/telemetry/TelemetryBoundary.test.ts::rebuilds the island in place when Try again succeeds'
+        'Try again fails again':
+          checks:
+            - web: 'apps/web/tests/browser-errors.spec.ts::Try again that fails again shows the message again and the page stays usable'
+            - web: 'apps/web/src/lib/telemetry/TelemetryBoundary.test.ts::shows the message again, and reports again, when Try again fails again'
+        'Header crashes':
+          checks:
+            - web: 'apps/web/tests/browser-errors.spec.ts::a crashed header shows the message in its place and the page stays usable'
+        'Sign-in form crashes':
+          checks:
+            - web: 'apps/web/tests/browser-errors.spec.ts::a crashed sign-in form offers Try again and a reload'
+        'No error details shown':
+          checks:
+            - web: 'apps/web/src/lib/telemetry/TelemetryBoundary.test.ts::shows no error text, stack or trace ID'
+        'Mobile':
+          checks:
+            - web: "apps/web/tests/browser-errors.spec.ts::a crashed panel's message fits the screen without horizontal scrolling"
+            - web: 'apps/web/src/lib/telemetry/TelemetryBoundary.test.ts::fits a phone-width screen without horizontal scrolling'
+        'List panel crashes':
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::a crashed list panel leaves the header and navigation working'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::contains a crash to the panel and rebuilds it on Try again'
+    'Lists are part of the dashboard navigation':
+      reason: 'Navigation, layout and touch handling in the browser (D13 Not formalized); out-of-order loads are modelled in 8.2.'
+      scenarios:
+        'Open Lists from the navigation':
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::Lists opens from the navigation without rebuilding the header'
+        'Move between lists':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::marks the open list in the picker and navigates to another'
+            - web: 'apps/web/tests/list-address.spec.ts::survives a reload and an in-site move away and back'
+        'Slow answers arrive out of order':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::a slow answer for the previous list cannot replace the one now open'
+            - web: 'apps/web/src/lib/lists/engine.test.ts::drops a stale load and reapplies only the newest answer'
+        'Phone':
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::on a phone, the picker is a drawer that closes on choosing a list'
+            - web: 'apps/web/tests/lists.spec.ts::nothing scrolls sideways at 360 px'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::opens the picker as a modal drawer that keeps focus, and Escape returns it'
+        'Touch':
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::a swipe over the todos scrolls the list and moves nothing'
+            - web: 'apps/web/tests/lists.spec.ts::only the drag handle turns off touch scrolling'
+        'Visitor opens a list address':
+          checks:
+            - web: 'apps/web/tests/list-address.spec.ts::a visitor is sent to sign in before dashboard content'
+    'List pages load without blocking the dashboard':
+      scenarios:
+        'Slow server':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows placeholders until the lists and todos load'
+        'Server or database unavailable':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows a retryable failure when the lists cannot be loaded'
+            - web: 'apps/web/src/lib/lists/regressions.test.ts::keeps the list offline and recovers when the server answers'
+        'Lists load but todos fail':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::keeps the picker usable when only the todos fail to load'
+        'Another account signs in':
+          pending: '8.4'
+          checks:
+            - web: "apps/web/src/components/dashboard/ListsPanel.test.ts::replaces one Member's lists and drafts with the next one's"
+            - web: 'apps/web/src/lib/lists/engine.test.ts::clears everything on reset'
+            - web: 'apps/web/src/lib/lists/regressions.test.ts::never repeats the old save, and sends the next one at once'
+    'List changes appear at once and save in the background':
+      scenarios:
+        'Change appears at once':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::adds a todo and marks it done optimistically'
+        'Rapid edits in one tab':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/src/lib/lists/engine.test.ts::rebases later queued edits only from n to n + 1'
+            - web: 'apps/web/src/lib/lists/regressions.test.ts::matches the server for random edits with no faults and no conflicts'
+        'Edit a todo that is still being added':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/src/lib/lists/engine.test.ts::marks a todo that is still being added'
+            - web: 'apps/web/src/lib/lists/engine.test.ts::renames and deletes a todo that is still being added'
+            - web: 'apps/web/src/lib/lists/regressions.test.ts::ticks and unticks a new todo without a conflict'
+        'Save fails':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::a failed rename keeps the old title and offers the new one again'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows a failed save, announces it and reverts the change'
+        'Addition fails':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::create a list, add and tick a todo, and keep the title of a failed save'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::keeps every failed title and the one being typed'
+        'One of several saves fails':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/src/lib/lists/engine.test.ts::undoes only the failed save among several'
+        'An earlier change to the same todo fails':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/src/lib/lists/engine.test.ts::drops dependent edits with one message'
+        'Move fails':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::a failed move goes back and says so'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::puts a todo back and says so when its move fails'
+        'Unknown outcome':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/src/lib/lists/engine.test.ts::refetches after an unknown addition outcome'
+            - web: 'apps/web/src/lib/lists/regressions.test.ts::refetches after the next save the server answers'
+        'Signed out part-way':
+          pending: '8.2'
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::a session that ends while saving goes to sign-in without asking'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::does not show a change as saved when the session ends, and asks nothing on leaving'
+        'Moving to another dashboard page while saving':
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::a save goes on after moving to Settings, and says so if it fails'
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::reports a save that fails after the Member moved away'
+        'Closing the tab while saving':
+          checks:
+            - web: 'apps/web/tests/lists.spec.ts::closing the tab asks only while a change is unsaved'
+        'Messages are announced':
+          checks:
+            - web: 'apps/web/src/components/dashboard/ListsPanel.test.ts::shows a failed save, announces it and reverts the change'
+  analytics:
+    'Page views are recorded anonymously':
+      reason: 'Telemetry content and page-view wiring in the browser; no proof or model applies (D13 Not formalized).'
+      scenarios:
+        'Visitor opens a public page':
+          checks:
+            - web: 'apps/web/tests/analytics.spec.ts::opening Register sends one page view, path only, to our own origin'
+        'Moving between dashboard pages counts each page':
+          checks:
+            - web: 'apps/web/tests/analytics.spec.ts::moving Home → Settings in the dashboard sends two page views'
+        'Codes and tokens in the address are never recorded':
+          checks:
+            - web: 'apps/web/tests/analytics.spec.ts::tokens and codes in the query string or fragment are never sent'
+        'Arrival from another site':
+          {
+            checks:
+              [
+                {
+                  web: 'apps/web/tests/analytics.spec.ts::arriving from another site records that site as the referrer',
+                },
+              ],
+          }
+        'List pages are one page':
+          checks:
+            - web: 'apps/web/tests/analytics.spec.ts::opening list addresses sends one template page view, without the id'
+        'Leaving a list page':
+          checks:
+            - web: 'apps/web/tests/analytics.spec.ts::opening list addresses sends one template page view, without the id'
+        'Address that is not a list':
+          {
+            checks:
+              [
+                {
+                  web: 'apps/web/tests/analytics.spec.ts::a list address that shows list not found is recorded as the list template',
+                },
+              ],
+          }
+  observability:
+    'Telemetry never exposes secrets or personal data':
+      reason: 'Telemetry content filtering (D13 Not formalized); tested on what is actually emitted.'
+      scenarios:
+        'Sign-in leaves no secrets behind':
+          checks:
+            - rust: 'backend/crates/server/tests/telemetry_integration.rs::auth_flows_leave_no_secrets_in_telemetry'
+        'Registration and reset flows leave no secrets behind':
+          checks:
+            - rust: 'backend/crates/server/tests/telemetry_integration.rs::auth_flows_leave_no_secrets_in_telemetry'
+        'Sensitive query parameters are stripped':
+          checks:
+            - rust: 'backend/crates/platform/src/telemetry/redact.rs::attributes_are_redacted_by_name_and_url_query'
+        'A sensitive field added by mistake is still scrubbed':
+          checks:
+            - rust: 'backend/crates/platform/src/telemetry/redact.rs::attributes_are_redacted_by_name_and_url_query'
+        'Upstream error bodies are not stored':
+          {
+            checks:
+              [
+                {
+                  rust: 'backend/crates/services/src/oauth/google.rs::a_failed_token_exchange_logs_the_status_and_kind_but_never_the_body',
+                },
+              ],
+          }
+        'Todos leave no content behind':
+          checks:
+            - rust: 'backend/crates/server/tests/telemetry_integration.rs::list_and_todo_content_never_reaches_telemetry'
+        'Refused or failed saves leave no content behind':
+          checks:
+            - rust: 'backend/crates/server/tests/telemetry_integration.rs::list_and_todo_content_never_reaches_telemetry'
+    'Browser reports never expose secrets or personal data':
+      reason: 'Telemetry content filtering in the browser (D13 Not formalized); tested on what is actually sent.'
+      scenarios:
+        'Email address in the page address is never recorded':
+          checks:
+            - web: 'apps/web/src/lib/telemetry/scrub.test.ts::has the shared cases'
+            - rust: 'backend/crates/application/src/use_cases/telemetry/scrub.rs::every_fixture_case_scrubs_to_its_expected_output'
+            - web: apps/web/tests/browser-errors.spec.ts::on ${name}, an error holding the full address sends neither secret
+        'Magic sign-in token is never recorded':
+          checks:
+            - web: 'apps/web/src/lib/telemetry/scrub.test.ts::has the shared cases'
+            - rust: 'backend/crates/application/src/use_cases/telemetry/scrub.rs::every_fixture_case_scrubs_to_its_expected_output'
+            - web: apps/web/tests/browser-errors.spec.ts::on ${name}, an error holding the full address sends neither secret
+        'Email address in an error message':
+          checks:
+            - web: 'apps/web/src/lib/telemetry/scrub.test.ts::matches emails like the regex'
+            - rust: 'backend/crates/application/src/use_cases/telemetry/scrub.rs::every_fixture_case_scrubs_to_its_expected_output'
+        'Long message':
+          checks:
+            - web: 'apps/web/src/lib/telemetry/scrub.test.ts::cuts a 20,000-character message to the limit'
+            - rust: 'backend/crates/application/src/use_cases/telemetry/record_client_telemetry.rs::text_is_truncated_after_scrubbing'
+        'Nothing stored in the browser':
+          checks:
+            - web: 'apps/web/src/lib/telemetry/reporter.test.ts::writes no cookie and no browser storage'
+        'Script error on a list page':
+          checks:
+            - web: 'apps/web/tests/browser-errors.spec.ts::on a list address, an error holding the address sends no id'
+        'Content in a script error':
+          checks:
+            - web: 'apps/web/tests/browser-errors.spec.ts::a failed add reports the route and status but never the title'
+            - web: apps/web/tests/browser-errors.spec.ts::a script error on a list page sends neither the list name nor a todo title
+            - web: apps/web/src/lib/lists/no-content-in-errors.test.ts::never builds an error message from data
+    'List pages are measured as one page':
+      reason: 'Telemetry naming and HTTP route templates (D13 Not formalized); tested on what is emitted.'
+      scenarios:
+        'Several lists, one page':
+          checks:
+            - rust: 'backend/crates/application/src/use_cases/telemetry/record_client_telemetry.rs::known_pages_keep_their_template_and_others_become_other'
+            - rust: 'backend/crates/application/src/use_cases/telemetry/record_client_telemetry.rs::page_templates_match_the_sites_pages'
+        'Moving between lists':
+          {
+            checks:
+              [
+                {
+                  web: 'apps/web/tests/navigation-timing.spec.ts::choosing another list in the picker is one in-site navigation to the list page',
+                },
+              ],
+          }
+        'Error on a list page':
+          checks:
+            - web: 'apps/web/tests/browser-errors.spec.ts::on a list address, an error holding the address sends no id'
+        'Backend routes':
+          checks:
+            - rust: 'backend/crates/api/src/middleware/http_telemetry.rs::templated_route_is_recorded_under_its_template'
+  performance:
+    'Named load scenarios run with one command':
+      reason: "Load-test tooling, measured rather than proved; no proof or model applies. `just load` needs the prod-like stack and isn't in `just ci`."
+      scenarios:
+        'Run a scenario by name':
+          {
+            exception: "Sends real load through the edge to the capped stack (just load-up), so it can't run in just ci or CI; every run's result lands in loadtest/results.",
+          }
+        'Unknown scenario name':
+          {
+            checks:
+              [
+                {
+                  web: 'loadtest/tooling.test.mjs::an unknown scenario fails at once, lists the valid names and sends no load',
+                },
+              ],
+          }
+        'Stack not running':
+          {
+            checks:
+              [
+                {
+                  web: 'loadtest/tooling.test.mjs::a stack that is not running fails within 10 seconds and sends no load',
+                },
+              ],
+          }
+        'Generator cannot keep up':
+          {
+            checks:
+              [
+                {
+                  web: 'loadtest/tooling.test.mjs::a generator that cannot keep up reports the iterations not started',
+                },
+              ],
+          }
+        'List scenarios start from the same lists':
+          {
+            exception: loadtest/run.sh clears the test Members' lists (and refills them for lists-large) through psql in the capped stack's db container before each list scenario; needs that stack.,
+          }
+  security:
+    Lists and todos are private to their Member:
+      reason: Sessions, verified-email and CSRF guards are HTTP wiring (D13 Not formalized), tested at the boundary against real Postgres; the repositories' owner checks are modelled in list_writes.qnt and replayed.
+      scenarios:
+        Another Member's list:
+          checks:
+            - invariant: 'models/list_writes.qnt::writesStayWithTheirMember'
+            - invariant: 'models/list_writes.qnt::findListStaysWithItsMember'
+            - broken: 'models/list_writes.qnt::no_owner_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: backend/crates/server/tests/lists_security_integration.rs::another_members_ids_answer_exactly_like_unknown_ids
+            - rust: backend/crates/server/tests/lists_integration.rs::unknown_and_foreign_ids_share_the_404_codes
+        Another list's todo:
+          checks:
+            - invariant: 'models/list_writes.qnt::writesStayWithTheirMember'
+            - broken: 'models/list_writes.qnt::no_todo_list_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: backend/crates/server/tests/lists_security_integration.rs::another_members_ids_answer_exactly_like_unknown_ids
+            - rust: backend/crates/server/tests/lists_integration.rs::unknown_and_foreign_ids_share_the_404_codes
+        Positioning next to another Member's todo:
+          checks:
+            - invariant: 'models/list_writes.qnt::writesStayWithTheirMember'
+            - broken: 'models/list_writes.qnt::no_neighbour_scope'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - kani: backend/crates/domain/src/entities/todo_order.rs::a_move_takes_the_slot_its_neighbours_name
+            - rust: backend/crates/server/tests/lists_security_integration.rs::a_foreign_neighbour_answers_exactly_like_an_unknown_one
+            - rust: backend/crates/persistence-postgres/tests/lists_integration.rs::neighbours_that_are_gone_done_or_foreign_are_ignored
+        Reused creation ID:
+          checks:
+            - invariant: 'models/list_writes.qnt::writesStayWithTheirMember'
+            - invariant: 'models/list_writes.qnt::repeatStoresOneRow'
+            - broken: 'models/list_writes.qnt::no_owner_check'
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - rust: backend/crates/persistence-postgres/tests/lists_integration.rs::another_members_list_and_key_are_invisible
+        Admin or Super Admin:
+          checks:
+            - rust: backend/crates/server/tests/lists_security_integration.rs::staff_get_the_same_404_and_never_see_another_accounts_lists
+        Visitor:
+          checks:
+            - rust: backend/crates/server/tests/lists_security_integration.rs::visitors_and_unverified_members_are_refused
+        Unverified Member:
+          checks:
+            - rust: backend/crates/server/tests/lists_security_integration.rs::visitors_and_unverified_members_are_refused
+        Missing CSRF token:
+          checks:
+            - rust: backend/crates/server/tests/lists_security_integration.rs::a_missing_csrf_token_refuses_every_change
+        The property is checked:
+          checks:
+            - just: threat-model-check
+            - just: formal-coverage
+            - shell: scripts/formal-coverage.test.sh::test_the_threat_model_property_must_exist
+    List guarantees are machine-checked on every change:
+      scenarios:
+        Breaking a guarantee fails the gate:
+          checks:
+            - kani: backend/crates/domain/src/entities/todo_order.rs::a_move_lands_strictly_between_or_asks_for_renumbering
+            - kani: backend/crates/domain/src/entities/todo.rs::appending_goes_one_gap_below_the_last_or_saturates
+            - kani: backend/crates/domain/src/value_objects/single_line.rs::the_single_line_rule_trims_counts_code_points_and_refuses_line_breaks
+            - just: verify
+        A removed guard is noticed:
+          checks:
+            - broken: 'models/list_writes.qnt::no_version_check'
+            - broken: 'models/list_writes.qnt::no_count_check'
+            - broken: 'models/list_writes.qnt::no_lock'
+            - broken: 'models/list_writes.qnt::no_user_lock'
+            - broken: 'models/list_writes.qnt::no_limit'
+            - broken: 'models/list_writes.qnt::no_owner_check'
+            - broken: 'models/list_writes.qnt::no_key_check'
+            - broken: 'models/list_writes.qnt::no_deleted_check'
+            - broken: 'models/list_writes.qnt::no_todo_list_check'
+            - broken: 'models/list_writes.qnt::no_neighbour_scope'
+            - just: models
+        A model that drifts from the code fails replay:
+          checks:
+            - replay: 'backend/crates/persistence-postgres/tests/model_conformance.rs::list_writes_follow_the_model'
+            - web: 'apps/web/src/lib/lists/server-model.replay.ts::replays every exported trace for the operations it implements'
+            - just: models
+        Bounds and assumptions are visible:
+          checks:
+            - kani: backend/crates/domain/src/entities/todo_order.rs::renumbering_keeps_the_order_of_five
+            - shell: scripts/formal-coverage.test.sh::test_a_harness_without_kani_proof_fails
+        A guarantee without a check:
+          checks:
+            - just: formal-coverage
+            - shell: scripts/formal-coverage.test.sh::test_an_empty_manifest_fails
+            - shell: scripts/formal-coverage.test.sh::test_a_missing_scenario_fails
+            - shell: scripts/formal-coverage.test.sh::test_a_requirement_without_formal_check_or_reason_fails
+            - shell: scripts/formal-coverage.test.sh::test_pending_entries
+properties:
+  P-35:
+    checks:
+      - rust: backend/crates/server/tests/lists_security_integration.rs::another_members_ids_answer_exactly_like_unknown_ids
+      - rust: backend/crates/server/tests/lists_security_integration.rs::staff_get_the_same_404_and_never_see_another_accounts_lists
+      - rust: backend/crates/server/tests/lists_security_integration.rs::a_foreign_neighbour_answers_exactly_like_an_unknown_one
+      - rust: backend/crates/server/tests/lists_security_integration.rs::visitors_and_unverified_members_are_refused
+      - rust: backend/crates/server/tests/lists_security_integration.rs::a_missing_csrf_token_refuses_every_change
+      - rust: backend/crates/persistence-postgres/tests/lists_integration.rs::another_members_list_and_key_are_invisible
