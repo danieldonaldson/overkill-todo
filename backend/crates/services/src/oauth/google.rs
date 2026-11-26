@@ -651,6 +651,56 @@ mod tests {
             assert!(err.to_string().contains("token exchange failed"));
         }
 
+        /// observability: "Upstream error bodies are not stored". The body
+        /// can echo request data, so the log keeps the status and the OAuth
+        /// error code only, and the error the caller sees neither.
+        #[tokio::test]
+        async fn a_failed_token_exchange_logs_the_status_and_kind_but_never_the_body() {
+            #[derive(Clone, Default)]
+            struct Logs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+            impl std::io::Write for Logs {
+                fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                    self.0.lock().unwrap().extend_from_slice(buf);
+                    Ok(buf.len())
+                }
+                fn flush(&mut self) -> std::io::Result<()> {
+                    Ok(())
+                }
+            }
+            let logs = Logs::default();
+            let writer = logs.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(move || writer.clone())
+                .with_ansi(false)
+                .finish();
+            let _guard = tracing::subscriber::set_default(subscriber);
+
+            let token_server = MockServer::start().await;
+            Mock::given(wm_method("POST"))
+                .and(wm_path("/token"))
+                .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                    "error": "invalid_grant",
+                    "error_description": "PROVIDER-BODY-SECRET for code bad-code",
+                })))
+                .mount(&token_server)
+                .await;
+            let jwks_server = MockServer::start().await;
+
+            let err = client_for(&token_server, &jwks_server)
+                .exchange_code("bad-code")
+                .await
+                .unwrap_err();
+
+            let logged = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+            assert!(logged.contains("Google token exchange failed"), "{logged}");
+            assert!(logged.contains("400"), "{logged}");
+            assert!(logged.contains("invalid_grant"), "{logged}");
+            for text in [logged.as_str(), &err.to_string()] {
+                assert!(!text.contains("PROVIDER-BODY-SECRET"), "{text}");
+                assert!(!text.contains("bad-code"), "{text}");
+            }
+        }
+
         #[tokio::test]
         async fn exchange_code_token_parse_error_maps_to_external_service() {
             // 2xx but the body is missing the required token fields.

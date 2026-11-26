@@ -450,6 +450,29 @@ jobs:
       - uses: actions/checkout@v7
       - run: ./scripts/threat-model-check.sh
 
+  # Cheap and always run: the load tooling's checks that need no stack (OT-013).
+  # No path filter covers loadtest/, so this runs on every change.
+  loadtest:
+    name: Load tooling
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      - run: node --test loadtest/tooling.test.mjs
+
+  # Cheap and always run: every list scenario names a proof, model, replay or test
+  # that exists and runs, and no pending entry outlives its task (OT-013 D13).
+  # yq is preinstalled on the runner.
+  formal-coverage:
+    name: Formal coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: ./scripts/formal-coverage.test.sh
+      - run: ./scripts/formal-coverage.sh
+
   # Images are built only from main, after every check passed, and tagged with the
   # commit. Deploys reference the tag's digest; CI holds no deploy credentials.
   # Once builds get slow, scope them to what changed since the last published image
@@ -468,6 +491,8 @@ jobs:
       - observability
       - secrets
       - threat-model
+      - formal-coverage
+      - loadtest
     runs-on: ubuntu-24.04
     permissions:
       contents: read

@@ -18,11 +18,40 @@ pub const POSITION_GAP: i64 = 1 << 20;
 ///
 /// `None` means the list has no open todo. A new todo and a todo marked not
 /// done both go to the bottom, so both take this value under the list lock.
+///
+/// Strictly increasing unless `last_open` is within one gap of `i64::MAX`,
+/// where it saturates. That is out of reach: no write raises a list's highest
+/// open position by more than one gap, and renumbering puts it at most 65,537
+/// gaps up (both proved below), so saturating takes about 2^43 writes to one
+/// list, 27 years at 10,000 a second. Were it reached, the saturated position
+/// would equal the last one and the deferrable unique constraint on positions
+/// would refuse the write (design D2), so the order can't be corrupted.
 #[must_use]
 pub const fn append_position(last_open: Option<i64>) -> i64 {
     match last_open {
         Some(position) => position.saturating_add(POSITION_GAP),
         None => POSITION_GAP,
+    }
+}
+
+/// Whether a todo is open or done (design D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TodoState {
+    Open,
+    Done,
+}
+
+/// A todo's state from which of its two columns are set.
+///
+/// An open todo has a position, a done one a completion time. `None` for both
+/// or neither, a row the database check refuses. Over the columns' presence
+/// only, so Kani can prove it without `jiff` (design D13).
+#[must_use]
+pub const fn todo_state(has_position: bool, has_completed_at: bool) -> Option<TodoState> {
+    match (has_position, has_completed_at) {
+        (true, false) => Some(TodoState::Open),
+        (false, true) => Some(TodoState::Done),
+        _ => None,
     }
 }
 
@@ -74,7 +103,7 @@ impl Todo {
     /// [`DomainError::Persistence`] when the open/done columns disagree (a row
     /// the database check should have refused).
     pub fn from_persistence(parts: TodoParts) -> Result<Self, DomainError> {
-        if parts.position.is_some() == parts.completed_at.is_some() {
+        if todo_state(parts.position.is_some(), parts.completed_at.is_some()).is_none() {
             return Err(DomainError::Persistence(
                 "todo row mixes open and done columns".into(),
             ));
@@ -129,29 +158,84 @@ impl Todo {
     pub const fn is_done(&self) -> bool {
         self.completed_at.is_some()
     }
+}
 
-    /// Marks the todo done, bumping its version.
-    pub const fn mark_done(&mut self, now: Timestamp) {
-        self.position = None;
-        self.completed_at = Some(now);
-        self.version += 1;
+/// Kani proofs (`just verify`). Bounds and assumptions are on each harness.
+#[cfg(kani)]
+mod verification {
+    use super::super::todo_order::{position_between, renumbered_other, renumbered_position};
+    use super::*;
+
+    /// 2^20, the design's literal gap (D6), written out rather than taken
+    /// from `POSITION_GAP`.
+    const GAP: i128 = 1_048_576;
+
+    /// Spec: an appended todo goes one gap below the last open one, so
+    /// positions strictly increase, and the first goes one gap from zero.
+    /// Within one gap of `i64::MAX` it saturates there instead. Every `i64`
+    /// last position, or none; no assumptions. No overflow or panic.
+    #[kani::proof]
+    fn appending_goes_one_gap_below_the_last_or_saturates() {
+        let last: Option<i64> = kani::any();
+        let position = append_position(last);
+        match last {
+            None => assert_eq!(i128::from(position), GAP),
+            Some(last) if i128::from(last) + GAP <= i128::from(i64::MAX) => {
+                assert_eq!(i128::from(position), i128::from(last) + GAP);
+                assert!(position > last, "not strictly increasing");
+            }
+            Some(_) => assert_eq!(position, i64::MAX),
+        }
     }
 
-    /// Marks the todo not done at `position`, bumping its version.
-    pub const fn mark_not_done(&mut self, position: i64, _now: Timestamp) {
-        self.position = Some(position);
-        self.completed_at = None;
-        self.version += 1;
+    /// Spec (why saturation is out of reach): no write puts a todo more than
+    /// one gap above the list's highest open position (or above zero, for an
+    /// empty list), and renumbering puts every todo at most 65,537 gaps up.
+    /// Every `i64` highest position and neighbours at or below it, either
+    /// absent; every `u16` rank and slot (a list holds at most 1,000 todos).
+    /// Assumes these are the only writes of a position, as in the repository:
+    /// an add or mark not done appends, a move uses `position_between` or
+    /// renumbers.
+    #[kani::proof]
+    fn no_write_raises_the_highest_position_by_more_than_one_gap() {
+        let highest: i64 = kani::any();
+        let ceiling = i128::from(highest.max(0)) + GAP;
+
+        let last: Option<i64> = kani::any();
+        kani::assume(last.is_none_or(|last| last <= highest));
+        assert!(i128::from(append_position(last)) <= ceiling);
+
+        let (above, below): (Option<i64>, Option<i64>) = (kani::any(), kani::any());
+        kani::assume(above.is_none_or(|above| above <= highest));
+        kani::assume(below.is_none_or(|below| below <= highest));
+        if let Some(position) = position_between(above, below) {
+            assert!(i128::from(position) <= ceiling);
+        }
+
+        let (rank, slot): (u16, u16) = (kani::any(), kani::any());
+        assert!(i128::from(renumbered_other(rank, slot)) <= 65_537 * GAP);
+        assert!(i128::from(renumbered_position(u32::from(slot))) <= 65_537 * GAP);
     }
 
-    /// Renames the todo, bumping its version.
-    ///
-    /// # Errors
-    /// Propagates the title validation from [`TodoTitle::new`].
-    pub fn rename(&mut self, title: &str) -> Result<(), DomainError> {
-        self.title = TodoTitle::new(title)?;
-        self.version += 1;
-        Ok(())
+    /// Spec: a todo is open or done, never both or neither; open exactly when
+    /// it has a position and no completion time, done exactly when it has a
+    /// completion time and no position. Every combination of the two columns'
+    /// presence; no assumptions. `from_persistence` refuses exactly the rows
+    /// this returns `None` for (by reading: Kani can't build its `jiff` and
+    /// `Uuid` fields).
+    #[kani::proof]
+    fn a_todo_is_open_or_done() {
+        let (has_position, has_completed_at): (bool, bool) = (kani::any(), kani::any());
+        let state = todo_state(has_position, has_completed_at);
+        assert_eq!(state.is_some(), has_position ^ has_completed_at);
+        assert_eq!(
+            state == Some(TodoState::Open),
+            has_position && !has_completed_at
+        );
+        assert_eq!(
+            state == Some(TodoState::Done),
+            has_completed_at && !has_position
+        );
     }
 }
 
@@ -186,25 +270,6 @@ mod tests {
     }
 
     #[test]
-    fn marking_done_moves_it_and_bumps_the_version() {
-        let mut todo = todo();
-        todo.mark_done(Timestamp::now());
-        assert!(todo.is_done());
-        assert_eq!(todo.position(), None);
-        assert_eq!(todo.version(), 2);
-    }
-
-    #[test]
-    fn marking_not_done_returns_it_to_the_bottom() {
-        let mut todo = todo();
-        todo.mark_done(Timestamp::now());
-        todo.mark_not_done(5 * POSITION_GAP, Timestamp::now());
-        assert!(!todo.is_done());
-        assert_eq!(todo.position(), Some(5 * POSITION_GAP));
-        assert_eq!(todo.version(), 3);
-    }
-
-    #[test]
     fn from_persistence_refuses_a_mixed_row() {
         let base = TodoParts {
             id: TodoId::new(),
@@ -216,6 +281,20 @@ mod tests {
             created_at: Timestamp::now(),
         };
         assert!(Todo::from_persistence(base).is_err());
+    }
+
+    #[test]
+    fn from_persistence_refuses_a_row_neither_open_nor_done() {
+        let parts = TodoParts {
+            id: TodoId::new(),
+            list_id: ListId::new(),
+            title: TodoTitle::new("x").unwrap(),
+            version: 1,
+            position: None,
+            completed_at: None,
+            created_at: Timestamp::now(),
+        };
+        assert!(Todo::from_persistence(parts).is_err());
     }
 
     proptest! {

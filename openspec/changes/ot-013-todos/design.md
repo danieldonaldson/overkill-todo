@@ -404,6 +404,10 @@ The existing route-guard walk covers the Visitor case for future routes.
     renumbering. `append_position` is strictly increasing unless it saturates;
     at saturation the caller must renumber, or the bound is stated with why
     it can't be reached.
+    _Slice 6:_ the bound is stated and proved instead (`todo.rs`): no write
+    raises a list's highest position by more than one gap, and renumbering
+    stays under 65,537 gaps, so saturating takes about 2^43 writes to one list.
+    Were it reached, the unique constraint on positions refuses the write.
   - CBMC can't unwind hundreds of symbolic characters or `String` allocations, so
     `normalize_single_line` uses an allocation-free kernel, proved over up to 6
     symbolic `char`s with `max <= 4`. A proptest ties it to the real function

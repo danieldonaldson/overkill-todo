@@ -272,6 +272,40 @@ test.describe('web analytics', () => {
     expect(JSON.stringify(pageViews())).not.toContain(list.id)
   })
 
+  test('arriving from another site records that site as the referrer', async ({ page }) => {
+    const { pageViews } = await setup(page)
+    await page.goto('/register', { referer: 'https://news.example.org/a/post?id=7' })
+    await expect(page.getByRole('heading', { name: /create/i })).toBeVisible()
+    await settle(page)
+
+    expect(pageViews()).toHaveLength(1)
+    const { url, referrer } = pageViews()[0].payload
+    expect(new URL(url).pathname).toBe('/register')
+    expect(new URL(referrer!).origin).toBe('https://news.example.org')
+  })
+
+  test('a list address that shows list not found is recorded as the list template', async ({
+    page,
+  }) => {
+    await seedSession(page)
+    // Every API call answers 404 (setup), so the list is not found; the
+    // malformed address is refused without a request.
+    const { pageViews } = await setup(page)
+    for (const address of [
+      '/dashboard/lists/0d6c3b9e-8f7a-4e2b-9c1d-5a4b3c2d1e0f',
+      '/dashboard/lists/not-a-list',
+    ]) {
+      await page.goto(address)
+      await expect(page.getByRole('heading', { name: 'List not found' })).toBeVisible()
+    }
+    await settle(page)
+
+    const paths = pageViews().map((v) => new URL(v.payload.url).pathname)
+    expect(paths).toEqual(['/dashboard/lists/[id]', '/dashboard/lists/[id]'])
+    expect(JSON.stringify(pageViews())).not.toContain('0d6c3b9e')
+    expect(JSON.stringify(pageViews())).not.toContain('not-a-list')
+  })
+
   test('registration carries no email address into analytics', async ({ page }) => {
     const { sent } = await setup(page)
 

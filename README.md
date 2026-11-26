@@ -79,7 +79,8 @@ than a rolling deploy or rollback across OT-012.
 | `just api-types-check`                 | fail if either generated API file is stale                         |
 | `just fuzz-api [seed] [examples]`      | fuzz every API route against `openapi.json` on a throwaway DB      |
 | `just threat-model-check`              | every auth security property names a check that still exists       |
-| `just verify`                          | Kani proofs of auth and ordering rules, every input within bounds  |
+| `just verify`                          | Kani proofs of auth and list rules, every input within bounds      |
+| `just formal-coverage`                 | every list scenario names a proof, model or test that still runs   |
 | `just models`                          | Quint concurrency models of code entry and refresh, replayed on DB |
 | `just protocols`                       | Tamarin proofs of the sign-in protocols against a network attacker |
 | `just load <scenario>`                 | k6 load scenario against the capped stack                          |
@@ -96,7 +97,11 @@ it; `just threat-model-check` keeps that list honest. The strongest checks:
 - **`just verify`** (Kani, about 2 minutes) proves the domain rules for every
   input within stated bounds: the code-entry lockout, code and magic-link
   expiry, refresh-token status, role changes, the deletion lifecycle, and
-  email normalisation (ASCII up to 8 bytes).
+  email normalisation (ASCII up to 8 bytes). For lists: where a moved or
+  appended todo goes (every `i64` position), that a todo is open or done, and
+  name and title validation (6 code points, tied to the real function by a
+  proptest at 100 and 500). `just formal-coverage` checks that every list
+  scenario names a proof, model or test that still exists and runs.
 - **`just models`** (Quint, about 4 minutes) checks races between concurrent
   requests over every interleaving of up to 8 steps, and replays the models'
   traces against Postgres.

@@ -415,9 +415,10 @@ Some properties are proven with [Kani](https://model-checking.github.io/kani/),
 a bounded model checker, for every input within stated bounds rather than for
 sampled ones. The harnesses sit in a `#[cfg(kani)] mod verification` next to
 the code they prove, and each has a doc comment stating its bounds.
-`just verify` runs them all (about 2 minutes warm, most of it the role-name
-and email proofs). It's in
-`just ci`, and CI runs it as its own job.
+`just verify` runs them all (31 harnesses, 2 min 15 s warm on 2026-11-26, most
+of it the role-name and email proofs; the list proofs take under 15 s, the
+validation kernel 10 s of that). It's in `just ci`, and CI runs it as its own
+job.
 
 - **Setup:** `mise install` installs the pinned `kani-verifier` (`.mise.toml`).
   Run `cargo kani setup` once to fetch Kani's own nightly toolchain, which
@@ -437,8 +438,27 @@ and email proofs). It's in
     no purge before the date, and the two columns round-trip (P-28)
   - email normalisation for short ASCII: case and surrounding whitespace
     don't change the identity, and normalising twice changes nothing (P-30)
+  - todo order (`todo_order.rs`, OT-013 D6): a move lands strictly between its
+    neighbours for every pair of `i64` positions, or asks for renumbering
+    exactly when no integer fits; renumbering keeps the order and puts the
+    moved todo in its slot (5 positions; a proptest covers 1,000); a move takes
+    the slot its neighbours name (3 todos, 2 IDs each way)
+  - appending (`todo.rs`): one gap below the last open todo, strictly
+    increasing for every `i64` unless within a gap of `i64::MAX`. That is out of
+    reach, also proved: no write raises a list's highest position by more than
+    one gap and renumbering stays under 65,537 gaps, so it takes about 2^43
+    writes to one list (and the unique constraint would refuse it)
+  - a todo is open or done, never both or neither, over the two columns'
+    presence (`todo_state`, which `Todo::from_persistence` uses)
+  - names and titles (`single_line.rs`): trimmed as `str::trim` trims, counted
+    in code points, refused when blank, too long or holding a control
+    character, U+2028 or U+2029. Bound: 6 symbolic `char`s with `max <= 4`,
+    since CBMC can't unwind hundreds of characters; a proptest ties the
+    allocation-free kernel to `str::trim` at 100 and 500
 
-  The proofs cover the domain's decisions, not the SQL around them. The
+  The proofs cover the domain's decisions, not the SQL around them. List
+  versions are bumped in SQL, so the version rules are left to the server
+  model (OT-013 task 7), not Kani. The
   concurrent writes are P-11, P-12 and P-14, modelled below; the
   last-Super-Admin guard and the purge job's due check are SQL, and tested.
 
@@ -451,6 +471,30 @@ and email proofs). It's in
   new proofs.
 - **Make a proof fail before trusting it:** break the rule it checks on a
   scratch edit, and see `just verify` fail with a counterexample.
+- **Strings become code points.** CBMC can't follow `String` allocation or
+  long strings, so a text rule is a kernel over `&[char]` (as
+  `check_single_line`), proved for a few symbolic `char`s, with a proptest
+  tying it to the real function at real lengths.
+
+### Formal coverage of lists (`just formal-coverage`)
+
+[`docs/formal-coverage.yaml`](../docs/formal-coverage.yaml) names, for every
+scenario in OT-013's specs and for P-35, the proof, model, replay or test that
+covers it. A requirement with no proof or model says why none applies. The
+gate (`scripts/formal-coverage.sh`, in `just ci` and an always-run CI job, under
+a second) fails when a scenario has no entry or an entry names one the specs no
+longer have, or when a named check is gone or wouldn't run: a Kani harness
+without `#[kani::proof]` or stated bounds, a test ignored directly or through
+`cfg_attr` (except the replays `just models` runs), a skipped or conditionally
+skipped web test, a flow under `apps/web/tests/integration` (which `just ci`
+doesn't run), or a Quint invariant `scripts/models.sh` doesn't check.
+`pending: <task>` is allowed while that task is unticked, also beside checks
+when a test covers a scenario now and a model is still owed;
+`just formal-coverage --final` allows none. A scenario no automated check can
+reach (a load test needing the capped stack) is an `exception:` with its
+reason, which `--final` accepts. It reads the change's
+spec deltas while the change is active and `openspec/specs/` once archived.
+Fixture tests: `scripts/formal-coverage.test.sh`, run first by the recipe.
 
 ### Concurrency models (`just models`)
 

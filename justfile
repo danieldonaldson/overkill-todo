@@ -293,6 +293,12 @@ test-web:
 decode-stack release file="":
     node {{ quote(justfile_directory() / "scripts/decode-stack.mjs") }} {{ quote(release) }} {{ if file == "" { "" } else { quote(file) } }}
 
+# Load tooling checks that need no stack (OT-013): unknown scenario, stack down,
+# dropped iterations in the summary. Running a scenario needs `just load-up`.
+[group('test')]
+test-loadtest:
+    node --test loadtest/tooling.test.mjs
+
 # Browser e2e against the built site with the API mocked.
 [group('test')]
 e2e:
@@ -406,6 +412,15 @@ models: db-up db-migrate
 [doc('Tamarin protocol model: sign-in lemmas proven against an active network attacker.')]
 protocols:
     ./scripts/protocols.sh
+
+# Formal coverage (OT-013 D13): every list scenario names a proof, model, replay or
+# test (with why no proof applies) that exists and runs; docs/formal-coverage.yaml.
+# Runs the script's fixture tests first. `--final` refuses pending entries (task 9.1).
+[group('formal')]
+[doc('Every list scenario names a check that exists and runs (docs/formal-coverage.yaml).')]
+formal-coverage *args:
+    ./scripts/formal-coverage.test.sh >/dev/null
+    ./scripts/formal-coverage.sh {{args}}
 
 # ── Secrets & security ───────────────────────────────────────────────────────────
 # SOPS + age. Policy: deploy/secrets/access.yaml. See deploy/secrets/README.md.
@@ -570,4 +585,4 @@ ci: ci-checks verify models protocols
 
 # The rest of `ci`, in order: static checks first, then tests.
 [group('ci')]
-ci-checks: toolchain-check fmt-check fmt-check-js lint lint-release deny machete lint-js obs-check secrets-check threat-model-check test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web e2e
+ci-checks: toolchain-check fmt-check fmt-check-js lint lint-release deny machete lint-js obs-check secrets-check threat-model-check formal-coverage test test-integration db-prepare-check api-types-check fuzz-api-test fuzz-api test-web test-loadtest e2e
