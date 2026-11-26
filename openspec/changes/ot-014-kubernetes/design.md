@@ -209,6 +209,27 @@ building on Traefik. If it fails, as we expect, the operator chooses between
 Caddy with the existing rules as the edge, and a small header-stripping hop in
 front of Traefik. Either way it is settled before slices 3–5.
 
+**Result (2026-11-26): fails.** Traefik v3.8.0 (chart 43.0.0) in Docker, OTLP to
+a collector, a header echo behind it, and a request carrying a forged
+`traceparent` and `tracestate`:
+
+| Setup | Forged ID reaches the backend | Edge's span and access-log trace ID |
+| --- | --- | --- |
+| Default | yes, `tracestate` too | the forged one |
+| Headers middleware deleting both | yes: re-injected after the middleware | the forged one |
+| Entry-point tracing off, plus that middleware | no | none: the edge neither traces nor logs an ID |
+
+Without a client header each request got a new trace. Traefik 3.8 has no option
+to ignore incoming context (`--help`, 2026-11-26).
+
+**Decided (2026-11-26): Traefik as it is, risk accepted by the operator.** On the
+cluster a client can choose a request's trace ID, which the backend adopts and
+returns in `X-Trace-Id`, so the observability scenario "Client-supplied trace
+context is ignored" fails there, and only there: compose's Caddy still strips it.
+A client could join its requests to a trace it knows the ID of, or make traces
+collide; it gains no access. Slice 5 checks the rest of that spec, and 8.2 adds
+this to the threat model's edge assumptions.
+
 **D7. Backups go to S3-compatible storage on the host.** Garage in a container
 with its own volume, reached over the VM bridge, with the barman-cloud plugin
 installed in the cluster. Slice 3 first proves Garage with barman-cloud,
