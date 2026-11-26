@@ -8,11 +8,12 @@
 use std::sync::Arc;
 
 use application::ports::outgoing::{
-    LimitKind, ListRepository, ListSummary, ListWithTodos, ListWrite,
+    LimitKind, ListRepository, ListSummary, ListWithTodos, ListWrite, TodoMove,
 };
 use async_trait::async_trait;
 use domain::entities::{
     List, ListParts, MAX_LISTS_PER_USER, MAX_TODOS_PER_LIST, Todo, TodoParts, append_position,
+    move_slot, position_between, renumbered_other, renumbered_position,
 };
 use domain::errors::DomainError;
 use domain::value_objects::{ListId, ListName, TodoId, TodoTitle, UserId};
@@ -176,6 +177,69 @@ impl PostgresListRepository {
         .fetch_one(&mut **executor)
         .await
         .map_err(persist_err)
+    }
+
+    /// The list's open todos but `todo_id`, in order, with their positions.
+    async fn other_open_todos(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        list_id: &ListId,
+        todo_id: &TodoId,
+    ) -> Result<Vec<(TodoId, i64)>, DomainError> {
+        let rows = sqlx::query!(
+            r#"
+            SELECT id, position AS "position!" FROM todos
+            WHERE list_id = $1 AND id <> $2 AND position IS NOT NULL
+            ORDER BY position
+            "#,
+            list_id.as_uuid(),
+            todo_id.as_uuid(),
+        )
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(persist_err)?;
+        Ok(rows
+            .into_iter()
+            .map(|row| (TodoId::from_uuid(row.id), row.position))
+            .collect())
+    }
+
+    /// Spaces the open todos out again, with `todo_id` in `slot` among `others`.
+    ///
+    /// One statement, because the deferrable unique constraint on positions is
+    /// checked at its end (design D2).
+    async fn renumber(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        list_id: &ListId,
+        todo_id: &TodoId,
+        others: &[TodoId],
+        slot: usize,
+    ) -> Result<(), DomainError> {
+        // A list holds at most 1,000 todos, so every rank fits.
+        let rank = |rank: usize| {
+            u16::try_from(rank)
+                .map_err(|_| DomainError::Persistence("list too long to renumber".into()))
+        };
+        let slot = rank(slot)?;
+        let mut ids = vec![*todo_id.as_uuid()];
+        let mut positions = vec![renumbered_position(u32::from(slot))];
+        for (index, id) in others.iter().enumerate() {
+            ids.push(*id.as_uuid());
+            positions.push(renumbered_other(rank(index)?, slot));
+        }
+        sqlx::query!(
+            r#"
+            UPDATE todos SET position = new.position
+            FROM UNNEST($2::uuid[], $3::bigint[]) AS new (id, position)
+            WHERE todos.id = new.id AND todos.list_id = $1
+            "#,
+            list_id.as_uuid(),
+            &ids,
+            &positions,
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(persist_err)?;
+        Ok(())
     }
 }
 
@@ -646,6 +710,60 @@ impl ListRepository for PostgresListRepository {
         };
         tx.commit().await.map_err(persist_err)?;
         Ok(ListWrite::Applied(Self::row_to_todo(&updated)?))
+    }
+
+    #[tracing::instrument(name = "repo.list.move_todo", skip_all, fields(db.system = "postgresql", user_id = %user_id, list_id = %list_id, todo_id = %todo_id))]
+    async fn move_todo(
+        &self,
+        user_id: &UserId,
+        list_id: &ListId,
+        todo_id: &TodoId,
+        above: &[TodoId],
+        below: &[TodoId],
+    ) -> Result<TodoMove, DomainError> {
+        let mut tx = self.db.pool().begin().await.map_err(persist_err)?;
+        if !Self::lock_list(&mut tx, user_id, list_id).await? {
+            tx.rollback().await.map_err(persist_err)?;
+            return Ok(TodoMove::ListNotFound);
+        }
+        let Some(row) = Self::todo_row(&mut tx, list_id, todo_id).await? else {
+            tx.rollback().await.map_err(persist_err)?;
+            return Ok(TodoMove::TodoNotFound);
+        };
+        let Some(current) = row.position else {
+            tx.commit().await.map_err(persist_err)?;
+            return Ok(TodoMove::Done(Self::row_to_todo(&row)?));
+        };
+
+        // Only this list's other open todos can be neighbours, so a foreign ID
+        // resolves exactly like an unknown one (security P-35).
+        let others = Self::other_open_todos(&mut tx, list_id, todo_id).await?;
+        let mut order: Vec<TodoId> = others.iter().map(|(id, _)| *id).collect();
+        let slot = move_slot(&order, above, below);
+        let above = slot.checked_sub(1).map(|rank| others[rank].1);
+        let below = others.get(slot).map(|(_, position)| *position);
+
+        // Already in that slot: writing again would only use up the gap.
+        let in_place =
+            above.is_none_or(|above| above < current) && below.is_none_or(|below| current < below);
+        if !in_place {
+            if let Some(position) = position_between(above, below) {
+                sqlx::query!(
+                    "UPDATE todos SET position = $3 WHERE id = $1 AND list_id = $2",
+                    todo_id.as_uuid(),
+                    list_id.as_uuid(),
+                    position,
+                )
+                .execute(&mut *tx)
+                .await
+                .map_err(persist_err)?;
+            } else {
+                Self::renumber(&mut tx, list_id, todo_id, &order, slot).await?;
+            }
+        }
+        tx.commit().await.map_err(persist_err)?;
+        order.insert(slot, *todo_id);
+        Ok(TodoMove::Moved(order))
     }
 
     #[tracing::instrument(name = "repo.list.list_todos", skip_all, fields(db.system = "postgresql", user_id = %user_id, list_id = %list_id))]

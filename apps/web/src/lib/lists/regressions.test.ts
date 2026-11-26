@@ -109,6 +109,12 @@ describe('lists engine: order without a refetch', () => {
       for (let step = 0; step < 30; step++) {
         const todos = engine.snapshot().details[id].todos
         const roll = rng()
+        // Every move on screen must survive its save, with no refetch to hide it.
+        const open = todos.filter((todo) => !todo.done)
+        if (open.length > 1 && rng() < 0.5) {
+          const moved = open[Math.floor(rng() * open.length)]
+          engine.moveTodo(id, moved, Math.floor(rng() * open.length))
+        }
         if (roll < 0.25 || todos.length === 0) {
           engine.addTodo(id, `t-${step}`)
           intent.set(`t-${step}`, false)
@@ -136,7 +142,12 @@ describe('lists engine: order without a refetch', () => {
         }
         for (let i = Math.floor(rng() * 8); i > 0; i--) await Promise.resolve()
       }
+      const onScreen = engine.snapshot().details[id].todos.map((todo) => todo.title)
       await idle(10)
+      expect(
+        engine.snapshot().details[id].todos.map((todo) => todo.title),
+        `seed ${seed}: nothing moves when the saves are answered`
+      ).toEqual(onScreen)
       expect(notices, `seed ${seed}: no false conflict`).toEqual([])
       const stored = server.getList(id).todos
       expect(shape(engine.snapshot().details[id].todos), `seed ${seed}`).toEqual(shape(stored))
@@ -389,5 +400,234 @@ describe('lists engine: refusals and broken answers', () => {
     server.addTodo(id, 'other-tab', 'two')
     await engine.loadLists()
     expect(engine.snapshot().lists[0].open_count).toBe(2)
+  })
+})
+
+// Found by models/list_queue.qnt (task 4.4).
+describe('lists engine: a save that changed nothing', () => {
+  it("never moves later edits onto another tab's version of a todo", async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['one'])
+    const todoId = server.getList(id).todos[0].id
+    const base = serverApi(server)
+    let offline = true
+    const gate = Promise.withResolvers<void>()
+    const { engine, notices } = tab(server, {
+      getList: async (listId) => {
+        if (offline && engine.snapshot().details[id]?.status === 'ready') throw new TypeError('x')
+        return base.getList(listId)
+      },
+      renameTodo: async (...args) => {
+        if (offline) throw new TypeError('offline')
+        await gate.promise
+        return base.renameTodo(...args)
+      },
+    })
+    await engine.loadList(id)
+    const only = () => engine.snapshot().details[id].todos[0]
+    engine.renameTodo(id, only(), 'two')
+    // Started on the unsaved title, then that save fails and is undone.
+    const draft = engine.startTodoRename(id, only())
+    await idle()
+    expect(only().title).toBe('one')
+    offline = false
+    // Asks for the title already stored, so the server changes nothing.
+    engine.submitRename(draft, 'one')
+    engine.deleteTodo(id, only())
+    server.markTodo(id, todoId, 1, true)
+    gate.resolve()
+    await idle()
+
+    // The other tab's tick was never on screen: the delete must not take it.
+    expect(server.getList(id).todos).toMatchObject([{ done: true, version: 2 }])
+    expect(notices.at(-1)).toBe('This changed elsewhere. The current version is shown.')
+  })
+})
+
+describe('lists engine: moves', () => {
+  const titles = (engine: ListsEngine, id: string) =>
+    engine.snapshot().details[id].todos.map((todo) => todo.title)
+  const find = (engine: ListsEngine, id: string, title: string) =>
+    engine.snapshot().details[id].todos.find((todo) => todo.title === title)!
+
+  it('sends up to 20 neighbours each way, nearest first', async () => {
+    const server = new MemoryListsServer()
+    const names = Array.from({ length: 60 }, (_, index) => `t${index}`)
+    const id = server.seededList('Work', names)
+    const sent: [string[], string[]][] = []
+    const base = serverApi(server)
+    const { engine } = tab(server, {
+      moveTodo: async (listId, todoId, above, below) => {
+        sent.push([above, below])
+        return base.moveTodo(listId, todoId, above, below)
+      },
+    })
+    await engine.loadList(id)
+    const ids = new Map(server.getList(id).todos.map((todo) => [todo.title, todo.id]))
+    engine.moveTodo(id, find(engine, id, 't0'), 30)
+    await idle(5)
+    const named = (from: number, step: number) =>
+      Array.from({ length: 20 }, (_, index) => ids.get(`t${from + index * step}`))
+    expect(sent).toEqual([[named(30, -1), named(31, 1)]])
+    expect(titles(engine, id)).toEqual(server.getList(id).todos.map((todo) => todo.title))
+  })
+
+  it('does nothing for the same place, a done todo or an unknown list', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['one', 'two'])
+    const { engine } = tab(server, { moveTodo: () => Promise.reject(new Error('sent')) })
+    await engine.loadList(id)
+    const one = find(engine, id, 'one')
+    engine.moveTodo(id, one, 0)
+    engine.moveTodo('elsewhere', one, 1)
+    engine.markTodo(id, one, true)
+    engine.moveTodo(id, find(engine, id, 'one'), 1)
+    expect(engine.snapshot().queue.map((op) => op.kind)).toEqual(['mark_todo'])
+  })
+
+  it('sends the move of a todo still being added after its creation', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['one', 'two'])
+    const gate = Promise.withResolvers<void>()
+    const base = serverApi(server)
+    const { engine, notices } = tab(server, {
+      addTodo: async (...args) => {
+        await gate.promise
+        return base.addTodo(...args)
+      },
+    })
+    await engine.loadList(id)
+    engine.addTodo(id, 'new')
+    engine.moveTodo(id, find(engine, id, 'new'), 0)
+    // A neighbour without an ID yet, too.
+    engine.moveTodo(id, find(engine, id, 'two'), 1)
+    expect(titles(engine, id)).toEqual(['new', 'two', 'one'])
+    gate.resolve()
+    await idle()
+    expect(notices).toEqual([])
+    expect(titles(engine, id)).toEqual(['new', 'two', 'one'])
+    expect(server.getList(id).todos.map((todo) => todo.title)).toEqual(['new', 'two', 'one'])
+  })
+
+  it('leaves out a neighbour that was never saved, without moving to the top', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['one', 'two', 'three'])
+    const gate = Promise.withResolvers<void>()
+    const { engine } = tab(server, {
+      addTodo: async () => {
+        await gate.promise
+        throw new ApiErrorException(null, { status: 400, message: 'refused' })
+      },
+    })
+    await engine.loadList(id)
+    engine.addTodo(id, 'new')
+    // Below `new` alone, then everything else is put under it.
+    engine.moveTodo(id, find(engine, id, 'new'), 0)
+    engine.moveTodo(id, find(engine, id, 'three'), 1)
+    gate.resolve()
+    await idle()
+    expect(server.getList(id).todos.map((todo) => todo.title)).toEqual(['three', 'one', 'two'])
+    expect(titles(engine, id)).toEqual(['three', 'one', 'two'])
+  })
+
+  it('refetches when the answer names other todos than the ones known', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['one', 'two', 'three'])
+    let loads = 0
+    const base = serverApi(server)
+    const { engine, notices } = tab(server, {
+      getList: (listId) => {
+        loads += 1
+        return base.getList(listId)
+      },
+    })
+    await engine.loadList(id)
+    const [one, two] = server.getList(id).todos
+
+    engine.moveTodo(id, find(engine, id, 'three'), 0)
+    await idle(5)
+    expect(loads).toBe(1)
+
+    server.addTodo(id, 'other-tab', 'added')
+    server.removeTodo(id, one.id)
+    server.markTodo(id, two.id, 1, true)
+    engine.moveTodo(id, find(engine, id, 'three'), 2)
+    await idle()
+    expect(loads).toBe(2)
+    expect(notices).toEqual([])
+    expect(shape(engine.snapshot().details[id].todos)).toEqual(shape(server.getList(id).todos))
+  })
+
+  it('undoes a failed move, and shows a todo completed or deleted elsewhere', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['one', 'two', 'three'])
+    const base = serverApi(server)
+    let refuse = true
+    const { engine, notices } = tab(server, {
+      moveTodo: async (...args) => {
+        if (refuse) throw new ApiErrorException(null, { status: 503, message: 'down' })
+        return base.moveTodo(...args)
+      },
+    })
+    await engine.loadList(id)
+    const [one, two] = server.getList(id).todos
+    engine.moveTodo(id, find(engine, id, 'three'), 0)
+    expect(titles(engine, id)).toEqual(['three', 'one', 'two'])
+    await idle()
+    expect(titles(engine, id)).toEqual(['one', 'two', 'three'])
+    expect(notices).toEqual([
+      "Couldn't save your change. The list will refresh when the server is reachable.",
+    ])
+
+    refuse = false
+    server.markTodo(id, one.id, 1, true)
+    server.removeTodo(id, two.id)
+    engine.moveTodo(id, find(engine, id, 'one'), 2)
+    engine.moveTodo(id, find(engine, id, 'two'), 2)
+    await idle()
+    expect(notices.slice(1)).toEqual([
+      'This changed elsewhere. The current version is shown.',
+      'This todo was deleted elsewhere.',
+    ])
+    expect(shape(engine.snapshot().details[id].todos)).toEqual(shape(server.getList(id).todos))
+  })
+
+  it('applies the answer beneath what is still queued', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['one', 'two', 'three'])
+    const gates = [Promise.withResolvers<void>(), Promise.withResolvers<void>()]
+    let sent = 0
+    const base = serverApi(server)
+    const { engine } = tab(server, {
+      moveTodo: async (...args) => {
+        await gates[sent++].promise
+        return base.moveTodo(...args)
+      },
+    })
+    await engine.loadList(id)
+    engine.moveTodo(id, find(engine, id, 'three'), 0)
+    engine.moveTodo(id, find(engine, id, 'one'), 2)
+    engine.renameTodo(id, find(engine, id, 'two'), 'TWO')
+    gates[0].resolve()
+    await idle(5)
+    expect(titles(engine, id)).toEqual(['three', 'TWO', 'one'])
+    gates[1].resolve()
+    await idle(5)
+    expect(titles(engine, id)).toEqual(['three', 'TWO', 'one'])
+  })
+
+  it('keeps a move beside a rename made elsewhere', async () => {
+    const server = new MemoryListsServer()
+    const id = server.seededList('Work', ['one', 'two'])
+    const first = tab(server)
+    const second = tab(server)
+    await first.engine.loadList(id)
+    await second.engine.loadList(id)
+    first.engine.moveTodo(id, find(first.engine, id, 'two'), 0)
+    await idle(5)
+    second.engine.renameTodo(id, find(second.engine, id, 'two'), 'TWO')
+    await idle(5)
+    expect([...first.notices, ...second.notices]).toEqual([])
+    expect(server.getList(id).todos.map((todo) => todo.title)).toEqual(['TWO', 'one'])
   })
 })

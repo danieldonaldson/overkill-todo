@@ -19,6 +19,7 @@ vi.mock('../../lib/api', () => ({
       markTodo: vi.fn(),
       renameTodo: vi.fn(),
       deleteTodo: vi.fn(),
+      moveTodo: vi.fn(),
     },
   },
 }))
@@ -733,5 +734,165 @@ describe('ListsPanel', () => {
     } finally {
       await page.viewport(1280, 720)
     }
+  })
+})
+
+describe('ListsPanel: reordering', () => {
+  const titles = ['one', 'two', 'three']
+  const ids = titles.map((title) => `todo-${title}`)
+
+  async function open(extra: Todo[] = []) {
+    const todos = titles.map((title, index) => todo({ id: ids[index], title }))
+    mockLoaded([...todos, ...extra])
+    // Answers with the order the neighbours ask for, as the server does.
+    vi.mocked(api.lists.moveTodo).mockImplementation(async (_list, id, { above }) => {
+      const order = ids.filter((other) => other !== id)
+      order.splice(above.length === 0 ? 0 : order.indexOf(above[0]) + 1, 0, id)
+      return { open_todo_ids: order }
+    })
+    const screen = await render(ListsPanel)
+    await expect.element(screen.getByText('three', { exact: true })).toBeInTheDocument()
+    return screen
+  }
+
+  const shown = () =>
+    [...document.querySelectorAll('[data-open-todo] > span')].map((node) =>
+      node.textContent?.trim()
+    )
+  const handle = (title: string) =>
+    document.querySelector<HTMLElement>(`[aria-label='Move "${title}"']`)!
+  const rowTop = (title: string) => handle(title).closest('li')!.getBoundingClientRect().top
+
+  function pointer(target: Element, type: string, clientY: number, init: PointerEventInit = {}) {
+    target.dispatchEvent(
+      new PointerEvent(type, {
+        bubbles: true,
+        pointerId: 7,
+        isPrimary: true,
+        button: 0,
+        clientX: 20,
+        clientY,
+        ...init,
+      })
+    )
+  }
+
+  /** A press on a handle. Only a real pointer can be captured. */
+  function press(title: string, init: PointerEventInit = {}) {
+    const target = handle(title)
+    target.setPointerCapture = () => {}
+    pointer(target, 'pointerdown', rowTop(title) + 10, init)
+    return target
+  }
+
+  for (const pointerType of ['mouse', 'touch']) {
+    it(`drags the third todo to the top (${pointerType})`, async () => {
+      await open()
+      const target = press('three', { pointerType })
+      pointer(target, 'pointermove', rowTop('one') + 1, { pointerType })
+      expect(api.lists.moveTodo).not.toHaveBeenCalled()
+      await expect.element(page.getByTestId('drop-line')).toBeInTheDocument()
+      pointer(target, 'pointerup', rowTop('one') + 1, { pointerType })
+      await vi.waitFor(() => expect(shown()).toEqual(['three', 'one', 'two']))
+      expect(api.lists.moveTodo).toHaveBeenCalledExactlyOnceWith(LIST_ID, ids[2], {
+        above: [],
+        below: [ids[0], ids[1]],
+      })
+      expect(page.getByTestId('drop-line').elements()).toHaveLength(0)
+    })
+  }
+
+  it('drags a todo to the bottom', async () => {
+    await open()
+    const target = press('one')
+    pointer(target, 'pointermove', rowTop('three') + 1000)
+    pointer(target, 'pointerup', rowTop('three') + 1000)
+    await vi.waitFor(() => expect(shown()).toEqual(['two', 'three', 'one']))
+  })
+
+  it('saves nothing for a drag that is cancelled or dropped where it was', async () => {
+    await open()
+    const cancelled = press('three')
+    pointer(cancelled, 'pointermove', rowTop('one') + 1)
+    await userEvent.keyboard('{Escape}')
+    pointer(cancelled, 'pointerup', rowTop('one') + 1)
+
+    const lost = press('three')
+    pointer(lost, 'pointermove', rowTop('one') + 1)
+    pointer(lost, 'pointercancel', rowTop('one') + 1)
+    pointer(lost, 'pointerup', rowTop('one') + 1)
+
+    for (const title of titles) {
+      const back = press(title)
+      pointer(back, 'pointermove', rowTop('three') + 1)
+      pointer(back, 'pointermove', rowTop(title) + 10)
+      pointer(back, 'pointerup', rowTop(title) + 10)
+    }
+
+    expect(shown()).toEqual(titles)
+    expect(api.lists.moveTodo).not.toHaveBeenCalled()
+    expect(lists.snapshot.queueLength).toBe(0)
+  })
+
+  it('ignores a second button or a second finger', async () => {
+    await open()
+    for (const init of [{ button: 2 }, { isPrimary: false }]) {
+      const target = press('three', init)
+      pointer(target, 'pointermove', rowTop('one') + 1)
+      pointer(target, 'pointerup', rowTop('one') + 1)
+    }
+    expect(api.lists.moveTodo).not.toHaveBeenCalled()
+  })
+
+  it('moves with the keyboard, keeping focus and announcing the position', async () => {
+    const screen = await open()
+    const status = screen.getByTestId('move-announcement')
+    const steps: [string, string[], string][] = [
+      ['{ArrowUp}', ['one', 'three', 'two'], '"three", position 2 of 3'],
+      ['{Home}', ['three', 'one', 'two'], '"three", position 1 of 3'],
+      ['{ArrowUp}', ['three', 'one', 'two'], '"three", position 1 of 3'],
+      ['{ArrowDown}', ['one', 'three', 'two'], '"three", position 2 of 3'],
+      ['{End}', ['one', 'two', 'three'], '"three", position 3 of 3'],
+    ]
+    handle('three').focus()
+    for (const [key, order, announced] of steps) {
+      await userEvent.keyboard(key)
+      await vi.waitFor(() => expect(shown()).toEqual(order))
+      await expect.element(status).toHaveTextContent(announced)
+      await vi.waitFor(() => expect(document.activeElement).toBe(handle('three')))
+    }
+    await expect.element(status).toHaveAttribute('role', 'status')
+  })
+
+  it('gives done todos no handle, and turns off touch scrolling on handles alone', async () => {
+    const done = todo({
+      id: 'todo-done',
+      title: 'finished',
+      done: true,
+      completed_at: '2026-01-02T00:00:00Z',
+    })
+    const screen = await open([done])
+    await screen.getByRole('button', { name: /Completed/ }).click()
+    await expect.element(screen.getByText('finished')).toBeInTheDocument()
+    expect(handle('finished')).toBeNull()
+    expect(document.querySelectorAll('[aria-label^="Move "]')).toHaveLength(3)
+
+    const style = document.createElement('style')
+    style.textContent = '.touch-none { touch-action: none }'
+    document.head.append(style)
+    expect(getComputedStyle(handle('one')).touchAction).toBe('none')
+    expect(getComputedStyle(handle('one').closest('li')!).touchAction).toBe('auto')
+    style.remove()
+  })
+
+  it('puts a todo back and says so when its move fails', async () => {
+    await open()
+    vi.mocked(api.lists.moveTodo).mockRejectedValue(
+      new ApiErrorException(null, { status: 503, message: 'down' })
+    )
+    handle('three').focus()
+    await userEvent.keyboard('{Home}')
+    await vi.waitFor(() => expect(toastError).toHaveBeenCalledOnce())
+    expect(shown()).toEqual(titles)
   })
 })

@@ -48,6 +48,10 @@ const transport: ListsApi = {
     await guard()
     return api.lists.deleteTodo(listId, todoId, version)
   },
+  moveTodo: async (listId, todoId, above, below) => {
+    await guard()
+    return (await api.lists.moveTodo(listId, todoId, { above, below })).open_todo_ids
+  },
 }
 
 /** Text of a save that failed, kept until the Member submits or discards it. */
@@ -137,6 +141,8 @@ export const lists = {
   cancelRename: (draft: RenameDraft): void => engine.cancelRename(draft),
   deleteTodo: (listId: string, todo: Parameters<ListsEngine['deleteTodo']>[1]): void =>
     engine.deleteTodo(listId, todo),
+  moveTodo: (listId: string, todo: Parameters<ListsEngine['moveTodo']>[1], index: number): void =>
+    engine.moveTodo(listId, todo, index),
   loadLists: (): Promise<void> => engine.loadLists(),
   loadList: (id: string): Promise<void> => engine.loadList(id),
   retry: (): void => engine.retry(),

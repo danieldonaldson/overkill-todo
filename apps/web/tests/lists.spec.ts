@@ -35,6 +35,10 @@ interface State {
   holdMarks?: Promise<void>
   /** Answer marks with this status instead of saving. */
   failMarks?: number
+  /** Answer the next moves with a 500 instead of saving. */
+  failMoves?: number
+  /** Moves received, saved or not. */
+  moves?: number
 }
 
 function mockLists(page: Page, state: State) {
@@ -156,6 +160,26 @@ function mockLists(page: Page, state: State) {
       }
       state.todos[add[1]]!.push(todo)
       return route.fulfill({ json: todo })
+    }
+
+    const move = path.match(/^\/lists\/([^/]+)\/todos\/([^/]+)\/move$/)
+    if (move && method === 'POST') {
+      state.moves = (state.moves ?? 0) + 1
+      if (state.failMoves) {
+        state.failMoves -= 1
+        return route.fulfill({
+          status: 500,
+          json: { code: 'internal_error', message: 'Something went wrong' },
+        })
+      }
+      const { above } = request.postDataJSON() as { above: string[]; below: string[] }
+      const all = state.todos[move[1]]!
+      const moved = all.find((todo) => todo.id === move[2])!
+      const open = all.filter((todo) => !todo.done && todo !== moved)
+      const under = open.findIndex((todo) => todo.id === above[0])
+      open.splice(under + 1, 0, moved)
+      state.todos[move[1]] = [...open, ...all.filter((todo) => todo.done)]
+      return route.fulfill({ json: { open_todo_ids: open.map((todo) => todo.id) } })
     }
 
     const todoPath = path.match(/^\/lists\/([^/]+)\/todos\/([^/]+)$/)
@@ -513,4 +537,121 @@ test('a lost rename answer does not rename twice or show a failure', async ({ pa
   await expect(todos.getByText('Answer lost')).toHaveCount(1)
   expect(state.todos[LIST_A]![0]!.title).toBe('Answer lost')
   expect(state.todos[LIST_A]![0]!.version).toBe(2)
+})
+
+function threeTodos(): State {
+  const titles = ['One', 'Two', 'Three']
+  return {
+    ...freshState(),
+    lists: [{ id: LIST_A, name: 'Work', version: 1 }],
+    todos: {
+      [LIST_A]: titles.map((title, index) => ({
+        id: `8a1c2d3e-4f5a-6b7c-8d9e-0f1a2b3c4d5${index}`,
+        title,
+        done: false,
+        version: 1,
+        created_at: '2026-11-25T10:00:00Z',
+        completed_at: null,
+      })),
+    },
+  }
+}
+
+const handle = (page: Page, title: string) => page.getByRole('button', { name: `Move "${title}"` })
+
+async function expectOrder(page: Page, titles: string[]) {
+  await expect(page.getByRole('list', { name: 'Todos' }).getByRole('listitem')).toContainText(
+    titles
+  )
+}
+
+/** Press a todo's handle and move to just above another todo, without dropping. */
+async function dragAbove(page: Page, title: string, target: string) {
+  const from = (await handle(page, title).boundingBox())!
+  const to = (await handle(page, target).boundingBox())!
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(to.x + to.width / 2, to.y, { steps: 5 })
+}
+
+test('drags a todo to the top, and the order is kept', async ({ page }) => {
+  await seedSession(page)
+  const state = threeTodos()
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await expectOrder(page, ['One', 'Two', 'Three'])
+
+  await dragAbove(page, 'Three', 'One')
+  await expect(page.getByTestId('drop-line')).toBeVisible()
+  expect(state.moves ?? 0).toBe(0)
+  await page.mouse.up()
+  await expectOrder(page, ['Three', 'One', 'Two'])
+  await expect.poll(() => state.moves).toBe(1)
+  await page.reload()
+  await expectOrder(page, ['Three', 'One', 'Two'])
+})
+
+test('a drag cancelled with Escape changes and saves nothing', async ({ page }) => {
+  await seedSession(page)
+  const state = threeTodos()
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await expectOrder(page, ['One', 'Two', 'Three'])
+
+  await dragAbove(page, 'Three', 'One')
+  await page.keyboard.press('Escape')
+  await expect(page.getByTestId('drop-line')).toHaveCount(0)
+  await page.mouse.up()
+  await expectOrder(page, ['One', 'Two', 'Three'])
+  await page.reload()
+  await expectOrder(page, ['One', 'Two', 'Three'])
+  expect(state.moves ?? 0).toBe(0)
+})
+
+test('moves a todo with the keyboard alone', async ({ page }) => {
+  await seedSession(page)
+  const state = threeTodos()
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await expectOrder(page, ['One', 'Two', 'Three'])
+
+  // From the checkbox before it, with Tab.
+  await page.getByRole('checkbox', { name: 'Mark "Two" done' }).focus()
+  await page.keyboard.press('Shift+Tab')
+  await expect(handle(page, 'Two')).toBeFocused()
+  await page.keyboard.press('ArrowUp')
+  await expectOrder(page, ['Two', 'One', 'Three'])
+  await expect(handle(page, 'Two')).toBeFocused()
+  await expect(page.getByTestId('move-announcement')).toHaveText('"Two", position 1 of 3')
+  await page.keyboard.press('End')
+  await expectOrder(page, ['One', 'Three', 'Two'])
+  await expect(handle(page, 'Two')).toBeFocused()
+  await expect.poll(() => state.moves).toBe(2)
+  await page.reload()
+  await expectOrder(page, ['One', 'Three', 'Two'])
+})
+
+test('a failed move goes back and says so', async ({ page }) => {
+  await seedSession(page)
+  const state = threeTodos()
+  state.failMoves = 2
+  mockLists(page, state)
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await handle(page, 'Three').press('Home')
+  await expect(page.getByText(/Couldn't save your change/)).toBeVisible()
+  await expectOrder(page, ['One', 'Two', 'Three'])
+  // Once, and one repeat.
+  expect(state.moves).toBe(2)
+
+  await handle(page, 'Three').press('Home')
+  await expectOrder(page, ['Three', 'One', 'Two'])
+})
+
+test('only the drag handle turns off touch scrolling', async ({ page }) => {
+  await seedSession(page)
+  mockLists(page, threeTodos())
+  await page.goto(`/dashboard/lists/${LIST_A}`)
+  await expect(handle(page, 'One')).toHaveCSS('touch-action', 'none')
+  for (const row of await page.getByRole('list', { name: 'Todos' }).getByRole('listitem').all())
+    await expect(row).toHaveCSS('touch-action', 'auto')
 })

@@ -219,7 +219,10 @@ A move sends up to 20 open todo IDs above the target position and 20 below,
 nearest first. The server ignores the moved todo's own ID and any that aren't
 open in this list, including foreign IDs, and then places the todo directly below the first remaining ID in
 `above`, else directly above the first remaining one in `below`, else at the
-bottom. An empty `above` means the top. Moving a done todo answers `stale`.
+bottom. An `above` sent empty means the top; one whose IDs are all ignored does
+not. So a client whose only neighbours above were never saved sends the moved
+todo's own ID there. Moving a done todo answers `stale`. A todo already in its
+slot isn't rewritten, so repeats don't use up the gap.
 
 The answer holds IDs only, since full rows would be up to 500 KB per move. If
 its set of IDs differs from the open todos the tab knows, something changed
@@ -268,10 +271,15 @@ confirmed state, so undoing a failed save is removing it from the queue.
 - **Versions:** an operation stores the version on screen when the Member
   acted. When a save moves a todo from version n to n + 1, later queued
   operations on that todo at n move to n + 1. Nothing else changes a stored
-  version: not a refetch, and not a success whose version isn't n + 1.
+  version: not a refetch, not a success whose version isn't n + 1, and not a
+  success that asked for what version n already held. That last one changed
+  nothing, so n + 1 is another tab's change; the prototype model (4.4) found that
+  it advanced a queued deletion onto a change the Member hadn't seen.
 - **Renames** take their version when the form opens, not when it is saved: the
   form hides what a load brings in meanwhile. Until submitted, a started rename
   follows this tab's own saves like a queued edit, and nothing else.
+- **Moves** have no version, and go to the place the server's rule would give on
+  screen. The answered order is applied beneath what is queued.
 - **409 or 404:** the operation and later queued ones on the same item are
   dropped, the current version is shown (or the item removed), and the Member
   sees one message. Dropped text stays available to submit again: it goes back
@@ -447,6 +455,25 @@ The existing route-guard walk covers the Visitor case for future routes.
   next to it, never raised or lowered silently. `list_queue.qnt` is first
   prototyped without moves in slice 4, before the client queue gains them, for at
   most a day: most slice 3 review findings were in that queue.
+- **Prototype result (slice 4, 2026-11-26).** `models/list_queue.qnt`: two
+  tabs, one todo (also run with two), queues of 2, 5 requests, 3 titles; mark,
+  rename by draft, delete, single retry, late applies, 404 and stale answers,
+  loads. No additions, moves, resets or account switches yet.
+  - **Found a bug** in the code as it stood (D7, now fixed with a regression
+    test): a rename asking for the title version n already held succeeded at
+    n + 1, another tab's tick, and advanced a queued deletion onto it. The random
+    simulation found it within 100,000 traces of 25 steps; the trace is longer
+    than Apalache can check.
+  - **Apalache, alone on this machine:** 4 steps 30 s, 5 steps 126 s, 6 steps
+    616 s, about five times per step; 8 steps would take hours. At 6 steps
+    `refetch_advances_queue` and `refetch_advances_draft` give counterexamples
+    in 701 s and 580 s. State-space size isn't reported by Apalache and wasn't
+    measured.
+  - **So 8.1 changes:** Apalache can't be the main check for the queue at
+    useful depths. Plan: `quint run` (random simulation, 25 to 30 steps, a fixed
+    number of samples) as the gate for the queue models, with Apalache at 5 steps
+    as a fast bounded check; each broken variant must fail the simulation within
+    its sample count. To be decided in 8.1, with the model kept small.
 - **Coverage gate:** `docs/formal-coverage.yaml` is keyed by capability,
   requirement and scenario, plus P-35. `just formal-coverage` reads the spec
   deltas while the change is active and `openspec/specs/` once it is archived.
@@ -494,6 +521,30 @@ The existing route-guard walk covers the Visitor case for future routes.
   - `lists-large` (five lists of 1,000 todos, each open in several tabs): GET
     list 4.12 / 5.11, PATCH todo 7.29 / 7.80. All budgets are at their floors of
     25 / 50.
+  - Slice 4 (2026-11-26, same stack): `lists-large` also moves a todo each
+    iteration, directly below the first open todo, so about one move in 20
+    renumbers a list of 1,000. Five runs: move p95 7.1 to 8.3, p99 15 to 16,
+    max 95 ms. Four runs met every budget; one had PATCH todo p99 at 50 ms (max
+    77), against 3.2 to 4.2 ms in the others. Sampling during two more runs
+    showed 0 to 17,000 dead todo rows (5,079 live), autovacuum about once a
+    minute, `todos` indexes at 34 MB against a 1.6 MB table, and no lock waits
+    in 3-second samples.
+  - The slow tail is the developer machine's WAL flush, not the list code
+    (2026-11-26, five more runs with every request timed by k6 and Postgres
+    logging statements over 20 ms, lock waits over 10 ms, checkpoints and
+    autovacuums). All five met every budget: PATCH todo p99 3.5 to 6.6 ms, max
+    74. Ten of 27,000 requests exceeded 25 ms, singly, with the requests beside
+    them fast, and each slow tick matched a slow `COMMIT` to the millisecond
+    (74 ms tick, 72 ms `COMMIT`). No statement was slow, no lock wait was
+    logged, and the slow commits fell outside autovacuums and mostly outside
+    checkpoints. The database volume is on btrfs (zstd, copy-on-write) inside
+    LUKS, known for occasional fsync stalls; the failing run would be a worse
+    patch of them. Index bloat is reusable space: after autovacuum about 95% of
+    the index pages are free, and no query ran slow. Renumbering adds WAL but
+    does not create the stalls: ticks reached 13 to 33 ms before moves existed.
+    Accepted as environmental. If it recurs, put the load database on a
+    no-copy-on-write directory rather than turning off `synchronous_commit`,
+    which would hide what a commit costs.
 - [The largest export exhausts memory] → Streamed (D10). Measured in slice 2,
   100 lists of 1,000 todos with 500-character titles, always complete:
   62.5 MB in 0.5 s with ASCII titles, and 212.5 MB in 1.0 s with four-byte

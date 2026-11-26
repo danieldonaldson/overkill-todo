@@ -784,3 +784,90 @@ async fn renaming_and_deleting_lists_and_todos(pool: PgPool) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+#[sqlx::test(migrations = "../../migrations")]
+async fn moving_a_todo_answers_the_order_and_each_refusal(pool: PgPool) {
+    let app = common::create_test_app(pool);
+    let session = signup_and_session(&app, "e2e-move@example.com").await;
+    let list = create_list(&app, &session, "Work").await;
+    let list_id = list["id"].as_str().unwrap();
+    let todos_uri = format!("/api/v1/lists/{list_id}/todos");
+    let call = async |method: &str, uri: &str, body: Value| {
+        let resp = app
+            .clone()
+            .oneshot(authed(method, uri, &session, Some(&body), true))
+            .await
+            .unwrap();
+        let status = resp.status();
+        (status, body_json(resp.into_body()).await)
+    };
+    let mut ids = Vec::new();
+    for title in ["a", "b", "c"] {
+        let body = json!({ "key": uuid::Uuid::now_v7(), "title": title });
+        let (_, todo) = call("POST", &todos_uri, body).await;
+        ids.push(todo["id"].as_str().unwrap().to_string());
+    }
+    let [a, b, c] = &ids[..] else { panic!() };
+    let move_c = format!("{todos_uri}/{c}/move");
+
+    let (status, body) = call("POST", &move_c, json!({ "above": [], "below": [a, b] })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "open_todo_ids": [c, a, b] }));
+    let resp = app
+        .clone()
+        .oneshot(authed(
+            "GET",
+            &format!("/api/v1/lists/{list_id}"),
+            &session,
+            None,
+            false,
+        ))
+        .await
+        .unwrap();
+    let detail = body_json(resp.into_body()).await;
+    let order: Vec<_> = detail["todos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|todo| todo["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(order, [c, a, b], "kept after a reload");
+
+    // Twenty IDs each way are accepted, twenty-one refused.
+    let unknown: Vec<_> = (0..21).map(|_| uuid::Uuid::now_v7()).collect();
+    let body = json!({ "above": unknown[..20], "below": unknown[..20] });
+    let (status, body) = call("POST", &move_c, body).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "open_todo_ids": [a, b, c] }), "the bottom");
+    for body in [
+        json!({ "above": unknown, "below": [] }),
+        json!({ "above": [], "below": unknown }),
+        json!({ "above": [] }),
+        json!({ "below": [] }),
+        json!({ "above": ["not-an-id"], "below": [] }),
+        json!({ "above": null, "below": [] }),
+    ] {
+        let (status, answer) = call("POST", &move_c, body.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(answer["message"].is_string(), "{body}");
+    }
+
+    // A done todo doesn't move.
+    let done = json!({ "version": 1, "done": true });
+    call("PATCH", &format!("{todos_uri}/{c}"), done).await;
+    let (status, body) = call("POST", &move_c, json!({ "above": [], "below": [a] })).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["code"], "stale");
+    assert_eq!(body["current"]["id"], json!(c));
+    assert_eq!(body["current"]["done"], true);
+
+    let gone = uuid::Uuid::now_v7();
+    let empty = json!({ "above": [], "below": [] });
+    let (status, body) = call("POST", &format!("{todos_uri}/{gone}/move"), empty.clone()).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], "todo_not_found");
+    let uri = format!("/api/v1/lists/{gone}/todos/{a}/move");
+    let (status, body) = call("POST", &uri, empty).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["code"], "list_not_found");
+}

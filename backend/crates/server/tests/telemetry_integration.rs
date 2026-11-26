@@ -737,6 +737,24 @@ async fn list_and_todo_content_never_reaches_telemetry(pool: PgPool) {
     .await;
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 
+    // Moves: refused for a done todo, and for too many neighbours.
+    let neighbours: Vec<_> = (0..21).map(|_| uuid::Uuid::now_v7()).collect();
+    for (above, status) in [
+        (&neighbours[..1], StatusCode::CONFLICT),
+        (&neighbours[..], StatusCode::BAD_REQUEST),
+    ] {
+        let (resp, _) = send(
+            &app,
+            authed(
+                "POST",
+                &format!("/api/v1/lists/{list_id}/todos/{todo_id}/move"),
+                Some(json!({ "above": above, "below": [] })),
+            ),
+        )
+        .await;
+        assert_eq!(resp.status(), status);
+    }
+
     // Renames and deletes, accepted and refused.
     let renamed_list_name = format!("LIST-RENAMED-{marker}");
     let (resp, _) = send(

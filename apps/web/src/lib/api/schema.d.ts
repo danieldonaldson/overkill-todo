@@ -586,6 +586,27 @@ export interface paths {
         patch: operations["patch_todo"];
         trace?: never;
     };
+    "/api/v1/lists/{id}/todos/{todo_id}/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move an open todo among the list's open todos.
+         *     # Errors
+         *     Returns the 404 codes for a missing or foreign list or todo, or invalid input.
+         */
+        post: operations["move_todo"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/me": {
         parameters: {
             query?: never;
@@ -1188,6 +1209,23 @@ export interface components {
         /** @description Response body for logout. */
         LogoutResponse: {
             success: boolean;
+        };
+        /**
+         * @description Move an open todo next to its new neighbours, nearest first.
+         *
+         *     IDs that aren't other open todos of the list are ignored. An empty `above`
+         *     means the top; with no neighbour left the todo goes to the bottom.
+         */
+        MoveTodoRequest: {
+            /** @description Open todos above the new position, nearest first. */
+            above: string[];
+            /** @description Open todos below the new position, nearest first. */
+            below: string[];
+        };
+        /** @description The order after a move. */
+        MoveTodoResponse: {
+            /** @description Every open todo of the list, in order. */
+            open_todo_ids: string[];
         };
         /**
          * @description Whether a navigation reached its page.
@@ -3251,6 +3289,101 @@ export interface operations {
                 };
             };
             /** @description The todo changed elsewhere */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StaleTodoConflictResponse"];
+                };
+            };
+            /** @description Made for another account than the one signed in (`account_changed`); nothing was changed */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Internal error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    move_todo: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description ID of the account the change was made for. If given, it must be the signed-in account's. */
+                "x-account-id"?: string;
+            };
+            path: {
+                /** @description List ID */
+                id: string;
+                /** @description Todo ID */
+                todo_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveTodoRequest"];
+            };
+        };
+        responses: {
+            /** @description The list's open todos in order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MoveTodoResponse"];
+                };
+            };
+            /** @description A missing field, a malformed ID, or more than 20 IDs either way */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Not authenticated */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Email address not verified */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description List or todo not found (`list_not_found` / `todo_not_found`) */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The todo is done */
             409: {
                 headers: {
                     [name: string]: unknown;

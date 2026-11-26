@@ -22,6 +22,7 @@ export const ROUTE_BUDGETS = {
   'GET /api/v1/lists/{id} (1000 todos)': { p95: 25, p99: 50 }, // worst 4.12 / 5.11
   'POST /api/v1/lists/{id}/todos': { p95: 25, p99: 50 }, // worst 2.82 / 7.31
   'PATCH /api/v1/lists/{id}/todos/{todo_id}': { p95: 25, p99: 50 }, // worst 7.29 / 7.80 (lists-large)
+  'POST /api/v1/lists/{id}/todos/{todo_id}/move': { p95: 25, p99: 50 }, // worst 8.26 / 16.47 (lists-large, renumbers 1 in 20)
   'DELETE /api/v1/lists/{id}/todos/{todo_id}': { p95: 25, p99: 50 }, // provisional: list writes
   'POST /api/v1/auth/register': { p95: 400, p99: 800 }, // provisional
   'POST /api/v1/auth/verify-email': { p95: 400, p99: 800 }, // provisional

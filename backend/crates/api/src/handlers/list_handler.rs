@@ -8,13 +8,14 @@ use std::sync::Arc;
 
 use application::dto::{
     AddTodoRequest, CreateListRequest, DeleteListQuery, DeleteTodoQuery, LimitConflictResponse,
-    ListDetailResponse, ListResponse, RenameListRequest, StaleListConflictResponse,
-    StaleTodoConflictResponse, TodoPatchRequest, TodoResponse,
+    ListDetailResponse, ListResponse, MoveTodoRequest, MoveTodoResponse, RenameListRequest,
+    StaleListConflictResponse, StaleTodoConflictResponse, TodoPatchRequest, TodoResponse,
 };
 use application::ports::outgoing::{LimitKind, ListSummary, ListWithTodos};
 use application::use_cases::{
     AddTodoUseCase, CreateListUseCase, DeleteListUseCase, DeleteTodoUseCase, GetListUseCase,
-    ListListsUseCase, MarkTodoUseCase, MutationOutcome, RenameListUseCase, RenameTodoUseCase,
+    ListListsUseCase, MarkTodoUseCase, MoveOutcome, MoveTodoUseCase, MutationOutcome,
+    RenameListUseCase, RenameTodoUseCase,
 };
 use axum::{
     Json,
@@ -29,7 +30,7 @@ use uuid::Uuid;
 
 use crate::{
     error::AppError,
-    extractors::{ApiJson, ApiPath, ApiQuery},
+    extractors::{ApiJson, ApiPath, ApiQuery, ValidatedJson},
     middleware::AuthUser,
 };
 
@@ -42,6 +43,7 @@ pub struct ListHandlerDeps {
     pub delete_list: Arc<DeleteListUseCase>,
     pub add_todo: Arc<AddTodoUseCase>,
     pub mark_todo: Arc<MarkTodoUseCase>,
+    pub move_todo: Arc<MoveTodoUseCase>,
     pub rename_todo: Arc<RenameTodoUseCase>,
     pub delete_todo: Arc<DeleteTodoUseCase>,
 }
@@ -439,5 +441,53 @@ pub async fn patch_todo(
         MutationOutcome::Applied(todo) => Json(todo_response(&todo)).into_response(),
         MutationOutcome::Stale(todo) => stale_todo_response(&todo),
         MutationOutcome::LimitReached(limit) => limit_response(limit),
+    })
+}
+
+/// Move an open todo among the list's open todos.
+#[utoipa::path(
+    post,
+    path = "/lists/{id}/todos/{todo_id}/move",
+    tag = "Lists",
+    params(
+        ("id" = Uuid, Path, description = "List ID"),
+        ("todo_id" = Uuid, Path, description = "Todo ID")
+    ),
+    request_body = MoveTodoRequest,
+    responses(
+        (status = 200, description = "The list's open todos in order", body = MoveTodoResponse),
+        (status = 400, description = "A missing field, a malformed ID, or more than 20 IDs either way"),
+        (status = 401, description = "Not authenticated"),
+        (status = 403, description = "Email address not verified"),
+        (status = 404, description = "List or todo not found (`list_not_found` / `todo_not_found`)"),
+        (status = 409, description = "The todo is done", body = StaleTodoConflictResponse)
+    )
+)]
+/// # Errors
+/// Returns the 404 codes for a missing or foreign list or todo, or invalid input.
+#[tracing::instrument(name = "handler.move_todo", skip_all)]
+pub async fn move_todo(
+    State(deps): State<Arc<ListHandlerDeps>>,
+    auth_user: AuthUser,
+    ApiPath(path): ApiPath<TodoPath>,
+    ValidatedJson(request): ValidatedJson<MoveTodoRequest>,
+) -> Result<Response, AppError> {
+    let ids = |ids: Vec<Uuid>| ids.into_iter().map(TodoId::from_uuid).collect::<Vec<_>>();
+    let outcome = deps
+        .move_todo
+        .execute(
+            &auth_user.user_id,
+            &ListId::from_uuid(path.id),
+            &TodoId::from_uuid(path.todo_id),
+            &ids(request.above),
+            &ids(request.below),
+        )
+        .await?;
+    Ok(match outcome {
+        MoveOutcome::Moved(order) => Json(MoveTodoResponse {
+            open_todo_ids: order.iter().map(|id| *id.as_uuid()).collect(),
+        })
+        .into_response(),
+        MoveOutcome::Stale(todo) => stale_todo_response(&todo),
     })
 }

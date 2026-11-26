@@ -71,6 +71,14 @@ export function renameTodo(client, listId, todo, title) {
   })
 }
 
+/** `above` and `below` are todo IDs, nearest first. */
+export function moveTodo(client, listId, todo, above, below) {
+  return client.request('POST', '/lists/{id}/todos/{todo_id}/move', {
+    path: `/lists/${listId}/todos/${todo.id}/move`,
+    body: { above, below },
+  })
+}
+
 export function deleteTodo(client, listId, todo) {
   return client.request('DELETE', '/lists/{id}/todos/{todo_id}', {
     path: `/lists/${listId}/todos/${todo.id}?version=${todo.version}`,

@@ -42,6 +42,7 @@
   let todoRenameError = $state('')
   let deleteOpen = $state(false)
   let deleteError = $state('')
+  let moveAnnouncement = $state('')
   /** What is being renamed, at the version seen when the form opened (D7). */
   let listDraft: RenameDraft | undefined
   let todoDraft: RenameDraft | undefined
@@ -129,6 +130,8 @@
         submittedListKey = null
         cancelListRename()
         cancelTodoRename()
+        cancelDrag()
+        moveAnnouncement = ''
         deleteOpen = false
         deleteError = ''
       }
@@ -142,10 +145,26 @@
     untrack(() => {
       cancelListRename()
       cancelTodoRename()
+      cancelDrag()
+      moveAnnouncement = ''
       deleteOpen = false
       deleteError = ''
     })
   })
+
+  // Escape cancels a drag wherever focus is.
+  $effect(() => {
+    if (!drag) return
+    const onkeydown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      cancelDrag()
+    }
+    window.addEventListener('keydown', onkeydown)
+    return () => window.removeEventListener('keydown', onkeydown)
+  })
+
+  $effect(() => cancelDrag)
 
   $effect(() => {
     if (!deleteOpen) return
@@ -269,6 +288,90 @@
     const left = group?.isConnected ? boxes() : []
     const next = left[index] ?? left[left.length - 1]
     ;(next ?? document.getElementById('new-todo-title'))?.focus()
+  }
+
+  const nameOf = (todo: TodoView) => todo.key ?? todo.id
+  const handleId = (todo: TodoView) => `move-todo-${nameOf(todo)}`
+
+  /** Move with the keyboard: announce the new place and keep focus. */
+  async function moveWithKeyboard(todo: TodoView, event: KeyboardEvent) {
+    const from = openTodos.findIndex((other) => nameOf(other) === nameOf(todo))
+    const last = openTodos.length - 1
+    const to = { ArrowUp: from - 1, ArrowDown: from + 1, Home: 0, End: last }[event.key]
+    if (to === undefined || !selectedId || drag) return
+    // Never scroll the page instead, also at either end.
+    event.preventDefault()
+    if (from === -1) return
+    const target = Math.max(0, Math.min(to, last))
+    lists.moveTodo(selectedId, todo, target)
+    moveAnnouncement = `"${todo.title}", position ${target + 1} of ${openTodos.length}`
+    await tick()
+    const handle = document.getElementById(handleId(todo))
+    handle?.focus()
+    handle?.scrollIntoView({ block: 'nearest' })
+  }
+
+  // Dragging: nothing changes until the drop, so a cancelled drag saves nothing.
+  // The open todos, as they are on screen when it is used, hold the target.
+  let drag = $state<{ name: string; pointer: number; before: string | null } | null>(null)
+  let pointerY = 0
+  let scrollFrame = 0
+
+  /** The todo the dragged one would go above, or null for the bottom. */
+  function dropTarget(y: number): string | null {
+    const rows = document.querySelectorAll<HTMLElement>('[data-open-todo]')
+    for (const row of rows) {
+      const { top, height } = row.getBoundingClientRect()
+      if (y < top + height / 2) return row.dataset.openTodo ?? null
+    }
+    return null
+  }
+
+  /** Near the top or bottom of the window, scroll so any place can be reached. */
+  function scrollWhileDragging() {
+    if (!drag) return
+    const edge = 48
+    const above = edge - pointerY
+    const below = pointerY - (window.innerHeight - edge)
+    if (above > 0) window.scrollBy(0, -above / 4)
+    else if (below > 0) window.scrollBy(0, below / 4)
+    drag.before = dropTarget(pointerY)
+    scrollFrame = requestAnimationFrame(scrollWhileDragging)
+  }
+
+  function startDrag(todo: TodoView, event: PointerEvent) {
+    const name = nameOf(todo)
+    if (event.button !== 0 || !event.isPrimary || drag || !name) return
+    const handle = event.currentTarget as HTMLElement
+    handle.setPointerCapture(event.pointerId)
+    pointerY = event.clientY
+    drag = { name, pointer: event.pointerId, before: dropTarget(pointerY) }
+    scrollFrame = requestAnimationFrame(scrollWhileDragging)
+  }
+
+  function continueDrag(event: PointerEvent) {
+    if (drag?.pointer !== event.pointerId) return
+    pointerY = event.clientY
+    drag.before = dropTarget(pointerY)
+  }
+
+  function cancelDrag() {
+    cancelAnimationFrame(scrollFrame)
+    drag = null
+  }
+
+  function endDrag(event: PointerEvent) {
+    if (drag?.pointer !== event.pointerId) return
+    const { name, before } = drag
+    cancelDrag()
+    const moved = openTodos.find((todo) => nameOf(todo) === name)
+    if (!moved || !selectedId || before === name) return
+    const others = openTodos.filter((todo) => todo !== moved)
+    const index = others.findIndex((todo) => nameOf(todo) === before)
+    const target = index === -1 ? others.length : index
+    if (target === openTodos.indexOf(moved)) return
+    lists.moveTodo(selectedId, moved, target)
+    moveAnnouncement = `"${moved.title}", position ${target + 1} of ${openTodos.length}`
   }
 
   function openDelete() {
@@ -427,7 +530,35 @@
     {/snippet}
 
     {#snippet todoRow(todo: TodoView, completed: boolean)}
-      <li class="flex flex-wrap items-center gap-2 px-3 py-2">
+      <li
+        class="relative flex flex-wrap items-center gap-2 px-3 py-2 {drag &&
+        drag.name === nameOf(todo)
+          ? 'opacity-50'
+          : ''}"
+        data-open-todo={completed ? undefined : nameOf(todo)}
+      >
+        {#if !completed}
+          {#if drag && drag.before === nameOf(todo)}
+            <span class="absolute inset-x-0 -top-px h-0.5 bg-primary" data-testid="drop-line"
+            ></span>
+          {/if}
+          <!-- Only the handle starts a drag, so a swipe over the todos scrolls. -->
+          <button
+            type="button"
+            id={handleId(todo)}
+            class="cursor-grab touch-none rounded-sm px-1 text-muted-foreground select-none"
+            aria-label={`Move "${todo.title}"`}
+            aria-describedby="move-todo-help"
+            onkeydown={(event) => moveWithKeyboard(todo, event)}
+            onpointerdown={(event) => startDrag(todo, event)}
+            onpointermove={continueDrag}
+            onpointerup={endDrag}
+            onpointercancel={cancelDrag}
+            onlostpointercapture={cancelDrag}
+          >
+            <span aria-hidden="true">⠿</span>
+          </button>
+        {/if}
         <input
           type="checkbox"
           class="size-4"
@@ -672,6 +803,11 @@
           {@render unsavedTexts(unsavedNewTodos, () => true)}
           {@render unsavedTexts(unsavedTodoRenames, canResubmit)}
 
+          <p id="move-todo-help" class="sr-only">
+            Drag, or press the up and down arrow keys, Home or End, to move this todo.
+          </p>
+          <p class="sr-only" role="status" data-testid="move-announcement">{moveAnnouncement}</p>
+
           {#if todos.length === 0}
             <div
               class="rounded-md border border-dashed border-border p-6 text-sm text-muted-foreground"
@@ -684,6 +820,9 @@
                 {#each openTodos as todo (todo.key ?? todo.id)}
                   {@render todoRow(todo, false)}
                 {/each}
+                {#if drag?.before === null}
+                  <li class="h-0.5 bg-primary" aria-hidden="true" data-testid="drop-line"></li>
+                {/if}
               </ul>
             {/if}
 

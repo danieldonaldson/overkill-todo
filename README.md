@@ -79,7 +79,7 @@ than a rolling deploy or rollback across OT-012.
 | `just api-types-check`                 | fail if either generated API file is stale                         |
 | `just fuzz-api [seed] [examples]`      | fuzz every API route against `openapi.json` on a throwaway DB      |
 | `just threat-model-check`              | every auth security property names a check that still exists       |
-| `just verify`                          | Kani proofs of the auth domain policy, every input within bounds   |
+| `just verify`                          | Kani proofs of auth and ordering rules, every input within bounds  |
 | `just models`                          | Quint concurrency models of code entry and refresh, replayed on DB |
 | `just protocols`                       | Tamarin proofs of the sign-in protocols against a network attacker |
 | `just load <scenario>`                 | k6 load scenario against the capped stack                          |
@@ -193,7 +193,7 @@ just load-seed          # 500 verified test Members via the real sign-up flow (a
 just load smoke         # 30 s, every route, zero errors allowed
 just load auth-mix      # sign in, check session, refresh, sign out at 10/s for 3 min
 just load lists         # open a list, add, tick, rename and delete todos and lists, at 10/s for 3 min
-just load lists-large   # the same list of 1,000 todos from several tabs, at 10/s for 3 min
+just load lists-large   # tick and reorder the same list of 1,000 todos from several tabs, at 10/s for 3 min
 just load-baseline auth-mix  # make the latest complete run the baseline (commit it)
 just load-reset         # delete the test Members
 just load-down
@@ -219,7 +219,9 @@ just load-down
 - **Results** go to `loadtest/results/` (gitignored). After each run, the p95 per
   route is compared with `loadtest/baselines/<scenario>.json` if one exists.
   Ctrl-C stops a run and still prints its summary, marked incomplete; incomplete
-  runs can't become baselines.
+  runs can't become baselines. `LOAD_RAW=1` also writes every request with a
+  millisecond timestamp to `loadtest/results/<scenario>-<time>.csv.gz`, to find
+  when a tail happened and match it to the database log.
 - **Live view.** With `just obs-up` running, k6 streams its metrics to
   VictoriaMetrics (tagged `testid=<scenario>-<time>`). Without it, runs behave the
   same.
