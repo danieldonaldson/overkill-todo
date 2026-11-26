@@ -22,6 +22,8 @@ find out.
   development mode off.
 - Account data is backed up outside the virtual machine, and a timed restore
   into a rebuilt cluster is rehearsed.
+- The database runs with replicas on the one node, and losing its primary
+  is rehearsed.
 - Workloads can reach only what they need.
 - The existing observability and analytics behaviour works there too.
 - Compose stays: it remains the way to run the app locally, and its production
@@ -48,7 +50,8 @@ key), and the gate (manifest checks). No API, schema or page changes.
 
 - Choosing a production target, cloud hosting, public DNS or public
   certificates.
-- Several nodes, high availability and autoscaling.
+- Several nodes, high availability across nodes, and autoscaling. Database
+  replicas on the one node are in scope, to practise failover.
 - Replacing or changing the compose workflow.
 - Surviving loss of the operator's computer: backups leave the virtual machine,
   not the host.

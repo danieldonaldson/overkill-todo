@@ -109,6 +109,19 @@ its other specifications there.
 - **WHEN** the virtual machine restarts
 - **THEN** every workload returns to healthy with no data lost
 
+### Requirement: The database survives losing its primary
+The cluster SHALL run the database with replicas, at least one synchronous, so
+that losing the primary instance promotes a replica without losing a committed
+write.
+
+#### Scenario: Primary fails
+- **WHEN** the primary database instance is killed while requests are being served
+- **THEN** a replica is promoted within 60 seconds, every write the app confirmed before the failure is present, and the app serves again without a manual restart
+
+#### Scenario: Planned switchover
+- **WHEN** the operator switches the primary to another instance
+- **THEN** reads keep succeeding throughout, and writes resume within 30 seconds
+
 ### Requirement: Account data can be restored
 Account data SHALL be backed up continuously to storage outside the virtual
 machine. Every restore rehearsal SHALL record how long it took and the newest

@@ -34,7 +34,7 @@ There are no domain, application or schema changes: everything is in `deploy/`,
 **Goals:** learn by running the pieces a real cluster has; one source of config
 shared with compose where practical.
 
-**Non-Goals:** high availability; hiding Kubernetes behind an abstraction;
+**Non-Goals:** high availability across nodes; hiding Kubernetes behind an abstraction;
 parity of every compose convenience.
 
 ## Hypothesis
@@ -362,6 +362,18 @@ CNPG 1.30.2, barman-cloud plugin 0.16.0. Kubernetes
 is 1.36.6: Talos 1.14 supports up to 1.37, but Cilium 1.20, cert-manager 1.21 and
 CNPG 1.30 list 1.36 as their newest tested. Garage is pinned in slice 3.
 
+**D15. Database replicas on one node (agreed 2026-11-26).** The local overlay
+runs three CNPG instances, the base keeps one, so other environments choose. One
+replica is synchronous (`synchronous: {method: any, number: 1}`), so a failover
+never loses a committed write; the other is asynchronous, so losing one replica
+doesn't stop writes. The backend keeps using the `-rw` service, which follows the
+primary. This rehearses failover and switchover only: every instance shares the
+VM's disk, so slice 3's backups are still the only protection against losing it.
+WAL archiving must continue from whichever instance is primary. Sending reads to
+the `-ro` service is backend work, a separate change on `main`, since replicas
+lag and the dashboard re-reads after its writes. _Alternative:_ one instance,
+which restarts in place but never fails over.
+
 ### Slice plan
 
 Only slice 1 has tasks until it ships.
@@ -395,7 +407,8 @@ the deployment spec.
 - [A broken secret blocks the one workloads Application] → the running version keeps
   serving, and status names it.
 - [VM networking needs root] → scripts print what needs `sudo`.
-- [Single node] → restarts are outages; accepted.
+- [Single node] → restarts are outages; accepted. Database replicas (D15) cover
+  a lost Postgres process, not a lost VM.
 
 ## Migration Plan
 
