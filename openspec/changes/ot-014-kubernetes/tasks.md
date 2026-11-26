@@ -36,7 +36,7 @@ Smoke checks pass; Database unavailable; Machine restarts.
 - [x] 2.4 Run backend and web from pinned `main` digests behind Traefik (D6), TLS from a local CA, HTTP redirected. Verify: `just smoke` passes trusting the CA, post-quantum check included.
 - [x] 2.5 Sign in as a Member over TLS with an emailed code. Verify: it works end to end in a real browser.
 - [x] 2.6 Drills with the app: deploy, rollback, broken image, database stopped and returned, VM restart (measured, data intact). Verify: outcomes and timings are in design.md and within the spec's limits.
-- [ ] 2.7 Merge `main` (D10), `just ci` green, README status updated, design.md revised, slice 3's tasks checked. Verify: strict validation passes.
+- [x] 2.7 Merge `main` (D10), `just ci` green, README status updated, design.md revised, slice 3's tasks checked. Verify: strict validation passes.
 
 ## 3. Slice 3: backups and the restore drill
 
@@ -44,8 +44,8 @@ Delivers: Destroying the cluster touches nothing else; Restore into a rebuilt
 cluster; Rebuild never silently starts empty; Backup storage unavailable.
 
 - [ ] 3.1 Prove Garage with barman-cloud, path-style addressing included, and pin it (D7). Verify: a base backup and WAL arrive, recorded in design.md; otherwise revise D7.
-- [ ] 3.2 Run Garage on the host with its own volume, reached over the VM bridge; its credentials are `local` secrets. Verify: `k8s-down` leaves its data.
-- [ ] 3.3 Add the barman-cloud plugin and the base's backup to the local overlay, with a separate explicit first-run `initdb` overlay and `bootstrap.recovery` for a rebuild. Verify: with no usable backup the database doesn't start.
+- [ ] 3.2 Run Garage on the host with its own volume, reached from the VM at the bridge's gateway (10.5.0.1, check ufw allows it); its credentials are `local` secrets. Verify: `k8s-down` leaves its data.
+- [ ] 3.3 Install the barman-cloud plugin as an Application (chart `plugin-barman-cloud` 0.9.0 for v0.16.0; it needs cert-manager), and add the base's backup to the local overlay, with a separate explicit first-run `initdb` overlay and `bootstrap.recovery` for a rebuild. CNPG reads `bootstrap` only when it creates a Cluster, so switching the running one to `recovery` changes nothing until a rebuild. Verify: with no usable backup the database doesn't start.
 - [ ] 3.4 Drill: write a row, confirm its backup, destroy and rebuild, restore. Verify: the row is there; duration and newest data recovered are recorded.
 - [ ] 3.5 Drill: storage stopped while the app runs. Verify: the app serves, the failure is visible, and backups resume. Boundary work as in 2.7.
 
@@ -74,7 +74,7 @@ Delivers: Backups stop succeeding, and the observability spec on the cluster.
 
 ## 7. Slice 7: rebuild from nothing
 
-- [ ] 7.1 Destroy everything but the backups and the keys, rebuild, restore. Verify: every scenario holds, and total recovery time is recorded in design.md.
+- [ ] 7.1 Destroy everything but the backups and the keys, rebuild, restore. Verify: every scenario holds, including a rollback against a newer schema (slice 2 had no migration to test it with), and total recovery time is recorded in design.md.
 
 ## 8. Feature done
 

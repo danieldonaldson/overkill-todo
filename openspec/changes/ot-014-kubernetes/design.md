@@ -127,7 +127,37 @@ network and the Redis password, as expected, and nothing needed a hand.
 - Email: a Mailtrap sandbox was replaced by Ethereal (Mailtrap allows 50 a month);
   `backend-v1` to `backend-v2`, the old one pruned.
 
+### Slice 2 drills (2026-11-26)
 
+With the app on the local cluster and a loop on the host requesting a page and the
+readiness endpoint every 0.2 s. Times are from the push, or from the action.
+
+| Drill | Outcome | Time | Requests failed | Limit |
+| --- | --- | --- | --- | --- |
+| Deploy (47c6baf → 962508e) | both running alone | 46 s | 1 of 694: a page, as web stopped | 10 min, none |
+| Roll back (revert), after web's `preStop` | previous images running alone | 110 s | 0 of 1,064 | 10 min, none |
+| Backend image that doesn't exist | old pod serves; `k8s-status` names the pod and image at 91 s | clean 71 s after the revert | 0 of 1,552 | |
+| Database stopped (CNPG fencing), 49 s | readiness 503 (and 8 timeouts) within 4 s; pages kept loading; no backend restart | ready 16 s after it returned | pages 0 of 183 | |
+| VM restart (`talosctl reboot`) | everything healthy by itself; 1 verified account before and after | API 60 s, serving 130 s | all, from +5 s to +125 s (accepted) | |
+
+The deploy's lost request was web stopping while Traefik still routed to it; the
+backend already waits before draining. Web now has a 5 s `preStop` sleep, and the
+rollback after it lost nothing. Roll back ran against the same schema: main added
+no migration between the two commits, so "against the newer schema" waits for a
+deploy that brings one (7.1).
+
+### What slice 2 changed for later slices
+
+- Every cluster setting change needs its consumer to restart or reload; check it
+  took effect in the running component, not just in its ConfigMap (Cilium).
+- Overlay generators need the base's namespace, or references silently miss.
+- Compose's app user is a superuser and CNPG's isn't: anything a migration needs
+  extra privilege for goes in CNPG's `Database` resource.
+- Pods behind Traefik need a pause before stopping (`preStop`), or a rollout drops
+  requests.
+- Images come only from `main` commits whose CI published them; merge that commit.
+
+### What slice 1 changed for later slices
 
 - An overlay can't be emptied: Kustomize refuses to render one, and ArgoCD refuses
   to prune an Application to nothing. The canary's removal left the app's namespace.
