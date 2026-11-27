@@ -301,6 +301,31 @@ rest), so row 3 came from the `.partial`.
   until it succeeds, so a Garage outage holds up Barman's WAL processing while
   streaming continues into its own directory. 3.12's outage drill checks it.
 
+### Slice 3, Barman in place (3.9–3.11, 2026-11-27)
+
+- Barman 3.20.1 runs on the host (`deploy/k8s/barman/`, PGDG packages on a pinned
+  Debian), started by `k8s.sh` after Garage, host networking, its volume kept by
+  `k8s-down`. It reaches the primary through CNPG's managed `rw` Service of type
+  LoadBalancer at `10.5.0.101`, from its own Cilium pool; the edge pool now
+  selects only Traefik, which it didn't before, so whichever Service came first
+  could have taken the edge's address. Postgres sees Barman as `10.5.0.1`, so the
+  `pg_hba` rules hold to the bridge.
+- The role is a CNPG-managed superuser with replication, as in Barman's own
+  setup: least privilege needs `GRANT EXECUTE` on the backup functions, which
+  CNPG can't declare.
+- Two pushes, so the database always had a backup path: Barman beside the
+  plugin's archiving first (streaming, its first backup 1.5 min after the sync,
+  uploaded by the hook), then the plugin's archiving and the ScheduledBackup
+  removed. After that Garage received WAL only from Barman's hook. CNPG copied
+  the slot `barman` to both replicas (`synchronizeReplicas`).
+- A bug: `barman -q list-backups` prints nothing, so the entrypoint took its
+  "first" backup every loop, six in seven minutes; `-q` dropped, the extras
+  deleted from Barman and Garage. The image's tag now includes a hash of its
+  build files, or the fix wouldn't have been rebuilt.
+- `k8s-up` copies Barman's `.partial` to Garage before the VM starts (3.11);
+  `k8s-db-init` refuses while Garage or Barman hold a backup, and no longer
+  requests a plugin backup: Barman takes the first one by itself.
+
 ### What slice 3 changed for later slices
 
 - The database restores on every creation; the first run is `just k8s-db-init`.

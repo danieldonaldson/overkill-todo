@@ -437,17 +437,8 @@ cmd_db_init() {
   kubectl -n overkill-todo delete cluster overkill-todo-db --ignore-not-found --wait
   kubectl create -f - <<<"$cluster"
   kubectl -n overkill-todo wait --for=condition=Ready cluster/overkill-todo-db --timeout=600s
-  # The ScheduledBackup's immediate one ran when it was created, not now.
-  kubectl create -f - >/dev/null <<YAML
-apiVersion: postgresql.cnpg.io/v1
-kind: Backup
-metadata: { generateName: overkill-todo-db-init-, namespace: overkill-todo }
-spec:
-  cluster: { name: overkill-todo-db }
-  method: plugin
-  pluginConfiguration: { name: barman-cloud.cloudnative-pg.io }
-YAML
-  say "the database is empty and archiving; its first backup has started (kubectl -n overkill-todo get backups)"
+  # Barman takes the first backup by itself once it can stream (deploy/k8s/barman/run.sh).
+  say "the database is empty; Barman's first backup follows within minutes (just k8s-status)"
 }
 
 case ${1:-} in

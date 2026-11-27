@@ -4,7 +4,8 @@ A local single-node cluster that ArgoCD fills from Git (OT-014). It sits beside
 `../compose/`, which stays the way to run the app locally and has its own
 production override. Which one production uses is not decided.
 
-> **Status:** slice 3 reopened for a streaming Barman server (D7a). The app runs at https://todo.k8s.test with
+> **Status:** slice 3 reopened for a streaming Barman server (D7a): it runs, and
+> its drills (3.12) are next. The app runs at https://todo.k8s.test with
 > development mode off. The database runs three instances and is backed up to
 > Garage on the host; a rebuild restores it (drilled: about 6 minutes, nothing by
 > hand). Isolation and admission arrive in slice 4.
@@ -51,33 +52,40 @@ which the cluster reads too. `./scripts/k8s.sh garage` restarts it alone.
 
 ### Backups and restore
 
-The database archives its WAL to Garage continuously and takes a base backup when
-the ScheduledBackup is created and daily at 03:00 UTC, kept for 14 days. A new
-cluster restores from the newest backup, so a rebuild needs nothing by hand. With
-no backup it doesn't start, rather than starting empty: `k8s-status` shows the
-database stuck at "Setting up primary" and its recovery pods failing with "no
-target backup found".
+A Barman server on the host, beside Garage, backs up the database the way a
+dedicated Barman host would: it streams WAL over the replication slot `barman`
+and takes a base backup with `pg_basebackup` daily at 03:00 UTC (and at once when
+it has none), keeping 14 days. It reaches the primary at `10.5.0.101:5432`, a
+LoadBalancer address on the bridge, as the role `barman` (password in
+[`../secrets/local/barman-db.sops.yaml`](../secrets/local/barman-db.sops.yaml)).
+Its own copies are in the Docker volume `overkill-todo-barman`, and its hooks copy
+each backup and finished WAL file to Garage, which is what the cluster restores
+from. Barman is pinned to the barman-cloud plugin's Barman version
+(`BARMAN_VERSION` in `versions.env`); they are upgraded together.
+
+A new cluster restores from the newest backup in Garage, so a rebuild needs
+nothing by hand. `k8s-up` first copies the WAL file Barman was still receiving
+into Garage, so the restore includes everything Barman got. With no backup the
+database doesn't start, rather than starting empty: `k8s-status` shows it stuck
+at "Setting up primary", its recovery pods failing with "no target backup found".
 
 The first run, with an empty bucket, is the one exception, and it is explicit:
 
 ```bash
-just k8s-db-init   # empty database, then a first backup; refused if the bucket holds anything
-kubectl -n overkill-todo get backups
+just k8s-db-init   # empty database; refused if Garage or Barman hold any backup
 ```
 
-A backup by hand:
+Barman, by hand:
 
 ```bash
-kubectl create -f - <<'YAML'
-apiVersion: postgresql.cnpg.io/v1
-kind: Backup
-metadata: { generateName: overkill-todo-db-manual-, namespace: overkill-todo }
-spec:
-  cluster: { name: overkill-todo-db }
-  method: plugin
-  pluginConfiguration: { name: barman-cloud.cloudnative-pg.io }
-YAML
+docker exec overkill-todo-barman barman check overkill-todo-db
+docker exec overkill-todo-barman barman list-backups overkill-todo-db
+docker exec overkill-todo-barman barman backup --wait overkill-todo-db
+./scripts/k8s.sh barman   # restart it; its data stays
 ```
+
+`k8s-status` names a stopped Barman and every failing `barman check` line: no
+streaming, a missing slot, no backup.
 
 For `kubectl` and `talosctl` (without this, `kubectl` tries `localhost:8080`,
 which is the compose edge):
