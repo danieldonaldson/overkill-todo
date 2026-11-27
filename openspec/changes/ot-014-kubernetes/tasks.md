@@ -42,6 +42,7 @@ Smoke checks pass; Database unavailable; Machine restarts.
 
 Delivers: Destroying the cluster touches nothing else; Restore into a rebuilt
 cluster; Rebuild never silently starts empty; Backup storage unavailable.
+3.8–3.12 replace file archiving with a streaming Barman server (D7a).
 
 - [x] 3.1 Prove Garage with barman-cloud, path-style addressing included, and pin it (D7). Verify: a base backup and WAL arrive, recorded in design.md; otherwise revise D7.
 - [x] 3.2 Run Garage on the host with its own volume, reached from the VM at the bridge's gateway (10.5.0.1, check ufw allows it); its credentials are `local` secrets. Verify: `k8s-down` leaves its data.
@@ -50,6 +51,14 @@ cluster; Rebuild never silently starts empty; Backup storage unavailable.
 - [x] 3.5 Drill: storage stopped while the app runs. Verify: the app serves, the failure is visible, and backups resume.
 - [x] 3.6 Run three instances in the local overlay, one synchronous replica (D15); the base stays at one. Verify: the cluster reports one primary and two streaming replicas, one of them synchronous, and memory is recorded.
 - [x] 3.7 Drills: kill the primary pod under the request loop, writing a numbered row each second; then a planned switchover. Verify: promotion within 60 s, every confirmed row present, no backend restart, WAL archiving continuing from the new primary; reads keep succeeding during the switchover. Timings in design.md. Boundary work as in 2.7.
+
+### Slice 3, continued: a streaming Barman server (D7a)
+
+- [ ] 3.8 Prove on the host: a Barman server (pinned, built from PGDG packages) streaming from Postgres 18 over a slot, its hooks uploading a base backup and finished WAL to Garage, and a renamed `.partial`. Verify: the plugin's `barman-cloud-restore` and `barman-cloud-wal-restore` recover a row written after the last finished WAL file, recorded in design.md; otherwise revise D7a.
+- [ ] 3.9 Run Barman on the host beside Garage, its own volume, started and stopped by `k8s.sh`; its password a `local` secret. Verify: `k8s-down` leaves its data, and `barman check` passes once the cluster is up.
+- [ ] 3.10 In the cluster: a LoadBalancer Service for the primary on the bridge, a managed replication role, a `pg_hba` rule for it from the bridge only, slot synchronisation, `max_slot_wal_keep_size`; remove WAL archiving and the ScheduledBackup from the local overlay, so the plugin only restores. `k8s-status` names a lagging slot and a failing `barman check`. Verify: streaming and a Barman backup work, and Garage receives both.
+- [ ] 3.11 `k8s-up` copies Barman's newest `.partial` to Garage before the database restores; `k8s-db-init` also refuses when Barman holds backups. Verify: the scripts' checks pass.
+- [ ] 3.12 Drills: rows written each second, the VM killed outright (no `k8s-down`), rebuild; then the primary killed, then Barman stopped while the app runs. Verify: every row confirmed more than a second before the kill is back; streaming continues from the new primary; with Barman down the app serves, `k8s-status` names it, and streaming catches up. Timings in design.md. Boundary work as in 2.7.
 
 ## 4. Slice 4: isolation, admission and the edge contract
 

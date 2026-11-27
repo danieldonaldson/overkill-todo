@@ -426,6 +426,31 @@ rebuild uses `bootstrap.recovery`; `initdb` is a separate, explicit first-run
 overlay, so nothing silently starts empty. _Alternatives:_ in-cluster storage
 (destroyed by the wipe); MinIO (repository archived).
 
+**D7a. A streaming Barman server does the backing up (agreed 2026-11-27).**
+Revises D7, after 3.1–3.7. File archiving (`archive_command`, which barman-cloud
+is limited to) loses the open WAL file with the VM: up to `archive_timeout`.
+The operator wants the cluster as close as possible to a production Barman
+setup, where a Barman server streams WAL. So a Barman server runs on the host
+beside Garage, with its own volume, started and stopped by `k8s.sh`:
+`streaming_archiver` over a replication slot, base backups with
+`pg_basebackup`, its own retention. It reaches the primary through a
+LoadBalancer Service on the bridge, as a CNPG-managed role with replication,
+from the bridge only, and CNPG synchronises the slot so it follows a failover.
+Barman's hook scripts (`barman-cloud-backup`, `barman-cloud-wal-archive`) copy
+each backup and finished WAL file to Garage, in the layout the plugin restores
+from; in the cluster the plugin only restores, so WAL archiving and the
+ScheduledBackup leave the local overlay, and base backups are taken once. Before
+a rebuild restores, `k8s-up` copies Barman's open `.partial` file to Garage under
+its segment's name, so recovery replays everything Barman received. While Barman
+is down the slot holds WAL on the database's disk, capped by
+`max_slot_wal_keep_size`, and `k8s-status` names the lag. Slice 3 first proves
+that a backup and WAL uploaded by the hooks, and a renamed `.partial`, restore
+with the plugin's tools; otherwise barman-cloud keeps its own base backups and
+only WAL comes from Barman. _Alternatives:_ archiving only (loses the open file;
+what 3.3–3.7 built); a Barman server alone (CNPG can't restore from one); a
+replica cluster outside the VM (what a Kubernetes production would more usually
+do, but not the Barman setup the operator wants to rehearse).
+
 **D8. Local-path storage.** Enough for one node, and managed by ArgoCD.
 Talos's root is read-only, so its path moves from `/opt` to under `/var`, and its
 namespace is `privileged`, since its helper pods mount host paths. Data is as
@@ -516,7 +541,7 @@ Only slice 1 has tasks until it ships.
 | --- | --- | --- |
 | 1 | Cluster, GitOps, secrets | Hypothesis above |
 | 2 | App, database and TLS; sign-in, smoke, rollout, database and VM failures | Traefik's trace context (D6), then the smoke suite |
-| 3 | Backups, destructive restore drill; destroying the cluster leaves backups alone | Garage with barman-cloud |
+| 3 | Backups, destructive restore drill; destroying the cluster leaves backups alone; streaming Barman (D7a) | Garage with barman-cloud; Barman hooks with the plugin |
 | 4 | Isolation, admission, full edge contract | Client address through the edge |
 | 5 | Observability and the backup alert | Pod log parsing and redaction |
 | 6 | Analytics; account backups hold no analytics data | Real client address |
