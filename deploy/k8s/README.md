@@ -4,9 +4,9 @@ A local single-node cluster that ArgoCD fills from Git (OT-014). It sits beside
 `../compose/`, which stays the way to run the app locally and has its own
 production override. Which one production uses is not decided.
 
-> **Status:** slice 2 done. The app runs at https://todo.k8s.test with
-> development mode off. Backups arrive in slice 3; until then the database lives
-> only on the VM's disk.
+> **Status:** slice 3 under way. The app runs at https://todo.k8s.test with
+> development mode off. Backup storage runs (below), but nothing backs up to it yet;
+> the database lives only on the VM's disk.
 
 ```
 cluster/apps/      ArgoCD Applications; root.yaml owns them all, itself included
@@ -35,6 +35,18 @@ just k8s-down     # destroys the VM, its network and firewall rules
 `k8s-up` refuses, changing nothing, if something is missing or a cluster (or part
 of one) exists. `k8s-down` cleans up after an interrupted `k8s-up`. Neither
 touches the compose stacks. A host reboot stops the VM: run both again.
+The VM runs in its own systemd scope, `overkill-todo-k8s.scope`, so closing or
+losing the terminal that started it leaves it running.
+
+### Backup storage
+
+Garage, an S3-compatible store, runs on the host in Docker so that destroying the
+VM leaves the backups. `k8s-up` starts it once the VM's bridge exists, listening
+only on the bridge's address (`10.5.0.1:3900`); `k8s-down` stops it. Its data is in
+the Docker volume `overkill-todo-garage`, which neither removes:
+`docker volume rm overkill-todo-garage` deletes every backup. Its key is
+[`../secrets/local/garage-s3.sops.yaml`](../secrets/local/garage-s3.sops.yaml),
+which the cluster reads too. `./scripts/k8s.sh garage` restarts it alone.
 
 For `kubectl` and `talosctl` (without this, `kubectl` tries `localhost:8080`,
 which is the compose edge):

@@ -156,6 +156,15 @@ deploy that brings one (7.1).
   restored with `barman-cloud-restore` and `barman-cloud-wal-restore` recovered
   a row written after the backup. Garage checks the signing region (`garage` here),
   so the ObjectStore's credentials need a region.
+- Garage on the host (3.2): `k8s-up` starts it after the bridge, on
+  `10.5.0.1:3900` only, with host networking so ufw applies (Docker's published
+  ports bypass it); its key is the `local` SopsSecret `garage-s3-v1`, imported, so
+  host and cluster share it. An object written before `k8s-down` was read after
+  `k8s-up` by a pod using that Secret. Up to `k8s-status` clean: 6 min 21 s.
+- The VM died overnight (2026-11-27 00:57): systemd-oomd killed the terminal
+  `k8s-up` ran from, at 30.3 of 33.5 GB with 3 GB swapped, and QEMU was in its
+  scope. The VM now runs in its own scope with `ManagedOOMPreference=avoid`. The
+  rebuild started empty, as slice 2's did: what 3.3 stops.
 
 ### What slice 2 changed for later slices
 
