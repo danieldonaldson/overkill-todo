@@ -265,6 +265,30 @@ streaming and a first backup completed; `k8s-status` clean 6 min 54 s after
 `k8s-up` started. Its last step, the `/etc/hosts` line, failed: the sudo it was
 given had expired, and the rest needs none.
 
+### Slice 3, streaming Barman proof (3.8, 2026-11-27)
+
+On the host, in throwaway containers: Postgres 18; a Barman server built from
+PGDG packages, streaming over the slot `barman` with `pg_receivewal` and taking a
+`pg_basebackup`; `barman-cloud-backup` as `post_backup_retry_script` and
+`barman-cloud-wal-archive` as `pre_archive_retry_script`, both with
+`--addressing-style path`, into its own Garage. Row 1 before the backup, row 2 in
+a WAL file Barman finished (…04), row 3 only in the open one (…05.partial);
+then Postgres killed outright, the `.partial` copied to Garage under its
+segment's name, and the plugin v0.16.0's `barman-cloud-restore` and
+`barman-cloud-wal-restore` used to restore. All three rows were back; replay
+ended inside …05 at the end of its records ("invalid record length", the zeroed
+rest), so row 3 came from the `.partial`.
+
+- Barman 3.21.0 failed it: its `backup.info` has a field (`whpg_dbid`) the
+  plugin's Barman 3.20.1 rejects. The server is pinned to the plugin sidecar's
+  Barman (3.20.1), and they move together.
+- Barman's streaming user needs a `pg_hba` replication rule; Barman's own role
+  needs `pg_checkpoint`, `pg_read_all_settings`, `pg_read_all_stats`,
+  `pg_monitor`, `pg_signal_backend` and execute on the backup functions.
+- Uploads are synchronous: a `retry` hook script blocks Barman until it succeeds,
+  so a Garage outage stops Barman processing WAL (streaming continues into its
+  own directory), and the slot keeps WAL on the database until then.
+
 ### What slice 3 changed for later slices
 
 - The database restores on every creation; the first run is `just k8s-db-init`.

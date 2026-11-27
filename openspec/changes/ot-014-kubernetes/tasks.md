@@ -54,7 +54,7 @@ cluster; Rebuild never silently starts empty; Backup storage unavailable.
 
 ### Slice 3, continued: a streaming Barman server (D7a)
 
-- [ ] 3.8 Prove on the host: a Barman server (pinned, built from PGDG packages) streaming from Postgres 18 over a slot, its hooks uploading a base backup and finished WAL to Garage, and a renamed `.partial`. Verify: the plugin's `barman-cloud-restore` and `barman-cloud-wal-restore` recover a row written after the last finished WAL file, recorded in design.md; otherwise revise D7a.
+- [x] 3.8 Prove on the host: a Barman server (pinned, built from PGDG packages) streaming from Postgres 18 over a slot, its hooks uploading a base backup and finished WAL to Garage, and a renamed `.partial`. Verify: the plugin's `barman-cloud-restore` and `barman-cloud-wal-restore` recover a row written after the last finished WAL file, recorded in design.md; otherwise revise D7a.
 - [ ] 3.9 Run Barman on the host beside Garage, its own volume, started and stopped by `k8s.sh`; its password a `local` secret. Verify: `k8s-down` leaves its data, and `barman check` passes once the cluster is up.
 - [ ] 3.10 In the cluster: a LoadBalancer Service for the primary on the bridge, a managed replication role, a `pg_hba` rule for it from the bridge only, slot synchronisation, `max_slot_wal_keep_size`; remove WAL archiving and the ScheduledBackup from the local overlay, so the plugin only restores. `k8s-status` names a lagging slot and a failing `barman check`. Verify: streaming and a Barman backup work, and Garage receives both.
 - [ ] 3.11 `k8s-up` copies Barman's newest `.partial` to Garage before the database restores; `k8s-db-init` also refuses when Barman holds backups. Verify: the scripts' checks pass.
