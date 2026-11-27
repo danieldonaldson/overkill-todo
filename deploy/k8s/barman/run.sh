@@ -9,7 +9,7 @@ cloud="--endpoint-url $GARAGE_URL --addressing-style path"
 done_day=
 while true; do
   barman -q cron
-  if [ -z "$(barman -q list-backups --minimal "$server")" ]; then
+  if [ -z "$(barman list-backups --minimal "$server")" ]; then
     if barman check "$server" 2>/dev/null | grep -q 'receive-wal running: OK'; then
       barman backup --wait "$server" && done_day=$(date -u +%F)
     fi

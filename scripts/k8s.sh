@@ -178,8 +178,8 @@ TOML
 # pg_basebackup, from the primary's address on the bridge; its hooks copy each
 # backup and finished WAL file to Garage, where the cluster restores from. Its own
 # copies stay in its volume. Its Barman is the plugin's version (Dockerfile).
-# Docker tags allow no "+".
-barman_image="$name-barman:${BARMAN_VERSION//+/_}"
+# Docker tags allow no "+". The build files' hash rebuilds it when they change.
+barman_image="$name-barman:${BARMAN_VERSION//+/_}-$(cat deploy/k8s/barman/* | sha256sum | cut -c1-12)"
 barman_stop() { docker rm -f "$barman_container" >/dev/null 2>&1 || true; }
 barman_start() {
   local cloud="--endpoint-url http://$gateway:3900 --addressing-style path"
@@ -227,6 +227,28 @@ CONF
   say "Barman keeps its copies in the volume $barman_volume; \`docker exec $barman_container barman check $barman_server\`"
 }
 barman() { docker exec "$barman_container" barman "$@"; }
+
+# Barman uploads only finished WAL files; the one it was streaming into when the
+# cluster went is a .partial in its volume. With the old cluster gone, copy it to
+# Garage under its segment's name, so the restore replays everything Barman
+# received (Postgres stops at the end of its records). Only from `up`: while a
+# cluster runs, the segment is still being written.
+barman_push_partial() {
+  local cloud="--endpoint-url http://$gateway:3900 --addressing-style path"
+  local out
+  # shellcheck disable=SC2016 # expanded in the container
+  out=$(docker exec "$barman_container" sh -c '
+    set -e
+    for p in /var/lib/barman/'"$barman_server"'/streaming/*.partial; do
+      [ -e "$p" ] || exit 0
+      seg=$(basename "$p" .partial)
+      cp "$p" "/tmp/$seg"
+      barman-cloud-wal-archive '"$cloud"' -z s3://'"$garage_bucket/$barman_server $barman_server"' "/tmp/$seg"
+      rm "/tmp/$seg"
+      echo "$seg"
+    done') || die "couldn't copy Barman's open WAL file to Garage: the restore would miss its writes"
+  if [[ -n $out ]]; then say "copied Barman's open WAL file $out to Garage"; fi
+}
 
 # One line in /etc/hosts, tagged so `down` removes only its own.
 add_host() {
@@ -279,6 +301,7 @@ cmd_up() {
 
   garage_start
   barman_start
+  barman_push_partial
 
   install -m 600 "$tmp/config/talosconfig" "$TALOSCONFIG"
   talosctl config endpoint "$node"
@@ -404,6 +427,8 @@ cmd_db_init() {
     die "can't read bucket $garage_bucket: is Garage running? (./scripts/k8s.sh garage)"
   [[ $objects == 0 ]] ||
     die "bucket $garage_bucket holds $objects objects: the database restores from them, so nothing was changed"
+  [[ -z $(barman list-backups --minimal "$barman_server" 2>/dev/null) ]] ||
+    die "Barman holds backups of $barman_server: restore from them, so nothing was changed"
   local cluster
   cluster=$(kubectl kustomize deploy/k8s/overlays/local-initdb | yq 'select(.kind == "Cluster")')
   [[ -n $cluster ]] || die "overlays/local-initdb renders no Cluster"
