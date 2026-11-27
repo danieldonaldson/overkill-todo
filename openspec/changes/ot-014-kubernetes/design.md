@@ -225,6 +225,16 @@ requested, during the outage.
 Requests: 0 of 2,942 failed; no pod restarted. The 53 s is Postgres's archiver
 waiting before it retries.
 
+### Slice 3 replicas (2026-11-27)
+
+Three instances (3.6), healthy 46 s after ArgoCD synced: one primary and two
+streaming replicas, cloned from the primary. With `method: any, number: 1`
+Postgres lists both replicas as `quorum` (`ANY 1 (...)`), not one as `sync`: each
+commit waits for whichever replica confirms first, which is D15's intent. Memory,
+idle: 64 to 106 MiB per instance (limit 512 MiB); the VM's available memory fell
+from 8.38 to 8.24 GiB and QEMU's resident memory rose from 9.17 to 9.42 GiB. The
+limits allow up to 1 GiB more than one instance under load.
+
 ### What slice 2 changed for later slices
 
 - Every cluster setting change needs its consumer to restart or reload; check it
