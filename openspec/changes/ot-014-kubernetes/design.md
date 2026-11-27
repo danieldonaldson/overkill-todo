@@ -258,6 +258,21 @@ D15's backend change. A switchover was triggered by setting the Cluster's
 `status.targetPrimary`, which is what `kubectl cnpg promote` does; the plugin
 isn't installed.
 
+### What slice 3 changed for later slices
+
+- The database restores on every creation; the first run is `just k8s-db-init`.
+  Anything that recreates the Cluster (a rename, a storage change) restores it.
+- Resources that need a component's sidecar or webhook go in a later sync wave
+  than what they depend on; ArgoCD's CNPG health check makes that work.
+- Slice 4's policies must allow the database's egress to Garage
+  (`10.5.0.1:3900`), the instances' replication between themselves, and the
+  operator and the barman-cloud plugin reaching the instances; a pod in the
+  database's namespace must pass `restricted`, as the drill pods had to.
+- The host runs short of memory with the VM up (the oomd kill); measure before
+  slice 5, as planned, and expect to trim.
+- A switchover drops writes for about 5 s and a failover for about 25 s; the
+  backend rides both without restarting.
+
 ### What slice 2 changed for later slices
 
 - Every cluster setting change needs its consumer to restart or reload; check it

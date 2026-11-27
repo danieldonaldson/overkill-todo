@@ -4,9 +4,10 @@ A local single-node cluster that ArgoCD fills from Git (OT-014). It sits beside
 `../compose/`, which stays the way to run the app locally and has its own
 production override. Which one production uses is not decided.
 
-> **Status:** slice 3 under way. The app runs at https://todo.k8s.test with
-> development mode off. The database is backed up to Garage on the host, and a
-> rebuild restores it (drilled: about 6 minutes, nothing by hand).
+> **Status:** slice 3 done. The app runs at https://todo.k8s.test with
+> development mode off. The database runs three instances and is backed up to
+> Garage on the host; a rebuild restores it (drilled: about 6 minutes, nothing by
+> hand). Isolation and admission arrive in slice 4.
 
 ```
 cluster/apps/      ArgoCD Applications; root.yaml owns them all, itself included
