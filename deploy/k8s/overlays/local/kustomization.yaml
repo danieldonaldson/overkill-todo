@@ -89,6 +89,15 @@ patches:
       - op: add
         path: /spec/plugins/0/parameters/serverName
         value: overkill-todo-db
+      # Three instances, one replica synchronous (D15): a failover loses no
+      # committed write, and losing one replica doesn't stop writes. All three
+      # share the VM's disk, so backups still guard against losing it.
+      - op: replace
+        path: /spec/instances
+        value: 3
+      - op: add
+        path: /spec/postgresql/synchronous
+        value: { method: any, number: 1 }
       - op: add
         path: /metadata/annotations
         value:
