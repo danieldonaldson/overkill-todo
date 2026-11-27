@@ -5,8 +5,8 @@ A local single-node cluster that ArgoCD fills from Git (OT-014). It sits beside
 production override. Which one production uses is not decided.
 
 > **Status:** slice 3 under way. The app runs at https://todo.k8s.test with
-> development mode off. Backup storage runs (below), but nothing backs up to it yet;
-> the database lives only on the VM's disk.
+> development mode off. The database is backed up to Garage on the host, and a
+> rebuild restores it; the restore drill (3.4) has not run yet.
 
 ```
 cluster/apps/      ArgoCD Applications; root.yaml owns them all, itself included
@@ -47,6 +47,36 @@ the Docker volume `overkill-todo-garage`, which neither removes:
 `docker volume rm overkill-todo-garage` deletes every backup. Its key is
 [`../secrets/local/garage-s3.sops.yaml`](../secrets/local/garage-s3.sops.yaml),
 which the cluster reads too. `./scripts/k8s.sh garage` restarts it alone.
+
+### Backups and restore
+
+The database archives its WAL to Garage continuously and takes a base backup when
+the ScheduledBackup is created and daily at 03:00 UTC, kept for 14 days. A new
+cluster restores from the newest backup, so a rebuild needs nothing by hand. With
+no backup it doesn't start, rather than starting empty: `k8s-status` shows the
+database stuck at "Setting up primary" and its recovery pods failing with "no
+target backup found".
+
+The first run, with an empty bucket, is the one exception, and it is explicit:
+
+```bash
+just k8s-db-init   # empty database, then a first backup; refused if the bucket holds anything
+kubectl -n overkill-todo get backups
+```
+
+A backup by hand:
+
+```bash
+kubectl create -f - <<'YAML'
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata: { generateName: overkill-todo-db-manual-, namespace: overkill-todo }
+spec:
+  cluster: { name: overkill-todo-db }
+  method: plugin
+  pluginConfiguration: { name: barman-cloud.cloudnative-pg.io }
+YAML
+```
 
 For `kubectl` and `talosctl` (without this, `kubectl` tries `localhost:8080`,
 which is the compose edge):

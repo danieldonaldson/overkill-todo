@@ -36,6 +36,10 @@ apiVersion: postgresql.cnpg.io/v1
 kind: ScheduledBackup
 metadata:
   name: overkill-todo-db-daily
+  annotations:
+    # After the database is healthy (ArgoCD's CNPG health check): created with it, an
+    # immediate backup fails before the plugin's sidecar is in its pod.
+    argocd.argoproj.io/sync-wave: '1'
 spec:
   schedule: '0 0 3 * * *'
   backupOwnerReference: self

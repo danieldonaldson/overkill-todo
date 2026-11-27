@@ -286,6 +286,13 @@ cmd_status() {
     kubectl get sopssecrets -A -o json 2>/dev/null | jq -r '.items[]
       | select(.status.message != "Healthy")
       | "secret \(.metadata.namespace)/\(.metadata.name): \(.status.message // "not decrypted yet")"'
+    # A database that isn't ready, or whose WAL archiving or last backup failed.
+    kubectl get clusters.postgresql.cnpg.io -A -o json 2>/dev/null | jq -r '.items[]
+      | "database \(.metadata.namespace)/\(.metadata.name)" as $n
+      | (select([.status.conditions[]? | select(.type == "Ready" and .status == "True")] | length == 0)
+          | "\($n): \(.status.phase // "not ready")"),
+        (.status.conditions[]? | select((.type == "ContinuousArchiving" or .type == "LastBackupSucceeded") and .status == "False")
+          | "\($n): \(.type): \(.message)")'
     kubectl get deployments,statefulsets,daemonsets -A -o json | jq -r '.items[]
       | (.spec.replicas // .status.desiredNumberScheduled // 0) as $want
       | (.status.updatedReplicas // .status.updatedNumberScheduled // 0) as $new

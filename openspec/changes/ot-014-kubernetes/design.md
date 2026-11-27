@@ -165,6 +165,24 @@ deploy that brings one (7.1).
   `k8s-up` ran from, at 30.3 of 33.5 GB with 3 GB swapped, and QEMU was in its
   scope. The VM now runs in its own scope with `ManagedOOMPreference=avoid`. The
   rebuild started empty, as slice 2's did: what 3.3 stops.
+- Backups (3.3): the barman-cloud plugin 0.9.0 (v0.16.0) in `cnpg-system`. The
+  local overlay restores (`bootstrap.recovery`) from the newest backup; the first
+  run is `just k8s-db-init`, which creates the Cluster from `overlays/local-initdb`
+  and refuses if the bucket holds any object. The workloads Application ignores
+  `spec.bootstrap` (`RespectIgnoreDifferences`), so switching the overlay left the
+  running database alone. A restored cluster archives to the same `serverName`, on
+  its new timeline, with `cnpg.io/skipEmptyWalArchiveCheck` (honoured by the plugin
+  v0.16.0), so a rebuild needs no commit. The cost: the store isn't checked for
+  another cluster's archive, which on one VM there can't be.
+- Verified: WAL archiving and a base backup arrived (7 objects, 4.4 MB); a Cluster
+  set to restore from an empty path never started ("no target backup found",
+  recovery pods retrying, no primary) and `k8s-status` named it; `k8s-db-init`
+  refused with backups present and changed nothing.
+- The ScheduledBackup's immediate backup ran before the database pod had the
+  plugin's sidecar and failed ("requested plugin is not available"). It now syncs
+  in wave 1, after ArgoCD's CNPG health check passes. `k8s-status` now names a
+  database that isn't ready, or whose archiving or last backup failed; it didn't
+  see that failure.
 
 ### What slice 2 changed for later slices
 
