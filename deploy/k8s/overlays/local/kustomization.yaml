@@ -91,9 +91,8 @@ patches:
               parameters:
                 barmanObjectName: overkill-todo-db-store
                 serverName: overkill-todo-db
-      - op: add
-        path: /spec/plugins/0/parameters/serverName
-        value: overkill-todo-db
+      - op: remove
+        path: /spec/plugins
       # Three instances, one replica synchronous (D15): a failover loses no
       # committed write, and losing one replica doesn't stop writes. All three
       # share the VM's disk, so backups still guard against losing it.
@@ -145,9 +144,9 @@ patches:
         path: /metadata/annotations
         value:
           argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-          cnpg.io/skipEmptyWalArchiveCheck: enabled
-  - target: { kind: ScheduledBackup, name: overkill-todo-db-daily }
-    patch: |
-      - op: add
-        path: /spec/immediate
-        value: true
+  - patch: |
+      $patch: delete
+      apiVersion: postgresql.cnpg.io/v1
+      kind: ScheduledBackup
+      metadata:
+        name: overkill-todo-db-daily
