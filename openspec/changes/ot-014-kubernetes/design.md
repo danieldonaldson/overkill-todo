@@ -235,6 +235,29 @@ idle: 64 to 106 MiB per instance (limit 512 MiB); the VM's available memory fell
 from 8.38 to 8.24 GiB and QEMU's resident memory rose from 9.17 to 9.42 GiB. The
 limits allow up to 1 GiB more than one instance under load.
 
+### Slice 3 failover drills (2026-11-27)
+
+A pod wrote a numbered row each second through `-rw` with the app's credentials,
+another read through `-r` each second, and the host loop requested a page and
+readiness every 0.2 s. Times are from the action.
+
+| Drill | New primary | Writes failed | Reads failed (`-r`) | Readiness 503 | Pages failed |
+| --- | --- | --- | --- | --- | --- |
+| Primary pod force-deleted (db-1) | db-2 at 21.1 s | 23.7 s (20 attempts) | not running | 19 s | 0 |
+| Switchover db-2 → db-3 | healthy at 13.1 s | 4 attempts, about 4 s | 0 | 18 requests | 0 |
+| Switchover db-3 → db-2 | healthy at 17.4 s | 5 attempts, about 5 s | 1 of 202 | 18 requests | 0 |
+
+All 304 confirmed rows were present afterwards. The backend never restarted;
+its readiness turned 503 while `-rw` had no primary, and back by itself. WAL
+archiving continued from each new primary (timeline 3 after the failover, 5 after
+the switchovers), and each old primary rejoined as a streaming replica; CNPG
+restarted each demoted primary's container once. The one failed read was during
+the second switchover: `-r` includes the primary, so a read can land on the one
+being demoted. Reads that must not fail belong on `-ro` (replicas only), with
+D15's backend change. A switchover was triggered by setting the Cluster's
+`status.targetPrimary`, which is what `kubectl cnpg promote` does; the plugin
+isn't installed.
+
 ### What slice 2 changed for later slices
 
 - Every cluster setting change needs its consumer to restart or reload; check it
