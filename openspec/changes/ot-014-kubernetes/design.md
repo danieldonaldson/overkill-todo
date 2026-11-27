@@ -258,6 +258,13 @@ D15's backend change. A switchover was triggered by setting the Cluster's
 `status.targetPrimary`, which is what `kubectl cnpg promote` does; the plugin
 isn't installed.
 
+Second restore, after the failover drills (`just ci` ran with the cluster down,
+for memory): 333 rows on timeline 5, every segment archived, then `k8s-down` and
+`k8s-up`. All 333 rows were back on timeline 6, with three instances, two replicas
+streaming and a first backup completed; `k8s-status` clean 6 min 54 s after
+`k8s-up` started. Its last step, the `/etc/hosts` line, failed: the sudo it was
+given had expired, and the rest needs none.
+
 ### What slice 3 changed for later slices
 
 - The database restores on every creation; the first run is `just k8s-db-init`.
