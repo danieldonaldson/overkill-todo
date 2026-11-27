@@ -322,7 +322,7 @@ rest), so row 3 came from the `.partial`.
   "first" backup every loop, six in seven minutes; `-q` dropped, the extras
   deleted from Barman and Garage. The image's tag now includes a hash of its
   build files, or the fix wouldn't have been rebuilt.
-- `k8s-up` copies Barman's `.partial` to Garage before the VM starts (3.11);
+- `k8s-up` copies Barman's `.partial` to Garage before the database restores (3.11);
   `k8s-db-init` refuses while Garage or Barman hold a backup, and no longer
   requests a plugin backup: Barman takes the first one by itself.
 
