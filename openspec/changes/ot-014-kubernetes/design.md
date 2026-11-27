@@ -209,6 +209,22 @@ arrived. Object keys repeat the name (`overkill-todo-db/overkill-todo-db/`),
 from `destinationPath` and `serverName`; changing either would orphan the
 existing backups, so it stays.
 
+### Slice 3 storage outage (2026-11-27)
+
+Garage stopped (`docker stop`) for 2 min while a loop requested a page and
+readiness every 0.2 s; row 2 written and its segment switched, and a backup
+requested, during the outage.
+
+| Step | Outcome | Time |
+| --- | --- | --- |
+| Archiving fails | `k8s-status` names `ContinuousArchiving` (exit status 4) | 11 s after the stop |
+| Backup during the outage | fails cleanly ("exit status 1"); `k8s-status` names `LastBackupSucceeded` | 107 s |
+| Garage back (`./scripts/k8s.sh garage`) | row 2's segment archived; `ContinuousArchiving` true | 53 s after the restart |
+| Backup after | completed; `k8s-status` clean | 10 s after that |
+
+Requests: 0 of 2,942 failed; no pod restarted. The 53 s is Postgres's archiver
+waiting before it retries.
+
 ### What slice 2 changed for later slices
 
 - Every cluster setting change needs its consumer to restart or reload; check it
