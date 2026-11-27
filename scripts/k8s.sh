@@ -79,6 +79,7 @@ preflight() {
   sops decrypt "$garage_secret" >/dev/null 2>&1 || problems+=("can't decrypt $garage_secret")
   [[ ! -e $state/clusters/$name ]] || problems+=("a cluster (or part of one) exists: run \`just k8s-down\` first")
   [[ -z $(bridge) ]] || problems+=("$gateway is already in use on $(bridge)")
+  ! systemctl is-active --quiet "$name-k8s.scope" || problems+=("$name-k8s.scope is still running: run \`just k8s-down\` first")
   if ((${#problems[@]})); then
     printf 'k8s: %s\n' "${problems[@]}" >&2
     die "nothing was changed"
@@ -187,10 +188,14 @@ cmd_up() {
   mkdir -p "$state/clusters"
   chmod 700 "$state"
   # `maintenance` leaves the VM waiting for our config instead of making its own
-  # keys; the throwaway config it writes goes to $tmp.
+  # keys; the throwaway config it writes goes to $tmp. The VM gets its own scope:
+  # started in the terminal's, it died when systemd-oomd killed the terminal
+  # (2026-11-27), and oomd now passes it over while anything else can go.
   repo=$PWD
   cd "$tmp"
-  root_talosctl cluster create qemu --presets iso,maintenance --talos-version "$TALOS_VERSION" \
+  as_root systemd-run --scope --quiet --unit "$name-k8s" -p ManagedOOMPreference=avoid \
+    env HOME="$HOME" "$talosctl_bin" cluster create qemu --name "$name" --state "$state/clusters" \
+    --presets iso,maintenance --talos-version "$TALOS_VERSION" \
     --controlplanes 1 --workers 0 --cpus-controlplanes "$cpus" --memory-controlplanes "${mem_gib}GiB" \
     --disks "virtio:${disk_gib}GiB" --cidr "$cidr" --talosconfig-destination "$tmp/unused"
   cd "$repo"
@@ -240,6 +245,7 @@ cmd_down() {
   local pids
   mapfile -t pids < <(pgrep -f "qemu-system.*$state/clusters/$name/")
   if ((${#pids[@]})); then as_root kill "${pids[@]}" || true; fi
+  if systemctl is-active --quiet "$name-k8s.scope"; then as_root systemctl stop "$name-k8s.scope" || true; fi
   if [[ -n $br ]]; then
     if ufw_active; then
       as_root ufw delete allow in on "$br" || true
