@@ -68,6 +68,11 @@ patches:
   # it doesn't start. The first run is `./scripts/k8s.sh db-init`
   # (overlays/local-initdb). CNPG reads bootstrap only when it creates a Cluster,
   # and the workloads Application ignores it on one that exists.
+  #
+  # Backups are a streaming Barman server's, on the host (D7a, scripts/k8s.sh):
+  # it streams WAL over a slot and copies backups and finished WAL to Garage,
+  # which the plugin restores from. So the plugin here only restores; the base's
+  # WAL archiving and ScheduledBackup go.
   - target: { kind: Cluster, name: overkill-todo-db }
     patch: |
       - op: replace
@@ -98,14 +103,49 @@ patches:
       - op: add
         path: /spec/postgresql/synchronous
         value: { method: any, number: 1 }
+      # Barman's role: a superuser, as in Barman's own setup, by password and
+      # from the VM bridge only (replication needs its own rule).
+      - op: add
+        path: /spec/postgresql/pg_hba
+        value:
+          - host replication barman 10.5.0.0/24 scram-sha-256
+          - host postgres barman 10.5.0.0/24 scram-sha-256
+      # While Barman is away its slot keeps WAL here; past this, Postgres drops
+      # the slot's claim rather than fill the disk (5 GiB), and Barman restarts.
+      - op: add
+        path: /spec/postgresql/parameters/max_slot_wal_keep_size
+        value: 2GB
+      # Barman's slot moves to a new primary on failover.
+      - op: add
+        path: /spec/replicationSlots
+        value:
+          highAvailability: { enabled: true }
+          synchronizeReplicas: { enabled: true }
+      - op: add
+        path: /spec/managed
+        value:
+          roles:
+            - name: barman
+              ensure: present
+              login: true
+              superuser: true
+              replication: true
+              passwordSecret: { name: barman-db-v1 }
+          services:
+            # The primary on the VM bridge, for Barman (cluster/edge pool).
+            additional:
+              - selectorType: rw
+                serviceTemplate:
+                  metadata:
+                    name: overkill-todo-db-host
+                    labels: { overkill-todo/lb-pool: database }
+                  spec:
+                    type: LoadBalancer
       - op: add
         path: /metadata/annotations
         value:
           argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
-          # A restored cluster archives where it restored from, on a new timeline,
-          # so a rebuild needs no commit.
           cnpg.io/skipEmptyWalArchiveCheck: enabled
-  # Restore needs a base backup on the new timeline, so take one at once.
   - target: { kind: ScheduledBackup, name: overkill-todo-db-daily }
     patch: |
       - op: add

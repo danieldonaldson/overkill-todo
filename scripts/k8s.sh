@@ -7,11 +7,13 @@
 #   k8s.sh env     print the exports for kubectl and talosctl
 #   k8s.sh hosts   add the app's name to /etc/hosts (up does this)
 #   k8s.sh garage  (re)start Garage, the backups' storage (up does this)
+#   k8s.sh barman  (re)start the Barman server that backs up the database (up does this)
 #   k8s.sh db-init first run only: an empty database, refused if any backup exists
 #
 # Runs as you; only the VM, its network and one firewall rule need sudo, and each
 # such command is printed first. State is in $XDG_STATE_HOME/overkill-todo/k8s;
-# backups are in the Docker volume overkill-todo-garage, which down keeps.
+# backups are in the Docker volumes overkill-todo-garage and overkill-todo-barman,
+# which down keeps.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -36,6 +38,12 @@ garage_secret=deploy/secrets/local/garage-s3.sops.yaml
 garage_container=$name-garage
 garage_volume=$name-garage
 garage_bucket=backups
+barman_secret=deploy/secrets/local/barman-db.sops.yaml
+barman_container=$name-barman
+barman_volume=$name-barman
+barman_server=overkill-todo-db
+# The database's primary on the bridge: its LoadBalancer Service (cluster/edge pool).
+db_host_ip=10.5.0.101
 export KUBECONFIG=$state/kubeconfig TALOSCONFIG=$state/talosconfig
 
 # shellcheck source=deploy/k8s/versions.env
@@ -78,6 +86,7 @@ preflight() {
   [[ -f $age_key ]] || problems+=("the cluster's age key is missing: $age_key")
   [[ -f $talos_secrets ]] || problems+=("$talos_secrets is missing")
   sops decrypt "$garage_secret" >/dev/null 2>&1 || problems+=("can't decrypt $garage_secret")
+  sops decrypt "$barman_secret" >/dev/null 2>&1 || problems+=("can't decrypt $barman_secret")
   [[ ! -e $state/clusters/$name ]] || problems+=("a cluster (or part of one) exists: run \`just k8s-down\` first")
   [[ -z $(bridge) ]] || problems+=("$gateway is already in use on $(bridge)")
   # A scope stays loaded after it fails (say the VM was killed) until it's reset.
@@ -121,7 +130,8 @@ bootstrap_argocd() {
 # bridge and stops before it goes; its data stays in the volume. Host networking
 # keeps ufw in charge (Docker's published ports bypass it), and ufw already lets
 # the bridge in. The key comes from the same SopsSecret the cluster reads.
-garage_value() { sops decrypt --extract "[\"spec\"][\"secretTemplates\"][0][\"stringData\"][\"$1\"]" "$garage_secret"; }
+sops_value() { sops decrypt --extract "[\"spec\"][\"secretTemplates\"][0][\"stringData\"][\"$2\"]" "$1"; }
+garage_value() { sops_value "$garage_secret" "$1"; }
 garage() { docker exec -e RUST_LOG=warn "$garage_container" /garage "$@"; }
 garage_stop() { docker rm -f "$garage_container" >/dev/null 2>&1 || true; }
 garage_start() {
@@ -162,6 +172,61 @@ TOML
   garage bucket allow --read --write "$garage_bucket" --key "$key_id" >/dev/null
   say "Garage is serving bucket $garage_bucket from the volume $garage_volume"
 }
+
+# Barman: a streaming backup server for the database, beside Garage on the host
+# (D7a). It streams WAL over the slot `barman` and takes backups with
+# pg_basebackup, from the primary's address on the bridge; its hooks copy each
+# backup and finished WAL file to Garage, where the cluster restores from. Its own
+# copies stay in its volume. Its Barman is the plugin's version (Dockerfile).
+# Docker tags allow no "+".
+barman_image="$name-barman:${BARMAN_VERSION//+/_}"
+barman_stop() { docker rm -f "$barman_container" >/dev/null 2>&1 || true; }
+barman_start() {
+  local cloud="--endpoint-url http://$gateway:3900 --addressing-style path"
+  local dest="s3://$garage_bucket/$barman_server"
+  if ! docker image inspect "$barman_image" >/dev/null 2>&1; then
+    say "building $barman_image"
+    docker build -q --build-arg BARMAN_VERSION="$BARMAN_VERSION" -t "$barman_image" deploy/k8s/barman >/dev/null
+  fi
+  barman_stop
+  mkdir -p "$state"
+  # Passwords come in the environment, not this file.
+  cat >"$state/barman.conf" <<CONF
+[barman]
+barman_home = /var/lib/barman
+barman_user = barman
+log_file = /var/lib/barman/barman.log
+log_level = INFO
+
+[$barman_server]
+description = overkill-todo local cluster
+conninfo = host=$db_host_ip user=barman dbname=postgres sslmode=require
+streaming_conninfo = host=$db_host_ip user=barman sslmode=require
+backup_method = postgres
+streaming_archiver = on
+slot_name = barman
+create_slot = auto
+archiver = off
+compression = gzip
+retention_policy = RECOVERY WINDOW OF 14 DAYS
+minimum_redundancy = 1
+pre_archive_retry_script = barman-cloud-wal-archive $cloud -z $dest $barman_server
+post_backup_retry_script = barman-cloud-backup $cloud -z $dest $barman_server
+CONF
+  say "starting Barman $BARMAN_VERSION for $db_host_ip"
+  docker run -d --name "$barman_container" --network host --restart no \
+    --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+    -e PGPASSWORD="$(sops_value "$barman_secret" password)" \
+    -e AWS_ACCESS_KEY_ID="$(garage_value ACCESS_KEY_ID)" \
+    -e AWS_SECRET_ACCESS_KEY="$(garage_value SECRET_ACCESS_KEY)" \
+    -e AWS_DEFAULT_REGION="$(garage_value REGION)" \
+    -e BARMAN_SERVER="$barman_server" -e GARAGE_URL="http://$gateway:3900" -e GARAGE_DEST="$dest" \
+    -e RETENTION="RECOVERY WINDOW OF 14 DAYS" \
+    -v "$state/barman.conf:/etc/barman.conf:ro" -v "$barman_volume:/var/lib/barman" \
+    "$barman_image" >/dev/null
+  say "Barman keeps its copies in the volume $barman_volume; \`docker exec $barman_container barman check $barman_server\`"
+}
+barman() { docker exec "$barman_container" barman "$@"; }
 
 # One line in /etc/hosts, tagged so `down` removes only its own.
 add_host() {
@@ -213,6 +278,7 @@ cmd_up() {
   fi
 
   garage_start
+  barman_start
 
   install -m 600 "$tmp/config/talosconfig" "$TALOSCONFIG"
   talosctl config endpoint "$node"
@@ -239,7 +305,8 @@ cmd_up() {
 cmd_down() {
   local br
   br=$(bridge)
-  # Its data stays in the volume.
+  # Their data stays in the volumes.
+  barman_stop
   garage_stop
   if [[ -e $state/clusters/$name ]]; then
     root_talosctl cluster destroy --force || say "destroy reported errors; cleaning up what is left"
@@ -296,6 +363,12 @@ cmd_status() {
           | "\($n): \(.status.phase // "not ready")"),
         (.status.conditions[]? | select((.type == "ContinuousArchiving" or .type == "LastBackupSucceeded") and .status == "False")
           | "\($n): \(.type): \(.message)")'
+    # Barman on the host: running, streaming, its slot and its backups (D7a).
+    if [[ $(docker inspect -f '{{.State.Running}}' "$barman_container" 2>/dev/null) != true ]]; then
+      echo "barman: $barman_container is not running (./scripts/k8s.sh barman)"
+    else
+      barman check "$barman_server" 2>&1 | sed -n 's/^[[:space:]]*\(.*FAILED.*\)$/barman: \1/p'
+    fi
     kubectl get deployments,statefulsets,daemonsets -A -o json | jq -r '.items[]
       | (.spec.replicas // .status.desiredNumberScheduled // 0) as $want
       | (.status.updatedReplicas // .status.updatedNumberScheduled // 0) as $new
@@ -319,6 +392,7 @@ cmd_status() {
 
 cmd_hosts() { add_host; grep -F "$hosts_tag" /etc/hosts; }
 cmd_garage() { garage_start; }
+cmd_barman() { barman_start; }
 
 # The database restores from its newest backup when ArgoCD creates it, and doesn't
 # start without one (D7). Starting empty is this explicit step, refused while the
@@ -352,7 +426,7 @@ YAML
 }
 
 case ${1:-} in
-  up | down | status | env | hosts | garage) "cmd_$1" ;;
+  up | down | status | env | hosts | garage | barman) "cmd_$1" ;;
   db-init) cmd_db_init ;;
-  *) sed -n '2,14s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+  *) sed -n '2,16s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
 esac

@@ -7,6 +7,22 @@ metadata:
 spec:
   blocks:
     - cidr: 10.5.0.100/32
+  # Only Traefik: otherwise another LoadBalancer Service created first could take it.
+  serviceSelector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+---
+# The database's primary, for the Barman server on the host (D7a).
+apiVersion: cilium.io/v2
+kind: CiliumLoadBalancerIPPool
+metadata:
+  name: database
+spec:
+  blocks:
+    - cidr: 10.5.0.101/32
+  serviceSelector:
+    matchLabels:
+      overkill-todo/lb-pool: database
 ---
 apiVersion: cilium.io/v2alpha1
 kind: CiliumL2AnnouncementPolicy
