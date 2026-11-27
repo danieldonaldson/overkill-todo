@@ -265,6 +265,18 @@ streaming and a first backup completed; `k8s-status` clean 6 min 54 s after
 `k8s-up` started. Its last step, the `/etc/hosts` line, failed: the sudo it was
 given had expired, and the rest needs none.
 
+### Unplanned VM loss (2026-11-27 18:29)
+
+The kernel's OOM killer (a global OOM, not systemd-oomd) killed QEMU while the
+host ran formal-verification jobs and the VM together, load average about 80.
+Its own scope only steers oomd; the kernel picks the largest process, the VM.
+Kept as is: protecting the VM would make the kernel kill the operator's apps
+instead. Heavy jobs and the cluster don't overlap. The failed scope stayed loaded
+and blocked `k8s-up`; `k8s-down` now resets it, and the preflight names it. After
+`k8s-down` and `k8s-up` the database restored from Garage by itself: all 333 rows,
+timeline 7, `k8s-status` clean. Nothing was lost, the last writes having been
+archived hours before.
+
 ### Slice 3, streaming Barman proof (3.8, 2026-11-27)
 
 On the host, in throwaway containers: Postgres 18; a Barman server built from
