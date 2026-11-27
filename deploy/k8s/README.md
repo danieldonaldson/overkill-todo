@@ -6,7 +6,7 @@ production override. Which one production uses is not decided.
 
 > **Status:** slice 3 under way. The app runs at https://todo.k8s.test with
 > development mode off. The database is backed up to Garage on the host, and a
-> rebuild restores it; the restore drill (3.4) has not run yet.
+> rebuild restores it (drilled: about 6 minutes, nothing by hand).
 
 ```
 cluster/apps/      ArgoCD Applications; root.yaml owns them all, itself included

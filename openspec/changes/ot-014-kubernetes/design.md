@@ -184,6 +184,31 @@ deploy that brings one (7.1).
   database that isn't ready, or whose archiving or last backup failed; it didn't
   see that failure.
 
+### Slice 3 restore drill (2026-11-27)
+
+Row 1 of a drill table (`ot014_drill`, kept for 3.7) written at 07:28:44, after
+the 07:22 base backup; its WAL segment was archived at 07:28:45 after a forced
+switch, and was in Garage before the destroy.
+
+| Step | Time |
+| --- | --- |
+| `k8s-down` | 3 s |
+| `k8s-up` to its last line | 3 min 16 s |
+| Database restored and healthy, from `k8s-up` | 5 min 49 s |
+| First backup on the new timeline (wave 1) | 20 s after that |
+| `k8s-status` clean, from `k8s-up` | 6 min 25 s |
+
+Row 1 and all 13 migrations were back, on timeline 2, and the backend and web
+served through the edge with nothing done by hand. Newest data recovered: the
+last archived segment. Without a forced switch that lags by up to
+`archive_timeout` (CNPG's 5 min), so a rebuild can lose up to the last 5 minutes
+of writes. Accepted locally; another environment sets its own. The archiver
+counted 12 failures between 07:34:33 and 07:34:44, while the restored instance
+promoted; Postgres retried, and `00000002.history` and every segment since
+arrived. Object keys repeat the name (`overkill-todo-db/overkill-todo-db/`),
+from `destinationPath` and `serverName`; changing either would orphan the
+existing backups, so it stays.
+
 ### What slice 2 changed for later slices
 
 - Every cluster setting change needs its consumer to restart or reload; check it
