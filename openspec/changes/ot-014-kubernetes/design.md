@@ -285,9 +285,9 @@ rest), so row 3 came from the `.partial`.
 - Barman's streaming user needs a `pg_hba` replication rule; Barman's own role
   needs `pg_checkpoint`, `pg_read_all_settings`, `pg_read_all_stats`,
   `pg_monitor`, `pg_signal_backend` and execute on the backup functions.
-- Uploads are synchronous: a `retry` hook script blocks Barman until it succeeds,
-  so a Garage outage stops Barman processing WAL (streaming continues into its
-  own directory), and the slot keeps WAL on the database until then.
+- Expected from Barman's docs, not yet seen: a `retry` hook script is retried
+  until it succeeds, so a Garage outage holds up Barman's WAL processing while
+  streaming continues into its own directory. 3.12's outage drill checks it.
 
 ### What slice 3 changed for later slices
 
