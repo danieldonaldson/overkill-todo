@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: barman-cloud
+  namespace: argocd
+  # After CNPG and cert-manager (wave -2): it needs both.
+  annotations:
+    argocd.argoproj.io/sync-wave: '-1'
+spec:
+  project: default
+  sources:
+    - repoURL: https://cloudnative-pg.github.io/charts
+      chart: plugin-barman-cloud
+      targetRevision: 0.9.0
+      helm:
+        releaseName: barman-cloud
+        valueFiles:
+          - $repo/deploy/k8s/cluster/barman-cloud/values.yaml
+    - repoURL: https://github.com/danieldonaldson/overkill-todo.git
+      targetRevision: ot-014-kubernetes
+      ref: repo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cnpg-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      # Retry the newest commit: without it a failing sync retries its own
+      # revision for ever and never sees the revert.
+      refresh: true
+      limit: -1
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 1m
+    syncOptions:
+      - ServerSideApply=true

@@ -7,6 +7,7 @@
 #   k8s.sh env     print the exports for kubectl and talosctl
 #   k8s.sh hosts   add the app's name to /etc/hosts (up does this)
 #   k8s.sh garage  (re)start Garage, the backups' storage (up does this)
+#   k8s.sh db-init first run only: an empty database, refused if any backup exists
 #
 # Runs as you; only the VM, its network and one firewall rule need sudo, and each
 # such command is printed first. State is in $XDG_STATE_HOME/overkill-todo/k8s;
@@ -309,7 +310,39 @@ cmd_status() {
 cmd_hosts() { add_host; grep -F "$hosts_tag" /etc/hosts; }
 cmd_garage() { garage_start; }
 
+# The database restores from its newest backup when ArgoCD creates it, and doesn't
+# start without one (D7). Starting empty is this explicit step, refused while the
+# store holds anything: delete the backups first if that is really meant.
+cmd_db_init() {
+  [[ -f $KUBECONFIG ]] || die "no cluster: run \`just k8s-up\` first"
+  local objects
+  objects=$(garage bucket info "$garage_bucket" | awk '/^Objects:/ {print $2}') ||
+    die "can't read bucket $garage_bucket: is Garage running? (./scripts/k8s.sh garage)"
+  [[ $objects == 0 ]] ||
+    die "bucket $garage_bucket holds $objects objects: the database restores from them, so nothing was changed"
+  local cluster
+  cluster=$(kubectl kustomize deploy/k8s/overlays/local-initdb | yq 'select(.kind == "Cluster")')
+  [[ -n $cluster ]] || die "overlays/local-initdb renders no Cluster"
+  say "replacing the database with an empty one"
+  # Straight after the delete, so ArgoCD doesn't recreate it as a restore first.
+  kubectl -n overkill-todo delete cluster overkill-todo-db --ignore-not-found --wait
+  kubectl create -f - <<<"$cluster"
+  kubectl -n overkill-todo wait --for=condition=Ready cluster/overkill-todo-db --timeout=600s
+  # The ScheduledBackup's immediate one ran when it was created, not now.
+  kubectl create -f - >/dev/null <<YAML
+apiVersion: postgresql.cnpg.io/v1
+kind: Backup
+metadata: { generateName: overkill-todo-db-init-, namespace: overkill-todo }
+spec:
+  cluster: { name: overkill-todo-db }
+  method: plugin
+  pluginConfiguration: { name: barman-cloud.cloudnative-pg.io }
+YAML
+  say "the database is empty and archiving; its first backup has started (kubectl -n overkill-todo get backups)"
+}
+
 case ${1:-} in
   up | down | status | env | hosts | garage) "cmd_$1" ;;
-  *) sed -n '2,13s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+  db-init) cmd_db_init ;;
+  *) sed -n '2,14s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
 esac

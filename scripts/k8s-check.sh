@@ -64,6 +64,7 @@ cmd_check() {
   pinned cnpg "$CNPG_CHART_VERSION"
   pinned cert-manager "$CERT_MANAGER_VERSION"
   pinned traefik "$TRAEFIK_CHART_VERSION"
+  pinned barman-cloud "$BARMAN_PLUGIN_CHART_VERSION"
   ((failed == 0)) || exit 1
   echo "k8s-check: every manifest renders and matches its schema"
 }
@@ -100,6 +101,8 @@ cmd_schemas() {
   from_crd "cilium/cilium/v$CILIUM_VERSION/pkg/k8s/apis/cilium.io/client/crds/v2/ciliumloadbalancerippools.yaml"
   from_crd "cilium/cilium/v$CILIUM_VERSION/pkg/k8s/apis/cilium.io/client/crds/v2alpha1/ciliuml2announcementpolicies.yaml"
   from_crd "cert-manager/cert-manager/$CERT_MANAGER_VERSION/deploy/crds/cert-manager.io_clusterissuers.yaml"
+  from_crd "cert-manager/cert-manager/$CERT_MANAGER_VERSION/deploy/crds/cert-manager.io_issuers.yaml"
+  from_crd "cert-manager/cert-manager/$CERT_MANAGER_VERSION/deploy/crds/cert-manager.io_certificates.yaml"
   from_crd "cloudnative-pg/plugin-barman-cloud/$BARMAN_PLUGIN_VERSION/config/crd/bases/barmancloud.cnpg.io_objectstores.yaml"
 }
 

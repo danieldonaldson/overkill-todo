@@ -440,6 +440,11 @@ k8s-down:
 k8s-status:
     ./scripts/k8s.sh status
 
+# First run only: start the cluster's database empty. Refused if any backup exists.
+[group('kubernetes')]
+k8s-db-init:
+    ./scripts/k8s.sh db-init
+
 # Render every Kubernetes manifest and check it against its schema. Network, no keys.
 [group('kubernetes')]
 k8s-check:

@@ -6,6 +6,7 @@ kind: Kustomization
 resources:
   - ../../base
   - issuer.yaml
+  - object-store.yaml
 # Images from main, by digest (D10): the commit last merged into this branch, so
 # its migrations match these manifests.
 images:
@@ -63,18 +64,41 @@ patches:
         path: /metadata/annotations
         value:
           cert-manager.io/cluster-issuer: local-ca
-  # Backups arrive in slice 3, with Garage (D7).
-  - patch: |
-      $patch: delete
-      apiVersion: postgresql.cnpg.io/v1
-      kind: ScheduledBackup
-      metadata:
-        name: overkill-todo-db-daily
+  # A cluster created from this restores from the newest backup (D7); with none,
+  # it doesn't start. The first run is `./scripts/k8s.sh db-init`
+  # (overlays/local-initdb). CNPG reads bootstrap only when it creates a Cluster,
+  # and the workloads Application ignores it on one that exists.
   - target: { kind: Cluster, name: overkill-todo-db }
     patch: |
-      - op: remove
-        path: /spec/plugins
+      - op: replace
+        path: /spec/bootstrap
+        value:
+          recovery:
+            source: backup
+            database: overkill_todo
+            owner: overkill_todo
+      - op: add
+        path: /spec/externalClusters
+        value:
+          - name: backup
+            plugin:
+              name: barman-cloud.cloudnative-pg.io
+              parameters:
+                barmanObjectName: overkill-todo-db-store
+                serverName: overkill-todo-db
+      - op: add
+        path: /spec/plugins/0/parameters/serverName
+        value: overkill-todo-db
       - op: add
         path: /metadata/annotations
         value:
           argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+          # A restored cluster archives where it restored from, on a new timeline,
+          # so a rebuild needs no commit.
+          cnpg.io/skipEmptyWalArchiveCheck: enabled
+  # Restore needs a base backup on the new timeline, so take one at once.
+  - target: { kind: ScheduledBackup, name: overkill-todo-db-daily }
+    patch: |
+      - op: add
+        path: /spec/immediate
+        value: true

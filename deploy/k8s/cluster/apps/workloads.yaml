@@ -21,6 +21,12 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: default
+  # How a database began is fixed when CNPG creates it: a restore, or the explicit
+  # first run's empty database (D7). Syncs keep the live value.
+  ignoreDifferences:
+    - group: postgresql.cnpg.io
+      kind: Cluster
+      jsonPointers: [/spec/bootstrap]
   syncPolicy:
     automated:
       prune: true
@@ -38,3 +44,4 @@ spec:
       - ServerSideApply=true
       # Keep the previous secret version until the new one is in use.
       - PruneLast=true
+      - RespectIgnoreDifferences=true

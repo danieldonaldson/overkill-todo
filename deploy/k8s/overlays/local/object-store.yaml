@@ -1,0 +1,20 @@
+# Garage on the host, at the VM bridge's gateway (D7, scripts/k8s.sh). Path-style
+# addressing comes from the IP endpoint; Garage checks the signing region.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: overkill-todo-db-store
+  namespace: overkill-todo
+spec:
+  retentionPolicy: 14d
+  configuration:
+    destinationPath: s3://backups/overkill-todo-db
+    endpointURL: http://10.5.0.1:3900
+    s3Credentials:
+      accessKeyId: { name: garage-s3-v1, key: ACCESS_KEY_ID }
+      secretAccessKey: { name: garage-s3-v1, key: SECRET_ACCESS_KEY }
+      region: { name: garage-s3-v1, key: REGION }
+    wal:
+      compression: gzip
+    data:
+      compression: gzip

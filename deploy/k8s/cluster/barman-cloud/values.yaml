@@ -1,0 +1,6 @@
+# barman-cloud plugin for CNPG (D7). It must share the operator's namespace, and its
+# mTLS certificates come from cert-manager. The chart pins the sidecar to its own
+# appVersion (BARMAN_PLUGIN_VERSION).
+resources:
+  requests: { cpu: 20m, memory: 64Mi }
+  limits: { memory: 256Mi }
