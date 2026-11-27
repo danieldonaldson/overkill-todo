@@ -6,9 +6,11 @@
 #   k8s.sh status  what is out of sync, failing or stuck; exits 1 if anything is
 #   k8s.sh env     print the exports for kubectl and talosctl
 #   k8s.sh hosts   add the app's name to /etc/hosts (up does this)
+#   k8s.sh garage  (re)start Garage, the backups' storage (up does this)
 #
 # Runs as you; only the VM, its network and one firewall rule need sudo, and each
-# such command is printed first. State is in $XDG_STATE_HOME/overkill-todo/k8s.
+# such command is printed first. State is in $XDG_STATE_HOME/overkill-todo/k8s;
+# backups are in the Docker volume overkill-todo-garage, which down keeps.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -29,6 +31,10 @@ spare_mem_gib=2
 state=${XDG_STATE_HOME:-$HOME/.local/state}/overkill-todo/k8s
 age_key=${OVERKILL_CLUSTER_AGE_KEY:-$HOME/.config/overkill-todo/cluster.agekey}
 talos_secrets=deploy/secrets/local/talos.sops
+garage_secret=deploy/secrets/local/garage-s3.sops.yaml
+garage_container=$name-garage
+garage_volume=$name-garage
+garage_bucket=backups
 export KUBECONFIG=$state/kubeconfig TALOSCONFIG=$state/talosconfig
 
 # shellcheck source=deploy/k8s/versions.env
@@ -57,7 +63,7 @@ wait_for() { # seconds, what, command...
 # Checks only; changes nothing. Reports every problem at once.
 preflight() {
   local problems=() tool have dir
-  for tool in talosctl kubectl helm sops qemu-system-x86_64 ip sudo; do
+  for tool in talosctl kubectl helm sops qemu-system-x86_64 ip sudo docker; do
     command -v "$tool" >/dev/null || problems+=("$tool is not installed")
   done
   [[ -r /dev/kvm && -w /dev/kvm ]] || problems+=("/dev/kvm is not usable")
@@ -70,6 +76,7 @@ preflight() {
   ((have >= disk_gib + 5)) || problems+=("disk: $have GiB free at $dir, $((disk_gib + 5)) GiB needed")
   [[ -f $age_key ]] || problems+=("the cluster's age key is missing: $age_key")
   [[ -f $talos_secrets ]] || problems+=("$talos_secrets is missing")
+  sops decrypt "$garage_secret" >/dev/null 2>&1 || problems+=("can't decrypt $garage_secret")
   [[ ! -e $state/clusters/$name ]] || problems+=("a cluster (or part of one) exists: run \`just k8s-down\` first")
   [[ -z $(bridge) ]] || problems+=("$gateway is already in use on $(bridge)")
   if ((${#problems[@]})); then
@@ -103,6 +110,53 @@ bootstrap_argocd() {
   kubectl -n argocd rollout status deployment/argocd-repo-server --timeout=300s
   kubectl -n argocd rollout status statefulset/argocd-application-controller --timeout=300s
   "${apply[@]}" -f deploy/k8s/cluster/apps/root.yaml >/dev/null
+}
+
+# Garage: S3 storage for the database's backups, on the host so destroying the VM
+# leaves them (D7). It listens only on the bridge's address, so it starts after the
+# bridge and stops before it goes; its data stays in the volume. Host networking
+# keeps ufw in charge (Docker's published ports bypass it), and ufw already lets
+# the bridge in. The key comes from the same SopsSecret the cluster reads.
+garage_value() { sops decrypt --extract "[\"spec\"][\"secretTemplates\"][0][\"stringData\"][\"$1\"]" "$garage_secret"; }
+garage() { docker exec -e RUST_LOG=warn "$garage_container" /garage "$@"; }
+garage_stop() { docker rm -f "$garage_container" >/dev/null 2>&1 || true; }
+garage_start() {
+  [[ -n $(bridge) ]] || die "no bridge has $gateway: Garage listens there, so start the cluster first"
+  local key_id secret region
+  key_id=$(garage_value ACCESS_KEY_ID)
+  secret=$(garage_value SECRET_ACCESS_KEY)
+  region=$(garage_value REGION)
+  garage_stop
+  mkdir -p "$state"
+  # Nothing secret here. The RPC secret only joins nodes, and there is one, so a
+  # new one each start is fine.
+  cat >"$state/garage.toml" <<TOML
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+replication_factor = 1
+rpc_bind_addr = "127.0.0.1:3901"
+rpc_public_addr = "127.0.0.1:3901"
+[s3_api]
+s3_region = "$region"
+api_bind_addr = "$gateway:3900"
+TOML
+  say "starting Garage $GARAGE_VERSION on $gateway:3900"
+  docker run -d --name "$garage_container" --network host --restart no \
+    --read-only --cap-drop ALL --security-opt no-new-privileges \
+    -e GARAGE_RPC_SECRET="$(openssl rand -hex 32)" \
+    -v "$state/garage.toml:/etc/garage.toml:ro" -v "$garage_volume:/var/lib/garage" \
+    "dxflrs/garage:$GARAGE_VERSION" >/dev/null
+  wait_for 60 "Garage" garage status
+  # A new volume has no layout; an existing one keeps its own.
+  if garage layout show 2>/dev/null | grep -q "No nodes currently have a role"; then
+    garage layout assign -z local -c 20G "$(garage node id -q | cut -d@ -f1)" >/dev/null
+    garage layout apply --version 1 >/dev/null
+  fi
+  garage bucket info "$garage_bucket" >/dev/null 2>&1 || garage bucket create "$garage_bucket" >/dev/null
+  garage key info "$key_id" >/dev/null 2>&1 || garage key import --yes -n backups "$key_id" "$secret" >/dev/null
+  garage bucket allow --read --write "$garage_bucket" --key "$key_id" >/dev/null
+  say "Garage is serving bucket $garage_bucket from the volume $garage_volume"
 }
 
 # One line in /etc/hosts, tagged so `down` removes only its own.
@@ -150,6 +204,8 @@ cmd_up() {
     as_root ufw route allow out on "$br" comment "$name k8s"
   fi
 
+  garage_start
+
   install -m 600 "$tmp/config/talosconfig" "$TALOSCONFIG"
   talosctl config endpoint "$node"
   talosctl config node "$node"
@@ -175,6 +231,8 @@ cmd_up() {
 cmd_down() {
   local br
   br=$(bridge)
+  # Its data stays in the volume.
+  garage_stop
   if [[ -e $state/clusters/$name ]]; then
     root_talosctl cluster destroy --force || say "destroy reported errors; cleaning up what is left"
   fi
@@ -243,8 +301,9 @@ cmd_status() {
 }
 
 cmd_hosts() { add_host; grep -F "$hosts_tag" /etc/hosts; }
+cmd_garage() { garage_start; }
 
 case ${1:-} in
-  up | down | status | env | hosts) "cmd_$1" ;;
-  *) sed -n '2,11s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+  up | down | status | env | hosts | garage) "cmd_$1" ;;
+  *) sed -n '2,13s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
 esac
