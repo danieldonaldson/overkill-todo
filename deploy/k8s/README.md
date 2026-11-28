@@ -4,11 +4,11 @@ A local single-node cluster that ArgoCD fills from Git (OT-014). It sits beside
 `../compose/`, which stays the way to run the app locally and has its own
 production override. Which one production uses is not decided.
 
-> **Status:** slice 3 reopened for a streaming Barman server (D7a): it runs, and
-> its drills (3.12) are next. The app runs at https://todo.k8s.test with
-> development mode off. The database runs three instances and is backed up to
-> Garage on the host; a rebuild restores it (drilled: about 6 minutes, nothing by
-> hand). Isolation and admission arrive in slice 4.
+> **Status:** slice 3 done. The app runs at https://todo.k8s.test with
+> development mode off. The database runs three instances; a streaming Barman
+> server on the host backs it up, with a copy in Garage, and a rebuild restores
+> it with nothing by hand (drilled with the VM killed: every confirmed row back,
+> about 11 minutes). Isolation and admission arrive in slice 4.
 
 ```
 cluster/apps/      ArgoCD Applications; root.yaml owns them all, itself included

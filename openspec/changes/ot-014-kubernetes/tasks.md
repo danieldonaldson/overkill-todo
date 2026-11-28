@@ -55,10 +55,10 @@ cluster; Rebuild never silently starts empty; Backup storage unavailable.
 ### Slice 3, continued: a streaming Barman server (D7a)
 
 - [x] 3.8 Prove on the host: a Barman server (pinned, built from PGDG packages) streaming from Postgres 18 over a slot, its hooks uploading a base backup and finished WAL to Garage, and a renamed `.partial`. Verify: the plugin's `barman-cloud-restore` and `barman-cloud-wal-restore` recover a row written after the last finished WAL file, recorded in design.md; otherwise revise D7a.
-- [ ] 3.9 Run Barman on the host beside Garage, its own volume, started and stopped by `k8s.sh`; its password a `local` secret. Verify: `k8s-down` leaves its data, and `barman check` passes once the cluster is up.
+- [x] 3.9 Run Barman on the host beside Garage, its own volume, started and stopped by `k8s.sh`; its password a `local` secret. Verify: `k8s-down` leaves its data, and `barman check` passes once the cluster is up.
 - [x] 3.10 In the cluster: a LoadBalancer Service for the primary on the bridge, a managed replication role, a `pg_hba` rule for it from the bridge only, slot synchronisation, `max_slot_wal_keep_size`; remove WAL archiving and the ScheduledBackup from the local overlay, so the plugin only restores. `k8s-status` names a lagging slot and a failing `barman check`. Verify: streaming and a Barman backup work, and Garage receives both.
 - [x] 3.11 `k8s-up` copies Barman's newest `.partial` to Garage before the database restores; `k8s-db-init` also refuses when Barman holds backups. Verify: the scripts' checks pass.
-- [ ] 3.12 Drills: rows written each second, the VM killed outright (no `k8s-down`), rebuild; then the primary killed, then Barman stopped while the app runs. Verify: every row confirmed more than a second before the kill is back; streaming continues from the new primary; with Barman down the app serves, `k8s-status` names it, and streaming catches up. Timings in design.md. Boundary work as in 2.7.
+- [x] 3.12 Drills: rows written each second, the VM killed outright (no `k8s-down`), rebuild; then the primary killed, then Barman stopped while the app runs. Verify: every row confirmed more than a second before the kill is back; streaming continues from the new primary; with Barman down the app serves, `k8s-status` names it, and streaming catches up. Timings in design.md. Boundary work as in 2.7.
 
 ## 4. Slice 4: isolation, admission and the edge contract
 
@@ -67,7 +67,7 @@ Operator tools stay private; Privileged workload is rejected; Workload exceeds
 its memory limit.
 
 - [ ] 4.1 Test the client address through the edge. Verify: recorded in design.md.
-- [ ] 4.2 NetworkPolicies, default deny, for every app, database and tool, including the database's egress to Garage on the host, replication between its instances, and the CNPG operator and barman-cloud plugin reaching them. Verify: backups and replication still work, each allowed path works, and the rest is refused, tested both ways.
+- [ ] 4.2 NetworkPolicies, default deny, for every app, database and tool, including Barman on the host reaching the primary at `10.5.0.101` (and nothing else reaching that address), the restore's egress to Garage, replication between the instances, and the CNPG operator and barman-cloud plugin reaching them; CNPG's default `pg_hba` admits any role with a password, so narrow what the bridge can log in as. Verify: Barman's streaming and backups, a restore, and replication still work, each allowed path works, and the rest is refused, tested both ways.
 - [ ] 4.3 Pod Security on every namespace, memory limits, exceptions listed with reasons (D12). Verify: a privileged pod is rejected, and a memory hog restarts alone.
 - [ ] 4.4 The compose README's edge contract on the cluster's edge. Verify: every item is checked. Boundary work as in 2.7.
 

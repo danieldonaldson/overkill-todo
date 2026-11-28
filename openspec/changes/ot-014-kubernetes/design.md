@@ -326,6 +326,28 @@ rest), so row 3 came from the `.partial`.
   `k8s-db-init` refuses while Garage or Barman hold a backup, and no longer
   requests a plugin backup: Barman takes the first one by itself.
 
+### Slice 3, Barman drills (3.12, 2026-11-28)
+
+A writer on the host inserted a numbered row each second through `10.5.0.101`
+with the app's credentials, logging to the host, so its record outlived the VM.
+
+| Drill | Outcome | Time |
+| --- | --- | --- |
+| VM killed (`kill -9` on QEMU), then `k8s-down`, `k8s-up` | all 44 confirmed rows back, the last committed 11 ms before the kill; `k8s-up` copied Barman's `…41.partial` to Garage; timeline 8 | database ready 10 min 42 s after `k8s-down` started |
+| Primary pod force-deleted | 73 confirmed rows, none missing; Barman streamed from the new primary over the synchronised slot, `barman check` clean | new primary 20.1 s; writes failed 19 s |
+| Barman stopped 113 s | `k8s-status` named it within 12 s; the slot held 16 MB a switched segment (48 MB); requests 0 of 1,766 failed, writes 0 of 115 | slot caught up 27 s after the restart, WAL in Garage 33 s after |
+| Garage stopped 162 s | Barman's upload hook failed and retried, holding its WAL processing (two finished segments waiting); streaming went on, slot lag 0 | uploads within 1 s of Garage's return |
+
+- Without the `.partial` copy the VM-kill restore would have stopped at the last
+  finished segment, losing the newest rows; with it, every confirmed row came back.
+- After the restore Barman continued by itself: pg_receivewal finished the old
+  timeline's file, streamed the new one, and uploaded the history files.
+- During the Garage outage `k8s-status` said only "barman check command timed
+  out": the check waits behind the stuck hook. Visible, but vague; slice 5's
+  alerting should look at the hook's failures.
+- The rebuild took longer than slice 3's first drills (10 min 42 s against about
+  6): three instances, each cloned in turn.
+
 ### What slice 3 changed for later slices
 
 - The database restores on every creation; the first run is `just k8s-db-init`.
@@ -336,6 +358,8 @@ rest), so row 3 came from the `.partial`.
   (`10.5.0.1:3900`), the instances' replication between themselves, and the
   operator and the barman-cloud plugin reaching the instances; a pod in the
   database's namespace must pass `restricted`, as the drill pods had to.
+- Backups are Barman's: anything that changes the primary, its address or its
+  slot must keep streaming working (slice 4's policies: Barman to `10.5.0.101`).
 - The host runs short of memory with the VM up (the oomd kill); measure before
   slice 5, as planned, and expect to trim.
 - A switchover drops writes for about 5 s and a failover for about 25 s; the
