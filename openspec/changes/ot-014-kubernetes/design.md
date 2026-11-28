@@ -348,6 +348,20 @@ with the app's credentials, logging to the host, so its record outlived the VM.
 - The rebuild took longer than slice 3's first drills (10 min 42 s against about
   6): three instances, each cloned in turn.
 
+### Why a failover takes 20 s (2026-11-28)
+
+From the operator's and db-2's logs for the 3.12 primary kill: failure noticed
+0.2 s after the kill, db-2 chosen at 2.5 s, then 16 s waiting for CNPG's primary
+lease (a Kubernetes Lease, `leaseDurationSeconds` 15, retried every 2 s), and
+promotion in milliseconds. A force-deleted primary can't release the lease, so it
+has to expire; a switchover releases it (`releasedLeaseDurationSeconds` 1),
+hence about 5 s there. The lease keeps two primaries from ever both taking
+writes. Kept at CNPG's defaults: a shorter one (`spec.primaryLease`, say 6/4/1 s
+for about 8 s) makes a primary that can't renew within the deadline stop itself,
+and here the API server shares one VM with a host that has run out of memory, so
+it would trade slow failovers for needless ones. Patroni's default lease is 30 s.
+Revisit with API server latency from slice 5.
+
 ### What slice 3 changed for later slices
 
 - The database restores on every creation; the first run is `just k8s-db-init`.
