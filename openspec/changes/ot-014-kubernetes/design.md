@@ -362,6 +362,22 @@ and here the API server shares one VM with a host that has run out of memory, so
 it would trade slow failovers for needless ones. Patroni's default lease is 30 s.
 Revisit with API server latency from slice 5.
 
+### Slice 4, client address through the edge (4.1, 2026-11-28)
+
+Requests from the host to `10.5.0.100`, and a throwaway `traefik/whoami` behind
+Traefik on its own host name (removed after):
+
+- No SNAT on the way in: Traefik's access log has `ClientHost` 10.5.0.1, the
+  host's bridge address, and the primary sees Barman's stream from 10.5.0.1
+  through its LoadBalancer (`pg_stat_replication.client_addr`). Policies can
+  match those sources by address.
+- Traefik, with no `trustedIPs`, replaces a client's `X-Forwarded-For` and
+  `X-Real-Ip` with the connection's address (10.5.0.1 for a forged
+  203.0.113.9), as the contract's item 2 wants.
+- It passes `CF-Connecting-IP`, `Forwarded` and `X-Analytics-Client-IP` through
+  as the client sent them. Nothing behind the edge reads them today; 4.4 must
+  overwrite `X-Analytics-Client-IP` (item 2) before Umami (slice 6) relies on it.
+
 ### What slice 3 changed for later slices
 
 - The database restores on every creation; the first run is `just k8s-db-init`.

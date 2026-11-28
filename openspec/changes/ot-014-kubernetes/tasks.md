@@ -66,7 +66,7 @@ Delivers: Unneeded connection is refused; Only the edge reaches the backend;
 Operator tools stay private; Privileged workload is rejected; Workload exceeds
 its memory limit.
 
-- [ ] 4.1 Test the client address through the edge. Verify: recorded in design.md.
+- [x] 4.1 Test the client address through the edge. Verify: recorded in design.md.
 - [ ] 4.2 NetworkPolicies, default deny, for every app, database and tool, including Barman on the host reaching the primary at `10.5.0.101` (and nothing else reaching that address), the restore's egress to Garage, replication between the instances, and the CNPG operator and barman-cloud plugin reaching them; CNPG's default `pg_hba` admits any role with a password, so narrow what the bridge can log in as. Verify: Barman's streaming and backups, a restore, and replication still work, each allowed path works, and the rest is refused, tested both ways.
 - [ ] 4.3 Pod Security on every namespace, memory limits, exceptions listed with reasons (D12). Verify: a privileged pod is rejected, and a memory hog restarts alone.
 - [ ] 4.4 The compose README's edge contract on the cluster's edge. Verify: every item is checked. Boundary work as in 2.7.
